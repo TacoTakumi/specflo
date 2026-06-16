@@ -13,6 +13,17 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo list [--json]` — list all projects, marking the active one and its phase.
 - `specflo switch <name>` — make another project active (by slug or name).
 - `specflo status [--json]` — show the active project, its phase, and what's next.
+- `specflo brainstorm start [--json]` — create (or locate) the active project's `brainstorm.md`.
+- `specflo decision add --text … [--rationale …] [--supersedes D-NN]` — append a decision (`D-NN`) to the brainstorm.
+- `specflo validate brainstorm [--json]` — lint the brainstorm artifact (reports readiness).
+
+## Skills
+
+- **`brainstorm`** (`skills/brainstorm/SKILL.md`) — drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase). Install by symlinking it into your agent's skills dir:
+
+  ```bash
+  ln -s "$PWD/skills/brainstorm" ~/.claude/skills/brainstorm
+  ```
 
 ## Development
 
