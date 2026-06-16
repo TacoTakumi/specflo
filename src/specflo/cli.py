@@ -309,5 +309,31 @@ def decision_add(
         typer.echo(message)
 
 
+@app.command(epilog="Example: specflo validate brainstorm")
+def validate(
+    artifact: str = typer.Argument(
+        ..., metavar="<artifact>", help="Artifact to validate (e.g. brainstorm)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Lint an artifact; reports readiness and any issues."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    if artifact != "brainstorm":
+        raise _die(f"Unknown artifact {artifact!r}. Known: brainstorm.")
+    issues = brainstorm.validate_brainstorm(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"ready": not issues, "issues": issues}))
+        raise typer.Exit(code=0 if not issues else 1)
+    if not issues:
+        typer.echo("ok — brainstorm is ready.")
+        return
+    typer.secho("brainstorm has issues:", fg=typer.colors.YELLOW, err=True)
+    for issue in issues:
+        typer.echo(f"  - {issue}", err=True)
+    raise typer.Exit(code=1)
+
+
 def main() -> None:
     app()

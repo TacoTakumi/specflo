@@ -296,3 +296,47 @@ def test_decision_add_without_start_fails(cwd):
     runner.invoke(app, ["new", "My Thing"])
     result = runner.invoke(app, ["decision", "add", "--text", "Too early"])
     assert result.exit_code != 0
+
+
+def test_validate_brainstorm_reports_issues_and_exits_nonzero(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    result = runner.invoke(app, ["validate", "brainstorm"])
+    assert result.exit_code != 0  # fresh doc: no decisions + empty out-of-scope
+    lowered = result.output.lower()
+    assert "no decisions" in lowered or "out of scope" in lowered
+
+
+def test_validate_brainstorm_passes_a_complete_doc(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "A decision"])
+    path = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    path.write_text(
+        path.read_text().replace(
+            "## Out of scope / Deferred\n"
+            "<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\nNo auth in v0.1.",
+        )
+    )
+    result = runner.invoke(app, ["validate", "brainstorm"])
+    assert result.exit_code == 0
+    assert "ok" in result.output.lower()
+
+
+def test_validate_unknown_artifact_fails(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["validate", "spec"])
+    assert result.exit_code != 0
+
+
+def test_validate_json_reports_ready(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    data = json.loads(runner.invoke(app, ["validate", "brainstorm", "--json"]).output)
+    assert data["ready"] is False
+    assert data["issues"]
