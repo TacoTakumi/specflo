@@ -92,3 +92,31 @@ def test_decisions_stay_inside_their_section(root, cfg, project):
     brainstorm.add_decision(root, cfg, project, "Inside", today="2026-06-16")
     text = _bpath(root, cfg, project).read_text()
     assert text.index("## Decisions") < text.index("### D-01") < text.index("## Out of scope")
+
+
+def test_supersede_marks_old_and_links_new(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use JSON", today="2026-06-16")
+    d2 = brainstorm.add_decision(
+        root, cfg, project, "Use YAML", rationale="frontmatter", supersedes="D-01",
+        today="2026-06-16",
+    )
+    assert d2.id == "D-02"
+    text = _bpath(root, cfg, project).read_text()
+    assert "### D-01 — Use JSON" in text          # kept in place
+    assert "- Status: superseded by D-02" in text  # old one flipped
+    assert "- Supersedes: D-01" in text            # new one links back
+
+
+def test_supersede_unknown_decision_raises(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    with pytest.raises(SpecfloError):
+        brainstorm.add_decision(root, cfg, project, "x", supersedes="D-99")
+
+
+def test_ids_never_collide_after_supersede(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "a", today="2026-06-16")                       # D-01
+    brainstorm.add_decision(root, cfg, project, "b", supersedes="D-01", today="2026-06-16")    # D-02
+    d3 = brainstorm.add_decision(root, cfg, project, "c", today="2026-06-16")                  # D-03
+    assert d3.id == "D-03"
