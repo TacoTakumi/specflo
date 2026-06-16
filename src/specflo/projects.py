@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .config import SpecfloConfig
+from .config import SpecfloConfig, save_config
 from .errors import SpecfloError
 
 PROJECT_FILENAME = "project.md"
@@ -77,6 +77,39 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         status=fields["status"],
         path=path.parent,
     )
+
+
+def list_projects(root: Path, cfg: SpecfloConfig) -> list[Project]:
+    """Return every project under the configured projects dir, sorted by slug.
+
+    Directories without a ``project.md`` are skipped, so stray folders under the
+    projects dir don't break the listing.
+    """
+    base = root / cfg.projects_dir
+    if not base.is_dir():
+        return []
+    return [
+        load_project(root, cfg, entry.name)
+        for entry in sorted(base.iterdir())
+        if (entry / PROJECT_FILENAME).is_file()
+    ]
+
+
+def switch_project(root: Path, cfg: SpecfloConfig, name: str) -> Project:
+    """Make the named project active (persisting the change) and return it.
+
+    ``name`` is slugified, so both the slug and the original project name work.
+    Raises ``SpecfloError`` if no such project exists.
+    """
+    slug = slugify(name)
+    if not (project_dir(root, cfg, slug) / PROJECT_FILENAME).is_file():
+        raise SpecfloError(
+            f"No project {slug!r}. Run `specflo list` to see available projects."
+        )
+    project = load_project(root, cfg, slug)
+    cfg.active_project = slug
+    save_config(root, cfg)
+    return project
 
 
 def _render(project: Project) -> str:

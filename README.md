@@ -10,6 +10,8 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 
 - `specflo init` — scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 - `specflo new <name>` — create a project and make it active.
+- `specflo list [--json]` — list all projects, marking the active one and its phase.
+- `specflo switch <name>` — make another project active (by slug or name).
 - `specflo status [--json]` — show the active project, its phase, and what's next.
 
 ## Development

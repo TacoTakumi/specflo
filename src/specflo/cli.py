@@ -122,6 +122,62 @@ def new(
     )
 
 
+@app.command(name="list", epilog="Example: specflo list --json")
+def list_(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List all projects, marking the active one."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    items = projects.list_projects(root, cfg)
+
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "active_project": cfg.active_project,
+                    "projects": [
+                        {
+                            "slug": p.slug,
+                            "name": p.name,
+                            "phase": p.phase,
+                            "status": p.status,
+                            "active": p.slug == cfg.active_project,
+                        }
+                        for p in items
+                    ],
+                }
+            )
+        )
+        return
+
+    if not items:
+        typer.echo("No projects yet. Create one with `specflo new <name>`.")
+        return
+
+    for p in items:
+        marker = "*" if p.slug == cfg.active_project else " "
+        typer.echo(f"{marker} {p.slug}  ({p.phase})")
+
+
+@app.command(epilog="Example: specflo switch my-project")
+def switch(
+    name: str = typer.Argument(
+        ...,
+        metavar="<name>",
+        help="Project to make active (its slug or name).",
+    ),
+) -> None:
+    """Make project <name> the active project."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    try:
+        project = projects.switch_project(root, cfg, name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Switched to '{project.slug}' (phase: {project.phase}).")
+
+
 @app.command(epilog="Example: specflo status --json")
 def status(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),

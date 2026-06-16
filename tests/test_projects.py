@@ -58,3 +58,47 @@ def test_load_project_reads_back_the_saved_fields(root, cfg):
 def test_load_missing_project_raises(root, cfg):
     with pytest.raises(SpecfloError):
         projects.load_project(root, cfg, "does-not-exist")
+
+
+def test_list_projects_returns_all_sorted_by_slug(root, cfg):
+    projects.create_project(root, cfg, "Charlie")
+    projects.create_project(root, cfg, "Alpha")
+    projects.create_project(root, cfg, "Bravo")
+
+    listed = projects.list_projects(root, cfg)
+    assert [p.slug for p in listed] == ["alpha", "bravo", "charlie"]
+
+
+def test_list_projects_is_empty_when_there_are_none(root, cfg):
+    assert projects.list_projects(root, cfg) == []
+
+
+def test_list_projects_ignores_dirs_without_a_project_file(root, cfg):
+    projects.create_project(root, cfg, "Alpha")
+    (root / cfg.projects_dir / "stray-dir").mkdir()
+
+    listed = projects.list_projects(root, cfg)
+    assert [p.slug for p in listed] == ["alpha"]
+
+
+def test_switch_project_sets_active_and_persists_it(root, cfg):
+    projects.create_project(root, cfg, "Alpha")
+    projects.create_project(root, cfg, "Bravo")
+
+    switched = projects.switch_project(root, cfg, "alpha")
+    assert switched.slug == "alpha"
+    assert cfg.active_project == "alpha"
+    assert config.load_config(root).active_project == "alpha"
+
+
+def test_switch_project_accepts_a_name_and_slugifies_it(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+
+    switched = projects.switch_project(root, cfg, "My Thing")
+    assert switched.slug == "my-thing"
+    assert config.load_config(root).active_project == "my-thing"
+
+
+def test_switch_to_a_missing_project_raises(root, cfg):
+    with pytest.raises(SpecfloError):
+        projects.switch_project(root, cfg, "does-not-exist")

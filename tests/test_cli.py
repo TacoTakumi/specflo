@@ -117,3 +117,84 @@ def test_status_reports_the_active_project_as_json(cwd):
     assert data["phase"] == "brainstorm"
     assert data["next_phase"] == "spec"
     assert data["next_step"]
+
+
+def test_list_shows_projects_and_marks_the_active_one(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["new", "Bravo"])  # Bravo is now active
+
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "alpha" in result.output
+    assert "bravo" in result.output
+    # The active project (bravo) is marked; alpha is not.
+    active_line = next(line for line in result.output.splitlines() if "bravo" in line)
+    other_line = next(line for line in result.output.splitlines() if "alpha" in line)
+    assert "*" in active_line
+    assert "*" not in other_line
+
+
+def test_list_shows_each_project_phase(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "brainstorm" in result.output
+
+
+def test_list_without_projects_is_friendly(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code == 0
+    assert "new" in result.output.lower()
+
+
+def test_list_without_init_fails(cwd):
+    result = runner.invoke(app, ["list"])
+    assert result.exit_code != 0
+
+
+def test_list_json_output(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["new", "Bravo"])  # active
+
+    data = json.loads(runner.invoke(app, ["list", "--json"]).output)
+    assert data["active_project"] == "bravo"
+    slugs = [p["slug"] for p in data["projects"]]
+    assert slugs == ["alpha", "bravo"]
+    by_slug = {p["slug"]: p for p in data["projects"]}
+    assert by_slug["bravo"]["active"] is True
+    assert by_slug["alpha"]["active"] is False
+    assert by_slug["alpha"]["phase"] == "brainstorm"
+
+
+def test_switch_changes_the_active_project(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["new", "Bravo"])  # Bravo is active
+
+    result = runner.invoke(app, ["switch", "Alpha"])
+    assert result.exit_code == 0
+    assert "alpha" in result.output
+    assert config.load_config(cwd).active_project == "alpha"
+
+
+def test_switch_to_a_missing_project_fails(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["switch", "ghost"])
+    assert result.exit_code != 0
+    assert config.load_config(cwd).active_project is None
+
+
+def test_switch_without_init_fails(cwd):
+    result = runner.invoke(app, ["switch", "anything"])
+    assert result.exit_code != 0
+
+
+def test_top_level_help_lists_switch_with_its_argument():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "switch <name>" in result.output
