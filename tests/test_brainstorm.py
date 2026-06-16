@@ -121,3 +121,51 @@ def test_ids_never_collide_after_supersede(root, cfg, project):
     brainstorm.add_decision(root, cfg, project, "b", supersedes="D-01", today="2026-06-16")    # D-02
     d3 = brainstorm.add_decision(root, cfg, project, "c", today="2026-06-16")                  # D-03
     assert d3.id == "D-03"
+
+
+def _fill_out_of_scope(root, cfg, project):
+    path = _bpath(root, cfg, project)
+    path.write_text(
+        path.read_text().replace(
+            "## Out of scope / Deferred\n"
+            "<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\nNo auth in v0.1.",
+        )
+    )
+    return path
+
+
+def test_validate_passes_a_complete_doc(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "A real decision", today="2026-06-16")
+    _fill_out_of_scope(root, cfg, project)
+    assert brainstorm.validate_brainstorm(root, cfg, project) == []
+
+
+def test_validate_flags_missing_file(root, cfg, project):
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    assert any("not found" in i for i in issues)
+
+
+def test_validate_flags_no_decisions(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    _fill_out_of_scope(root, cfg, project)  # isolate the decisions check
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    assert any("no decisions" in i for i in issues)
+
+
+def test_validate_flags_empty_out_of_scope(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "A decision", today="2026-06-16")
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    assert any("Out of scope" in i for i in issues)
+
+
+def test_validate_flags_placeholder_text(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "A decision", today="2026-06-16")
+    _fill_out_of_scope(root, cfg, project)
+    path = _bpath(root, cfg, project)
+    path.write_text(path.read_text().replace("A decision", "TODO decide later"))
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    assert any("placeholder" in i for i in issues)

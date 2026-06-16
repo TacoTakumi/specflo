@@ -132,6 +132,34 @@ def add_decision(
     )
 
 
+def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """Return a list of lint issues (empty == ready). Read-only."""
+    path = brainstorm_path(root, cfg, slug)
+    if not path.is_file():
+        return ["brainstorm.md not found — run `specflo brainstorm start`."]
+    doc = path.read_text()
+    body = _strip_comments(doc)
+    issues: list[str] = []
+
+    for pattern in ("TBD", "TODO", "???"):
+        if pattern in body:
+            issues.append(f"placeholder text found: {pattern}")
+
+    if not _DECISION_ID_RE.search(doc):
+        issues.append("no decisions captured (need at least one).")
+
+    out_of_scope = _section_body(doc, "## Out of scope / Deferred")
+    if out_of_scope is None:
+        issues.append("missing 'Out of scope / Deferred' section.")
+    elif not _strip_comments(out_of_scope).strip():
+        issues.append("'Out of scope / Deferred' section is empty.")
+
+    if _section_body(doc, "## Open questions") is None:
+        issues.append("missing 'Open questions' section.")
+
+    return issues
+
+
 # --- internal helpers ---
 
 
@@ -168,3 +196,21 @@ def _mark_superseded(doc: str, dec_id: str, by_id: str) -> str:
 def _bump_updated(doc: str, today: str | None = None) -> str:
     today = today or datetime.date.today().isoformat()
     return re.sub(r"(?m)^updated:.*$", f"updated: {today}", doc, count=1)
+
+
+def _strip_comments(text: str) -> str:
+    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
+
+
+def _section_body(doc: str, header: str) -> str | None:
+    lines = doc.splitlines(keepends=True)
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == header)
+    except StopIteration:
+        return None
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("## "):
+            end = i
+            break
+    return "".join(lines[start + 1 : end])
