@@ -6,14 +6,69 @@ import json
 from pathlib import Path
 
 import typer
+from typer.core import TyperGroup
 
 from . import config, projects, workflow
 from .errors import SpecfloError
 
+
+class DefaultHelpGroup(TyperGroup):
+    """Two help tweaks:
+
+    - On an unknown command, print the error and the full help below it,
+      instead of the default bare "Try '... --help' for help." hint.
+    - In the commands list, show each command's positional arguments next to
+      its name (e.g. ``new <name>``).
+    """
+
+    def resolve_command(self, ctx: typer.Context, args: list[str]):
+        name = args[0] if args else None
+        if name is not None and not name.startswith("-") and self.get_command(ctx, name) is None:
+            typer.echo(f"Error: No such command {name!r}.\n", err=True)
+            typer.echo(ctx.get_help(), err=True)
+            raise typer.Exit(code=2)
+        return super().resolve_command(ctx, args)
+
+    @staticmethod
+    def _args_metavar(ctx: typer.Context, command) -> str:
+        """The space-joined metavars of a command's positional arguments."""
+        parts = []
+        for param in command.get_params(ctx):
+            if getattr(param, "param_type_name", None) != "argument":
+                continue
+            try:
+                parts.append(param.make_metavar(ctx=ctx))
+            except TypeError:  # older signature
+                parts.append(param.make_metavar())
+        return " ".join(p for p in parts if p)
+
+    def format_help(self, ctx: typer.Context, formatter) -> None:
+        # Temporarily suffix each command's display name with its arguments so
+        # the commands list reads e.g. "new <name>". Restored afterwards so
+        # command resolution and per-command usage are unaffected.
+        restore = {}
+        for name in self.list_commands(ctx):
+            command = self.get_command(ctx, name)
+            metavar = self._args_metavar(ctx, command) if command else ""
+            if metavar:
+                restore[command] = command.name
+                command.name = f"{command.name} {metavar}"
+        try:
+            super().format_help(ctx, formatter)
+        finally:
+            for command, original in restore.items():
+                command.name = original
+
+
 app = typer.Typer(
+    cls=DefaultHelpGroup,
     no_args_is_help=True,
     add_completion=False,
     help="A spec-driven software-engineering workflow.",
+    epilog=(
+        "Examples:  specflo init  |  "
+        "specflo new 'My Project'  |  specflo status --json"
+    ),
 )
 
 
@@ -29,7 +84,7 @@ def _require_root() -> Path:
     return root
 
 
-@app.command()
+@app.command(epilog="Example: specflo init --projects-dir docs/projects")
 def init(
     projects_dir: str = typer.Option(
         "docs/projects", "--projects-dir", help="Where projects are stored."
@@ -45,9 +100,15 @@ def init(
     typer.echo(f"Initialized specflo in {root} (projects dir: {cfg.projects_dir}).")
 
 
-@app.command()
-def new(name: str) -> None:
-    """Create a project and make it the active one."""
+@app.command(epilog="Example: specflo new 'My Project'")
+def new(
+    name: str = typer.Argument(
+        ...,
+        metavar="<name>",
+        help="Project name; slugified into the project directory name.",
+    ),
+) -> None:
+    """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
     try:
@@ -61,7 +122,7 @@ def new(name: str) -> None:
     )
 
 
-@app.command()
+@app.command(epilog="Example: specflo status --json")
 def status(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:

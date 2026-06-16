@@ -71,6 +71,43 @@ def test_status_reports_the_active_project_for_humans(cwd):
     assert "brainstorm" in result.output
 
 
+def test_unknown_command_shows_full_help_not_just_a_hint():
+    result = runner.invoke(app, ["bogus"])
+    assert result.exit_code != 0
+    out = result.output
+    assert "bogus" in out  # names the offending command
+    assert "Commands" in out  # the full help (command list) is shown
+    assert "status" in out
+    assert "--help' for help" not in out  # the bare "Try ... --help" hint is gone
+
+
+def test_new_help_describes_the_name_argument():
+    result = runner.invoke(app, ["new", "--help"])
+    assert result.exit_code == 0
+    assert "<name>" in result.output  # argument metavar
+    assert "slug" in result.output.lower()  # argument is described
+
+
+def test_top_level_help_shows_usage_examples():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "Example" in result.output
+
+
+def test_top_level_help_lists_new_with_its_argument():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "new <name>" in result.output
+
+
+def test_top_level_help_does_not_add_args_to_argless_commands():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    # init and status take no positional arguments
+    assert "init <" not in result.output
+    assert "status <" not in result.output
+
+
 def test_status_reports_the_active_project_as_json(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
