@@ -230,3 +230,35 @@ def test_top_level_help_lists_switch_with_its_argument():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "switch <name>" in result.output
+
+
+def test_brainstorm_start_creates_the_artifact(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["brainstorm", "start"])
+    assert result.exit_code == 0
+    assert (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").is_file()
+    assert "brainstorm.md" in result.output
+
+
+def test_brainstorm_start_is_resume_friendly(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    result = runner.invoke(app, ["brainstorm", "start"])
+    assert result.exit_code == 0
+    assert "already started" in result.output.lower()
+
+
+def test_brainstorm_start_without_active_project_fails(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["brainstorm", "start"])
+    assert result.exit_code != 0
+
+
+def test_brainstorm_start_json(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = json.loads(runner.invoke(app, ["brainstorm", "start", "--json"]).output)
+    assert data["created"] is True
+    assert data["path"].endswith("brainstorm.md")

@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import config, projects, workflow
+from . import brainstorm, config, projects, workflow
 from .errors import SpecfloError
 
 
@@ -71,6 +71,12 @@ app = typer.Typer(
     ),
 )
 
+brainstorm_app = typer.Typer(help="Work with the brainstorm artifact.")
+app.add_typer(brainstorm_app, name="brainstorm")
+
+decision_app = typer.Typer(help="Capture brainstorm decisions.")
+app.add_typer(decision_app, name="decision")
+
 
 def _die(message: str) -> typer.Exit:
     typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
@@ -82,6 +88,12 @@ def _require_root() -> Path:
     if root is None:
         raise _die("Not a specflo project. Run `specflo init` first.")
     return root
+
+
+def _require_active(cfg: config.SpecfloConfig) -> str:
+    if cfg.active_project is None:
+        raise _die("No active project. Create one with `specflo new <name>`.")
+    return cfg.active_project
 
 
 def _project_dir_display(path: Path, root: Path) -> str:
@@ -245,6 +257,25 @@ def status(
         typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
         typer.echo(f"Phase:   {project.phase}")
         typer.echo(f"Next:    {info['next_step']}")
+
+
+@brainstorm_app.command("start", epilog="Example: specflo brainstorm start")
+def brainstorm_start(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Create (or locate) the active project's brainstorm.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        path, created = brainstorm.start_brainstorm(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"path": str(path), "created": created}))
+    else:
+        note = "" if created else " (already started)"
+        typer.echo(f"{path}{note}")
 
 
 def main() -> None:
