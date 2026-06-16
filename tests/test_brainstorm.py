@@ -51,3 +51,44 @@ def test_start_is_idempotent_and_does_not_clobber(root, cfg, project):
 def test_start_on_missing_project_raises(root, cfg):
     with pytest.raises(SpecfloError):
         brainstorm.start_brainstorm(root, cfg, "ghost")
+
+
+def _bpath(root, cfg, project):
+    return brainstorm.brainstorm_path(root, cfg, project)
+
+
+def test_add_decision_assigns_sequential_ids(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    d1 = brainstorm.add_decision(
+        root, cfg, project, "Use SQLite", rationale="simplest", today="2026-06-16"
+    )
+    d2 = brainstorm.add_decision(
+        root, cfg, project, "One file per project", today="2026-06-16"
+    )
+    assert d1.id == "D-01"
+    assert d2.id == "D-02"
+    text = _bpath(root, cfg, project).read_text()
+    assert "### D-01 — Use SQLite" in text
+    assert "- Rationale: simplest" in text
+    assert "### D-02 — One file per project" in text
+    assert "- Rationale: —" in text  # default when omitted
+
+
+def test_add_decision_bumps_updated_only(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Something", today="2026-06-20")
+    text = _bpath(root, cfg, project).read_text()
+    assert "updated: 2026-06-20" in text
+    assert "created: 2026-06-16" in text  # created is unchanged
+
+
+def test_add_decision_without_start_raises(root, cfg, project):
+    with pytest.raises(SpecfloError):
+        brainstorm.add_decision(root, cfg, project, "Too early")
+
+
+def test_decisions_stay_inside_their_section(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Inside", today="2026-06-16")
+    text = _bpath(root, cfg, project).read_text()
+    assert text.index("## Decisions") < text.index("### D-01") < text.index("## Out of scope")
