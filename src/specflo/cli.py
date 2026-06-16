@@ -84,6 +84,14 @@ def _require_root() -> Path:
     return root
 
 
+def _project_dir_display(path: Path, root: Path) -> str:
+    """The project dir relative to the repo root, or absolute if it lies outside."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 @app.command(epilog="Example: specflo init --projects-dir docs/projects")
 def init(
     projects_dir: str = typer.Option(
@@ -219,6 +227,7 @@ def status(
         "initialized": True,
         "active_project": project.slug,
         "name": project.name,
+        "dir": str(project.path),
         "phase": project.phase,
         "status": project.status,
         "next_phase": workflow.next_phase(project.phase),
@@ -227,7 +236,13 @@ def status(
     if json_output:
         typer.echo(json.dumps(info))
     else:
-        typer.echo(f"Project: {project.name} ({project.slug})")
+        label = (
+            project.name
+            if project.name == project.slug
+            else f"{project.name} ({project.slug})"
+        )
+        typer.echo(f"Project: {label}")
+        typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
         typer.echo(f"Phase:   {project.phase}")
         typer.echo(f"Next:    {info['next_step']}")
 

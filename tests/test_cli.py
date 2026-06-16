@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
@@ -106,6 +107,37 @@ def test_top_level_help_does_not_add_args_to_argless_commands():
     # init and status take no positional arguments
     assert "init <" not in result.output
     assert "status <" not in result.output
+
+
+def test_status_collapses_the_label_when_name_equals_slug(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "tpro"])  # name == slug == "tpro"
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0
+    assert "Project: tpro" in result.output
+    assert "tpro (tpro)" not in result.output
+
+
+def test_status_shows_name_and_slug_when_they_differ(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["status"])
+    assert "My Thing (my-thing)" in result.output
+
+
+def test_status_shows_the_project_directory(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["status"])
+    assert "docs/projects/my-thing" in result.output
+
+
+def test_status_json_includes_the_project_directory(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["dir"].endswith("docs/projects/my-thing")
+    assert Path(data["dir"]).is_absolute()
 
 
 def test_status_reports_the_active_project_as_json(cwd):
