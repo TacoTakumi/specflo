@@ -262,3 +262,37 @@ def test_brainstorm_start_json(cwd):
     data = json.loads(runner.invoke(app, ["brainstorm", "start", "--json"]).output)
     assert data["created"] is True
     assert data["path"].endswith("brainstorm.md")
+
+
+def test_decision_add_records_an_id(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    result = runner.invoke(
+        app, ["decision", "add", "--text", "Use SQLite", "--rationale", "simplest"]
+    )
+    assert result.exit_code == 0
+    assert "D-01" in result.output
+    text = (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").read_text()
+    assert "### D-01 — Use SQLite" in text
+
+
+def test_decision_add_supersede(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use JSON"])
+    result = runner.invoke(
+        app, ["decision", "add", "--text", "Use YAML", "--supersedes", "D-01"]
+    )
+    assert result.exit_code == 0
+    assert "D-02" in result.output
+    text = (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").read_text()
+    assert "superseded by D-02" in text
+
+
+def test_decision_add_without_start_fails(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["decision", "add", "--text", "Too early"])
+    assert result.exit_code != 0

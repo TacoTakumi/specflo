@@ -278,5 +278,36 @@ def brainstorm_start(
         typer.echo(f"{path}{note}")
 
 
+@decision_app.command(
+    "add",
+    epilog='Example: specflo decision add --text "Use SQLite" --rationale "simplest"',
+)
+def decision_add(
+    text: str = typer.Option(..., "--text", help="The decision (one line)."),
+    rationale: str = typer.Option(None, "--rationale", help="Why (recommended)."),
+    supersedes: str = typer.Option(
+        None, "--supersedes", metavar="D-NN", help="The decision this replaces."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Append a decision (D-NN) to the active project's brainstorm.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        decision = brainstorm.add_decision(
+            root, cfg, slug, text, rationale=rationale, supersedes=supersedes
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"id": decision.id, "supersedes": decision.supersedes}))
+    else:
+        message = f"Recorded {decision.id}."
+        if decision.supersedes:
+            message += f" Supersedes {decision.supersedes}."
+        typer.echo(message)
+
+
 def main() -> None:
     app()
