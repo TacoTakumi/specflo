@@ -102,6 +102,7 @@ def test_supersede_marks_old_and_links_new(root, cfg, project):
         today="2026-06-16",
     )
     assert d2.id == "D-02"
+    assert d2.supersedes == "D-01"
     text = _bpath(root, cfg, project).read_text()
     assert "### D-01 — Use JSON" in text          # kept in place
     assert "- Status: superseded by D-02" in text  # old one flipped
@@ -111,7 +112,7 @@ def test_supersede_marks_old_and_links_new(root, cfg, project):
 def test_supersede_unknown_decision_raises(root, cfg, project):
     brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
     with pytest.raises(SpecfloError):
-        brainstorm.add_decision(root, cfg, project, "x", supersedes="D-99")
+        brainstorm.add_decision(root, cfg, project, "x", supersedes="D-99", today="2026-06-16")
 
 
 def test_ids_never_collide_after_supersede(root, cfg, project):
