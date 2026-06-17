@@ -39,8 +39,14 @@ explicitly approved. This applies regardless of how simple the work looks.
 2. **Decompose-first.** If the request spans multiple independent subsystems, say
    so now and split it; brainstorm one piece at a time. Don't refine details of
    something that should be decomposed.
-3. **Scout.** Read relevant code, recent commits, and the existing artifact. If a
-   question can be answered by reading the codebase, read it — don't ask.
+3. **Scout (code + landscape).** Read relevant code, recent commits, and the
+   existing artifact; if a question can be answered by reading the codebase, read
+   it — don't ask. Then **dispatch the research landscape scan** (see *Researching*
+   below): announce it ("scanning for existing clients/SDKs/framework state…"),
+   hand the research subagent the rough goal, and fold its digest into **Current
+   understanding**, **## Research**, and **Canonical refs** *before* setting the
+   agenda — so the gray areas reflect what already exists (an existing SDK, an
+   official client), not just what you assumed.
 4. **Set the agenda (gray areas).** Surface 3–4 phase-specific ambiguities —
    decisions that could go multiple ways and would change the result. Let the
    user pick which to dig into. Avoid generic labels.
@@ -50,9 +56,13 @@ explicitly approved. This applies regardless of how simple the work looks.
    consequence (reuses X / needs new Y). Highest-risk decisions first.
 6. **Capture decisions inline.** The moment a decision lands, record it:
    `specflo decision add --text "…" --rationale "…"` (add `--supersedes D-NN`
-   when it replaces an earlier one). Don't batch — capture as they happen. Keep
-   the prose sections (Current understanding, Out of scope / Deferred, Open
-   questions, Canonical refs) current by editing `brainstorm.md` directly.
+   when it replaces an earlier one). Don't batch — capture as they happen. Before
+   recording a decision that rests on a **checkable fact** (a library's maturity,
+   an API's capability, a version), run an **opportunistic research check** (see
+   *Researching*) and cite the source in the rationale; if it can't be verified,
+   record the uncertainty under **Open questions** rather than asserting it. Keep
+   the prose sections (Current understanding, ## Research, Out of scope / Deferred,
+   Open questions, Canonical refs) current by editing `brainstorm.md` directly.
 7. **Hold the scope boundary.** Scope is fixed: clarify HOW, not WHETHER to add
    new capabilities. Park scope-creep under **Out of scope / Deferred** — don't
    lose it, don't act on it.
@@ -67,6 +77,28 @@ explicitly approved. This applies regardless of how simple the work looks.
     next: the spec synthesizes from `brainstorm.md` and must not re-interview.
     Phase movement is `specflo advance`'s job (a later command) — do not change
     the phase yourself.
+
+## Researching (the woven research seam)
+
+Research is done by a **research subagent**, not by you inline — that keeps raw
+search noise out of this conversation. Dispatch a subagent that follows the
+`skills/research` skill (it runs with least-privilege, read/research-only tools
+and owns wiki search + save-back). Hand it one research question and fold the
+**digest** it returns into the artifact:
+
+- **Findings / Surprises** → `## Research` (and revise **Current understanding**).
+- **Sources** → **Canonical refs**.
+- A fact that grounds a decision → cite it in that decision's `--rationale`.
+
+Two triggers:
+- **Landscape scan** — once, early (step 3), mandatory. The safety net for the
+  things you didn't know to ask about. Announce it; don't gate it.
+- **Opportunistic check** — before a fact-dependent decision (step 6). Run it
+  inline-fast and report the result; no per-check permission prompt.
+
+**Portability / degraded mode:** the dispatch is the only harness-specific part.
+Where subagents aren't available, run the `skills/research` process inline instead
+(accept the added noise). Where the wiki is absent, research proceeds web-only.
 
 ## Anti-sycophancy
 
@@ -93,6 +125,9 @@ the strongest version of the user's idea, not a strawman.
 - You moved toward the spec without an explicit user "ready?" and a passing
   `specflo validate brainstorm`.
 - You built or scaffolded something during the brainstorm.
+- You set the gray-areas agenda without running the landscape scan.
+- You recorded a fact-dependent decision without grounding it (or noting it
+  unverified under Open questions).
 
 ## Verification checklist
 
@@ -103,3 +138,5 @@ the strongest version of the user's idea, not a strawman.
 - [ ] `specflo validate brainstorm` passes.
 - [ ] The user explicitly approved readiness before handoff.
 - [ ] No code or scaffolding was produced.
+- [ ] The landscape scan ran and its digest was folded into the artifact.
+- [ ] Fact-dependent decisions cite a source (or the uncertainty is in Open questions).

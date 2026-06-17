@@ -28,3 +28,11 @@ def test_skill_references_the_real_commands():
         "specflo validate brainstorm",
     ]:
         assert cmd in text, f"missing command reference: {cmd}"
+
+
+def test_brainstorm_skill_weaves_in_research():
+    text = SKILL.read_text()
+    lower = text.lower()
+    assert "skills/research" in text, "brainstorm skill must reference the research skill path"
+    for phrase in ["landscape scan", "opportunistic", "research subagent"]:
+        assert phrase in lower, f"missing research seam phrase: {phrase}"
