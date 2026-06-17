@@ -335,5 +335,57 @@ def validate(
     raise typer.Exit(code=1)
 
 
+@app.command(epilog="Example: specflo advance")
+def advance(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Validate the current phase's artifact, then move to the next phase."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        project = projects.load_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+    from_phase = project.phase
+    to_phase = workflow.next_phase(from_phase)
+    if to_phase is None:
+        if json_output:
+            typer.echo(json.dumps({"advanced": False, "from": from_phase, "to": None}))
+            raise typer.Exit(code=1)
+        raise _die(f"Project '{slug}' is already at the final phase '{from_phase}'.")
+
+    # Gate: validate the leaving artifact. Only brainstorm has a validator today;
+    # other phases advance ungated until their artifacts exist.
+    if from_phase == "brainstorm":
+        issues = brainstorm.validate_brainstorm(root, cfg, slug)
+        if issues:
+            if json_output:
+                typer.echo(
+                    json.dumps(
+                        {"advanced": False, "from": from_phase, "to": to_phase, "issues": issues}
+                    )
+                )
+                raise typer.Exit(code=1)
+            typer.secho("cannot advance — brainstorm is not ready:", fg=typer.colors.YELLOW, err=True)
+            for issue in issues:
+                typer.echo(f"  - {issue}", err=True)
+            typer.echo("Fix these, then run `specflo advance` again.", err=True)
+            raise typer.Exit(code=1)
+        brainstorm.complete_brainstorm(root, cfg, slug)
+
+    try:
+        updated = projects.advance_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+    if json_output:
+        typer.echo(json.dumps({"advanced": True, "from": from_phase, "to": updated.phase}))
+    else:
+        typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
+        typer.echo(f"Next: {workflow.next_step(updated.phase)}")
+
+
 def main() -> None:
     app()

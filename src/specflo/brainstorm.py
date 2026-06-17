@@ -132,6 +132,25 @@ def add_decision(
     )
 
 
+def complete_brainstorm(
+    root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
+) -> None:
+    """Mark the brainstorm complete (``status: draft → complete``); bump ``updated``.
+
+    Called when leaving the brainstorm phase (by `specflo advance`). Raises
+    ``SpecfloError`` if the artifact is missing.
+    """
+    path = brainstorm_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
+    doc = path.read_text()
+    # Frontmatter `status:` only — the leading-`-` decision `- Status:` lines and
+    # the count=1 (frontmatter comes first) keep this from touching entries.
+    doc = re.sub(r"(?m)^status:.*$", "status: complete", doc, count=1)
+    doc = _bump_updated(doc, today)
+    path.write_text(doc)
+
+
 def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """Return a list of lint issues (empty == ready). Read-only."""
     path = brainstorm_path(root, cfg, slug)

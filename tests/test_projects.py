@@ -102,3 +102,28 @@ def test_switch_project_accepts_a_name_and_slugifies_it(root, cfg):
 def test_switch_to_a_missing_project_raises(root, cfg):
     with pytest.raises(SpecfloError):
         projects.switch_project(root, cfg, "does-not-exist")
+
+
+def test_advance_project_moves_to_next_phase_and_persists(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+
+    advanced = projects.advance_project(root, cfg, "my-thing")
+    assert advanced.phase == "spec"
+    # The change is persisted to project.md, not just held in memory.
+    assert projects.load_project(root, cfg, "my-thing").phase == "spec"
+
+
+def test_advance_project_walks_the_full_phase_sequence(root, cfg):
+    projects.create_project(root, cfg, "My Thing")  # starts at brainstorm
+
+    phases = [projects.advance_project(root, cfg, "my-thing").phase for _ in range(3)]
+    assert phases == ["spec", "plan", "execute"]
+
+
+def test_advance_project_at_the_final_phase_raises(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    for _ in range(3):
+        projects.advance_project(root, cfg, "my-thing")  # now at "execute"
+
+    with pytest.raises(SpecfloError):
+        projects.advance_project(root, cfg, "my-thing")

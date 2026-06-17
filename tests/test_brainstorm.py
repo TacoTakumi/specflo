@@ -254,3 +254,30 @@ def test_validate_reads_real_out_of_scope_not_fenced(root, cfg, project):
     issues = brainstorm.validate_brainstorm(root, cfg, project)
     oos_issues = [i for i in issues if "Out of scope" in i]
     assert oos_issues == [], f"Unexpected Out-of-scope issue(s): {oos_issues}"
+
+
+def test_complete_brainstorm_flips_status_and_bumps_updated(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+
+    brainstorm.complete_brainstorm(root, cfg, project, today="2026-06-20")
+
+    text = _bpath(root, cfg, project).read_text()
+    assert "status: complete" in text
+    assert "status: draft" not in text
+    assert "updated: 2026-06-20" in text
+
+
+def test_complete_brainstorm_without_file_raises(root, cfg, project):
+    with pytest.raises(SpecfloError):
+        brainstorm.complete_brainstorm(root, cfg, project)
+
+
+def test_complete_brainstorm_leaves_decision_status_untouched(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "A real decision", today="2026-06-16")
+
+    brainstorm.complete_brainstorm(root, cfg, project, today="2026-06-20")
+
+    text = _bpath(root, cfg, project).read_text()
+    assert "status: complete" in text  # frontmatter flipped
+    assert "- Status: active" in text  # decision entry left alone

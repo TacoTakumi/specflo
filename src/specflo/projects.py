@@ -16,6 +16,7 @@ import yaml
 
 from .config import SpecfloConfig, save_config
 from .errors import SpecfloError
+from .workflow import next_phase
 
 PROJECT_FILENAME = "project.md"
 INITIAL_PHASE = "brainstorm"
@@ -109,6 +110,22 @@ def switch_project(root: Path, cfg: SpecfloConfig, name: str) -> Project:
     project = load_project(root, cfg, slug)
     cfg.active_project = slug
     save_config(root, cfg)
+    return project
+
+
+def advance_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
+    """Move the project to the next phase (persisting it) and return it.
+
+    Raises ``SpecfloError`` if the project is already at the final phase.
+    """
+    project = load_project(root, cfg, slug)
+    nxt = next_phase(project.phase)
+    if nxt is None:
+        raise SpecfloError(
+            f"Project {slug!r} is already at the final phase {project.phase!r}."
+        )
+    project.phase = nxt
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 
 

@@ -16,6 +16,7 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo brainstorm start [--json]` — create (or locate) the active project's `brainstorm.md`.
 - `specflo decision add --text … [--rationale …] [--supersedes D-NN]` — append a decision (`D-NN`) to the brainstorm.
 - `specflo validate brainstorm [--json]` — lint the brainstorm artifact (reports readiness).
+- `specflo advance [--json]` — validate the current phase's artifact, then move the active project to the next phase (`brainstorm → spec → plan → execute`).
 
 ## Skills
 

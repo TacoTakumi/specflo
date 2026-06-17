@@ -344,3 +344,77 @@ def test_validate_json_reports_ready(cwd):
     data = json.loads(result.output)
     assert data["ready"] is False
     assert data["issues"]
+
+
+def _ready_brainstorm(cwd):
+    """init + new + a brainstorm that passes `validate brainstorm`."""
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "A decision"])
+    path = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    path.write_text(
+        path.read_text().replace(
+            "## Out of scope / Deferred\n"
+            "<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\nNo auth in v0.1.",
+        )
+    )
+    return path
+
+
+def test_advance_moves_a_ready_brainstorm_to_spec(cwd):
+    brainstorm_md = _ready_brainstorm(cwd)
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code == 0
+    assert "spec" in result.output
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    assert "phase: spec" in project_md.read_text()
+    assert "status: complete" in brainstorm_md.read_text()
+
+
+def test_advance_refuses_a_not_ready_brainstorm_without_mutating(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])  # fresh: no decisions, empty out-of-scope
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code != 0
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    brainstorm_md = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    assert "phase: brainstorm" in project_md.read_text()  # phase unchanged
+    assert "status: draft" in brainstorm_md.read_text()  # artifact untouched
+
+
+def test_advance_without_active_project_fails(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code != 0
+
+
+def test_advance_past_the_final_phase_fails(cwd):
+    _ready_brainstorm(cwd)
+    runner.invoke(app, ["advance"])  # brainstorm -> spec
+    runner.invoke(app, ["advance"])  # spec -> plan (ungated)
+    runner.invoke(app, ["advance"])  # plan -> execute (ungated)
+    result = runner.invoke(app, ["advance"])  # execute is final
+    assert result.exit_code != 0
+    assert "final" in result.output.lower()
+
+
+def test_advance_json_success_shape(cwd):
+    _ready_brainstorm(cwd)
+    result = runner.invoke(app, ["advance", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data == {"advanced": True, "from": "brainstorm", "to": "spec"}
+
+
+def test_advance_json_gate_failure_shape(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])  # not ready
+    result = runner.invoke(app, ["advance", "--json"])
+    assert result.exit_code == 1
+    data = json.loads(result.output)
+    assert data["advanced"] is False
+    assert data["issues"]
