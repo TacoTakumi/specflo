@@ -259,7 +259,9 @@ def test_brainstorm_start_without_active_project_fails(cwd):
 def test_brainstorm_start_json(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
-    data = json.loads(runner.invoke(app, ["brainstorm", "start", "--json"]).output)
+    result = runner.invoke(app, ["brainstorm", "start", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
     assert data["created"] is True
     assert data["path"].endswith("brainstorm.md")
 
@@ -337,6 +339,8 @@ def test_validate_json_reports_ready(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
     runner.invoke(app, ["brainstorm", "start"])
-    data = json.loads(runner.invoke(app, ["validate", "brainstorm", "--json"]).output)
+    result = runner.invoke(app, ["validate", "brainstorm", "--json"])
+    assert result.exit_code == 1  # fresh/not-ready doc must exit non-zero
+    data = json.loads(result.output)
     assert data["ready"] is False
     assert data["issues"]

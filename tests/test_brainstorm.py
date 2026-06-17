@@ -169,3 +169,88 @@ def test_validate_flags_placeholder_text(root, cfg, project):
     path.write_text(path.read_text().replace("A decision", "TODO decide later"))
     issues = brainstorm.validate_brainstorm(root, cfg, project)
     assert any("placeholder" in i for i in issues)
+
+
+# Fix B — word-boundary placeholder tests
+
+
+def test_validate_no_false_positive_for_embedded_todo(root, cfg, project):
+    """AUTODOCK contains the substring 'TODO'; must NOT trip the placeholder check."""
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use AUTODOCK for docking", today="2026-06-16")
+    _fill_out_of_scope(root, cfg, project)
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    placeholder_issues = [i for i in issues if "placeholder" in i]
+    assert placeholder_issues == [], f"False positive placeholder issue(s): {placeholder_issues}"
+
+
+def test_validate_no_false_positive_for_embedded_tbd(root, cfg, project):
+    """STBD contains the substring 'TBD'; must NOT trip the placeholder check."""
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use STBD protocol", today="2026-06-16")
+    _fill_out_of_scope(root, cfg, project)
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    placeholder_issues = [i for i in issues if "placeholder" in i]
+    assert placeholder_issues == [], f"False positive placeholder issue(s): {placeholder_issues}"
+
+
+# Fix A — fence-aware section parsing tests
+
+
+def _doc_with_fenced_prose(root, cfg, project):
+    """Return a brainstorm path whose 'Current understanding' section contains a fenced
+    code block that has a fake '## Decisions' header and a fake '### D-99 — fake' line,
+    followed by the real ## Decisions and ## Out of scope sections.
+    """
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    path = _bpath(root, cfg, project)
+    text = path.read_text()
+    # Inject a fenced block into Current understanding that mirrors the doc structure
+    fenced_prose = (
+        "## Current understanding\n"
+        "Here is an example of our artifact structure:\n"
+        "```\n"
+        "## Decisions\n"
+        "### D-99 — fake decision\n"
+        "- Status: active\n"
+        "```\n"
+    )
+    text = text.replace("## Current understanding\n", fenced_prose)
+    path.write_text(text)
+    return path
+
+
+def test_add_decision_skips_fenced_section_headers(root, cfg, project):
+    """add_decision must insert into the REAL ## Decisions section, not a fenced one."""
+    path = _doc_with_fenced_prose(root, cfg, project)
+    d = brainstorm.add_decision(root, cfg, project, "Real decision", today="2026-06-16")
+    # ID must be D-01 (D-99 in the fence must not count)
+    assert d.id == "D-01"
+    text = path.read_text()
+    # The new entry must appear AFTER the real ## Decisions and BEFORE ## Out of scope
+    idx_real_decisions = text.index("## Decisions\n<!-- append-only")
+    idx_new_entry = text.index("### D-01 — Real decision")
+    idx_out_of_scope = text.index("## Out of scope")
+    assert idx_real_decisions < idx_new_entry < idx_out_of_scope, (
+        "New decision landed outside the real Decisions section"
+    )
+
+
+def test_validate_reads_real_out_of_scope_not_fenced(root, cfg, project):
+    """validate must read the REAL Out-of-scope section; a fenced empty one in prose
+    must not cause a false 'empty' issue, and the real non-empty one must pass.
+    """
+    _doc_with_fenced_prose(root, cfg, project)
+    brainstorm.add_decision(root, cfg, project, "Real decision", today="2026-06-16")
+    # Fill the REAL Out of scope section (not in the fenced block)
+    path = _bpath(root, cfg, project)
+    text = path.read_text()
+    text = text.replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\nNo auth in v0.1.",
+    )
+    path.write_text(text)
+    issues = brainstorm.validate_brainstorm(root, cfg, project)
+    oos_issues = [i for i in issues if "Out of scope" in i]
+    assert oos_issues == [], f"Unexpected Out-of-scope issue(s): {oos_issues}"

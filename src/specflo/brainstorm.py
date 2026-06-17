@@ -141,9 +141,11 @@ def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     body = _strip_comments(doc)
     issues: list[str] = []
 
-    for pattern in ("TBD", "TODO", "???"):
-        if pattern in body:
+    for pattern in ("TBD", "TODO"):
+        if re.search(rf"\b{pattern}\b", body):
             issues.append(f"placeholder text found: {pattern}")
+    if "???" in body:
+        issues.append("placeholder text found: ???")
 
     if not _DECISION_ID_RE.search(doc):
         issues.append("no decisions captured (need at least one).")
@@ -163,18 +165,42 @@ def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
 # --- internal helpers ---
 
 
+def _iter_lines_with_fence(doc: str):
+    """Yield ``(index, line, in_fence)`` for each line in *doc*.
+
+    *in_fence* is True for lines inside a fenced code block (delimited by a
+    line whose stripped text starts with triple backtick).  The opening and
+    closing fence lines themselves are also yielded with ``in_fence=True`` so
+    callers never need to skip them separately.
+    """
+    in_fence = False
+    for i, line in enumerate(doc.splitlines(keepends=True)):
+        if line.strip().startswith("```"):
+            in_fence = not in_fence
+            yield i, line, True  # fence delimiter itself is "inside"
+            continue
+        yield i, line, in_fence
+
+
 def _next_decision_id(doc: str) -> str:
-    numbers = [int(m.group(1).split("-")[1]) for m in _DECISION_ID_RE.finditer(doc)]
+    numbers = [
+        int(line.split()[1].split("-")[1])
+        for _, line, in_fence in _iter_lines_with_fence(doc)
+        if not in_fence and _DECISION_ID_RE.match(line)
+    ]
     nxt = max(numbers) + 1 if numbers else 1
     return f"D-{nxt:02d}"
 
 
 def _append_to_section(doc: str, header: str, entry: str) -> str:
     lines = doc.splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines) if line.strip() == header)
+    start = next(
+        i for i, line, in_fence in _iter_lines_with_fence(doc)
+        if not in_fence and line.strip() == header
+    )
     end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("## "):
+    for i, line, in_fence in _iter_lines_with_fence(doc):
+        if i > start and not in_fence and line.startswith("## "):
             end = i
             break
     lines.insert(end, entry + "\n")  # trailing blank line separates entries
@@ -183,7 +209,10 @@ def _append_to_section(doc: str, header: str, entry: str) -> str:
 
 def _mark_superseded(doc: str, dec_id: str, by_id: str) -> str:
     lines = doc.splitlines(keepends=True)
-    start = next(i for i, line in enumerate(lines) if line.startswith(f"### {dec_id} —"))
+    start = next(
+        i for i, line, in_fence in _iter_lines_with_fence(doc)
+        if not in_fence and line.startswith(f"### {dec_id} —")
+    )
     for i in range(start + 1, len(lines)):
         if lines[i].startswith("### ") or lines[i].startswith("## "):
             break
@@ -205,12 +234,15 @@ def _strip_comments(text: str) -> str:
 def _section_body(doc: str, header: str) -> str | None:
     lines = doc.splitlines(keepends=True)
     try:
-        start = next(i for i, line in enumerate(lines) if line.strip() == header)
+        start = next(
+            i for i, line, in_fence in _iter_lines_with_fence(doc)
+            if not in_fence and line.strip() == header
+        )
     except StopIteration:
         return None
     end = len(lines)
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("## "):
+    for i, line, in_fence in _iter_lines_with_fence(doc):
+        if i > start and not in_fence and line.startswith("## "):
             end = i
             break
     return "".join(lines[start + 1 : end])
