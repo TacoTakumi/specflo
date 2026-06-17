@@ -35,3 +35,22 @@ def test_research_skill_digest_has_five_fields():
     text = SKILL.read_text().lower()
     for field in ["findings", "surprises", "sources", "freshness", "provenance"]:
         assert field in text, f"missing digest field: {field}"
+
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "research-digest.md"
+
+
+def test_digest_fixture_exists():
+    assert FIXTURE.is_file()
+
+
+def test_digest_fixture_covers_the_contract():
+    text = FIXTURE.read_text()
+    for section in [
+        "## Findings",
+        "## Surprises",
+        "## Sources",
+        "## Freshness",
+        "## Wiki provenance",
+    ]:
+        assert section in text, f"fixture missing contract section: {section}"
