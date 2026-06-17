@@ -26,6 +26,12 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
   ln -s "$PWD/skills/brainstorm" ~/.claude/skills/brainstorm
   ```
 
+- **`research`** (`skills/research/SKILL.md`) — a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated — searches the Agent Wiki first and saves findings back (soft dependency). Symlink it like the brainstorm skill:
+
+  ```sh
+  ln -s "$PWD/skills/research" ~/.claude/skills/research
+  ```
+
 ## Development
 
 ```bash
