@@ -281,3 +281,18 @@ def test_complete_brainstorm_leaves_decision_status_untouched(root, cfg, project
     text = _bpath(root, cfg, project).read_text()
     assert "status: complete" in text  # frontmatter flipped
     assert "- Status: active" in text  # decision entry left alone
+
+
+def test_scaffold_has_research_section(root, cfg, project):
+    path, _ = brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    text = path.read_text()
+    assert "## Research" in text
+
+
+def test_research_section_is_not_required_by_validate(root, cfg, project):
+    # A brainstorm whose Research section is still the empty scaffold comment
+    # must still validate once the genuinely-required sections are filled.
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, text="Use SQLite", rationale="simplest")
+    _fill_out_of_scope(root, cfg, project)
+    assert brainstorm.validate_brainstorm(root, cfg, project) == []

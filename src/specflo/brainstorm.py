@@ -36,6 +36,9 @@ updated: {today}
 ## Current understanding
 <!-- rewritten as it converges; the synthesis the spec phase reads -->
 
+## Research
+<!-- findings + surprises from the research subagent (optional); links go to Canonical refs -->
+
 ## Decisions
 <!-- append-only; managed by `specflo decision add`. Stable IDs D-NN. -->
 
