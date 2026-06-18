@@ -53,3 +53,74 @@ def test_start_is_idempotent_and_does_not_clobber(root, cfg, project):
 def test_start_on_missing_project_raises(root, cfg):
     with pytest.raises(SpecfloError):
         spec.start_spec(root, cfg, "ghost")
+
+
+def _spath(root, cfg, project):
+    return spec.spec_path(root, cfg, project)
+
+
+def test_add_requirement_assigns_sequential_ids(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    r1 = spec.add_requirement(
+        root, cfg, project, "CLI prints help on no args",
+        acceptance="`specflo` with no args exits 0 and prints usage", today="2026-06-18",
+    )
+    r2 = spec.add_requirement(
+        root, cfg, project, "validate spec reports issues",
+        acceptance="exit 1 + an issue list when a requirement lacks acceptance", today="2026-06-18",
+    )
+    assert r1.id == "REQ-01"
+    assert r2.id == "REQ-02"
+    text = _spath(root, cfg, project).read_text()
+    assert "### REQ-01 — CLI prints help on no args" in text
+    assert "- Acceptance: `specflo` with no args exits 0 and prints usage" in text
+    assert "### REQ-02 — validate spec reports issues" in text
+    assert "- Status: active" in text
+
+
+def test_add_requirement_bumps_updated_only(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "x", acceptance="y", today="2026-06-20")
+    text = _spath(root, cfg, project).read_text()
+    assert "updated: 2026-06-20" in text
+    assert "created: 2026-06-18" in text  # created is unchanged
+
+
+def test_add_requirement_without_start_raises(root, cfg, project):
+    with pytest.raises(SpecfloError):
+        spec.add_requirement(root, cfg, project, "Too early", acceptance="never")
+
+
+def test_requirements_stay_inside_their_section(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "Inside", acceptance="a", today="2026-06-18")
+    text = _spath(root, cfg, project).read_text()
+    assert text.index("## Requirements") < text.index("### REQ-01") < text.index("## Boundaries")
+
+
+def test_supersede_marks_old_and_links_new(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "old", acceptance="a", today="2026-06-18")
+    r2 = spec.add_requirement(
+        root, cfg, project, "new", acceptance="b", supersedes="REQ-01", today="2026-06-18",
+    )
+    assert r2.id == "REQ-02"
+    assert r2.supersedes == "REQ-01"
+    text = _spath(root, cfg, project).read_text()
+    assert "### REQ-01 — old" in text                 # kept in place
+    assert "- Status: superseded by REQ-02" in text   # old one flipped
+    assert "- Supersedes: REQ-01" in text             # new one links back
+
+
+def test_supersede_unknown_requirement_raises(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    with pytest.raises(SpecfloError):
+        spec.add_requirement(root, cfg, project, "x", acceptance="a", supersedes="REQ-99")
+
+
+def test_ids_never_collide_after_supersede(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "a", acceptance="a", today="2026-06-18")                    # REQ-01
+    spec.add_requirement(root, cfg, project, "b", acceptance="b", supersedes="REQ-01", today="2026-06-18")  # REQ-02
+    r3 = spec.add_requirement(root, cfg, project, "c", acceptance="c", today="2026-06-18")               # REQ-03
+    assert r3.id == "REQ-03"
