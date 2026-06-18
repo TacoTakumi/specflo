@@ -363,6 +363,26 @@ def _ready_brainstorm(cwd):
     return path
 
 
+def _ready_spec(cwd):
+    """A project advanced to the spec phase with a spec.md that passes validate."""
+    _ready_brainstorm(cwd)
+    runner.invoke(app, ["advance"])  # brainstorm -> spec
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "A req", "--acceptance", "it passes"])
+    path = cwd / "docs" / "projects" / "my-thing" / "spec.md"
+    text = path.read_text()
+    text = text.replace(
+        "### In scope\n<!-- required, non-empty -->",
+        "### In scope\n- the CLI.",
+    ).replace(
+        "### Out of scope\n"
+        "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+        "### Out of scope\n- the GUI.",
+    )
+    path.write_text(text)
+    return path
+
+
 def test_advance_moves_a_ready_brainstorm_to_spec(cwd):
     brainstorm_md = _ready_brainstorm(cwd)
     result = runner.invoke(app, ["advance"])
@@ -385,6 +405,28 @@ def test_advance_refuses_a_not_ready_brainstorm_without_mutating(cwd):
     assert "status: draft" in brainstorm_md.read_text()  # artifact untouched
 
 
+def test_advance_moves_a_ready_spec_to_plan(cwd):
+    spec_md = _ready_spec(cwd)
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code == 0
+    assert "plan" in result.output
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    assert "phase: plan" in project_md.read_text()
+    assert "status: complete" in spec_md.read_text()
+
+
+def test_advance_refuses_a_not_ready_spec_without_mutating(cwd):
+    _ready_brainstorm(cwd)
+    runner.invoke(app, ["advance"])  # brainstorm -> spec
+    runner.invoke(app, ["spec", "start"])  # fresh spec: no requirements, empty boundaries
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code != 0
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    spec_md = cwd / "docs" / "projects" / "my-thing" / "spec.md"
+    assert "phase: spec" in project_md.read_text()   # phase unchanged
+    assert "status: draft" in spec_md.read_text()     # artifact untouched
+
+
 def test_advance_without_active_project_fails(cwd):
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["advance"])
@@ -392,9 +434,8 @@ def test_advance_without_active_project_fails(cwd):
 
 
 def test_advance_past_the_final_phase_fails(cwd):
-    _ready_brainstorm(cwd)
-    runner.invoke(app, ["advance"])  # brainstorm -> spec
-    runner.invoke(app, ["advance"])  # spec -> plan (ungated)
+    _ready_spec(cwd)
+    runner.invoke(app, ["advance"])  # spec -> plan (gated; spec is ready)
     runner.invoke(app, ["advance"])  # plan -> execute (ungated)
     result = runner.invoke(app, ["advance"])  # execute is final
     assert result.exit_code != 0

@@ -368,10 +368,16 @@ def advance(
             raise typer.Exit(code=1)
         raise _die(f"Project '{slug}' is already at the final phase '{from_phase}'.")
 
-    # Gate: validate the leaving artifact. Only brainstorm has a validator today;
-    # other phases advance ungated until their artifacts exist.
-    if from_phase == "brainstorm":
-        issues = brainstorm.validate_brainstorm(root, cfg, slug)
+    # Gate: validate (and on success, complete) the leaving artifact. Phases
+    # without an entry here advance ungated until their artifacts exist.
+    gates = {
+        "brainstorm": (brainstorm.validate_brainstorm, brainstorm.complete_brainstorm),
+        "spec": (spec.validate_spec, spec.complete_spec),
+    }
+    gate = gates.get(from_phase)
+    if gate is not None:
+        validator, completer = gate
+        issues = validator(root, cfg, slug)
         if issues:
             if json_output:
                 typer.echo(
@@ -380,12 +386,16 @@ def advance(
                     )
                 )
                 raise typer.Exit(code=1)
-            typer.secho("cannot advance — brainstorm is not ready:", fg=typer.colors.YELLOW, err=True)
+            typer.secho(
+                f"cannot advance — {from_phase} is not ready:",
+                fg=typer.colors.YELLOW,
+                err=True,
+            )
             for issue in issues:
                 typer.echo(f"  - {issue}", err=True)
             typer.echo("Fix these, then run `specflo advance` again.", err=True)
             raise typer.Exit(code=1)
-        brainstorm.complete_brainstorm(root, cfg, slug)
+        completer(root, cfg, slug)
 
     try:
         updated = projects.advance_project(root, cfg, slug)
