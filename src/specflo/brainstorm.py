@@ -16,6 +16,7 @@ from pathlib import Path
 
 from .config import SpecfloConfig
 from .errors import SpecfloError
+from . import markdown
 from .projects import load_project, project_dir
 
 BRAINSTORM_FILENAME = "brainstorm.md"
@@ -111,11 +112,11 @@ def add_decision(
     ):
         raise SpecfloError(f"No decision {supersedes} to supersede.")
 
-    new_id = _next_decision_id(doc)
+    new_id = markdown.next_id(doc, "D-")
     rationale_text = rationale if rationale else "—"
 
     if supersedes is not None:
-        doc = _mark_superseded(doc, supersedes, new_id)
+        doc = markdown.mark_superseded(doc, supersedes, new_id)
 
     entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
     if supersedes is not None:
@@ -123,8 +124,8 @@ def add_decision(
     entry_lines.append("- Status: active")
     entry = "\n".join(entry_lines) + "\n"
 
-    doc = _append_to_section(doc, "## Decisions", entry)
-    doc = _bump_updated(doc, today)
+    doc = markdown.append_to_section(doc, "## Decisions", entry)
+    doc = markdown.bump_updated(doc, today)
     path.write_text(doc)
     return Decision(
         id=new_id,
@@ -150,7 +151,7 @@ def complete_brainstorm(
     # Frontmatter `status:` only — the leading-`-` decision `- Status:` lines and
     # the count=1 (frontmatter comes first) keep this from touching entries.
     doc = re.sub(r"(?m)^status:.*$", "status: complete", doc, count=1)
-    doc = _bump_updated(doc, today)
+    doc = markdown.bump_updated(doc, today)
     path.write_text(doc)
 
 
@@ -160,111 +161,19 @@ def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if not path.is_file():
         return ["brainstorm.md not found — run `specflo brainstorm start`."]
     doc = path.read_text()
-    body = _strip_comments(doc)
-    issues: list[str] = []
-
-    for pattern in ("TBD", "TODO"):
-        if re.search(rf"\b{pattern}\b", body):
-            issues.append(f"placeholder text found: {pattern}")
-    if "???" in body:
-        issues.append("placeholder text found: ???")
+    body = markdown.strip_comments(doc)
+    issues = markdown.placeholder_issues(body)
 
     if not _DECISION_ID_RE.search(doc):
         issues.append("no decisions captured (need at least one).")
 
-    out_of_scope = _section_body(doc, "## Out of scope / Deferred")
+    out_of_scope = markdown.section_body(doc, "## Out of scope / Deferred")
     if out_of_scope is None:
         issues.append("missing 'Out of scope / Deferred' section.")
-    elif not _strip_comments(out_of_scope).strip():
+    elif not markdown.strip_comments(out_of_scope).strip():
         issues.append("'Out of scope / Deferred' section is empty.")
 
-    if _section_body(doc, "## Open questions") is None:
+    if markdown.section_body(doc, "## Open questions") is None:
         issues.append("missing 'Open questions' section.")
 
     return issues
-
-
-# --- internal helpers ---
-
-
-def _iter_lines_with_fence(doc: str):
-    """Yield ``(index, line, in_fence)`` for each line in *doc*.
-
-    *in_fence* is True for lines inside a fenced code block (delimited by a
-    line whose stripped text starts with triple backtick).  The opening and
-    closing fence lines themselves are also yielded with ``in_fence=True`` so
-    callers never need to skip them separately.
-    """
-    in_fence = False
-    for i, line in enumerate(doc.splitlines(keepends=True)):
-        if line.strip().startswith("```"):
-            in_fence = not in_fence
-            yield i, line, True  # fence delimiter itself is "inside"
-            continue
-        yield i, line, in_fence
-
-
-def _next_decision_id(doc: str) -> str:
-    numbers = [
-        int(line.split()[1].split("-")[1])
-        for _, line, in_fence in _iter_lines_with_fence(doc)
-        if not in_fence and _DECISION_ID_RE.match(line)
-    ]
-    nxt = max(numbers) + 1 if numbers else 1
-    return f"D-{nxt:02d}"
-
-
-def _append_to_section(doc: str, header: str, entry: str) -> str:
-    lines = doc.splitlines(keepends=True)
-    start = next(
-        i for i, line, in_fence in _iter_lines_with_fence(doc)
-        if not in_fence and line.strip() == header
-    )
-    end = len(lines)
-    for i, line, in_fence in _iter_lines_with_fence(doc):
-        if i > start and not in_fence and line.startswith("## "):
-            end = i
-            break
-    lines.insert(end, entry + "\n")  # trailing blank line separates entries
-    return "".join(lines)
-
-
-def _mark_superseded(doc: str, dec_id: str, by_id: str) -> str:
-    lines = doc.splitlines(keepends=True)
-    start = next(
-        i for i, line, in_fence in _iter_lines_with_fence(doc)
-        if not in_fence and line.startswith(f"### {dec_id} —")
-    )
-    for i in range(start + 1, len(lines)):
-        if lines[i].startswith("### ") or lines[i].startswith("## "):
-            break
-        if lines[i].startswith("- Status:"):
-            lines[i] = f"- Status: superseded by {by_id}\n"
-            break
-    return "".join(lines)
-
-
-def _bump_updated(doc: str, today: str | None = None) -> str:
-    today = today or datetime.date.today().isoformat()
-    return re.sub(r"(?m)^updated:.*$", f"updated: {today}", doc, count=1)
-
-
-def _strip_comments(text: str) -> str:
-    return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
-
-
-def _section_body(doc: str, header: str) -> str | None:
-    lines = doc.splitlines(keepends=True)
-    try:
-        start = next(
-            i for i, line, in_fence in _iter_lines_with_fence(doc)
-            if not in_fence and line.strip() == header
-        )
-    except StopIteration:
-        return None
-    end = len(lines)
-    for i, line, in_fence in _iter_lines_with_fence(doc):
-        if i > start and not in_fence and line.startswith("## "):
-            end = i
-            break
-    return "".join(lines[start + 1 : end])
