@@ -1,6 +1,6 @@
 import pytest
 
-from specflo import config, projects, spec
+from specflo import brainstorm, config, projects, spec
 from specflo.errors import SpecfloError
 
 
@@ -124,3 +124,32 @@ def test_ids_never_collide_after_supersede(root, cfg, project):
     spec.add_requirement(root, cfg, project, "b", acceptance="b", supersedes="REQ-01", today="2026-06-18")  # REQ-02
     r3 = spec.add_requirement(root, cfg, project, "c", acceptance="c", today="2026-06-18")               # REQ-03
     assert r3.id == "REQ-03"
+
+
+def test_from_records_the_link_when_decision_exists(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-18")
+    brainstorm.add_decision(root, cfg, project, "Use SQLite", today="2026-06-18")  # D-01
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    r = spec.add_requirement(
+        root, cfg, project, "Store data in SQLite",
+        acceptance="data survives a restart", derives_from="D-01", today="2026-06-18",
+    )
+    assert r.derives_from == "D-01"
+    assert "- Derives from: D-01" in _spath(root, cfg, project).read_text()
+
+
+def test_from_unknown_decision_raises(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-18")
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    with pytest.raises(SpecfloError):
+        spec.add_requirement(
+            root, cfg, project, "x", acceptance="a", derives_from="D-99",
+        )
+
+
+def test_from_without_a_brainstorm_raises(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")  # no brainstorm.md created
+    with pytest.raises(SpecfloError):
+        spec.add_requirement(
+            root, cfg, project, "x", acceptance="a", derives_from="D-01",
+        )
