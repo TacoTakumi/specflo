@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, config, projects, workflow
+from . import brainstorm, config, projects, spec, workflow
 from .errors import SpecfloError
 
 
@@ -76,6 +76,12 @@ app.add_typer(brainstorm_app, name="brainstorm")
 
 decision_app = typer.Typer(help="Capture brainstorm decisions.")
 app.add_typer(decision_app, name="decision")
+
+spec_app = typer.Typer(help="Work with the spec artifact.")
+app.add_typer(spec_app, name="spec")
+
+requirement_app = typer.Typer(help="Capture spec requirements.")
+app.add_typer(requirement_app, name="requirement")
 
 
 def _die(message: str) -> typer.Exit:
@@ -385,6 +391,25 @@ def advance(
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
         typer.echo(f"Next: {workflow.next_step(updated.phase)}")
+
+
+@spec_app.command("start", epilog="Example: specflo spec start")
+def spec_start(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Create (or locate) the active project's spec.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        path, created = spec.start_spec(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"path": str(path), "created": created}))
+    else:
+        note = "" if created else " (already started)"
+        typer.echo(f"{path}{note}")
 
 
 def main() -> None:
