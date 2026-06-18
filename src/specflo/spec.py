@@ -156,3 +156,82 @@ def _require_decision_exists(
         raise SpecfloError(f"Cannot link {dec_id}: no brainstorm.md for this project.")
     if not re.search(rf"^### {re.escape(dec_id)} —", bpath.read_text(), re.MULTILINE):
         raise SpecfloError(f"No decision {dec_id} in the brainstorm to derive from.")
+
+
+def complete_spec(
+    root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
+) -> None:
+    """Mark the spec complete (``status: draft → complete``); bump ``updated``.
+
+    Called when leaving the spec phase (by `specflo advance`). Raises
+    ``SpecfloError`` if the artifact is missing.
+    """
+    path = spec_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No spec yet. Run `specflo spec start` first.")
+    doc = path.read_text()
+    # Frontmatter `status:` only — leading-`-` requirement `- Status:` lines and
+    # count=1 (frontmatter comes first) keep this from touching entries.
+    doc = re.sub(r"(?m)^status:.*$", "status: complete", doc, count=1)
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+
+
+def validate_spec(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """Return a list of lint issues (empty == ready). Read-only."""
+    path = spec_path(root, cfg, slug)
+    if not path.is_file():
+        return ["spec.md not found — run `specflo spec start`."]
+    doc = path.read_text()
+    body = markdown.strip_comments(doc)
+    issues = markdown.placeholder_issues(body)
+
+    if not _REQ_ID_RE.search(doc):
+        issues.append("no requirements captured (need at least one).")
+    else:
+        issues.extend(_requirements_without_acceptance(doc))
+
+    in_scope = markdown.section_body(doc, "### In scope")
+    if in_scope is None:
+        issues.append("missing 'In scope' section.")
+    elif not markdown.strip_comments(in_scope).strip():
+        issues.append("'In scope' section is empty.")
+
+    out_scope = markdown.section_body(doc, "### Out of scope")
+    if out_scope is None:
+        issues.append("missing 'Out of scope' section.")
+    elif not markdown.strip_comments(out_scope).strip():
+        issues.append("'Out of scope' section is empty.")
+
+    if markdown.section_body(doc, "## Open questions") is None:
+        issues.append("missing 'Open questions' section.")
+
+    return issues
+
+
+def _requirements_without_acceptance(doc: str) -> list[str]:
+    """Return an issue per ACTIVE requirement that lacks a non-empty Acceptance."""
+    lines = doc.splitlines(keepends=True)
+    heads: list[tuple[int, str]] = []
+    for i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if in_fence:
+            continue
+        m = _REQ_ID_RE.match(line)
+        if m:
+            heads.append((i, m.group(1)))
+
+    issues: list[str] = []
+    for n, (start, req_id) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        for i in range(start + 1, end):  # also stop at the next H2 boundary
+            if lines[i].startswith("## "):
+                end = i
+                break
+        block = lines[start:end]
+        status = next((ln for ln in block if ln.startswith("- Status:")), "")
+        if "superseded by" in status:
+            continue  # historical — not re-checked
+        acceptance = next((ln for ln in block if ln.startswith("- Acceptance:")), None)
+        if acceptance is None or not acceptance.split(":", 1)[1].strip():
+            issues.append(f"{req_id} has no acceptance criterion.")
+    return issues

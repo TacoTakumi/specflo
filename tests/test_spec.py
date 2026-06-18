@@ -153,3 +153,124 @@ def test_from_without_a_brainstorm_raises(root, cfg, project):
         spec.add_requirement(
             root, cfg, project, "x", acceptance="a", derives_from="D-01",
         )
+
+
+def _fill_boundaries(root, cfg, project):
+    path = _spath(root, cfg, project)
+    text = path.read_text()
+    text = text.replace(
+        "### In scope\n<!-- required, non-empty -->",
+        "### In scope\n- the spec CLI surface.",
+    ).replace(
+        "### Out of scope\n"
+        "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+        "### Out of scope\n- versioning UI.",
+    )
+    path.write_text(text)
+    return path
+
+
+def test_validate_passes_a_complete_doc(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    _fill_boundaries(root, cfg, project)
+    assert spec.validate_spec(root, cfg, project) == []
+
+
+def test_validate_flags_missing_file(root, cfg, project):
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("not found" in i for i in issues)
+
+
+def test_validate_flags_no_requirements(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    _fill_boundaries(root, cfg, project)  # isolate the requirements check
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("no requirements" in i for i in issues)
+
+
+def test_validate_flags_requirement_missing_acceptance(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    _fill_boundaries(root, cfg, project)
+    # Hand-edit to blank out the acceptance criterion (simulating a bad manual edit)
+    path = _spath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Acceptance: passes", "- Acceptance: "))
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("acceptance" in i.lower() for i in issues)
+
+
+def test_validate_flags_empty_in_scope(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    # Fill only Out of scope, leave In scope as the empty scaffold comment
+    path = _spath(root, cfg, project)
+    path.write_text(
+        path.read_text().replace(
+            "### Out of scope\n"
+            "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+            "### Out of scope\n- versioning UI.",
+        )
+    )
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("In scope" in i for i in issues)
+
+
+def test_validate_flags_empty_out_of_scope(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    # Fill only In scope, leave Out of scope as the empty scaffold comment
+    path = _spath(root, cfg, project)
+    path.write_text(
+        path.read_text().replace(
+            "### In scope\n<!-- required, non-empty -->",
+            "### In scope\n- the spec CLI surface.",
+        )
+    )
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("Out of scope" in i for i in issues)
+
+
+def test_validate_flags_placeholder_text(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    _fill_boundaries(root, cfg, project)
+    path = _spath(root, cfg, project)
+    path.write_text(path.read_text().replace("A requirement", "TODO write this later"))
+    issues = spec.validate_spec(root, cfg, project)
+    assert any("placeholder" in i for i in issues)
+
+
+def test_validate_ignores_superseded_requirement_acceptance(root, cfg, project):
+    """A superseded requirement is historical; its acceptance isn't re-checked."""
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "old", acceptance="a", today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "new", acceptance="b", supersedes="REQ-01", today="2026-06-18")
+    _fill_boundaries(root, cfg, project)
+    # Blank the SUPERSEDED entry's acceptance; validate must still pass
+    path = _spath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Acceptance: a", "- Acceptance: "))
+    assert spec.validate_spec(root, cfg, project) == []
+
+
+def test_complete_spec_flips_status_and_bumps_updated(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.complete_spec(root, cfg, project, today="2026-06-20")
+    text = _spath(root, cfg, project).read_text()
+    assert "status: complete" in text
+    assert "status: draft" not in text
+    assert "updated: 2026-06-20" in text
+
+
+def test_complete_spec_leaves_requirement_status_untouched(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "A requirement", acceptance="passes", today="2026-06-18")
+    spec.complete_spec(root, cfg, project, today="2026-06-20")
+    text = _spath(root, cfg, project).read_text()
+    assert "status: complete" in text   # frontmatter flipped
+    assert "- Status: active" in text   # requirement entry left alone
+
+
+def test_complete_spec_without_file_raises(root, cfg, project):
+    with pytest.raises(SpecfloError):
+        spec.complete_spec(root, cfg, project)
