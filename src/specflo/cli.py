@@ -315,10 +315,10 @@ def decision_add(
         typer.echo(message)
 
 
-@app.command(epilog="Example: specflo validate brainstorm")
+@app.command(epilog="Example: specflo validate spec")
 def validate(
     artifact: str = typer.Argument(
-        ..., metavar="<artifact>", help="Artifact to validate (e.g. brainstorm)."
+        ..., metavar="<artifact>", help="Artifact to validate: brainstorm or spec."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
@@ -326,16 +326,22 @@ def validate(
     root = _require_root()
     cfg = config.load_config(root)
     slug = _require_active(cfg)
-    if artifact != "brainstorm":
-        raise _die(f"Unknown artifact {artifact!r}. Known: brainstorm.")
-    issues = brainstorm.validate_brainstorm(root, cfg, slug)
+    validators = {
+        "brainstorm": brainstorm.validate_brainstorm,
+        "spec": spec.validate_spec,
+    }
+    validator = validators.get(artifact)
+    if validator is None:
+        known = ", ".join(sorted(validators))
+        raise _die(f"Unknown artifact {artifact!r}. Known: {known}.")
+    issues = validator(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"ready": not issues, "issues": issues}))
         raise typer.Exit(code=0 if not issues else 1)
     if not issues:
-        typer.echo("ok — brainstorm is ready.")
+        typer.echo(f"ok — {artifact} is ready.")
         return
-    typer.secho("brainstorm has issues:", fg=typer.colors.YELLOW, err=True)
+    typer.secho(f"{artifact} has issues:", fg=typer.colors.YELLOW, err=True)
     for issue in issues:
         typer.echo(f"  - {issue}", err=True)
     raise typer.Exit(code=1)

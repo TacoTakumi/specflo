@@ -331,7 +331,7 @@ def test_validate_brainstorm_passes_a_complete_doc(cwd):
 def test_validate_unknown_artifact_fails(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
-    result = runner.invoke(app, ["validate", "spec"])
+    result = runner.invoke(app, ["validate", "bogus"])
     assert result.exit_code != 0
 
 
@@ -523,3 +523,42 @@ def test_requirement_add_without_start_fails(cwd):
     runner.invoke(app, ["new", "My Thing"])
     result = runner.invoke(app, ["requirement", "add", "--text", "x", "--acceptance", "y"])
     assert result.exit_code != 0
+
+
+def test_validate_spec_reports_issues_and_exits_nonzero(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    result = runner.invoke(app, ["validate", "spec"])
+    assert result.exit_code != 0  # fresh doc: no requirements + empty boundaries
+    assert "no requirements" in result.output.lower() or "scope" in result.output.lower()
+
+
+def test_validate_spec_passes_a_complete_doc(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "A req", "--acceptance", "it passes"])
+    path = cwd / "docs" / "projects" / "my-thing" / "spec.md"
+    text = path.read_text()
+    text = text.replace(
+        "### In scope\n<!-- required, non-empty -->",
+        "### In scope\n- the CLI.",
+    ).replace(
+        "### Out of scope\n"
+        "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+        "### Out of scope\n- the GUI.",
+    )
+    path.write_text(text)
+    result = runner.invoke(app, ["validate", "spec"])
+    assert result.exit_code == 0
+    assert "ok" in result.output.lower()
+
+
+def test_validate_spec_json_reports_not_ready(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    data = json.loads(runner.invoke(app, ["validate", "spec", "--json"]).output)
+    assert data["ready"] is False
+    assert data["issues"]
