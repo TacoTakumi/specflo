@@ -37,14 +37,26 @@ requirements with pass/fail acceptance — not merely "don't code yet".
    Run `specflo spec start` to create or locate `spec.md` (the command prints its
    path — never build the path yourself). Read the project's `brainstorm.md`:
    its Decisions (`D-NN`), Research, Current understanding, and Out of scope.
-2. **Draft requirements — reframe vague → testable.** For each thing the system
-   must do, write a falsifiable requirement. Reframe fuzzy wants:
-   `"make it fast"` → `"the landscape scan returns within 5s on a warm cache"`,
-   then ask "are these the right targets?". A good requirement is **✓** "API
-   responds in < 200ms at p95"; a bad one is **✗** "the system should be fast".
+2. **Draft requirements — translate decisions, reframe vague → testable.** For
+   each thing the system must do, write a falsifiable requirement. Two moves:
+   - **Decision → behavior.** Brainstorm decisions are often *architecture or
+     tech-stack* choices ("build on SDK X", "UI in framework Y"), not behaviors —
+     and have no inherent pass/fail. Make each testable by spec'ing the
+     **behaviors it exists to enable**, and expect one decision to **fan out into
+     several requirements** (e.g. "build on the SDK" → separate auth, discovery,
+     and version-compatibility requirements, each `--from` that decision).
+   - **Reframe fuzzy wants:** `"make it fast"` →
+     `"the landscape scan returns within 5s on a warm cache"`, then ask "are these
+     the right targets?".
+   A good requirement is **✓** "API responds in < 200ms at p95"; a bad one is
+   **✗** "the system should be fast".
 3. **Give every requirement a pass/fail acceptance criterion.** No subjective
-   criteria — write how a verifier confirms it. Trace it to the decision it comes
-   from with `--from D-NN` where applicable.
+   criteria — write how a verifier confirms it. The check may be **behavioral**
+   (observe the running system) or **structural** (a source- or dependency-scan)
+   — both are valid as long as the verdict is mechanical. An architectural
+   constraint ("all server I/O goes through the SDK; no hand-rolled client") is
+   legitimately verified structurally; don't contort it into a fake runtime test.
+   Trace it to the decision it comes from with `--from D-NN` where applicable.
 4. **Capture inline.** The moment a requirement is settled, record it:
    `specflo requirement add --text "…" --acceptance "…" [--from D-NN]`
    (add `--supersedes REQ-NN` when it replaces an earlier one). Don't batch —
@@ -80,6 +92,7 @@ reframe it.
 | Rationalization | Reality |
 |---|---|
 | "The brainstorm is enough." | The brainstorm captures *decisions*, not *testable requirements*. The spec adds acceptance criteria a verifier can check. |
+| "A tech-stack decision isn't a requirement." | It is — spec the *behaviors* it exists to enable. One decision usually fans out into several testable requirements, each `--from` it. |
 | "I'll write the acceptance after I code it." | That's a test report, not a specification. Decide pass/fail *before* building. |
 | "This requirement is obviously testable." | If you can't state the pass/fail check in one line, it isn't. Write the line. |
 | "I'll re-ask the user to be safe." | Re-interviewing is not synthesis. Read `brainstorm.md`; only ask about genuine gaps. |
