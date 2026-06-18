@@ -450,3 +450,76 @@ def test_spec_start_json(cwd):
     data = json.loads(runner.invoke(app, ["spec", "start", "--json"]).output)
     assert data["created"] is True
     assert data["path"].endswith("spec.md")
+
+
+def test_requirement_add_records_an_id(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    result = runner.invoke(
+        app,
+        ["requirement", "add", "--text", "Prints help", "--acceptance", "no-arg run exits 0"],
+    )
+    assert result.exit_code == 0
+    assert "REQ-01" in result.output
+    text = (cwd / "docs" / "projects" / "my-thing" / "spec.md").read_text()
+    assert "### REQ-01 — Prints help" in text
+    assert "- Acceptance: no-arg run exits 0" in text
+
+
+def test_requirement_add_acceptance_is_required(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    result = runner.invoke(app, ["requirement", "add", "--text", "No acceptance given"])
+    assert result.exit_code != 0  # missing required --acceptance
+
+
+def test_requirement_add_from_links_a_decision(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])  # D-01
+    runner.invoke(app, ["spec", "start"])
+    result = runner.invoke(
+        app,
+        ["requirement", "add", "--text", "Persist to SQLite",
+         "--acceptance", "survives restart", "--from", "D-01"],
+    )
+    assert result.exit_code == 0
+    text = (cwd / "docs" / "projects" / "my-thing" / "spec.md").read_text()
+    assert "- Derives from: D-01" in text
+
+
+def test_requirement_add_from_unknown_decision_fails(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["spec", "start"])
+    result = runner.invoke(
+        app,
+        ["requirement", "add", "--text", "x", "--acceptance", "y", "--from", "D-99"],
+    )
+    assert result.exit_code != 0
+
+
+def test_requirement_add_supersede(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "old", "--acceptance", "a"])
+    result = runner.invoke(
+        app,
+        ["requirement", "add", "--text", "new", "--acceptance", "b", "--supersedes", "REQ-01"],
+    )
+    assert result.exit_code == 0
+    assert "REQ-02" in result.output
+    text = (cwd / "docs" / "projects" / "my-thing" / "spec.md").read_text()
+    assert "superseded by REQ-02" in text
+
+
+def test_requirement_add_without_start_fails(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["requirement", "add", "--text", "x", "--acceptance", "y"])
+    assert result.exit_code != 0

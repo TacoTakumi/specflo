@@ -412,5 +412,51 @@ def spec_start(
         typer.echo(f"{path}{note}")
 
 
+@requirement_app.command(
+    "add",
+    epilog='Example: specflo requirement add --text "Prints help" --acceptance "no-arg run exits 0"',
+)
+def requirement_add(
+    text: str = typer.Option(..., "--text", help="The requirement (one line)."),
+    acceptance: str = typer.Option(
+        ..., "--acceptance", help="Pass/fail acceptance criterion (required)."
+    ),
+    from_: str = typer.Option(
+        None, "--from", metavar="D-NN", help="The brainstorm decision this derives from."
+    ),
+    supersedes: str = typer.Option(
+        None, "--supersedes", metavar="REQ-NN", help="The requirement this replaces."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Append a requirement (REQ-NN) to the active project's spec.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        requirement = spec.add_requirement(
+            root, cfg, slug, text, acceptance, derives_from=from_, supersedes=supersedes
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "id": requirement.id,
+                    "derives_from": requirement.derives_from,
+                    "supersedes": requirement.supersedes,
+                }
+            )
+        )
+    else:
+        message = f"Recorded {requirement.id}."
+        if requirement.derives_from:
+            message += f" Derives from {requirement.derives_from}."
+        if requirement.supersedes:
+            message += f" Supersedes {requirement.supersedes}."
+        typer.echo(message)
+
+
 def main() -> None:
     app()
