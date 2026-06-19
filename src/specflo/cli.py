@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, config, projects, spec, workflow
+from . import brainstorm, config, guide as guide_module, projects, spec, workflow
 from .errors import SpecfloError
 
 
@@ -263,6 +263,78 @@ def status(
         typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
         typer.echo(f"Phase:   {project.phase}")
         typer.echo(f"Next:    {info['next_step']}")
+
+
+def _render_pipeline(data: dict) -> str:
+    current = data.get("phase")
+    parts = [f"*{p}*" if p == current else p for p in data["pipeline"]]
+    return " → ".join(parts)
+
+
+def _render_you_are_here(data: dict) -> list[str]:
+    action = data["next_action"]
+    if action == "init":
+        return [
+            "specflo isn't set up in this repo yet.",
+            "  Run `specflo init`, then `specflo new <name>` to start a project.",
+        ]
+    if action == "new":
+        return [
+            "No active project.",
+            "  Run `specflo new <name>` to start one.",
+        ]
+    return [
+        f"Project '{data['active_project']}' · phase: {data['phase']}",
+        f"  Next: {data['next_step']}",
+    ]
+
+
+def _render_commands(data: dict) -> list[str]:
+    groups = [("setup", "Setup & navigation"), ("workflow", "Workflow")]
+    width = max(len(f"{c['name']} {c['args']}".strip()) for c in data["commands"])
+    lines: list[str] = []
+    for key, title in groups:
+        lines.append(f"  {title}")
+        for c in data["commands"]:
+            if c["group"] != key:
+                continue
+            label = f"{c['name']} {c['args']}".strip()
+            lines.append(f"    {label.ljust(width)}  {c['summary']}")
+    return lines
+
+
+@app.command(name="guide", epilog="Example: specflo guide --json")
+def guide_(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show what specflo is, the workflow, and what to do next here.
+
+    Runs cold — works before `specflo init` — so an agent can get oriented in any
+    repo with a single command.
+    """
+    root = config.find_root(Path.cwd())
+    cfg = config.load_config(root) if root is not None else None
+    data = guide_module.build_guide(root, cfg)
+
+    if json_output:
+        typer.echo(json.dumps(data))
+        return
+
+    lines = [
+        "specflo — a spec-driven software-engineering workflow.",
+        "",
+        f"Pipeline:  {_render_pipeline(data)}",
+        "",
+        "You are here:",
+        *(f"  {line}" for line in _render_you_are_here(data)),
+        "",
+        "Commands:",
+        *_render_commands(data),
+        "",
+        "Skills:  in a skill-capable harness the `brainstorm` and `spec` skills "
+        "drive the\n  conversation; these commands are the seam they call.",
+    ]
+    typer.echo("\n".join(lines))
 
 
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")

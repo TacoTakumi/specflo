@@ -8,6 +8,7 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 
 ## v0.1 commands
 
+- `specflo guide [--json]` — orientation in one shot: what specflo is, the pipeline, the full command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo.
 - `specflo init` — scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 - `specflo new <name>` — create a project and make it active.
 - `specflo list [--json]` — list all projects, marking the active one and its phase.
