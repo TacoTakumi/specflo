@@ -110,6 +110,20 @@ def _project_dir_display(path: Path, root: Path) -> str:
         return str(path)
 
 
+def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
+    """Best-effort: rewrite the active project's checkpoint.md after a mutation.
+
+    The checkpoint is fully derived, so this is cheap and always current. It runs
+    after the triggering mutation has already succeeded, so a failure here must
+    never fail that command — swallow load errors and move on.
+    """
+    try:
+        project = projects.load_project(root, cfg, slug)
+        checkpoint.write_checkpoint(root, project)
+    except SpecfloError:
+        pass
+
+
 @app.command(epilog="Example: specflo init --projects-dir docs/projects")
 def init(
     projects_dir: str = typer.Option(
@@ -143,6 +157,7 @@ def new(
         raise _die(str(exc))
     cfg.active_project = project.slug
     config.save_config(root, cfg)
+    _refresh_checkpoint(root, cfg, project.slug)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
@@ -369,6 +384,7 @@ def brainstorm_start(
         path, created = brainstorm.start_brainstorm(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"path": str(path), "created": created}))
     else:
@@ -398,6 +414,7 @@ def decision_add(
         )
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"id": decision.id, "supersedes": decision.supersedes}))
     else:
@@ -513,6 +530,7 @@ def spec_start(
         path, created = spec.start_spec(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"path": str(path), "created": created}))
     else:
@@ -547,6 +565,7 @@ def requirement_add(
         )
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(
             json.dumps(

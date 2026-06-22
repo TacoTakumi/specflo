@@ -638,3 +638,33 @@ def test_checkpoint_without_active_project_fails(cwd):
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["checkpoint"])
     assert result.exit_code != 0
+
+
+def test_new_creates_an_initial_checkpoint(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    assert path.is_file()
+    assert "phase: brainstorm" in path.read_text()
+
+
+def test_decision_add_refreshes_the_checkpoint(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    path = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    text = path.read_text()
+    # brainstorm.md now exists, so it is listed in "Read first"
+    assert "brainstorm.md" in text
+
+
+def test_requirement_add_refreshes_the_checkpoint(cwd):
+    _ready_brainstorm(cwd)
+    runner.invoke(app, ["advance"])      # brainstorm -> spec
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "A req", "--acceptance", "it passes"])
+    path = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    text = path.read_text()
+    assert "phase: spec" in text
+    assert "spec.md" in text
