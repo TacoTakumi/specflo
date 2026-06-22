@@ -121,3 +121,73 @@ def test_add_task_validates_dependency_and_supersede_targets(root, cfg, project)
 def test_add_task_without_start_raises(root, cfg, project):
     with pytest.raises(SpecfloError):
         plan.add_task(root, cfg, project, "early", acceptance="a", verify="v", implements=["REQ-01"])
+
+
+def _good_plan(root, cfg, project):
+    """A plan with full bidirectional coverage of a 2-requirement spec."""
+    _spec_with_reqs(root, cfg, project, n=2)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a passes", verify="uv run pytest",
+                  implements=["REQ-01"], today="2026-06-22")                                  # T-01
+    plan.add_task(root, cfg, project, "task b", acceptance="b passes", verify="uv run pytest",
+                  implements=["REQ-02"], depends_on=["T-01"], today="2026-06-22")             # T-02
+
+
+def test_validate_passes_a_complete_plan(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_validate_flags_missing_file(root, cfg, project):
+    assert any("not found" in i for i in plan.validate_plan(root, cfg, project))
+
+
+def test_validate_flags_no_tasks(root, cfg, project):
+    _spec_with_reqs(root, cfg, project)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    assert any("no tasks" in i for i in plan.validate_plan(root, cfg, project))
+
+
+def test_validate_flags_uncovered_requirement(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=2)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "only a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")  # REQ-02 left uncovered
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("REQ-02" in i and "not implemented" in i for i in issues)
+
+
+def test_validate_flags_missing_acceptance_and_verify(root, cfg, project):
+    _good_plan(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text()
+                    .replace("- Acceptance: a passes", "- Acceptance: ")
+                    .replace("- Verify: uv run pytest", "- Verify: ", 1))
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("acceptance" in i.lower() for i in issues)
+    assert any("verification" in i.lower() for i in issues)
+
+
+def test_validate_flags_dangling_dependency_and_cycle(root, cfg, project):
+    _good_plan(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    # make T-01 depend on T-02 -> cycle (T-01 -> T-02 -> T-01)
+    text = path.read_text().replace(
+        "### T-01 — task a\n- Acceptance: a passes\n- Verify: uv run pytest\n- Implements: REQ-01\n",
+        "### T-01 — task a\n- Acceptance: a passes\n- Verify: uv run pytest\n- Implements: REQ-01\n- Depends on: T-02\n",
+    )
+    path.write_text(text)
+    assert any("cycle" in i for i in plan.validate_plan(root, cfg, project))
+
+
+def test_validate_ignores_superseded_tasks(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "old", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                                  # T-01
+    plan.add_task(root, cfg, project, "new", acceptance="b", verify="v",
+                  implements=["REQ-01"], supersedes="T-01", today="2026-06-22")               # T-02
+    # blank the superseded entry's acceptance — validate must still pass
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Acceptance: a", "- Acceptance: "))
+    assert plan.validate_plan(root, cfg, project) == []

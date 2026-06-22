@@ -79,6 +79,130 @@ def plan_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return project_dir(root, cfg, slug) / PLAN_FILENAME
 
 
+def _split_refs(value: str) -> list[str]:
+    return [part.strip() for part in value.split(",") if part.strip()]
+
+
+def _parse_tasks(doc: str) -> list[Task]:
+    """Parse all task entries (active and superseded) from *doc*, in order."""
+    lines = doc.splitlines(keepends=True)
+    heads: list[tuple[int, str, str]] = []
+    for i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if in_fence:
+            continue
+        m = _TASK_ID_RE.match(line)
+        if m:
+            title = line.split("—", 1)[1].strip()
+            heads.append((i, m.group(1), title))
+    tasks: list[Task] = []
+    for n, (start, task_id, title) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        for i in range(start + 1, end):
+            if lines[i].startswith("## "):
+                end = i
+                break
+        fields: dict[str, str] = {}
+        for ln in lines[start + 1:end]:
+            if ln.startswith("- ") and ":" in ln:
+                key, _, val = ln[2:].partition(":")
+                fields[key.strip()] = val.strip()
+        status_raw = fields.get("Status", "")
+        tasks.append(Task(
+            id=task_id, text=title,
+            acceptance=fields.get("Acceptance", ""),
+            verify=fields.get("Verify", ""),
+            implements=_split_refs(fields.get("Implements", "")),
+            depends_on=_split_refs(fields.get("Depends on", "")),
+            files=fields.get("Files"), scope=fields.get("Scope"),
+            progress=fields.get("Progress", "pending"),
+            status="superseded" if "superseded by" in status_raw else "active",
+            supersedes=fields.get("Supersedes"),
+            blocked=fields.get("Blocked"),
+        ))
+    return tasks
+
+
+def _find_cycle(tasks: list[Task]) -> list[str] | None:
+    ids = {t.id for t in tasks}
+    graph = {t.id: [d for d in t.depends_on if d in ids] for t in tasks}
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {tid: WHITE for tid in graph}
+    stack: list[str] = []
+
+    def dfs(node: str) -> list[str] | None:
+        color[node] = GRAY
+        stack.append(node)
+        for nxt in graph.get(node, []):
+            if color.get(nxt, WHITE) == GRAY:
+                return stack[stack.index(nxt):] + [nxt]
+            if color.get(nxt, WHITE) == WHITE:
+                found = dfs(nxt)
+                if found:
+                    return found
+        stack.pop()
+        color[node] = BLACK
+        return None
+
+    for tid in graph:
+        if color[tid] == WHITE:
+            found = dfs(tid)
+            if found:
+                return found
+    return None
+
+
+def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """Return a list of blocking lint issues (empty == ready). Read-only."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return ["plan.md not found — run `specflo plan start`."]
+    doc = path.read_text()
+    issues = markdown.placeholder_issues(markdown.strip_comments(doc))
+
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    if not active:
+        issues.append("no tasks captured (need at least one).")
+        return issues
+
+    for t in active:
+        if not t.acceptance:
+            issues.append(f"{t.id} has no acceptance criterion.")
+        if not t.verify:
+            issues.append(f"{t.id} has no verification step.")
+
+    sp = spec_mod.spec_path(root, cfg, slug)
+    if not sp.is_file():
+        issues.append("spec.md not found — coverage cannot be checked.")
+    else:
+        active_reqs = spec_mod.active_requirement_ids(sp.read_text())
+        covered: set[str] = set()
+        for t in active:
+            if not t.implements:
+                issues.append(f"{t.id} implements no requirement (needs Implements: REQ-NN).")
+            for req in t.implements:
+                if req not in active_reqs:
+                    issues.append(f"{t.id} implements {req}, which is not an active requirement.")
+                else:
+                    covered.add(req)
+        for req in active_reqs:
+            if req not in covered:
+                issues.append(f"{req} is not implemented by any task.")
+
+    ids = {t.id for t in active}
+    for t in active:
+        for dep in t.depends_on:
+            if dep not in ids:
+                issues.append(f"{t.id} depends on {dep}, which is not an active task.")
+    cycle = _find_cycle(active)
+    if cycle:
+        issues.append(f"dependency cycle: {' -> '.join(cycle)}.")
+
+    if markdown.section_body(doc, "## Open questions") is None:
+        issues.append("missing 'Open questions' section.")
+
+    return issues
+
+
 def start_plan(
     root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
 ) -> tuple[Path, bool]:
