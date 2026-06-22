@@ -439,7 +439,7 @@ def decision_add(
 @app.command(epilog="Example: specflo validate spec")
 def validate(
     artifact: str = typer.Argument(
-        ..., metavar="<artifact>", help="Artifact to validate: brainstorm or spec."
+        ..., metavar="<artifact>", help="Artifact to validate: brainstorm, spec, or plan."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
@@ -450,15 +450,28 @@ def validate(
     validators = {
         "brainstorm": brainstorm.validate_brainstorm,
         "spec": spec.validate_spec,
+        "plan": plan.validate_plan,
+    }
+    warners = {
+        "plan": plan.plan_warnings,
     }
     validator = validators.get(artifact)
     if validator is None:
         known = ", ".join(sorted(validators))
         raise _die(f"Unknown artifact {artifact!r}. Known: {known}.")
     issues = validator(root, cfg, slug)
+    warner = warners.get(artifact)
+    warnings = warner(root, cfg, slug) if warner is not None else []
     if json_output:
-        typer.echo(json.dumps({"ready": not issues, "issues": issues}))
+        payload = {"ready": not issues, "issues": issues}
+        if warner is not None:
+            payload["warnings"] = warnings
+        typer.echo(json.dumps(payload))
         raise typer.Exit(code=0 if not issues else 1)
+    if warnings:
+        typer.secho(f"{artifact} warnings:", fg=typer.colors.YELLOW, err=True)
+        for w in warnings:
+            typer.echo(f"  - {w}", err=True)
     if not issues:
         typer.echo(f"ok — {artifact} is ready.")
         return
@@ -494,6 +507,7 @@ def advance(
     gates = {
         "brainstorm": (brainstorm.validate_brainstorm, brainstorm.complete_brainstorm),
         "spec": (spec.validate_spec, spec.complete_spec),
+        "plan": (plan.validate_plan, plan.complete_plan),
     }
     gate = gates.get(from_phase)
     if gate is not None:

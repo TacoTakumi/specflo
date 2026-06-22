@@ -482,7 +482,12 @@ def test_advance_without_active_project_fails(cwd):
 def test_advance_past_the_final_phase_fails(cwd):
     _ready_spec(cwd)
     runner.invoke(app, ["advance"])  # spec -> plan (gated; spec is ready)
-    runner.invoke(app, ["advance"])  # plan -> execute (ungated)
+    # plan -> execute is now gated: need a valid plan with at least one task.
+    runner.invoke(app, ["plan", "start"])
+    runner.invoke(app, ["task", "add", "--text", "do it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    runner.invoke(app, ["advance"])  # plan -> execute (gated; plan is ready)
     result = runner.invoke(app, ["advance"])  # execute is final
     assert result.exit_code != 0
     assert "final" in result.output.lower()
@@ -798,3 +803,65 @@ def test_checkpoint_lifecycle_smoke(cwd):
     # the command reprints the current prompt
     out = runner.invoke(app, ["checkpoint"]).output
     assert "phase: spec" in out
+
+
+def _project_at_plan_phase(runner, app, tmp_path):
+    _new_project_with_spec(runner, app)
+    # _new_project_with_spec leaves us at brainstorm phase (OOS empty, advance fails).
+    # Fill brainstorm OOS so advance brainstorm->spec passes, then advance through spec.
+    bs_md = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs_md.write_text(bs_md.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\nNo auth in v0.1.",
+    ))
+    runner.invoke(app, ["advance"])  # brainstorm -> spec
+    # spec.md already has REQ-01 from _new_project_with_spec; fill boundaries.
+    spec_md = tmp_path / "docs" / "projects" / "thing" / "spec.md"
+    spec_md.write_text(spec_md.read_text()
+                       .replace("### In scope\n<!-- required, non-empty -->",
+                                "### In scope\n- the thing.")
+                       .replace("### Out of scope\n"
+                                "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+                                "### Out of scope\n- other things."))
+    runner.invoke(app, ["advance"])  # spec -> plan
+    runner.invoke(app, ["plan", "start"])
+
+
+def test_validate_plan_reports_coverage_gap(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["validate", "plan", "--json"])
+    data = _json.loads(r.output)
+    assert data["ready"] is False  # no tasks yet -> REQ uncovered / no tasks
+    assert r.exit_code == 1
+
+
+def test_validate_plan_warnings_do_not_fail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "ship a stub for now",
+                        "--acceptance", "returns a value", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    r = runner.invoke(app, ["validate", "plan", "--json"])
+    data = _json.loads(r.output)
+    assert data["ready"] is True          # warnings don't block
+    assert any("stub" in w for w in data["warnings"])
+    assert r.exit_code == 0
+
+
+def test_advance_plan_to_execute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    r = runner.invoke(app, ["advance", "--json"])
+    data = _json.loads(r.output)
+    assert data["advanced"] is True
+    assert data["from"] == "plan" and data["to"] == "execute"
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "status: complete" in plan_md
