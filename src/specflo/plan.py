@@ -90,3 +90,89 @@ def start_plan(
     today = today or datetime.date.today().isoformat()
     path.write_text(_TEMPLATE.format(slug=project.slug, name=project.name, today=today))
     return path, True
+
+
+def _active_requirement_ids(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    sp = spec_mod.spec_path(root, cfg, slug)
+    if not sp.is_file():
+        raise SpecfloError("Cannot link requirements: no spec.md for this project.")
+    return spec_mod.active_requirement_ids(sp.read_text())
+
+
+def add_task(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    text: str,
+    acceptance: str,
+    verify: str,
+    implements: list[str],
+    depends_on: list[str] | None = None,
+    files: str | None = None,
+    scope: str | None = None,
+    supersedes: str | None = None,
+    today: str | None = None,
+) -> Task:
+    """Append a task to the Tasks section and return it.
+
+    Mints the next ``T-NN``. ``acceptance``/``verify`` are mandatory; ``implements``
+    must name ≥1 active requirement in ``spec.md``. ``depends_on`` and
+    ``supersedes`` must reference existing tasks.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    if "## Tasks" not in doc:
+        raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
+
+    depends_on = depends_on or []
+    if not implements:
+        raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
+
+    active_reqs = _active_requirement_ids(root, cfg, slug)
+    for req_id in implements:
+        if req_id not in active_reqs:
+            raise SpecfloError(
+                f"Cannot implement {req_id}: not an active requirement in spec.md."
+            )
+
+    for dep in depends_on:
+        if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
+            raise SpecfloError(f"No task {dep} to depend on.")
+
+    if supersedes is not None and not re.search(
+        rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
+    ):
+        raise SpecfloError(f"No task {supersedes} to supersede.")
+
+    new_id = markdown.next_id(doc, "T-")
+    if supersedes is not None:
+        doc = markdown.mark_superseded(doc, supersedes, new_id)
+
+    entry_lines = [
+        f"### {new_id} — {text}",
+        f"- Acceptance: {acceptance}",
+        f"- Verify: {verify}",
+        f"- Implements: {', '.join(implements)}",
+    ]
+    if depends_on:
+        entry_lines.append(f"- Depends on: {', '.join(depends_on)}")
+    if files:
+        entry_lines.append(f"- Files: {files}")
+    if scope:
+        entry_lines.append(f"- Scope: {scope}")
+    if supersedes is not None:
+        entry_lines.append(f"- Supersedes: {supersedes}")
+    entry_lines.append("- Progress: pending")
+    entry_lines.append("- Status: active")
+    entry = "\n".join(entry_lines) + "\n"
+
+    doc = markdown.append_to_section(doc, "## Tasks", entry)
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+    return Task(
+        id=new_id, text=text, acceptance=acceptance, verify=verify,
+        implements=implements, depends_on=depends_on, files=files, scope=scope,
+        progress="pending", status="active", supersedes=supersedes,
+    )
