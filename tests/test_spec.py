@@ -126,6 +126,16 @@ def test_ids_never_collide_after_supersede(root, cfg, project):
     assert r3.id == "REQ-03"
 
 
+def test_active_requirement_ids_excludes_superseded(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "a", acceptance="a", today="2026-06-18")          # REQ-01
+    spec.add_requirement(root, cfg, project, "b", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-18")                                # REQ-02
+    spec.add_requirement(root, cfg, project, "c", acceptance="c", today="2026-06-18")           # REQ-03
+    doc = _spath(root, cfg, project).read_text()
+    assert spec.active_requirement_ids(doc) == ["REQ-02", "REQ-03"]
+
+
 def test_from_records_the_link_when_decision_exists(root, cfg, project):
     brainstorm.start_brainstorm(root, cfg, project, today="2026-06-18")
     brainstorm.add_decision(root, cfg, project, "Use SQLite", today="2026-06-18")  # D-01

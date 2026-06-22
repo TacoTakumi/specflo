@@ -235,3 +235,28 @@ def _requirements_without_acceptance(doc: str) -> list[str]:
         if acceptance is None or not acceptance.split(":", 1)[1].strip():
             issues.append(f"{req_id} has no acceptance criterion.")
     return issues
+
+
+def active_requirement_ids(doc: str) -> list[str]:
+    """Return the ids of ACTIVE (non-superseded) requirements, in document order."""
+    lines = doc.splitlines(keepends=True)
+    heads: list[tuple[int, str]] = []
+    for i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if in_fence:
+            continue
+        m = _REQ_ID_RE.match(line)
+        if m:
+            heads.append((i, m.group(1)))
+    active: list[str] = []
+    for n, (start, req_id) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        for i in range(start + 1, end):
+            if lines[i].startswith("## "):
+                end = i
+                break
+        block = lines[start:end]
+        status = next((ln for ln in block if ln.startswith("- Status:")), "")
+        if "superseded by" in status:
+            continue
+        active.append(req_id)
+    return active
