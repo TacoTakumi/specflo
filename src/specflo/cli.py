@@ -114,13 +114,15 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
     """Best-effort: rewrite the active project's checkpoint.md after a mutation.
 
     The checkpoint is fully derived, so this is cheap and always current. It runs
-    after the triggering mutation has already succeeded, so a failure here must
-    never fail that command — swallow load errors and move on.
+    after the triggering mutation has already succeeded and been persisted, so a
+    failure here must never fail that command — swallow *any* refresh error
+    (a failed load, or a write that hits a read-only FS, permissions, full disk,
+    or a clobbered path) and move on.
     """
     try:
         project = projects.load_project(root, cfg, slug)
         checkpoint.write_checkpoint(root, project)
-    except SpecfloError:
+    except Exception:
         pass
 
 

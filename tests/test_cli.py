@@ -662,6 +662,31 @@ def test_decision_add_refreshes_the_checkpoint(cwd):
     assert "brainstorm.md" in text
 
 
+def test_mutation_survives_a_failing_checkpoint_refresh(cwd, monkeypatch):
+    """A crash inside the silent checkpoint refresh must never fail its host command.
+
+    The auto-refresh runs AFTER the mutation has already persisted, so an OSError
+    from write_checkpoint (read-only FS, permissions, disk full, ...) must be
+    swallowed — the command still exits 0 and its mutation stands.
+    """
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+
+    def _raise_oserror(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    # cli.py calls checkpoint.write_checkpoint(...) by attribute at call time.
+    monkeypatch.setattr("specflo.checkpoint.write_checkpoint", _raise_oserror)
+
+    result = runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    assert result.exit_code == 0          # the refresh failure did not crash the command
+    assert "D-01" in result.output        # the mutation's normal success output is present
+    # and the mutation itself persisted to brainstorm.md
+    text = (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").read_text()
+    assert "### D-01 — Use SQLite" in text
+
+
 def test_requirement_add_refreshes_the_checkpoint(cwd):
     _ready_brainstorm(cwd)
     runner.invoke(app, ["advance"])      # brainstorm -> spec
