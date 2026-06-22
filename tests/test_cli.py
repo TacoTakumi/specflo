@@ -704,3 +704,26 @@ def test_status_json_includes_the_checkpoint_path(cwd):
     runner.invoke(app, ["new", "My Thing"])
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
     assert data["checkpoint"].endswith("checkpoint.md")
+
+
+def test_checkpoint_lifecycle_smoke(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    cp = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+
+    # new wrote an initial brainstorm-phase checkpoint
+    assert "phase: brainstorm" in cp.read_text()
+
+    # a decision refreshes it; brainstorm.md now appears
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    assert "brainstorm.md" in cp.read_text()
+
+    # advancing to spec rewrites it for the new phase
+    _ready_brainstorm(cwd)                 # fills out-of-scope so advance passes
+    runner.invoke(app, ["advance"])
+    assert "phase: spec" in cp.read_text()
+
+    # the command reprints the current prompt
+    out = runner.invoke(app, ["checkpoint"]).output
+    assert "phase: spec" in out

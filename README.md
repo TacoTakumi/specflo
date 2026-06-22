@@ -21,6 +21,7 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo requirement add --text … --acceptance … [--from D-NN] [--supersedes REQ-NN]` — append a requirement (`REQ-NN`) to the spec.
 - `specflo validate spec [--json]` — lint the spec artifact (reports readiness).
 - `specflo advance [--json]` — validate the current phase's artifact, then move the active project to the next phase (`brainstorm → spec → plan → execute`).
+- `specflo checkpoint [--json]` — print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
 
 ## Skills
 
