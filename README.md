@@ -20,6 +20,14 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo spec start [--json]` — create (or locate) the active project's `spec.md`.
 - `specflo requirement add --text … --acceptance … [--from D-NN] [--supersedes REQ-NN]` — append a requirement (`REQ-NN`) to the spec.
 - `specflo validate spec [--json]` — lint the spec artifact (reports readiness).
+- `specflo plan start [--json]` — create (or locate) the active project's `plan.md`.
+- `specflo task add --text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …] [--supersedes T-NN]` — append a task (`T-NN`) to the plan. `--from` (repeatable, required) links to the requirement(s) the task implements; `--depends-on` (repeatable) declares execution ordering; `--acceptance` is a behavioural pass/fail criterion; `--verify` is the command or step to confirm it.
+- `specflo task start <T-NN>` — mark a task `in_progress`.
+- `specflo task done <T-NN>` — mark a task `done`.
+- `specflo task block <T-NN> [--reason …]` — mark a task `blocked`, optionally recording why.
+- `specflo task reopen <T-NN>` — return a task to `pending` (clears any block).
+- `specflo task list [--json]` — list all tasks with their progress state and the deps-aware next-actionable marker.
+- `specflo validate plan [--json]` — lint the plan artifact (bidirectional REQ↔task coverage, every task has acceptance + verification, dependencies resolve and are acyclic).
 - `specflo advance [--json]` — validate the current phase's artifact, then move the active project to the next phase (`brainstorm → spec → plan → execute`).
 - `specflo checkpoint [--json]` — print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
 
@@ -35,6 +43,12 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 
   ```bash
   ln -s "$PWD/skills/spec" ~/.claude/skills/spec
+  ```
+
+- **`plan`** (`skills/plan/SKILL.md`) — drives the plan phase over the CLI above (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase). Install by symlinking it into your agent's skills dir:
+
+  ```bash
+  ln -s "$PWD/skills/plan" ~/.claude/skills/plan
   ```
 
 - **`research`** (`skills/research/SKILL.md`) — a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated — searches the Agent Wiki first and saves findings back (soft dependency). Symlink it like the brainstorm skill:
