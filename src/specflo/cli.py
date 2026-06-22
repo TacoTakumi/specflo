@@ -265,6 +265,9 @@ def status(
         "status": project.status,
         "next_phase": workflow.next_phase(project.phase),
         "next_step": workflow.next_step(project.phase),
+        "checkpoint": _project_dir_display(
+            checkpoint.checkpoint_path(root, cfg, project.slug), root
+        ),
     }
     if json_output:
         typer.echo(json.dumps(info))
@@ -278,6 +281,7 @@ def status(
         typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
         typer.echo(f"Phase:   {project.phase}")
         typer.echo(f"Next:    {info['next_step']}")
+        typer.echo("Resume:  specflo checkpoint")
 
 
 def _render_pipeline(data: dict) -> str:

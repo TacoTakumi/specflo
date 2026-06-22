@@ -689,3 +689,18 @@ def test_advance_json_includes_the_checkpoint_path(cwd):
     data = json.loads(runner.invoke(app, ["advance", "--json"]).output)
     assert data["advanced"] is True
     assert data["checkpoint"].endswith("checkpoint.md")
+
+
+def test_status_points_to_the_checkpoint_for_humans(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["status"])
+    assert "Resume:" in result.output
+    assert "specflo checkpoint" in result.output
+
+
+def test_status_json_includes_the_checkpoint_path(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["checkpoint"].endswith("checkpoint.md")
