@@ -688,5 +688,113 @@ def task_add(
         typer.echo(message)
 
 
+def _report_transition(task: plan.Task, json_output: bool) -> None:
+    if json_output:
+        typer.echo(json.dumps({"id": task.id, "progress": task.progress, "blocked": task.blocked}))
+    else:
+        line = f"{task.id} → {task.progress}"
+        if task.blocked:
+            line += f" ({task.blocked})"
+        typer.echo(line)
+
+
+@task_app.command("start", epilog="Example: specflo task start T-01")
+def task_start(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to start."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Mark a task in_progress."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        task = plan.start_task(root, cfg, slug, task_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    _report_transition(task, json_output)
+
+
+@task_app.command("done", epilog="Example: specflo task done T-01")
+def task_done(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to mark done."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Mark a task done."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        task = plan.done_task(root, cfg, slug, task_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    _report_transition(task, json_output)
+
+
+@task_app.command("block", epilog='Example: specflo task block T-01 --reason "waiting on API"')
+def task_block(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to block."),
+    reason: str = typer.Option(None, "--reason", help="Why it's blocked."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Mark a task blocked (optionally recording a reason)."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        task = plan.block_task(root, cfg, slug, task_id, reason=reason)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    _report_transition(task, json_output)
+
+
+@task_app.command("reopen", epilog="Example: specflo task reopen T-01")
+def task_reopen(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to reopen (back to pending)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Return a task to pending (clears any block)."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        task = plan.reopen_task(root, cfg, slug, task_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    _report_transition(task, json_output)
+
+
+@task_app.command("list", epilog="Example: specflo task list")
+def task_list(
+    all_: bool = typer.Option(False, "--all", help="Include superseded tasks."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List tasks with progress and the deps-aware next-actionable marker."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        tasks = plan.list_tasks(root, cfg, slug, include_superseded=all_)
+        progress = plan.plan_progress(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    nexts = set(progress["next_actionable"])
+    if json_output:
+        typer.echo(json.dumps({
+            "tasks": [
+                {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
+                 "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts}
+                for t in tasks
+            ],
+            "progress": progress,
+        }))
+        return
+    if not tasks:
+        typer.echo("No tasks yet. Add one with `specflo task add`.")
+        return
+    for t in tasks:
+        marker = "→" if t.id in nexts else " "
+        sup = "  (superseded)" if t.status != "active" else ""
+        deps = f"  deps: {', '.join(t.depends_on)}" if t.depends_on else ""
+        typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{sup}")
+    tail = ""
+    if progress["next_actionable"]:
+        tail = " · next: " + ", ".join(progress["next_actionable"])
+    typer.echo(f"\n{progress['done']}/{progress['total']} done{tail}")
+
+
 def main() -> None:
     app()

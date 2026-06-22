@@ -865,3 +865,34 @@ def test_advance_plan_to_execute(tmp_path, monkeypatch):
     assert data["from"] == "plan" and data["to"] == "execute"
     plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
     assert "status: complete" in plan_md
+
+
+def test_task_progress_verbs_and_list(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    r = runner.invoke(app, ["task", "start", "T-01", "--json"])
+    assert _json.loads(r.output)["progress"] == "in_progress"
+    r = runner.invoke(app, ["task", "done", "T-01"])
+    assert r.exit_code == 0
+    r = runner.invoke(app, ["task", "list", "--json"])
+    data = _json.loads(r.output)
+    assert data["tasks"][0]["progress"] == "done"
+    assert data["progress"]["all_done"] is True
+
+
+def test_task_block_records_reason(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    r = runner.invoke(app, ["task", "block", "T-01", "--reason", "waiting on API"])
+    assert r.exit_code == 0
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "- Progress: blocked" in plan_md
+    assert "- Blocked: waiting on API" in plan_md

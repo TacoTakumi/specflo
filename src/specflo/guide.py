@@ -52,6 +52,16 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Create the plan.md artifact."},
     {"name": "task add", "group": "workflow", "args": "",
      "summary": "Record a plan task (T-NN)."},
+    {"name": "task start", "group": "workflow", "args": "<T-NN>",
+     "summary": "Mark a task in_progress."},
+    {"name": "task done", "group": "workflow", "args": "<T-NN>",
+     "summary": "Mark a task done."},
+    {"name": "task block", "group": "workflow", "args": "<T-NN>",
+     "summary": "Mark a task blocked."},
+    {"name": "task reopen", "group": "workflow", "args": "<T-NN>",
+     "summary": "Return a task to pending."},
+    {"name": "task list", "group": "workflow", "args": "",
+     "summary": "List tasks, progress, and the next actionable."},
 ]
 
 
