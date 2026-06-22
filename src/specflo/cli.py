@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, config, guide as guide_module, projects, spec, workflow
+from . import brainstorm, checkpoint, config, guide as guide_module, projects, spec, workflow
 from .errors import SpecfloError
 
 
@@ -335,6 +335,26 @@ def guide_(
         "drive the\n  conversation; these commands are the seam they call.",
     ]
     typer.echo("\n".join(lines))
+
+
+@app.command(name="checkpoint", epilog="Example: specflo checkpoint --json")
+def checkpoint_(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Print the resume prompt (and refresh checkpoint.md) for the active project."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        project = projects.load_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    payload = checkpoint.build_checkpoint(root, project)
+    checkpoint.write_checkpoint(root, project)
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        typer.echo(checkpoint.render_checkpoint(payload))
 
 
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")

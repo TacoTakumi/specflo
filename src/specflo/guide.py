@@ -34,6 +34,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show the active project, its phase, and what's next."},
     {"name": "guide", "group": "setup", "args": "",
      "summary": "Show this overview of specflo and what to do next."},
+    {"name": "checkpoint", "group": "setup", "args": "",
+     "summary": "Print the resume prompt; refresh checkpoint.md."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",

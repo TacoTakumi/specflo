@@ -603,3 +603,38 @@ def test_validate_spec_json_reports_not_ready(cwd):
     data = json.loads(runner.invoke(app, ["validate", "spec", "--json"]).output)
     assert data["ready"] is False
     assert data["issues"]
+
+
+def test_checkpoint_prints_the_resume_prompt(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["checkpoint"])
+    assert result.exit_code == 0
+    assert "Checkpoint" in result.output
+    assert "Read first" in result.output
+    assert "my-thing" in result.output
+
+
+def test_checkpoint_writes_the_file(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["checkpoint"])
+    path = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    assert path.is_file()
+    assert "phase: brainstorm" in path.read_text()
+
+
+def test_checkpoint_json(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = json.loads(runner.invoke(app, ["checkpoint", "--json"]).output)
+    assert data["project"] == "my-thing"
+    assert data["phase"] == "brainstorm"
+    assert data["read_first"][0].endswith("project.md")
+    assert data["path"].endswith("checkpoint.md")
+
+
+def test_checkpoint_without_active_project_fails(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["checkpoint"])
+    assert result.exit_code != 0
