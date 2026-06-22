@@ -277,6 +277,8 @@ def status(
             checkpoint.checkpoint_path(root, cfg, project.slug), root
         ),
     }
+    if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
+        info["progress"] = plan.plan_progress(root, cfg, project.slug)
     if json_output:
         typer.echo(json.dumps(info))
     else:
@@ -288,6 +290,10 @@ def status(
         typer.echo(f"Project: {label}")
         typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
         typer.echo(f"Phase:   {project.phase}")
+        if "progress" in info:
+            p = info["progress"]
+            nxt = " · next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
+            typer.echo(f"Tasks:   {p['done']}/{p['total']} done{nxt}")
         typer.echo(f"Next:    {info['next_step']}")
         typer.echo("Resume:  specflo checkpoint")
 

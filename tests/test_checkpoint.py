@@ -54,3 +54,20 @@ def test_write_checkpoint_writes_and_overwrites(tmp_path):
     checkpoint.write_checkpoint(tmp_path, project, today="2026-06-21")
     assert "phase: spec" in path.read_text()
     assert path.read_text() != first
+
+
+def test_checkpoint_names_next_task_at_plan_phase(tmp_path):
+    from specflo import checkpoint, config, plan, projects, spec
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-06-22")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-06-22")
+    spec.add_requirement(tmp_path, cfg, "thing", "r", acceptance="a", today="2026-06-22")
+    # move to plan phase by hand (advance is tested elsewhere)
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: plan"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-06-22")
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    project = projects.load_project(tmp_path, cfg, "thing")
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-22")
+    assert "T-01" in payload["do_next"]

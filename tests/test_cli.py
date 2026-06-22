@@ -896,3 +896,16 @@ def test_task_block_records_reason(tmp_path, monkeypatch):
     plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
     assert "- Progress: blocked" in plan_md
     assert "- Blocked: waiting on API" in plan_md
+
+
+def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["progress"]["total"] == 1
+    out = runner.invoke(app, ["status"]).output
+    assert "Tasks:" in out and "next: T-01" in out
