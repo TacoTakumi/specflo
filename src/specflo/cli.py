@@ -511,11 +511,24 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
+    cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
+
     if json_output:
-        typer.echo(json.dumps({"advanced": True, "from": from_phase, "to": updated.phase}))
+        typer.echo(
+            json.dumps(
+                {
+                    "advanced": True,
+                    "from": from_phase,
+                    "to": updated.phase,
+                    "checkpoint": cp_display,
+                }
+            )
+        )
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
-        typer.echo(f"Next: {workflow.next_step(updated.phase)}")
+        typer.echo(f"Next:    {workflow.next_step(updated.phase)}")
+        typer.echo(f"Checkpoint saved: {cp_display}")
+        typer.echo("Resume anytime: specflo checkpoint")
 
 
 @spec_app.command("start", epilog="Example: specflo spec start")

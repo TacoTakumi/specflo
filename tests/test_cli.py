@@ -447,7 +447,10 @@ def test_advance_json_success_shape(cwd):
     result = runner.invoke(app, ["advance", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
-    assert data == {"advanced": True, "from": "brainstorm", "to": "spec"}
+    assert data["advanced"] is True
+    assert data["from"] == "brainstorm"
+    assert data["to"] == "spec"
+    assert data["checkpoint"].endswith("checkpoint.md")
 
 
 def test_advance_json_gate_failure_shape(cwd):
@@ -668,3 +671,21 @@ def test_requirement_add_refreshes_the_checkpoint(cwd):
     text = path.read_text()
     assert "phase: spec" in text
     assert "spec.md" in text
+
+
+def test_advance_writes_checkpoint_and_points_to_it(cwd):
+    _ready_brainstorm(cwd)
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code == 0
+    assert "Checkpoint saved" in result.output
+    assert "specflo checkpoint" in result.output
+    path = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    assert path.is_file()
+    assert "phase: spec" in path.read_text()   # reflects the NEW phase
+
+
+def test_advance_json_includes_the_checkpoint_path(cwd):
+    _ready_brainstorm(cwd)
+    data = json.loads(runner.invoke(app, ["advance", "--json"]).output)
+    assert data["advanced"] is True
+    assert data["checkpoint"].endswith("checkpoint.md")
