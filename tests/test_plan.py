@@ -225,3 +225,35 @@ def test_complete_plan_flips_status_and_leaves_tasks_untouched(root, cfg, projec
 def test_complete_plan_without_file_raises(root, cfg, project):
     with pytest.raises(SpecfloError):
         plan.complete_plan(root, cfg, project)
+
+
+def test_progress_transitions(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")  # T-01
+    plan.start_task(root, cfg, project, "T-01")
+    assert "- Progress: in_progress" in _ppath(root, cfg, project).read_text()
+    plan.done_task(root, cfg, project, "T-01")
+    assert "- Progress: done" in _ppath(root, cfg, project).read_text()
+    plan.block_task(root, cfg, project, "T-01", reason="waiting on API")
+    text = _ppath(root, cfg, project).read_text()
+    assert "- Progress: blocked" in text
+    assert "- Blocked: waiting on API" in text
+    plan.reopen_task(root, cfg, project, "T-01")
+    text = _ppath(root, cfg, project).read_text()
+    assert "- Progress: pending" in text
+    assert "Blocked" not in text  # cleared on reopen
+
+
+def test_transition_on_unknown_or_superseded_task_raises(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "old", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                                # T-01
+    plan.add_task(root, cfg, project, "new", acceptance="b", verify="v",
+                  implements=["REQ-01"], supersedes="T-01", today="2026-06-22")             # T-02
+    with pytest.raises(SpecfloError):
+        plan.start_task(root, cfg, project, "T-99")
+    with pytest.raises(SpecfloError):
+        plan.start_task(root, cfg, project, "T-01")  # superseded -> frozen

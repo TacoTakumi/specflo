@@ -331,3 +331,46 @@ def add_task(
         implements=implements, depends_on=depends_on, files=files, scope=scope,
         progress="pending", status="active", supersedes=supersedes,
     )
+
+
+def _set_progress(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
+    progress: str, reason: str | None = None, today: str | None = None,
+) -> Task:
+    if progress not in PROGRESS_STATES:
+        raise SpecfloError(f"Unknown progress state {progress!r}.")
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+    if task is None:
+        raise SpecfloError(f"No task {task_id}.")
+    if task.status != "active":
+        raise SpecfloError(f"Task {task_id} is superseded; its progress is frozen.")
+    doc = markdown.set_entry_field(doc, task_id, "Progress", progress)
+    if progress == "blocked" and reason:
+        doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
+    else:
+        doc = markdown.clear_entry_field(doc, task_id, "Blocked")
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+    task.progress = progress
+    task.blocked = reason if progress == "blocked" else None
+    return task
+
+
+def start_task(root, cfg, slug, task_id, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "in_progress", today=today)
+
+
+def done_task(root, cfg, slug, task_id, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "done", today=today)
+
+
+def block_task(root, cfg, slug, task_id, reason=None, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "blocked", reason=reason, today=today)
+
+
+def reopen_task(root, cfg, slug, task_id, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "pending", today=today)
