@@ -203,6 +203,24 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     return issues
 
 
+def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """Return non-blocking scope-reduction warnings for active tasks."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return []
+    warnings: list[str] = []
+    for t in _parse_tasks(path.read_text()):
+        if t.status != "active":
+            continue
+        haystack = f"{t.text} {t.acceptance} {t.verify}".lower()
+        for term in _SCOPE_REDUCTION_TERMS:
+            if re.search(rf"\b{re.escape(term)}\b", haystack):
+                warnings.append(
+                    f'{t.id} may reduce scope ("{term}") — deliver what the requirement needs, or split.'
+                )
+    return warnings
+
+
 def start_plan(
     root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
 ) -> tuple[Path, bool]:

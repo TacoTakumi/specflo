@@ -191,3 +191,19 @@ def test_validate_ignores_superseded_tasks(root, cfg, project):
     path = _ppath(root, cfg, project)
     path.write_text(path.read_text().replace("- Acceptance: a", "- Acceptance: "))
     assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_plan_warnings_flags_scope_reduction_vocab(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "ship a stub for now",
+                  acceptance="returns a value", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    warnings = plan.plan_warnings(root, cfg, project)
+    assert any("stub" in w for w in warnings)
+    assert any("for now" in w for w in warnings)
+
+
+def test_plan_warnings_empty_on_clean_plan(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.plan_warnings(root, cfg, project) == []
