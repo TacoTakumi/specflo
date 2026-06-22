@@ -241,6 +241,19 @@ def _active_requirement_ids(root: Path, cfg: SpecfloConfig, slug: str) -> list[s
     return spec_mod.active_requirement_ids(sp.read_text())
 
 
+def complete_plan(
+    root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
+) -> None:
+    """Mark the plan complete (``status: draft → complete``); bump ``updated``."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    doc = re.sub(r"(?m)^status:.*$", "status: complete", doc, count=1)
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+
+
 def add_task(
     root: Path,
     cfg: SpecfloConfig,

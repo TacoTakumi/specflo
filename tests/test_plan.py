@@ -207,3 +207,21 @@ def test_plan_warnings_flags_scope_reduction_vocab(root, cfg, project):
 def test_plan_warnings_empty_on_clean_plan(root, cfg, project):
     _good_plan(root, cfg, project)
     assert plan.plan_warnings(root, cfg, project) == []
+
+
+def test_complete_plan_flips_status_and_leaves_tasks_untouched(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    plan.complete_plan(root, cfg, project, today="2026-06-24")
+    text = _ppath(root, cfg, project).read_text()
+    assert "status: complete" in text
+    assert "status: draft" not in text
+    assert "updated: 2026-06-24" in text
+    assert "- Status: active" in text   # task entry untouched
+
+
+def test_complete_plan_without_file_raises(root, cfg, project):
+    with pytest.raises(SpecfloError):
+        plan.complete_plan(root, cfg, project)
