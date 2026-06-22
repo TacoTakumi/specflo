@@ -257,3 +257,34 @@ def test_transition_on_unknown_or_superseded_task_raises(root, cfg, project):
         plan.start_task(root, cfg, project, "T-99")
     with pytest.raises(SpecfloError):
         plan.start_task(root, cfg, project, "T-01")  # superseded -> frozen
+
+
+def test_plan_progress_is_dependency_aware(root, cfg, project):
+    _good_plan(root, cfg, project)  # T-01, T-02 (T-02 depends on T-01)
+    prog = plan.plan_progress(root, cfg, project)
+    assert prog["total"] == 2
+    assert prog["by_state"]["pending"] == 2
+    assert prog["next_actionable"] == ["T-01"]  # T-02 blocked by its dep
+    assert prog["all_done"] is False
+    plan.done_task(root, cfg, project, "T-01")
+    prog = plan.plan_progress(root, cfg, project)
+    assert prog["done"] == 1
+    assert prog["next_actionable"] == ["T-02"]  # dep now satisfied
+    plan.done_task(root, cfg, project, "T-02")
+    assert plan.plan_progress(root, cfg, project)["all_done"] is True
+
+
+def test_plan_progress_zero_when_no_plan(root, cfg, project):
+    prog = plan.plan_progress(root, cfg, project)
+    assert prog["total"] == 0 and prog["all_done"] is False
+
+
+def test_list_tasks_hides_superseded_by_default(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "old", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                                # T-01
+    plan.add_task(root, cfg, project, "new", acceptance="b", verify="v",
+                  implements=["REQ-01"], supersedes="T-01", today="2026-06-22")             # T-02
+    assert [t.id for t in plan.list_tasks(root, cfg, project)] == ["T-02"]
+    assert [t.id for t in plan.list_tasks(root, cfg, project, include_superseded=True)] == ["T-01", "T-02"]

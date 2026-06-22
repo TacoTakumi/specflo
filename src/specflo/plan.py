@@ -374,3 +374,43 @@ def block_task(root, cfg, slug, task_id, reason=None, today=None) -> Task:
 
 def reopen_task(root, cfg, slug, task_id, today=None) -> Task:
     return _set_progress(root, cfg, slug, task_id, "pending", today=today)
+
+
+def _progress_from_tasks(active: list[Task]) -> dict:
+    by_state = {s: 0 for s in PROGRESS_STATES}
+    for t in active:
+        by_state[t.progress if t.progress in by_state else "pending"] += 1
+    done_ids = {t.id for t in active if t.progress == "done"}
+    next_actionable = [
+        t.id for t in active
+        if t.progress == "pending" and all(d in done_ids for d in t.depends_on)
+    ]
+    total = len(active)
+    return {
+        "total": total,
+        "by_state": by_state,
+        "done": by_state["done"],
+        "next_actionable": next_actionable,
+        "all_done": total > 0 and by_state["done"] == total,
+    }
+
+
+def progress_from_doc(doc: str) -> dict:
+    return _progress_from_tasks([t for t in _parse_tasks(doc) if t.status == "active"])
+
+
+def plan_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    path = plan_path(root, cfg, slug)
+    return progress_from_doc(path.read_text() if path.is_file() else "")
+
+
+def list_tasks(
+    root: Path, cfg: SpecfloConfig, slug: str, include_superseded: bool = False
+) -> list[Task]:
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    tasks = _parse_tasks(path.read_text())
+    if include_superseded:
+        return tasks
+    return [t for t in tasks if t.status == "active"]
