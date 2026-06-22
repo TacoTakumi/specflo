@@ -95,20 +95,57 @@ def next_id(doc: str, prefix: str) -> str:
     return f"{prefix}{nxt:02d}"
 
 
-def mark_superseded(doc: str, item_id: str, by_id: str) -> str:
-    """Flip the ``- Status:`` line of the ``### <item_id> —`` entry to superseded."""
+def set_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
+    """Set the ``- {field}:`` line of the ``### {item_id} —`` entry to *value*.
+
+    Updates the existing field line in place if present; otherwise inserts a new
+    ``- {field}: {value}`` line after the entry's last ``- `` metadata line
+    (before the next ``###``/``## `` header). Fence-aware via the heading scan.
+    """
     lines = doc.splitlines(keepends=True)
     start = next(
         i for i, line, in_fence in iter_lines_with_fence(doc)
         if not in_fence and line.startswith(f"### {item_id} —")
     )
+    end = len(lines)
     for i in range(start + 1, len(lines)):
         if lines[i].startswith("### ") or lines[i].startswith("## "):
+            end = i
             break
-        if lines[i].startswith("- Status:"):
-            lines[i] = f"- Status: superseded by {by_id}\n"
+    for i in range(start + 1, end):
+        if lines[i].startswith(f"- {field}:"):
+            lines[i] = f"- {field}: {value}\n"
+            return "".join(lines)
+    insert_at = start + 1
+    for i in range(start + 1, end):
+        if lines[i].startswith("- "):
+            insert_at = i + 1
+    lines.insert(insert_at, f"- {field}: {value}\n")
+    return "".join(lines)
+
+
+def clear_entry_field(doc: str, item_id: str, field: str) -> str:
+    """Remove the ``- {field}:`` line from the ``### {item_id} —`` entry, if present."""
+    lines = doc.splitlines(keepends=True)
+    start = next(
+        i for i, line, in_fence in iter_lines_with_fence(doc)
+        if not in_fence and line.startswith(f"### {item_id} —")
+    )
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("### ") or lines[i].startswith("## "):
+            end = i
+            break
+    for i in range(start + 1, end):
+        if lines[i].startswith(f"- {field}:"):
+            del lines[i]
             break
     return "".join(lines)
+
+
+def mark_superseded(doc: str, item_id: str, by_id: str) -> str:
+    """Flip the ``- Status:`` line of the ``### <item_id> —`` entry to superseded."""
+    return set_entry_field(doc, item_id, "Status", f"superseded by {by_id}")
 
 
 def bump_updated(doc: str, today: str | None = None) -> str:

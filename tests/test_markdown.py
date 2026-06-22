@@ -43,3 +43,41 @@ def test_section_body_is_level_aware():
     # H2 'Boundaries' spans its H3 children
     boundaries = markdown.section_body(doc, "## Boundaries")
     assert "### In scope" in boundaries and "### Out of scope" in boundaries
+
+
+_ENTRY = (
+    "## Tasks\n\n"
+    "### T-01 — first\n"
+    "- Acceptance: passes\n"
+    "- Progress: pending\n"
+    "- Status: active\n\n"
+    "### T-02 — second\n"
+    "- Progress: pending\n"
+    "- Status: active\n"
+)
+
+
+def test_set_entry_field_updates_existing_line():
+    out = markdown.set_entry_field(_ENTRY, "T-01", "Progress", "done")
+    assert "### T-01 — first\n- Acceptance: passes\n- Progress: done\n" in out
+    # only the named entry changes
+    assert "### T-02 — second\n- Progress: pending\n" in out
+
+
+def test_set_entry_field_inserts_when_missing():
+    out = markdown.set_entry_field(_ENTRY, "T-01", "Blocked", "waiting on API")
+    assert "- Blocked: waiting on API\n" in out
+    # inserted within the T-01 block, before T-02
+    assert out.index("- Blocked: waiting on API") < out.index("### T-02")
+
+
+def test_clear_entry_field_removes_line():
+    blocked = markdown.set_entry_field(_ENTRY, "T-01", "Blocked", "x")
+    out = markdown.clear_entry_field(blocked, "T-01", "Blocked")
+    assert "Blocked" not in out
+
+
+def test_mark_superseded_still_flips_status():
+    out = markdown.mark_superseded(_ENTRY, "T-01", "T-02")
+    assert "### T-01 — first" in out
+    assert "- Status: superseded by T-02\n" in out
