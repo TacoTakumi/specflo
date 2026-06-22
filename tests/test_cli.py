@@ -1,4 +1,5 @@
 import json
+import json as _json
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,51 @@ from specflo import config
 from specflo.cli import app
 
 runner = CliRunner()
+
+
+def _new_project_with_spec(runner, app):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    runner.invoke(app, ["advance"])  # brainstorm -> spec (validate brainstorm passes by default)
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "store data",
+                        "--acceptance", "data survives restart", "--from", "D-01"])
+
+
+def test_plan_start_and_task_add(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _new_project_with_spec(runner, app)
+    # advance spec -> plan first (fill boundaries so validate spec passes)
+    spec_md = tmp_path / "docs" / "projects" / "thing" / "spec.md"
+    spec_md.write_text(spec_md.read_text()
+                       .replace("### In scope\n<!-- required, non-empty -->",
+                                "### In scope\n- the thing.")
+                       .replace("### Out of scope\n"
+                                "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+                                "### Out of scope\n- other things."))
+    runner.invoke(app, ["advance"])  # spec -> plan
+    r = runner.invoke(app, ["plan", "start"])
+    assert r.exit_code == 0
+    r = runner.invoke(app, ["task", "add", "--text", "build it",
+                            "--acceptance", "it works", "--verify", "uv run pytest",
+                            "--from", "REQ-01", "--json"])
+    assert r.exit_code == 0
+    data = _json.loads(r.output)
+    assert data["id"] == "T-01"
+    assert data["implements"] == ["REQ-01"]
+
+
+def test_task_add_requires_from(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _new_project_with_spec(runner, app)
+    runner.invoke(app, ["plan", "start"])  # phase still spec, but start is allowed once active
+    r = runner.invoke(app, ["task", "add", "--text", "x",
+                            "--acceptance", "a", "--verify", "v"])
+    assert r.exit_code != 0  # --from is required
 
 
 @pytest.fixture

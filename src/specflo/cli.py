@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, checkpoint, config, guide as guide_module, projects, spec, workflow
+from . import brainstorm, checkpoint, config, guide as guide_module, plan, projects, spec, workflow
 from .errors import SpecfloError
 
 
@@ -82,6 +82,12 @@ app.add_typer(spec_app, name="spec")
 
 requirement_app = typer.Typer(help="Capture spec requirements.")
 app.add_typer(requirement_app, name="requirement")
+
+plan_app = typer.Typer(help="Work with the plan artifact.")
+app.add_typer(plan_app, name="plan")
+
+task_app = typer.Typer(help="Capture plan tasks and track their progress.")
+app.add_typer(task_app, name="task")
 
 
 def _die(message: str) -> typer.Exit:
@@ -601,6 +607,70 @@ def requirement_add(
             message += f" Derives from {requirement.derives_from}."
         if requirement.supersedes:
             message += f" Supersedes {requirement.supersedes}."
+        typer.echo(message)
+
+
+@plan_app.command("start", epilog="Example: specflo plan start")
+def plan_start(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Create (or locate) the active project's plan.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        path, created = plan.start_plan(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"path": str(path), "created": created}))
+    else:
+        note = "" if created else " (already started)"
+        typer.echo(f"{path}{note}")
+
+
+@task_app.command(
+    "add",
+    epilog='Example: specflo task add --text "Build X" --acceptance "X works" --verify "uv run pytest" --from REQ-01',
+)
+def task_add(
+    text: str = typer.Option(..., "--text", help="The task title (one line)."),
+    acceptance: str = typer.Option(..., "--acceptance", help="Pass/fail acceptance criterion (required)."),
+    verify: str = typer.Option(..., "--verify", help="Verification command or step (required)."),
+    from_: list[str] = typer.Option(
+        ..., "--from", metavar="REQ-NN", help="Requirement(s) this task implements (repeatable; ≥1)."
+    ),
+    depends_on: list[str] = typer.Option(
+        None, "--depends-on", metavar="T-NN", help="Task(s) this depends on (repeatable)."
+    ),
+    files: str = typer.Option(None, "--files", help="Files likely touched."),
+    scope: str = typer.Option(None, "--scope", help="Estimated scope (Small/Medium/Large)."),
+    supersedes: str = typer.Option(None, "--supersedes", metavar="T-NN", help="The task this replaces."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Append a task (T-NN) to the active project's plan.md."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        task = plan.add_task(
+            root, cfg, slug, text, acceptance, verify,
+            implements=list(from_), depends_on=list(depends_on or []),
+            files=files, scope=scope, supersedes=supersedes,
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({
+            "id": task.id, "implements": task.implements,
+            "depends_on": task.depends_on, "supersedes": task.supersedes,
+        }))
+    else:
+        message = f"Recorded {task.id} (implements {', '.join(task.implements)})."
+        if task.supersedes:
+            message += f" Supersedes {task.supersedes}."
         typer.echo(message)
 
 

@@ -48,6 +48,10 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Lint an artifact (brainstorm|spec) for readiness."},
     {"name": "advance", "group": "workflow", "args": "",
      "summary": "Gate the current artifact, then move to the next phase."},
+    {"name": "plan start", "group": "workflow", "args": "",
+     "summary": "Create the plan.md artifact."},
+    {"name": "task add", "group": "workflow", "args": "",
+     "summary": "Record a plan task (T-NN)."},
 ]
 
 
