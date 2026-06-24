@@ -62,6 +62,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Return a task to pending."},
     {"name": "task list", "group": "workflow", "args": "",
      "summary": "List tasks, progress, and the next actionable."},
+    {"name": "task show", "group": "workflow", "args": "[<T-NN>]",
+     "summary": "Show a task's brief (acceptance + cited REQ-NN + constraints)."},
 ]
 
 

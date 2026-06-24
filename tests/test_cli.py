@@ -936,3 +936,23 @@ def test_validate_execute_reports_reconcile(tmp_path, monkeypatch):
     r = runner.invoke(app, ["validate", "execute", "--json"])
     assert r.exit_code == 1                      # T-01 still pending
     assert "not all tasks are done" in r.output
+
+
+def test_task_show_renders_brief_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "show", "--json"])
+    assert r.exit_code == 0
+    data = _json.loads(r.output)
+    assert data["task"]["id"] == "T-01"
+    assert data["requirements"][0]["id"] == "REQ-01"
+
+
+def test_task_show_defaults_to_next_actionable(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "show"])           # no id
+    assert r.exit_code == 0
+    assert "T-01" in r.output

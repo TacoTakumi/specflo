@@ -810,5 +810,41 @@ def task_list(
     typer.echo(f"\n{progress['done']}/{progress['total']} done{tail}")
 
 
+@task_app.command("show", epilog="Example: specflo task show T-01")
+def task_show(
+    task_id: str = typer.Argument(
+        None, metavar="[<T-NN>]", help="Task to show (default: next actionable)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show a task's brief: acceptance, verify, its cited REQ-NN sections, and Global constraints."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        brief = plan.task_brief(root, cfg, slug, task_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(brief))
+        return
+    t = brief["task"]
+    lines = [
+        f"{t['id']} — {t['text']}  [{t['progress']}]",
+        f"  Acceptance: {t['acceptance']}",
+        f"  Verify:     {t['verify']}",
+        f"  Implements: {', '.join(t['implements'])}",
+    ]
+    if t["depends_on"]:
+        lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
+    lines.append("")
+    for req in brief["requirements"]:
+        lines.append(req["section"].rstrip() if req["section"]
+                     else f"### {req['id']} — (not found in spec)")
+        lines.append("")
+    if brief["global_constraints"]:
+        lines.append("## Global constraints")
+        lines.append(brief["global_constraints"])
+    typer.echo("\n".join(lines))
+
+
 def main() -> None:
     app()
