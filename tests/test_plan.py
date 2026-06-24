@@ -333,3 +333,21 @@ def test_task_brief_unknown_task_raises(root, cfg, project):
     _good_plan(root, cfg, project)
     with pytest.raises(SpecfloError):
         plan.task_brief(root, cfg, project, "T-99")
+
+
+def test_reconcile_requires_all_tasks_done(root, cfg, project):
+    _good_plan(root, cfg, project)   # T-01, T-02 both pending
+    assert any("not all tasks are done" in i
+               for i in plan.reconcile_issues(root, cfg, project))
+    for tid in ("T-01", "T-02"):
+        plan.start_task(root, cfg, project, tid)
+        plan.done_task(root, cfg, project, tid)
+    assert plan.reconcile_issues(root, cfg, project) == []
+
+
+def test_reconcile_surfaces_coverage_issues(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=2)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "only a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")   # REQ-02 uncovered
+    assert any("REQ-02" in i for i in plan.reconcile_issues(root, cfg, project))

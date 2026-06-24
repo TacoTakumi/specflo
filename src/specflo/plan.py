@@ -203,6 +203,25 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     return issues
 
 
+def reconcile_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """Issues blocking execute-phase completion: the plan must still validate AND
+    every active task must be done. Empty == ready to complete the project."""
+    issues = validate_plan(root, cfg, slug)
+    if issues:
+        return issues
+    active = [
+        t for t in _parse_tasks(plan_path(root, cfg, slug).read_text())
+        if t.status == "active"
+    ]
+    not_done = [t.id for t in active if t.progress != "done"]
+    if not_done:
+        issues.append(
+            "not all tasks are done: " + ", ".join(not_done)
+            + " (every task must be done before completing execute)."
+        )
+    return issues
+
+
 def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """Return non-blocking scope-reduction warnings for active tasks."""
     path = plan_path(root, cfg, slug)
