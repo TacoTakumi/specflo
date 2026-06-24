@@ -479,7 +479,7 @@ def test_advance_without_active_project_fails(cwd):
     assert result.exit_code != 0
 
 
-def test_advance_past_the_final_phase_fails(cwd):
+def test_advance_at_execute_refused_when_tasks_pending(cwd):
     _ready_spec(cwd)
     runner.invoke(app, ["advance"])  # spec -> plan (gated; spec is ready)
     # plan -> execute is now gated: need a valid plan with at least one task.
@@ -984,6 +984,7 @@ def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     assert "status: complete" in proj_md.read_text()
     # idempotent: a second advance reports already-complete, mutates nothing
     r2 = runner.invoke(app, ["advance", "--json"])
+    assert r2.exit_code == 0
     assert _json.loads(r2.output)["complete"] is True
 
 
