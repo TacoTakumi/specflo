@@ -288,3 +288,34 @@ def test_list_tasks_hides_superseded_by_default(root, cfg, project):
                   implements=["REQ-01"], supersedes="T-01", today="2026-06-22")             # T-02
     assert [t.id for t in plan.list_tasks(root, cfg, project)] == ["T-02"]
     assert [t.id for t in plan.list_tasks(root, cfg, project, include_superseded=True)] == ["T-01", "T-02"]
+
+
+def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=2)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    ppath = _ppath(root, cfg, project)
+    ppath.write_text(ppath.read_text().replace(
+        "## Global constraints\n"
+        "<!-- optional; project-wide invariants copied verbatim from the spec,"
+        " implicitly part of every task -->",
+        "## Global constraints\n- Python 3.12; use uv."))
+    plan.add_task(root, cfg, project, "build a", acceptance="a works",
+                  verify="uv run pytest", implements=["REQ-01"], today="2026-06-22")  # T-01
+    brief = plan.task_brief(root, cfg, project, "T-01")
+    assert brief["task"]["id"] == "T-01"
+    assert brief["task"]["acceptance"] == "a works"
+    assert brief["requirements"][0]["id"] == "REQ-01"
+    assert "REQ-01" in brief["requirements"][0]["section"]
+    assert "Python 3.12" in brief["global_constraints"]
+
+
+def test_task_brief_defaults_to_first_next_actionable(root, cfg, project):
+    _good_plan(root, cfg, project)   # T-01, then T-02 (depends on T-01)
+    brief = plan.task_brief(root, cfg, project)   # no id -> first actionable
+    assert brief["task"]["id"] == "T-01"          # T-02 blocked by T-01
+
+
+def test_task_brief_unknown_task_raises(root, cfg, project):
+    _good_plan(root, cfg, project)
+    with pytest.raises(SpecfloError):
+        plan.task_brief(root, cfg, project, "T-99")

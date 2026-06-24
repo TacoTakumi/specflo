@@ -414,3 +414,50 @@ def list_tasks(
     if include_superseded:
         return tasks
     return [t for t in tasks if t.status == "active"]
+
+
+def task_brief(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str | None = None
+) -> dict:
+    """Assemble the progressive-disclosure brief for one task: its own entry, the
+    full text of each cited REQ-NN section, and the plan's Global constraints.
+
+    ``task_id`` defaults to the first ``next_actionable`` task. Raises
+    SpecfloError if there is no such active task.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    if task_id is None:
+        actionable = _progress_from_tasks(active)["next_actionable"]
+        if not actionable:
+            raise SpecfloError(
+                "No actionable task (all done, or remaining tasks are blocked "
+                "or waiting on dependencies). See `specflo task list`."
+            )
+        task_id = actionable[0]
+    task = next((t for t in active if t.id == task_id), None)
+    if task is None:
+        raise SpecfloError(f"No active task {task_id}.")
+
+    sp = spec_mod.spec_path(root, cfg, slug)
+    spec_doc = sp.read_text() if sp.is_file() else ""
+    requirements = [
+        {"id": req, "section": spec_mod.requirement_section(spec_doc, req)}
+        for req in task.implements
+    ]
+    constraints = markdown.strip_comments(
+        markdown.section_body(doc, "## Global constraints") or ""
+    ).strip() or None
+    return {
+        "task": {
+            "id": task.id, "text": task.text, "acceptance": task.acceptance,
+            "verify": task.verify, "implements": task.implements,
+            "depends_on": task.depends_on, "files": task.files,
+            "scope": task.scope, "progress": task.progress,
+        },
+        "requirements": requirements,
+        "global_constraints": constraints,
+    }
