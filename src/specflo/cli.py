@@ -132,6 +132,21 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
         pass
 
 
+# Phase/artifact registries. Defined once so `validate` and `advance` agree.
+VALIDATORS = {
+    "brainstorm": brainstorm.validate_brainstorm,
+    "spec": spec.validate_spec,
+    "plan": plan.validate_plan,
+    "execute": plan.reconcile_issues,
+}
+WARNERS = {"plan": plan.plan_warnings}
+GATES = {
+    "brainstorm": (brainstorm.validate_brainstorm, brainstorm.complete_brainstorm),
+    "spec": (spec.validate_spec, spec.complete_spec),
+    "plan": (plan.validate_plan, plan.complete_plan),
+}
+
+
 @app.command(epilog="Example: specflo init --projects-dir docs/projects")
 def init(
     projects_dir: str = typer.Option(
@@ -445,7 +460,8 @@ def decision_add(
 @app.command(epilog="Example: specflo validate spec")
 def validate(
     artifact: str = typer.Argument(
-        ..., metavar="<artifact>", help="Artifact to validate: brainstorm, spec, or plan."
+        ..., metavar="<artifact>",
+        help="Artifact/phase to validate: brainstorm, spec, plan, or execute."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
@@ -453,20 +469,12 @@ def validate(
     root = _require_root()
     cfg = config.load_config(root)
     slug = _require_active(cfg)
-    validators = {
-        "brainstorm": brainstorm.validate_brainstorm,
-        "spec": spec.validate_spec,
-        "plan": plan.validate_plan,
-    }
-    warners = {
-        "plan": plan.plan_warnings,
-    }
-    validator = validators.get(artifact)
+    validator = VALIDATORS.get(artifact)
     if validator is None:
-        known = ", ".join(sorted(validators))
+        known = ", ".join(sorted(VALIDATORS))
         raise _die(f"Unknown artifact {artifact!r}. Known: {known}.")
     issues = validator(root, cfg, slug)
-    warner = warners.get(artifact)
+    warner = WARNERS.get(artifact)
     warnings = warner(root, cfg, slug) if warner is not None else []
     if json_output:
         payload = {"ready": not issues, "issues": issues}

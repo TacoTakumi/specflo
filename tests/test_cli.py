@@ -805,6 +805,24 @@ def test_checkpoint_lifecycle_smoke(cwd):
     assert "phase: spec" in out
 
 
+def _project_at_execute(runner, app, tmp_path):
+    """Drive a fresh project to the execute phase with one pending task T-01."""
+    _new_project_with_spec(runner, app)
+    spec_md = tmp_path / "docs" / "projects" / "thing" / "spec.md"
+    spec_md.write_text(spec_md.read_text()
+        .replace("### In scope\n<!-- required, non-empty -->",
+                 "### In scope\n- the thing.")
+        .replace("### Out of scope\n"
+                 "<!-- required, non-empty; carried from the brainstorm's "
+                 "Out of scope / Deferred -->",
+                 "### Out of scope\n- other things."))
+    runner.invoke(app, ["advance"])                 # spec -> plan
+    runner.invoke(app, ["plan", "start"])
+    runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                        "it works", "--verify", "true", "--from", "REQ-01"])  # T-01
+    runner.invoke(app, ["advance"])                 # plan -> execute
+
+
 def _project_at_plan_phase(runner, app, tmp_path):
     _new_project_with_spec(runner, app)
     # _new_project_with_spec leaves us at brainstorm phase (OOS empty, advance fails).
@@ -909,3 +927,12 @@ def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     assert data["progress"]["total"] == 1
     out = runner.invoke(app, ["status"]).output
     assert "Tasks:" in out and "next: T-01" in out
+
+
+def test_validate_execute_reports_reconcile(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["validate", "execute", "--json"])
+    assert r.exit_code == 1                      # T-01 still pending
+    assert "not all tasks are done" in r.output
