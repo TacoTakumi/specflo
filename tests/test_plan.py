@@ -246,6 +246,18 @@ def test_progress_transitions(root, cfg, project):
     assert "Blocked" not in text  # cleared on reopen
 
 
+def test_done_requires_in_progress(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")   # T-01 pending
+    with pytest.raises(SpecfloError):
+        plan.done_task(root, cfg, project, "T-01")             # pending -> done refused
+    plan.start_task(root, cfg, project, "T-01")
+    plan.done_task(root, cfg, project, "T-01")                 # in_progress -> done ok
+    assert "- Progress: done" in _ppath(root, cfg, project).read_text()
+
+
 def test_transition_on_unknown_or_superseded_task_raises(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=1)
     plan.start_plan(root, cfg, project, today="2026-06-22")
@@ -266,10 +278,12 @@ def test_plan_progress_is_dependency_aware(root, cfg, project):
     assert prog["by_state"]["pending"] == 2
     assert prog["next_actionable"] == ["T-01"]  # T-02 blocked by its dep
     assert prog["all_done"] is False
+    plan.start_task(root, cfg, project, "T-01")
     plan.done_task(root, cfg, project, "T-01")
     prog = plan.plan_progress(root, cfg, project)
     assert prog["done"] == 1
     assert prog["next_actionable"] == ["T-02"]  # dep now satisfied
+    plan.start_task(root, cfg, project, "T-02")
     plan.done_task(root, cfg, project, "T-02")
     assert plan.plan_progress(root, cfg, project)["all_done"] is True
 

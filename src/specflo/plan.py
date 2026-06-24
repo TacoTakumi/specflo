@@ -348,6 +348,11 @@ def _set_progress(
         raise SpecfloError(f"No task {task_id}.")
     if task.status != "active":
         raise SpecfloError(f"Task {task_id} is superseded; its progress is frozen.")
+    if progress == "done" and task.progress != "in_progress":
+        raise SpecfloError(
+            f"{task_id} must be in_progress before it can be done "
+            f"(run `specflo task start {task_id}` first)."
+        )
     doc = markdown.set_entry_field(doc, task_id, "Progress", progress)
     if progress == "blocked" and reason:
         doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
