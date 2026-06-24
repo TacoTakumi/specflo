@@ -28,3 +28,20 @@ def test_unknown_phase_raises_value_error():
         workflow.next_phase("nonsense")
     with pytest.raises(ValueError):
         workflow.next_step("nonsense")
+
+
+def test_next_step_single_arg_unchanged():
+    for phase in workflow.PHASES:
+        assert isinstance(workflow.next_step(phase), str)
+    # plan/execute base strings unchanged when called single-arg
+    assert workflow.next_step("execute") == workflow.next_step("execute", progress=None)
+
+
+def test_next_step_execute_is_progress_aware():
+    pending = {"total": 2, "all_done": False, "next_actionable": ["T-01"]}
+    assert "T-01" in workflow.next_step("execute", progress=pending)
+    done = {"total": 2, "all_done": True, "next_actionable": []}
+    assert "final" in workflow.next_step("execute", progress=done).lower()
+    blocked = {"total": 2, "all_done": False, "next_actionable": []}
+    assert "actionable" in workflow.next_step("execute", progress=blocked).lower()
+    assert "complete" in workflow.next_step("execute", complete=True).lower()

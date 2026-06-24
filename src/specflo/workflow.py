@@ -31,7 +31,29 @@ def next_phase(phase: str) -> str | None:
     return None
 
 
-def next_step(phase: str) -> str:
-    """Return a human-readable hint for what to do while in ``phase``."""
+def next_step(phase: str, progress: dict | None = None, complete: bool = False) -> str:
+    """Return a human-readable hint for what to do while in ``phase``.
+
+    For the ``execute`` phase the hint is progress-aware: pass the
+    ``plan_progress`` dict and/or ``complete=True`` (project finished). All other
+    phases ignore ``progress``/``complete`` and return their static hint, so the
+    single-argument form is unchanged.
+    """
     _require_known(phase)
+    if phase == "execute":
+        if complete:
+            return "Project complete. Start the next piece of work with `specflo new`."
+        if progress is not None and progress.get("total", 0) > 0:
+            if progress.get("all_done"):
+                return (
+                    "All tasks done — run the final whole-branch review (fresh "
+                    "context), then `specflo advance` to complete the project."
+                )
+            actionable = progress.get("next_actionable") or []
+            if actionable:
+                return f"Work the next task: {', '.join(actionable)} (`specflo task show`)."
+            return (
+                "Tasks remain but none are actionable — unblock or reopen one "
+                "(`specflo task list`)."
+            )
     return _NEXT_STEP[phase]
