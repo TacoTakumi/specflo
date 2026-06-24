@@ -51,14 +51,21 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     for filename in _ARTIFACT_ORDER:
         if (directory / filename).is_file():
             read_first.append(_relpath(directory / filename, root))
-    do_next = workflow.next_step(project.phase)
     plan_file = directory / plan_module.PLAN_FILENAME
+    prog = None
     if project.phase in ("plan", "execute") and plan_file.is_file():
         prog = plan_module.progress_from_doc(plan_file.read_text())
-        if prog["next_actionable"]:
-            do_next += "  (next task: " + ", ".join(prog["next_actionable"]) + ")"
-        elif prog["all_done"]:
-            do_next += "  (all tasks done)"
+    if project.phase == "execute":
+        do_next = workflow.next_step(
+            "execute", progress=prog, complete=project.status == "complete"
+        )
+    else:
+        do_next = workflow.next_step(project.phase)
+        if project.phase == "plan" and prog is not None:
+            if prog["next_actionable"]:
+                do_next += "  (next task: " + ", ".join(prog["next_actionable"]) + ")"
+            elif prog["all_done"]:
+                do_next += "  (all tasks done)"
     return {
         "project": project.slug,
         "phase": project.phase,

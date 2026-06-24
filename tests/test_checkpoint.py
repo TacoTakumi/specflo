@@ -71,3 +71,20 @@ def test_checkpoint_names_next_task_at_plan_phase(tmp_path):
     project = projects.load_project(tmp_path, cfg, "thing")
     payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-22")
     assert "T-01" in payload["do_next"]
+
+
+def test_checkpoint_execute_phase_progress_aware(tmp_path):
+    from specflo import checkpoint, config, plan, projects, spec
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-06-24")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-06-24")
+    spec.add_requirement(tmp_path, cfg, "thing", "r", acceptance="a", today="2026-06-24")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-06-24")
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-24")     # T-01 pending
+    project = projects.load_project(tmp_path, cfg, "thing")
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-24")
+    assert "T-01" in payload["do_next"]                          # names the next task
+    assert "task show" in payload["do_next"]

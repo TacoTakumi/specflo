@@ -985,3 +985,16 @@ def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     # idempotent: a second advance reports already-complete, mutates nothing
     r2 = runner.invoke(app, ["advance", "--json"])
     assert _json.loads(r2.output)["complete"] is True
+
+
+def test_status_complete_project_is_progress_aware(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    runner.invoke(app, ["advance"])                       # completes the project
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["status"] == "complete"
+    assert "complete" in data["next_step"].lower()
+    assert "complete" in runner.invoke(app, ["status"]).output.lower()

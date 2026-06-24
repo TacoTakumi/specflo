@@ -221,7 +221,8 @@ def list_(
 
     for p in items:
         marker = "*" if p.slug == cfg.active_project else " "
-        typer.echo(f"{marker} {p.slug}  ({p.phase})")
+        suffix = "  ✓ complete" if p.status == "complete" else ""
+        typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
 
 
 @app.command(epilog="Example: specflo switch my-project")
@@ -279,6 +280,11 @@ def status(
             return
         raise _die(str(exc))
 
+    progress = None
+    if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
+        progress = plan.plan_progress(root, cfg, project.slug)
+    complete = project.status == projects.COMPLETE_STATUS
+
     info = {
         "initialized": True,
         "active_project": project.slug,
@@ -287,13 +293,13 @@ def status(
         "phase": project.phase,
         "status": project.status,
         "next_phase": workflow.next_phase(project.phase),
-        "next_step": workflow.next_step(project.phase),
+        "next_step": workflow.next_step(project.phase, progress=progress, complete=complete),
         "checkpoint": _project_dir_display(
             checkpoint.checkpoint_path(root, cfg, project.slug), root
         ),
     }
-    if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
-        info["progress"] = plan.plan_progress(root, cfg, project.slug)
+    if progress is not None:
+        info["progress"] = progress
     if json_output:
         typer.echo(json.dumps(info))
     else:
@@ -304,7 +310,10 @@ def status(
         )
         typer.echo(f"Project: {label}")
         typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
-        typer.echo(f"Phase:   {project.phase}")
+        phase_line = f"Phase:   {project.phase}"
+        if complete:
+            phase_line += "  (complete)"
+        typer.echo(phase_line)
         if "progress" in info:
             p = info["progress"]
             nxt = " · next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
