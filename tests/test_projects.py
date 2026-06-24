@@ -127,3 +127,12 @@ def test_advance_project_at_the_final_phase_raises(root, cfg):
 
     with pytest.raises(SpecfloError):
         projects.advance_project(root, cfg, "my-thing")
+
+
+def test_complete_project_flips_status_idempotently(tmp_path):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing")
+    p = projects.complete_project(tmp_path, cfg, "thing")
+    assert p.status == projects.COMPLETE_STATUS
+    assert projects.load_project(tmp_path, cfg, "thing").status == "complete"
+    assert projects.complete_project(tmp_path, cfg, "thing").status == "complete"

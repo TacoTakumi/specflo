@@ -21,6 +21,7 @@ from .workflow import next_phase
 PROJECT_FILENAME = "project.md"
 INITIAL_PHASE = "brainstorm"
 INITIAL_STATUS = "active"
+COMPLETE_STATUS = "complete"
 
 
 @dataclass
@@ -125,6 +126,14 @@ def advance_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
             f"Project {slug!r} is already at the final phase {project.phase!r}."
         )
     project.phase = nxt
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
+def complete_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
+    """Mark the project complete (terminal). Persists and returns it. Idempotent."""
+    project = load_project(root, cfg, slug)
+    project.status = COMPLETE_STATUS
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 
