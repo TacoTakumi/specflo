@@ -388,8 +388,8 @@ def guide_(
         "Commands:",
         *_render_commands(data),
         "",
-        "Skills:  in a skill-capable harness the `brainstorm`, `spec`, and `plan` "
-        "skills drive the\n  conversation; these commands are the seam they call.",
+        "Skills:  in a skill-capable harness the `brainstorm`, `spec`, `plan`, and "
+        "`execute` skills drive\n  the conversation; these commands are the seam they call.",
     ]
     typer.echo("\n".join(lines))
 

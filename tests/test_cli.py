@@ -998,3 +998,17 @@ def test_status_complete_project_is_progress_aware(tmp_path, monkeypatch):
     assert data["status"] == "complete"
     assert "complete" in data["next_step"].lower()
     assert "complete" in runner.invoke(app, ["status"]).output.lower()
+
+
+def test_execute_loop_end_to_end(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)            # phase: execute, T-01 pending
+    assert "T-01" in runner.invoke(app, ["task", "show"]).output
+    assert runner.invoke(app, ["task", "start", "T-01"]).exit_code == 0
+    assert runner.invoke(app, ["task", "done", "T-01"]).exit_code == 0
+    assert runner.invoke(app, ["validate", "execute"]).exit_code == 0
+    r = runner.invoke(app, ["advance", "--json"])
+    assert _json.loads(r.output)["complete"] is True
+    # guide no longer claims only brainstorm/spec/plan have skills
+    assert "execute" in runner.invoke(app, ["guide"]).output

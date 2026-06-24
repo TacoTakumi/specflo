@@ -27,7 +27,9 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo task block <T-NN> [--reason …]` — mark a task `blocked`, optionally recording why.
 - `specflo task reopen <T-NN>` — return a task to `pending` (clears any block).
 - `specflo task list [--json]` — list all tasks with their progress state and the deps-aware next-actionable marker.
+- `specflo task show [<T-NN>] [--json]` — show a task's brief: acceptance criterion, cited requirements, and constraints. Defaults to the next actionable task.
 - `specflo validate plan [--json]` — lint the plan artifact (bidirectional REQ↔task coverage, every task has acceptance + verification, dependencies resolve and are acyclic).
+- `specflo validate execute [--json]` — reconcile gate: confirms all tasks are done before the project can be completed.
 - `specflo advance [--json]` — validate the current phase's artifact, then move the active project to the next phase (`brainstorm → spec → plan → execute`).
 - `specflo checkpoint [--json]` — print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
 
@@ -49,6 +51,12 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 
   ```bash
   ln -s "$PWD/skills/plan" ~/.claude/skills/plan
+  ```
+
+- **`execute`** (`skills/execute/SKILL.md`) — drives the execute phase over the CLI above (work through tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`). Install by symlinking it into your agent's skills dir:
+
+  ```bash
+  ln -s "$PWD/skills/execute" ~/.claude/skills/execute
   ```
 
 - **`research`** (`skills/research/SKILL.md`) — a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated — searches the Agent Wiki first and saves findings back (soft dependency). Symlink it like the brainstorm skill:

@@ -45,7 +45,7 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "requirement add", "group": "workflow", "args": "",
      "summary": "Record a spec requirement (REQ-NN)."},
     {"name": "validate", "group": "workflow", "args": "<artifact>",
-     "summary": "Lint an artifact (brainstorm|spec) for readiness."},
+     "summary": "Lint an artifact/phase (brainstorm|spec|plan|execute)."},
     {"name": "advance", "group": "workflow", "args": "",
      "summary": "Gate the current artifact, then move to the next phase."},
     {"name": "plan start", "group": "workflow", "args": "",
