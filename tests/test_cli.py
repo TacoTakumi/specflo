@@ -488,9 +488,9 @@ def test_advance_past_the_final_phase_fails(cwd):
                         "--acceptance", "it works", "--verify", "uv run pytest",
                         "--from", "REQ-01"])
     runner.invoke(app, ["advance"])  # plan -> execute (gated; plan is ready)
-    result = runner.invoke(app, ["advance"])  # execute is final
+    result = runner.invoke(app, ["advance"])  # execute is terminal — refused (task pending)
     assert result.exit_code != 0
-    assert "final" in result.output.lower()
+    assert "not all tasks are done" in result.output.lower()
 
 
 def test_advance_json_success_shape(cwd):
@@ -808,6 +808,14 @@ def test_checkpoint_lifecycle_smoke(cwd):
 def _project_at_execute(runner, app, tmp_path):
     """Drive a fresh project to the execute phase with one pending task T-01."""
     _new_project_with_spec(runner, app)
+    # Fill brainstorm OOS so advance brainstorm->spec passes.
+    bs_md = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs_md.write_text(bs_md.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\nNo auth in v0.1.",
+    ))
+    runner.invoke(app, ["advance"])                 # brainstorm -> spec
     spec_md = tmp_path / "docs" / "projects" / "thing" / "spec.md"
     spec_md.write_text(spec_md.read_text()
         .replace("### In scope\n<!-- required, non-empty -->",
@@ -956,3 +964,24 @@ def test_task_show_defaults_to_next_actionable(tmp_path, monkeypatch):
     r = runner.invoke(app, ["task", "show"])           # no id
     assert r.exit_code == 0
     assert "T-01" in r.output
+
+
+def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    # T-01 pending -> advance refuses, nothing mutated
+    assert runner.invoke(app, ["advance"]).exit_code == 1
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    assert "status: active" in proj_md.read_text()
+    # do the task, then advance completes the project
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    r = runner.invoke(app, ["advance", "--json"])
+    assert r.exit_code == 0
+    data = _json.loads(r.output)
+    assert data["complete"] is True and data["to"] is None
+    assert "status: complete" in proj_md.read_text()
+    # idempotent: a second advance reports already-complete, mutates nothing
+    r2 = runner.invoke(app, ["advance", "--json"])
+    assert _json.loads(r2.output)["complete"] is True

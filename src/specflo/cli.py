@@ -510,36 +510,54 @@ def advance(
 
     from_phase = project.phase
     to_phase = workflow.next_phase(from_phase)
-    if to_phase is None:
-        if json_output:
-            typer.echo(json.dumps({"advanced": False, "from": from_phase, "to": None}))
-            raise typer.Exit(code=1)
-        raise _die(f"Project '{slug}' is already at the final phase '{from_phase}'.")
 
-    # Gate: validate (and on success, complete) the leaving artifact. Phases
-    # without an entry here advance ungated until their artifacts exist.
-    gates = {
-        "brainstorm": (brainstorm.validate_brainstorm, brainstorm.complete_brainstorm),
-        "spec": (spec.validate_spec, spec.complete_spec),
-        "plan": (plan.validate_plan, plan.complete_plan),
-    }
-    gate = gates.get(from_phase)
+    # Terminal phase: completing it completes the PROJECT (no phase bump).
+    if to_phase is None:
+        if project.status == projects.COMPLETE_STATUS:
+            if json_output:
+                typer.echo(json.dumps(
+                    {"advanced": False, "from": from_phase, "to": None, "complete": True}))
+            else:
+                typer.echo(f"Project '{slug}' is already complete.")
+            return
+        validator = VALIDATORS.get(from_phase)
+        if validator is not None:
+            issues = validator(root, cfg, slug)
+            if issues:
+                if json_output:
+                    typer.echo(json.dumps(
+                        {"advanced": False, "from": from_phase, "to": None, "issues": issues}))
+                    raise typer.Exit(code=1)
+                typer.secho(f"cannot complete — {from_phase} is not ready:",
+                            fg=typer.colors.YELLOW, err=True)
+                for issue in issues:
+                    typer.echo(f"  - {issue}", err=True)
+                typer.echo("Fix these, then run `specflo advance` again.", err=True)
+                raise typer.Exit(code=1)
+        updated = projects.complete_project(root, cfg, slug)
+        cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
+        if json_output:
+            typer.echo(json.dumps(
+                {"advanced": True, "from": from_phase, "to": None,
+                 "complete": True, "checkpoint": cp_display}))
+        else:
+            typer.echo(f"Completed project '{slug}'.")
+            typer.echo(f"Next:    {workflow.next_step(from_phase, complete=True)}")
+            typer.echo(f"Checkpoint saved: {cp_display}")
+        return
+
+    # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
+    gate = GATES.get(from_phase)
     if gate is not None:
         validator, completer = gate
         issues = validator(root, cfg, slug)
         if issues:
             if json_output:
-                typer.echo(
-                    json.dumps(
-                        {"advanced": False, "from": from_phase, "to": to_phase, "issues": issues}
-                    )
-                )
+                typer.echo(json.dumps(
+                    {"advanced": False, "from": from_phase, "to": to_phase, "issues": issues}))
                 raise typer.Exit(code=1)
-            typer.secho(
-                f"cannot advance — {from_phase} is not ready:",
-                fg=typer.colors.YELLOW,
-                err=True,
-            )
+            typer.secho(f"cannot advance — {from_phase} is not ready:",
+                        fg=typer.colors.YELLOW, err=True)
             for issue in issues:
                 typer.echo(f"  - {issue}", err=True)
             typer.echo("Fix these, then run `specflo advance` again.", err=True)
@@ -554,16 +572,9 @@ def advance(
     cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
 
     if json_output:
-        typer.echo(
-            json.dumps(
-                {
-                    "advanced": True,
-                    "from": from_phase,
-                    "to": updated.phase,
-                    "checkpoint": cp_display,
-                }
-            )
-        )
+        typer.echo(json.dumps(
+            {"advanced": True, "from": from_phase, "to": updated.phase,
+             "checkpoint": cp_display}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
         typer.echo(f"Next:    {workflow.next_step(updated.phase)}")
