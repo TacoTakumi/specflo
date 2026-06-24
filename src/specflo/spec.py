@@ -260,3 +260,22 @@ def active_requirement_ids(doc: str) -> list[str]:
             continue
         active.append(req_id)
     return active
+
+
+def requirement_section(doc: str, req_id: str) -> str | None:
+    """Return the ``### {req_id} —`` entry block (header + its ``- `` field
+    lines), or None if absent. Fence-aware; stops at the next ``###``/``## ``."""
+    lines = doc.splitlines(keepends=True)
+    start = None
+    for i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if not in_fence and line.startswith(f"### {req_id} —"):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("### ") or lines[i].startswith("## "):
+            end = i
+            break
+    return "".join(lines[start:end]).rstrip() + "\n"

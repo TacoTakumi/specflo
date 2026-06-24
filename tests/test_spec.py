@@ -284,3 +284,18 @@ def test_complete_spec_leaves_requirement_status_untouched(root, cfg, project):
 def test_complete_spec_without_file_raises(root, cfg, project):
     with pytest.raises(SpecfloError):
         spec.complete_spec(root, cfg, project)
+
+
+def test_requirement_section_returns_block_or_none():
+    doc = (
+        "## Requirements\n"
+        "### REQ-01 — first\n- Acceptance: a\n- Status: active\n\n"
+        "### REQ-02 — second\n- Acceptance: b\n- Status: active\n\n"
+        "## Boundaries\n"
+    )
+    block = spec.requirement_section(doc, "REQ-01")
+    assert "### REQ-01 — first" in block
+    assert "- Acceptance: a" in block
+    assert "REQ-02" not in block        # stops at the next entry
+    assert "Boundaries" not in block    # stops at the next H2
+    assert spec.requirement_section(doc, "REQ-99") is None
