@@ -32,6 +32,14 @@ See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
 - `specflo validate execute [--json]` — reconcile gate: confirms all tasks are done before the project can be completed.
 - `specflo advance [--json]` — validate the current phase's artifact, then move the active project to the next phase (`brainstorm → spec → plan → execute`).
 - `specflo checkpoint [--json]` — print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
+- `specflo hook reseed` — emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Prints nothing for no active project. **Always exits 0, reads no stdin, makes no network calls** — safe to wire into a session-start hook unconditionally. This is the command a Claude Code `SessionStart` hook calls so a freshly-cleared (or freshly-started) session reorients itself and asks before resuming.
+- `specflo hook print [--install]` — print the `.claude/settings.json` `SessionStart` wiring that calls `specflo hook reseed` on the `clear` and `startup` sources (`compact`/`resume` excluded). `--install` idempotently merges it into `.claude/settings.json`, preserving existing content.
+
+### Session-start integration (clear-and-continue)
+
+An agent can't clear its own context *or* remember what to do across a `/clear` — the continuation must come from outside the conversation. `specflo hook reseed` is that bridge: install it once (`specflo hook print --install`), and after a `/clear` (or on a fresh session start) Claude Code reorients from the on-disk checkpoint and **asks before resuming**, so you never re-explain where you were.
+
+**Security posture:** the reseed injects only **trusted local state** — the checkpoint is derived read-only from the project's own artifacts, never from external or network input — so running it at session start is benign.
 
 ## Skills
 
