@@ -24,3 +24,19 @@ def test_reseed_text_active_leads_with_directive_then_checkpoint(tmp_path):
     body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(tmp_path, project))
     assert body in out
     assert out.index(hook.CONFIRMATION_DIRECTIVE) < out.index(body)
+
+
+def test_reseed_text_noop_outside_specflo_repo(tmp_path):
+    # no .specflo anywhere up the tree -> nothing to emit, no raise
+    assert hook.reseed_text(tmp_path) == ""
+
+
+def test_reseed_text_noop_no_active_project(tmp_path):
+    config.init_config(tmp_path)  # initialized, but no project created/activated
+    assert hook.reseed_text(tmp_path) == ""
+
+
+def test_reseed_text_noop_corrupt_active_project(tmp_path):
+    _active(tmp_path)
+    (tmp_path / "docs" / "projects" / "my-thing" / "project.md").unlink()  # unreadable
+    assert hook.reseed_text(tmp_path) == ""

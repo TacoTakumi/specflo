@@ -34,9 +34,20 @@ def reseed_text(cwd: Path) -> str:
     The payload is :data:`CONFIRMATION_DIRECTIVE` followed by the verbatim
     ``specflo checkpoint`` render (single source of truth). Resolves the specflo
     root and active project from ``cwd``.
+
+    Returns ``""`` and never raises when there is nothing to emit (no specflo
+    root, no active project, or an unreadable project), so the session-start
+    hook that calls it can be wired unconditionally and cannot break startup.
     """
-    root = config.find_root(cwd)
-    cfg = config.load_config(root)
-    project = projects.load_project(root, cfg, cfg.active_project)
-    body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(root, project))
-    return f"{CONFIRMATION_DIRECTIVE}\n\n{body}"
+    try:
+        root = config.find_root(cwd)
+        if root is None:
+            return ""
+        cfg = config.load_config(root)
+        if cfg.active_project is None:
+            return ""
+        project = projects.load_project(root, cfg, cfg.active_project)
+        body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(root, project))
+        return f"{CONFIRMATION_DIRECTIVE}\n\n{body}"
+    except Exception:
+        return ""
