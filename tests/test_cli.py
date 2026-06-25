@@ -889,8 +889,19 @@ def test_advance_plan_to_execute(tmp_path, monkeypatch):
     data = _json.loads(r.output)
     assert data["advanced"] is True
     assert data["from"] == "plan" and data["to"] == "execute"
+    assert "T-01" in data["next_step"]       # progress-aware: names the first actionable task
     plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
     assert "status: complete" in plan_md
+
+
+def test_advance_into_execute_next_step_is_progress_aware(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                        "it works", "--verify", "true", "--from", "REQ-01"])
+    out = runner.invoke(app, ["advance"]).output          # human, plan -> execute
+    assert "T-01" in out and "task show" in out           # the "Next:" line points at the first task
 
 
 def test_task_progress_verbs_and_list(tmp_path, monkeypatch):

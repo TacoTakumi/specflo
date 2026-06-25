@@ -580,13 +580,21 @@ def advance(
 
     cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
 
+    # Progress-aware next step for the phase we just entered (e.g. advancing into
+    # execute names the first actionable task). Non-task targets keep the static
+    # hint (progress stays None), so other advances are unchanged.
+    progress = None
+    if updated.phase in ("plan", "execute") and plan.plan_path(root, cfg, slug).is_file():
+        progress = plan.plan_progress(root, cfg, slug)
+    next_step = workflow.next_step(updated.phase, progress=progress)
+
     if json_output:
         typer.echo(json.dumps(
             {"advanced": True, "from": from_phase, "to": updated.phase,
-             "checkpoint": cp_display}))
+             "next_step": next_step, "checkpoint": cp_display}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
-        typer.echo(f"Next:    {workflow.next_step(updated.phase)}")
+        typer.echo(f"Next:    {next_step}")
         typer.echo(f"Checkpoint saved: {cp_display}")
         typer.echo("Resume anytime: specflo checkpoint")
 
