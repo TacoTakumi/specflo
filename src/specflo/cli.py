@@ -8,7 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, checkpoint, config, guide as guide_module, plan, projects, spec, workflow
+from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec, workflow
 from .errors import SpecfloError
 
 
@@ -88,6 +88,9 @@ app.add_typer(plan_app, name="plan")
 
 task_app = typer.Typer(help="Capture plan tasks and track their progress.")
 app.add_typer(task_app, name="task")
+
+hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
+app.add_typer(hook_app, name="hook")
 
 
 def _die(message: str) -> typer.Exit:
@@ -412,6 +415,22 @@ def checkpoint_(
         typer.echo(json.dumps(payload))
     else:
         typer.echo(checkpoint.render_checkpoint(payload))
+
+
+@hook_app.command(
+    "reseed",
+    epilog="Wired into a SessionStart hook by `specflo hook print`.",
+)
+def hook_reseed() -> None:
+    """Emit the clear-and-continue reseed payload for the active project.
+
+    Prints the confirmation-gate directive + the verbatim checkpoint, or nothing
+    when there is no active project. Always exits 0, reads no stdin, makes no
+    network calls — safe to wire into SessionStart unconditionally.
+    """
+    text = hook.reseed_text(Path.cwd())
+    if text:
+        typer.echo(text)
 
 
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")

@@ -1,4 +1,9 @@
+from typer.testing import CliRunner
+
 from specflo import checkpoint, config, hook, projects
+from specflo.cli import app
+
+runner = CliRunner()
 
 
 def _active(tmp_path, name="My Thing"):
@@ -40,3 +45,33 @@ def test_reseed_text_noop_corrupt_active_project(tmp_path):
     _active(tmp_path)
     (tmp_path / "docs" / "projects" / "my-thing" / "project.md").unlink()  # unreadable
     assert hook.reseed_text(tmp_path) == ""
+
+
+# --- the `specflo hook reseed` CLI command ------------------------------
+
+
+def test_cli_hook_reseed_active_project_prints_payload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed"])
+    assert result.exit_code == 0
+    assert hook.CONFIRMATION_DIRECTIVE in result.output
+    assert "## Do next" in result.output  # the checkpoint body came through
+
+
+def test_cli_hook_reseed_no_active_project_is_silent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])  # initialized, but no active project
+    result = runner.invoke(app, ["hook", "reseed"])
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
+
+
+def test_cli_hook_reseed_does_not_block_on_stdin(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed"], input="")  # closed/empty stdin
+    assert result.exit_code == 0
+    assert hook.CONFIRMATION_DIRECTIVE in result.output
