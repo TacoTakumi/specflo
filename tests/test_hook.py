@@ -79,6 +79,64 @@ def test_cli_hook_reseed_does_not_block_on_stdin(tmp_path, monkeypatch):
     assert hook.CONFIRMATION_DIRECTIVE in result.output
 
 
+# --- the Claude SessionStart JSON (`hook reseed --format claude`) --------
+# Claude Code can't make the agent take a turn after startup/clear/resume, so the
+# wiring emits structured JSON: `additionalContext` re-grounds the agent, and a
+# user-visible `systemMessage` tells the human what to type to kick it off.
+
+
+def test_claude_session_start_output_wraps_context_and_nudges_user(tmp_path):
+    _active(tmp_path)
+    payload = json.loads(hook.claude_session_start_output(tmp_path))
+
+    # additionalContext carries the verbatim reseed payload — for the agent
+    hso = payload["hookSpecificOutput"]
+    assert hso["hookEventName"] == "SessionStart"
+    assert hso["additionalContext"] == hook.reseed_text(tmp_path)
+
+    # systemMessage is shown to the *user* and tells them what to type
+    msg = payload["systemMessage"]
+    assert "continue" in msg.lower()   # the concrete thing to type
+    assert "my-thing" in msg           # names the active project
+
+
+def test_claude_session_start_output_noop_no_active_project(tmp_path):
+    config.init_config(tmp_path)       # initialized, no active project
+    assert hook.claude_session_start_output(tmp_path) == ""
+
+
+def test_claude_session_start_output_noop_outside_repo(tmp_path):
+    assert hook.claude_session_start_output(tmp_path) == ""
+
+
+def test_cli_hook_reseed_format_claude_emits_json_with_systemmessage(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed", "--format", "claude"])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["hookSpecificOutput"]["hookEventName"] == "SessionStart"
+    assert "continue" in payload["systemMessage"].lower()
+
+
+def test_cli_hook_reseed_format_claude_silent_no_active_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["hook", "reseed", "--format", "claude"])
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
+
+
+def test_cli_hook_reseed_default_format_is_plain_text(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed"])  # default: portable text, not JSON
+    assert result.exit_code == 0
+    assert result.output.startswith(hook.CONFIRMATION_DIRECTIVE)
+
+
 # --- `specflo hook print` (the SessionStart wiring) ---------------------
 
 
@@ -87,10 +145,11 @@ def test_hook_print_settings_snippet_shape():
     entries = snip["hooks"]["SessionStart"]
     assert len(entries) == 1
     entry = entries[0]
-    assert entry["matcher"] == "startup|clear"          # only clear + startup
-    assert "compact" not in entry["matcher"]
-    assert "resume" not in entry["matcher"]
-    assert entry["hooks"] == [{"type": "command", "command": "specflo hook reseed"}]
+    assert entry["matcher"] == "startup|clear|resume"   # clear + startup + resume
+    assert "compact" not in entry["matcher"]            # compact still excluded
+    assert entry["hooks"] == [
+        {"type": "command", "command": "specflo hook reseed --format claude"}
+    ]
 
 
 def test_hook_print_cli_emits_parseable_wiring(tmp_path, monkeypatch):
@@ -98,8 +157,8 @@ def test_hook_print_cli_emits_parseable_wiring(tmp_path, monkeypatch):
     result = runner.invoke(app, ["hook", "print"])
     assert result.exit_code == 0
     entry = json.loads(result.output)["hooks"]["SessionStart"][0]
-    assert entry["matcher"] == "startup|clear"
-    assert entry["hooks"][0]["command"] == "specflo hook reseed"
+    assert entry["matcher"] == "startup|clear|resume"
+    assert entry["hooks"][0]["command"] == "specflo hook reseed --format claude"
 
 
 # --- `specflo hook print --install` (idempotent settings.json merge) -----
@@ -142,6 +201,22 @@ def test_hook_install_is_idempotent(tmp_path):
     hook.install_hook(tmp_path)
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert len(_reseed_entries(data)) == 1                           # no duplicate
+
+
+def test_hook_install_migrates_old_reseed_wiring(tmp_path):
+    # a previously-installed (pre-resume, plain-text) reseed entry is rewired in
+    # place to the current matcher + command, not left stale and not duplicated.
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text(json.dumps({"hooks": {"SessionStart": [
+        {"matcher": "startup|clear",
+         "hooks": [{"type": "command", "command": "specflo hook reseed"}]}
+    ]}}))
+    hook.install_hook(tmp_path)
+    data = json.loads((claude / "settings.json").read_text())
+    assert len(_reseed_entries(data)) == 1                           # migrated, not dup'd
+    cmds = [h["command"] for e in data["hooks"]["SessionStart"] for h in e["hooks"]]
+    assert cmds == ["specflo hook reseed --format claude"]           # old form replaced
 
 
 def test_hook_install_cli_writes_file(tmp_path, monkeypatch):

@@ -421,16 +421,30 @@ def checkpoint_(
     "reseed",
     epilog="Wired into a SessionStart hook by `specflo hook print`.",
 )
-def hook_reseed() -> None:
+def hook_reseed(
+    output_format: str = typer.Option(
+        "text",
+        "--format",
+        help="'text' (portable payload) or 'claude' (SessionStart JSON: agent "
+        "context + a user-visible nudge).",
+    ),
+) -> None:
     """Emit the clear-and-continue reseed payload for the active project.
 
-    Prints the confirmation-gate directive + the verbatim checkpoint, or nothing
+    Default (`text`) prints the confirmation-gate directive + the verbatim
+    checkpoint — portable across harnesses. `--format claude` emits Claude Code
+    SessionStart JSON: the same payload as `additionalContext` plus a visible
+    `systemMessage` telling the user what to type. Either way, prints nothing
     when there is no active project. Always exits 0, reads no stdin, makes no
     network calls — safe to wire into SessionStart unconditionally.
     """
-    text = hook.reseed_text()
-    if text:
-        typer.echo(text)
+    out = (
+        hook.claude_session_start_output()
+        if output_format == "claude"
+        else hook.reseed_text()
+    )
+    if out:
+        typer.echo(out)
 
 
 @hook_app.command(
