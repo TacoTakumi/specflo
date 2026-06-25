@@ -18,7 +18,7 @@ from pathlib import Path
 from . import plan as plan_module, workflow
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig
-from .projects import PROJECT_FILENAME, Project, project_dir
+from .projects import COMPLETE_STATUS, PROJECT_FILENAME, Project, project_dir
 from .spec import SPEC_FILENAME
 
 CHECKPOINT_FILENAME = "checkpoint.md"
@@ -57,7 +57,7 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         prog = plan_module.progress_from_doc(plan_file.read_text())
     if project.phase == "execute":
         do_next = workflow.next_step(
-            "execute", progress=prog, complete=project.status == "complete"
+            "execute", progress=prog, complete=project.status == COMPLETE_STATUS
         )
     else:
         do_next = workflow.next_step(project.phase)

@@ -1011,5 +1011,6 @@ def test_execute_loop_end_to_end(tmp_path, monkeypatch):
     assert runner.invoke(app, ["validate", "execute"]).exit_code == 0
     r = runner.invoke(app, ["advance", "--json"])
     assert _json.loads(r.output)["complete"] is True
-    # guide no longer claims only brainstorm/spec/plan have skills
-    assert "execute" in runner.invoke(app, ["guide"]).output
+    # the guide's Skills line itself must name execute (not merely the pipeline line)
+    skills_line = runner.invoke(app, ["guide"]).output.split("Skills:", 1)[1].splitlines()[0]
+    assert "execute" in skills_line
