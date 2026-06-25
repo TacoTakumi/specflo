@@ -100,3 +100,54 @@ def test_hook_print_cli_emits_parseable_wiring(tmp_path, monkeypatch):
     entry = json.loads(result.output)["hooks"]["SessionStart"][0]
     assert entry["matcher"] == "startup|clear"
     assert entry["hooks"][0]["command"] == "specflo hook reseed"
+
+
+# --- `specflo hook print --install` (idempotent settings.json merge) -----
+
+
+def _reseed_entries(settings: dict) -> list:
+    return [
+        e for e in settings.get("hooks", {}).get("SessionStart", [])
+        if e.get("matcher") == hook.RESEED_MATCHER
+        and any(h.get("command") == hook.RESEED_COMMAND for h in e.get("hooks", []))
+    ]
+
+
+def test_hook_install_creates_settings_when_absent(tmp_path):
+    path = hook.install_hook(tmp_path)
+    assert path == tmp_path / ".claude" / "settings.json"
+    data = json.loads(path.read_text())
+    assert len(_reseed_entries(data)) == 1
+
+
+def test_hook_install_preserves_existing_settings(tmp_path):
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    (claude / "settings.json").write_text(json.dumps({
+        "permissions": {"allow": ["Bash(ls)"]},
+        "hooks": {"SessionStart": [
+            {"matcher": "resume", "hooks": [{"type": "command", "command": "echo hi"}]}
+        ]},
+    }))
+    hook.install_hook(tmp_path)
+    data = json.loads((claude / "settings.json").read_text())
+    assert data["permissions"] == {"allow": ["Bash(ls)"]}            # untouched
+    matchers = [e.get("matcher") for e in data["hooks"]["SessionStart"]]
+    assert "resume" in matchers                                      # pre-existing kept
+    assert len(_reseed_entries(data)) == 1                           # ours added
+
+
+def test_hook_install_is_idempotent(tmp_path):
+    hook.install_hook(tmp_path)
+    hook.install_hook(tmp_path)
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert len(_reseed_entries(data)) == 1                           # no duplicate
+
+
+def test_hook_install_cli_writes_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["hook", "print", "--install"])
+    assert result.exit_code == 0
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert len(_reseed_entries(data)) == 1

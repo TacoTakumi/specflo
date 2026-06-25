@@ -435,11 +435,20 @@ def hook_reseed() -> None:
 
 @hook_app.command(
     "print",
-    epilog="Example: specflo hook print  (paste into .claude/settings.json)",
+    epilog="Example: specflo hook print --install",
 )
-def hook_print() -> None:
-    """Print the .claude/settings.json SessionStart wiring for `hook reseed`."""
-    typer.echo(json.dumps(hook.settings_snippet(), indent=2))
+def hook_print(
+    install: bool = typer.Option(
+        False, "--install", help="Merge the wiring into .claude/settings.json (idempotent)."
+    ),
+) -> None:
+    """Print the SessionStart wiring for `hook reseed` (or --install it)."""
+    if install:
+        root = _require_root()
+        path = hook.install_hook(root)
+        typer.echo(f"Installed SessionStart hook → {_project_dir_display(path, root)}")
+    else:
+        typer.echo(json.dumps(hook.settings_snippet(), indent=2))
 
 
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")

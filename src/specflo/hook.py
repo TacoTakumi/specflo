@@ -13,6 +13,7 @@ beyond reading the artifacts the checkpoint already derives from.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import checkpoint, config, projects
@@ -75,3 +76,30 @@ def settings_snippet() -> dict:
             ]
         }
     }
+
+
+def install_hook(root: Path) -> Path:
+    """Merge the reseed SessionStart entry into ``root/.claude/settings.json``.
+
+    Creates the file (and ``.claude/``) if absent, preserves all existing content,
+    and is idempotent — re-running adds no duplicate when the reseed hook is
+    already wired (matched on ``matcher`` + ``command``). Returns the settings path.
+    """
+    settings_path = root / ".claude" / "settings.json"
+    settings: dict = {}
+    if settings_path.is_file():
+        try:
+            settings = json.loads(settings_path.read_text() or "{}")
+        except json.JSONDecodeError:
+            settings = {}
+    session_start = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
+    already_wired = any(
+        entry.get("matcher") == RESEED_MATCHER
+        and any(h.get("command") == RESEED_COMMAND for h in entry.get("hooks", []))
+        for entry in session_start
+    )
+    if not already_wired:
+        session_start.append(settings_snippet()["hooks"]["SessionStart"][0])
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n")
+    return settings_path
