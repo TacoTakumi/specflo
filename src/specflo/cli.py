@@ -433,6 +433,15 @@ def hook_reseed() -> None:
         typer.echo(text)
 
 
+@hook_app.command(
+    "print",
+    epilog="Example: specflo hook print  (paste into .claude/settings.json)",
+)
+def hook_print() -> None:
+    """Print the .claude/settings.json SessionStart wiring for `hook reseed`."""
+    typer.echo(json.dumps(hook.settings_snippet(), indent=2))
+
+
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")
 def brainstorm_start(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),

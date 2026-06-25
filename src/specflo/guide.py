@@ -38,6 +38,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Print the resume prompt; refresh checkpoint.md."},
     {"name": "hook reseed", "group": "setup", "args": "",
      "summary": "Emit the session-start reseed payload (used by the SessionStart hook)."},
+    {"name": "hook print", "group": "setup", "args": "",
+     "summary": "Print the SessionStart hook wiring (clear|startup) for settings.json."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",

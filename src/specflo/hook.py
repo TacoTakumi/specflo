@@ -51,3 +51,27 @@ def reseed_text(cwd: Path) -> str:
         return f"{CONFIRMATION_DIRECTIVE}\n\n{body}"
     except Exception:
         return ""
+
+
+# The SessionStart sources the reseed fires on (D-05): a true context wipe and a
+# fresh session in a project. `compact`/`resume` are excluded (context retained).
+RESEED_MATCHER = "startup|clear"
+RESEED_COMMAND = "specflo hook reseed"
+
+
+def settings_snippet() -> dict:
+    """The ``.claude/settings.json`` fragment wiring the reseed into SessionStart.
+
+    One SessionStart entry whose ``matcher`` fires on exactly ``startup`` and
+    ``clear`` and whose command invokes ``specflo hook reseed``.
+    """
+    return {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "matcher": RESEED_MATCHER,
+                    "hooks": [{"type": "command", "command": RESEED_COMMAND}],
+                }
+            ]
+        }
+    }

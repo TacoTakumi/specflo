@@ -1,3 +1,5 @@
+import json
+
 from typer.testing import CliRunner
 
 from specflo import checkpoint, config, hook, projects
@@ -75,3 +77,26 @@ def test_cli_hook_reseed_does_not_block_on_stdin(tmp_path, monkeypatch):
     result = runner.invoke(app, ["hook", "reseed"], input="")  # closed/empty stdin
     assert result.exit_code == 0
     assert hook.CONFIRMATION_DIRECTIVE in result.output
+
+
+# --- `specflo hook print` (the SessionStart wiring) ---------------------
+
+
+def test_hook_print_settings_snippet_shape():
+    snip = hook.settings_snippet()
+    entries = snip["hooks"]["SessionStart"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["matcher"] == "startup|clear"          # only clear + startup
+    assert "compact" not in entry["matcher"]
+    assert "resume" not in entry["matcher"]
+    assert entry["hooks"] == [{"type": "command", "command": "specflo hook reseed"}]
+
+
+def test_hook_print_cli_emits_parseable_wiring(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["hook", "print"])
+    assert result.exit_code == 0
+    entry = json.loads(result.output)["hooks"]["SessionStart"][0]
+    assert entry["matcher"] == "startup|clear"
+    assert entry["hooks"][0]["command"] == "specflo hook reseed"
