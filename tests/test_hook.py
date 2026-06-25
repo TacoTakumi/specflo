@@ -151,3 +151,23 @@ def test_hook_install_cli_writes_file(tmp_path, monkeypatch):
     assert result.exit_code == 0
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert len(_reseed_entries(data)) == 1
+
+
+def test_hook_install_tolerates_wrong_shaped_settings(tmp_path):
+    # hand-edited / malformed shapes must not raise; install still wires ours
+    claude = tmp_path / ".claude"
+    claude.mkdir()
+    for bad in ('{"hooks": []}',
+                '{"hooks": {"SessionStart": {"matcher": "x"}}}',
+                '{"hooks": "weird"}'):
+        (claude / "settings.json").write_text(bad)
+        hook.install_hook(tmp_path)  # must not raise
+        data = json.loads((claude / "settings.json").read_text())
+        assert len(_reseed_entries(data)) == 1
+
+
+def test_reseed_text_defaults_to_cwd(tmp_path, monkeypatch):
+    # cwd resolution lives inside the never-errors guard; no-arg call works
+    _active(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert hook.reseed_text().startswith(hook.CONFIRMATION_DIRECTIVE)

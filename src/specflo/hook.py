@@ -29,18 +29,21 @@ CONFIRMATION_DIRECTIVE = (
 )
 
 
-def reseed_text(cwd: Path) -> str:
+def reseed_text(cwd: Path | None = None) -> str:
     """Return the reseed payload for the active project found from ``cwd``.
 
     The payload is :data:`CONFIRMATION_DIRECTIVE` followed by the verbatim
     ``specflo checkpoint`` render (single source of truth). Resolves the specflo
-    root and active project from ``cwd``.
+    root and active project from ``cwd`` (defaulting to the current directory).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
-    root, no active project, or an unreadable project), so the session-start
-    hook that calls it can be wired unconditionally and cannot break startup.
+    root, no active project, or an unreadable project) — even resolving the
+    current directory happens inside the guard, so the session-start hook that
+    calls it can be wired unconditionally and cannot break startup.
     """
     try:
+        if cwd is None:
+            cwd = Path.cwd()
         root = config.find_root(cwd)
         if root is None:
             return ""
@@ -89,13 +92,27 @@ def install_hook(root: Path) -> Path:
     settings: dict = {}
     if settings_path.is_file():
         try:
-            settings = json.loads(settings_path.read_text() or "{}")
+            loaded = json.loads(settings_path.read_text() or "{}")
         except json.JSONDecodeError:
-            settings = {}
-    session_start = settings.setdefault("hooks", {}).setdefault("SessionStart", [])
+            loaded = {}
+        if isinstance(loaded, dict):
+            settings = loaded
+    # Coerce away unexpected shapes (a hand-edited settings.json could have a
+    # non-object `hooks` or a non-list `SessionStart`) so the merge can't raise.
+    hooks = settings.setdefault("hooks", {})
+    if not isinstance(hooks, dict):
+        hooks = settings["hooks"] = {}
+    session_start = hooks.setdefault("SessionStart", [])
+    if not isinstance(session_start, list):
+        session_start = hooks["SessionStart"] = []
     already_wired = any(
-        entry.get("matcher") == RESEED_MATCHER
-        and any(h.get("command") == RESEED_COMMAND for h in entry.get("hooks", []))
+        isinstance(entry, dict)
+        and entry.get("matcher") == RESEED_MATCHER
+        and isinstance(entry.get("hooks"), list)
+        and any(
+            isinstance(h, dict) and h.get("command") == RESEED_COMMAND
+            for h in entry["hooks"]
+        )
         for entry in session_start
     )
     if not already_wired:

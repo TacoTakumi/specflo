@@ -428,7 +428,7 @@ def hook_reseed() -> None:
     when there is no active project. Always exits 0, reads no stdin, makes no
     network calls — safe to wire into SessionStart unconditionally.
     """
-    text = hook.reseed_text(Path.cwd())
+    text = hook.reseed_text()
     if text:
         typer.echo(text)
 
