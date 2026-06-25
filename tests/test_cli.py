@@ -902,6 +902,19 @@ def test_advance_into_execute_next_step_is_progress_aware(tmp_path, monkeypatch)
                         "it works", "--verify", "true", "--from", "REQ-01"])
     out = runner.invoke(app, ["advance"]).output          # human, plan -> execute
     assert "T-01" in out and "task show" in out           # the "Next:" line points at the first task
+    assert "may clear context" in out.lower()             # permissive clear-context affordance
+    assert "specflo checkpoint" in out                    # ...paired with the resume command
+
+
+def test_advance_completion_offers_clear_context_affordance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)            # at execute, T-01 pending
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    out = runner.invoke(app, ["advance"]).output          # human, completes the project
+    assert "Completed project" in out
+    assert "may clear context" in out.lower()             # the final phase-end gets it too
 
 
 def test_task_progress_verbs_and_list(tmp_path, monkeypatch):

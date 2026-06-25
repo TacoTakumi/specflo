@@ -553,6 +553,7 @@ def advance(
             typer.echo(f"Completed project '{slug}'.")
             typer.echo(f"Next:    {workflow.next_step(from_phase, complete=True)}")
             typer.echo(f"Checkpoint saved: {cp_display}")
+            typer.echo("You may clear context now — this project is complete.")
         return
 
     # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
@@ -596,7 +597,7 @@ def advance(
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
         typer.echo(f"Next:    {next_step}")
         typer.echo(f"Checkpoint saved: {cp_display}")
-        typer.echo("Resume anytime: specflo checkpoint")
+        typer.echo("You may clear context now — resume with `specflo checkpoint`.")
 
 
 @spec_app.command("start", epilog="Example: specflo spec start")
