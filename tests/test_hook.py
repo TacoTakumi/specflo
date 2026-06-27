@@ -16,6 +16,15 @@ def _active(tmp_path, name="My Thing"):
     return cfg
 
 
+def _complete(tmp_path, name="My Thing"):
+    """Active project advanced to the execute phase and marked complete."""
+    cfg = _active(tmp_path, name)
+    for _ in range(3):  # brainstorm -> spec -> plan -> execute
+        projects.advance_project(tmp_path, cfg, "my-thing")
+    projects.complete_project(tmp_path, cfg, "my-thing")
+    return cfg
+
+
 def test_reseed_text_active_leads_with_directive_then_checkpoint(tmp_path):
     cfg = _active(tmp_path)
     out = hook.reseed_text(tmp_path)
@@ -31,6 +40,18 @@ def test_reseed_text_active_leads_with_directive_then_checkpoint(tmp_path):
     body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(tmp_path, project))
     assert body in out
     assert out.index(hook.CONFIRMATION_DIRECTIVE) < out.index(body)
+
+
+def test_reseed_text_complete_project_uses_complete_directive(tmp_path):
+    # a finished project has nothing to resume: the payload leads with the
+    # complete directive (offer a new project), never the resume one, and the
+    # whole payload is free of "continue".
+    _complete(tmp_path)
+    out = hook.reseed_text(tmp_path)
+    assert out.startswith(hook.COMPLETE_DIRECTIVE)
+    assert hook.CONFIRMATION_DIRECTIVE not in out
+    assert "continue" not in out.lower()
+    assert "specflo new" in out.lower()
 
 
 def test_reseed_text_noop_outside_specflo_repo(tmp_path):
@@ -94,10 +115,30 @@ def test_claude_session_start_output_wraps_context_and_nudges_user(tmp_path):
     assert hso["hookEventName"] == "SessionStart"
     assert hso["additionalContext"] == hook.reseed_text(tmp_path)
 
-    # systemMessage is shown to the *user* and tells them what to type
+    # systemMessage is shown to the *user*: the verbatim `specflo status` block
+    # (leads with the Project/Phase lines) plus the concrete thing to type.
     msg = payload["systemMessage"]
-    assert "continue" in msg.lower()   # the concrete thing to type
-    assert "my-thing" in msg           # names the active project
+    assert "Project: My Thing (my-thing)" in msg   # the status block, for the user
+    assert "Phase:   brainstorm" in msg
+    assert "continue" in msg.lower()               # in-progress: type continue
+
+
+def test_claude_session_start_output_complete_shows_status_and_offers_new(tmp_path):
+    # a complete project: the user-visible message still shows status (now marked
+    # complete) but offers a *new* project instead of suggesting `continue`, and
+    # the agent context uses the complete directive.
+    _complete(tmp_path)
+    payload = json.loads(hook.claude_session_start_output(tmp_path))
+
+    msg = payload["systemMessage"]
+    assert "Project: My Thing (my-thing)" in msg
+    assert "(complete)" in msg                      # status shows completion
+    assert "start a new project" in msg.lower()
+    assert "specflo new" in msg.lower()
+    assert "continue" not in msg.lower()            # nothing to resume
+
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    assert ctx.startswith(hook.COMPLETE_DIRECTIVE)
 
 
 def test_claude_session_start_output_noop_no_active_project(tmp_path):

@@ -8,7 +8,9 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
-from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec, workflow
+from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
+from . import status as status_view
+from . import workflow
 from .errors import SpecfloError
 
 
@@ -109,14 +111,6 @@ def _require_active(cfg: config.SpecfloConfig) -> str:
     if cfg.active_project is None:
         raise _die("No active project. Create one with `specflo new <name>`.")
     return cfg.active_project
-
-
-def _project_dir_display(path: Path, root: Path) -> str:
-    """The project dir relative to the repo root, or absolute if it lies outside."""
-    try:
-        return str(path.relative_to(root))
-    except ValueError:
-        return str(path)
 
 
 def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
@@ -283,46 +277,11 @@ def status(
             return
         raise _die(str(exc))
 
-    progress = None
-    if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
-        progress = plan.plan_progress(root, cfg, project.slug)
-    complete = project.status == projects.COMPLETE_STATUS
-
-    info = {
-        "initialized": True,
-        "active_project": project.slug,
-        "name": project.name,
-        "dir": str(project.path),
-        "phase": project.phase,
-        "status": project.status,
-        "next_phase": workflow.next_phase(project.phase),
-        "next_step": workflow.next_step(project.phase, progress=progress, complete=complete),
-        "checkpoint": _project_dir_display(
-            checkpoint.checkpoint_path(root, cfg, project.slug), root
-        ),
-    }
-    if progress is not None:
-        info["progress"] = progress
+    info = status_view.build_status(root, cfg, project)
     if json_output:
         typer.echo(json.dumps(info))
     else:
-        label = (
-            project.name
-            if project.name == project.slug
-            else f"{project.name} ({project.slug})"
-        )
-        typer.echo(f"Project: {label}")
-        typer.echo(f"Dir:     {_project_dir_display(project.path, root)}")
-        phase_line = f"Phase:   {project.phase}"
-        if complete:
-            phase_line += "  (complete)"
-        typer.echo(phase_line)
-        if "progress" in info:
-            p = info["progress"]
-            nxt = " · next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
-            typer.echo(f"Tasks:   {p['done']}/{p['total']} done{nxt}")
-        typer.echo(f"Next:    {info['next_step']}")
-        typer.echo("Resume:  specflo checkpoint")
+        typer.echo(status_view.render_status(root, info))
 
 
 def _render_pipeline(data: dict) -> str:
@@ -460,7 +419,7 @@ def hook_print(
     if install:
         root = _require_root()
         path = hook.install_hook(root)
-        typer.echo(f"Installed SessionStart hook → {_project_dir_display(path, root)}")
+        typer.echo(f"Installed SessionStart hook → {config.display_path(path, root)}")
     else:
         typer.echo(json.dumps(hook.settings_snippet(), indent=2))
 
@@ -595,7 +554,7 @@ def advance(
                 typer.echo("Fix these, then run `specflo advance` again.", err=True)
                 raise typer.Exit(code=1)
         updated = projects.complete_project(root, cfg, slug)
-        cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
+        cp_display = config.display_path(checkpoint.write_checkpoint(root, updated), root)
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
@@ -630,7 +589,7 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
-    cp_display = _project_dir_display(checkpoint.write_checkpoint(root, updated), root)
+    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated), root)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
     # execute names the first actionable task). Non-task targets keep the static

@@ -16,7 +16,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import checkpoint, config, projects
+from . import checkpoint, config, projects, status
+from .projects import COMPLETE_STATUS
 
 # Leads the reseed payload so the agent surfaces state and asks rather than
 # auto-running the checkpoint's "Do next" (D-04). Source-neutral so it reads
@@ -28,9 +29,20 @@ CONFIRMATION_DIRECTIVE = (
     "else, or stop, then wait for their answer."
 )
 
+# The complete-project counterpart: there is nothing to resume, so the agent
+# must not "continue" the finished work — it surfaces completion and offers the
+# next piece (`specflo new`) instead. Used in place of CONFIRMATION_DIRECTIVE
+# when the active project's status is COMPLETE_STATUS.
+COMPLETE_DIRECTIVE = (
+    "The active specflo project is complete — there is nothing to resume. Do "
+    "NOT begin work or pick the finished project back up. Tell the user the "
+    "project is complete and ask whether they'd like to start a new project "
+    "(`specflo new`) or do something else, then wait for their answer."
+)
+
 
 def _active_project(cwd: Path):
-    """``(root, project)`` for the active project found from ``cwd``, or ``None``.
+    """``(root, cfg, project)`` for the active project found from ``cwd``, or ``None``.
 
     Shared resolver for the reseed entrypoints. May raise on a corrupt project;
     callers run it inside their own never-errors guard.
@@ -41,15 +53,18 @@ def _active_project(cwd: Path):
     cfg = config.load_config(root)
     if cfg.active_project is None:
         return None
-    return root, projects.load_project(root, cfg, cfg.active_project)
+    return root, cfg, projects.load_project(root, cfg, cfg.active_project)
 
 
 def reseed_text(cwd: Path | None = None) -> str:
     """Return the reseed payload for the active project found from ``cwd``.
 
-    The payload is :data:`CONFIRMATION_DIRECTIVE` followed by the verbatim
-    ``specflo checkpoint`` render (single source of truth). Resolves the specflo
-    root and active project from ``cwd`` (defaulting to the current directory).
+    The payload is a leading directive followed by the verbatim
+    ``specflo checkpoint`` render (single source of truth). The directive is
+    :data:`CONFIRMATION_DIRECTIVE` for a project still in flight, or
+    :data:`COMPLETE_DIRECTIVE` once it is complete (nothing to resume — offer a
+    new project instead). Resolves the specflo root and active project from
+    ``cwd`` (defaulting to the current directory).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) — even resolving the
@@ -62,34 +77,50 @@ def reseed_text(cwd: Path | None = None) -> str:
         found = _active_project(cwd)
         if found is None:
             return ""
-        root, project = found
+        root, _cfg, project = found
         body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(root, project))
-        return f"{CONFIRMATION_DIRECTIVE}\n\n{body}"
+        directive = (
+            COMPLETE_DIRECTIVE
+            if project.status == COMPLETE_STATUS
+            else CONFIRMATION_DIRECTIVE
+        )
+        return f"{directive}\n\n{body}"
     except Exception:
         return ""
 
 
-def _user_nudge(project) -> str:
-    """The user-visible one-liner: which project is active and what to type.
+def _user_message(root: Path, cfg, project) -> str:
+    """The user-visible session-start message: the ``specflo status`` block + a prompt.
 
     A SessionStart hook can re-ground the *agent* (via injected context) but
-    cannot make it take a turn — so this is surfaced to the *human* to tell them
-    the concrete thing to type to kick the reseed off. Harness-neutral wording.
+    cannot make it take a turn — so this is surfaced to the *human* at startup.
+    It leads with the verbatim ``specflo status`` render (so "what the user sees"
+    *is* status) and closes with the concrete next move: ``continue`` to resume a
+    project still in flight, or ``specflo new`` once it is complete (nothing to
+    resume). Harness-neutral wording.
     """
-    return (
-        f'specflo: active project "{project.slug}" (phase: {project.phase}). '
-        "I won't pick up on my own — type `continue` and I'll surface the "
-        "checkpoint and resume from there, or tell me what you'd like to do."
-    )
+    status_block = status.render_status(root, status.build_status(root, cfg, project))
+    if project.status == COMPLETE_STATUS:
+        prompt = (
+            "This project is complete. Would you like to start a new project? "
+            "(`specflo new`) — or tell me what you'd like to do."
+        )
+    else:
+        prompt = (
+            "I won't pick up on my own — type `continue` and I'll surface the "
+            "checkpoint and resume from there, or tell me what you'd like to do."
+        )
+    return f"{status_block}\n\n{prompt}"
 
 
 def claude_session_start_output(cwd: Path | None = None) -> str:
     """Claude Code ``SessionStart`` JSON for the active project found from ``cwd``.
 
     Wraps the portable :func:`reseed_text` payload as ``additionalContext`` (for
-    the agent) and adds a user-visible ``systemMessage`` (:func:`_user_nudge`)
-    telling the human what to type. This is the only Claude-specific *shape* —
-    the payload itself stays portable for other harnesses.
+    the agent) and adds a user-visible ``systemMessage`` (:func:`_user_message`)
+    showing ``specflo status`` plus what to do next. This is the only
+    Claude-specific *shape* — the payload itself stays portable for other
+    harnesses.
 
     Returns ``""`` and never raises when there is nothing to emit, so the hook
     can be wired unconditionally and cannot break session start.
@@ -103,13 +134,13 @@ def claude_session_start_output(cwd: Path | None = None) -> str:
         found = _active_project(cwd)
         if found is None:
             return ""
-        _root, project = found
+        root, cfg, project = found
         payload = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": context,
             },
-            "systemMessage": _user_nudge(project),
+            "systemMessage": _user_message(root, cfg, project),
         }
         return json.dumps(payload)
     except Exception:
