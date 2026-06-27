@@ -52,8 +52,13 @@ not planning.
    and every task cites ≥1 live `REQ-NN`. Aim for this so `specflo validate plan` passes first try.
 7. **Self-review** — coverage both ways, no placeholders, dependencies ordered and
    acyclic, ≤~5 files per task, every task has acceptance + verification.
-8. **Readiness** — get an explicit user **"ready?"**, then `specflo validate plan` → fix issues + address warnings → re-validate → `specflo advance` (moves
-   `plan → execute`).
+8. **Readiness + phase boundary** — get an explicit user **"ready?"**, then
+   `specflo validate plan` → fix issues + address warnings → re-validate. Then
+   **pause at the boundary, don't auto-advance**: the plan is complete and
+   validated, the **checkpoint is saved** (the project's `checkpoint.md`; resume any
+   time with `specflo checkpoint`), so this is a **safe place to clear context**.
+   `specflo advance` (moves `plan → execute`) is the user's to call — **wait** for
+   their go; don't start executing tasks yourself.
 
 ## Anti-sycophancy
 
@@ -86,4 +91,4 @@ Before declaring the plan ready:
 - [ ] `specflo validate plan` exits 0 (bidirectional coverage holds; every task has acceptance + verification; dependencies resolve and are acyclic).
 - [ ] Any `specflo validate plan` warnings are addressed or justified.
 - [ ] The user has explicitly approved the plan.
-- [ ] Then, and only then, `specflo advance`.
+- [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` to the user.

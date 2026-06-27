@@ -74,10 +74,13 @@ requirements with pass/fail acceptance — not merely "don't code yet".
 8. **Gate + validate.** Ask the user an explicit "ready?". On yes, run
    `specflo validate spec`; fix any reported gaps inline and re-run until it
    passes.
-9. **Hand off.** Tell the user the spec is complete and the plan phase is next:
-   the plan synthesizes from `spec.md` and cites `REQ-NN` — it must not
-   re-interview. Phase movement is `specflo advance`'s job — do not change the
-   phase yourself.
+9. **Hand off — pause at the phase boundary.** Surface the end of the phase as one
+   clear beat, and **do not auto-advance**: the spec is complete and validated, the
+   **checkpoint is saved** (the project's `checkpoint.md`; resume any time with
+   `specflo checkpoint`), so this is a **safe place to clear context**. The plan
+   phase is next (it synthesizes from `spec.md` and cites `REQ-NN` — no
+   re-interview). Then **wait** — `specflo advance` is the user's to call; don't
+   change the phase yourself or start the plan.
 
 ## Anti-sycophancy
 
@@ -117,4 +120,5 @@ reframe it.
 - [ ] **Open questions** is present (may say "none").
 - [ ] `specflo validate spec` passes.
 - [ ] The user explicitly approved readiness before handoff.
+- [ ] At hand-off, the checkpoint-saved phase-end beat was surfaced and `specflo advance` was left to the user.
 - [ ] No code or scaffolding was produced.

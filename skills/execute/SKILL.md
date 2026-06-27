@@ -68,7 +68,10 @@ superseding requirement — never silently mutate a task or drift off its
      ready-to-merge / not.
    - Without subagents: do **not** review inline (it defeats fresh eyes and burns
      context) — `specflo checkpoint`, then run the review in a fresh session.
-   On ready-to-merge, `specflo advance` (completes the project).
+   On ready-to-merge, **pause before completing — don't auto-complete**: the work
+   is done and reviewed and the **checkpoint is saved** (the project's
+   `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
+   the project — the user's to call; **wait** for their go.
 
 ## `task done` is earned
 
@@ -107,4 +110,4 @@ Before completing the project:
 - [ ] Every active task is `done` and each earned its own atomic commit.
 - [ ] `specflo validate execute` exits 0 (coverage holds; all tasks done).
 - [ ] A fresh-context final whole-branch review returned ready-to-merge.
-- [ ] Then, and only then, `specflo advance` to complete the project.
+- [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` (project completion) to the user.

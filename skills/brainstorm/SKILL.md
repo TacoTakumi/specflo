@@ -73,10 +73,13 @@ explicitly approved. This applies regardless of how simple the work looks.
 9. **Gate + validate.** Ask the user an explicit "ready?". On yes, run
    `specflo validate brainstorm`; fix any reported gaps inline (edit the prose
    sections / add missing decisions) and re-run until it passes.
-10. **Hand off.** Tell the user the brainstorm is complete and the spec phase is
-    next: the spec synthesizes from `brainstorm.md` and must not re-interview.
-    Phase movement is `specflo advance`'s job (a later command) — do not change
-    the phase yourself.
+10. **Hand off — pause at the phase boundary.** Surface the end of the phase as
+    one clear beat, and **do not auto-advance**: the brainstorm is complete and
+    validated, the **checkpoint is saved** (the project's `checkpoint.md`; resume
+    any time with `specflo checkpoint`), so this is a **safe place to clear
+    context**. The spec phase is next (it synthesizes from `brainstorm.md` and must
+    not re-interview). Then **wait** — `specflo advance` is the next move, but it's
+    the user's to call; don't change the phase yourself or start the spec.
 
 ## Researching (the woven research seam)
 
@@ -137,6 +140,7 @@ the strongest version of the user's idea, not a strawman.
 - [ ] **Open questions** is present (may say "none").
 - [ ] `specflo validate brainstorm` passes.
 - [ ] The user explicitly approved readiness before handoff.
+- [ ] At hand-off, the checkpoint-saved phase-end beat was surfaced and `specflo advance` was left to the user.
 - [ ] No code or scaffolding was produced.
 - [ ] The landscape scan ran and its digest was folded into the artifact.
 - [ ] Fact-dependent decisions cite a source (or the uncertainty is in Open questions).
