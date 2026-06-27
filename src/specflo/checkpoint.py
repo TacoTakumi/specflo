@@ -17,7 +17,7 @@ from pathlib import Path
 
 from . import plan as plan_module, workflow
 from .brainstorm import BRAINSTORM_FILENAME
-from .config import SpecfloConfig
+from .config import SpecfloConfig, display_path
 from .projects import COMPLETE_STATUS, PROJECT_FILENAME, Project, project_dir
 from .spec import SPEC_FILENAME
 
@@ -33,24 +33,16 @@ def checkpoint_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return project_dir(root, cfg, slug) / CHECKPOINT_FILENAME
 
 
-def _relpath(path: Path, root: Path) -> str:
-    """``path`` relative to the repo root as POSIX, or absolute if outside it."""
-    try:
-        return path.relative_to(root).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
 def build_checkpoint(root: Path, project: Project, today: str | None = None) -> dict:
     """Derive the resume-prompt payload for ``project`` from current state.
 
     Read-only: inspects which artifacts exist on disk but mutates nothing.
     """
     directory = project.path
-    read_first = [_relpath(directory / PROJECT_FILENAME, root)]
+    read_first = [display_path(directory / PROJECT_FILENAME, root, posix=True)]
     for filename in _ARTIFACT_ORDER:
         if (directory / filename).is_file():
-            read_first.append(_relpath(directory / filename, root))
+            read_first.append(display_path(directory / filename, root, posix=True))
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
     if project.phase in ("plan", "execute") and plan_file.is_file():
@@ -72,7 +64,7 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         "generated": today or datetime.date.today().isoformat(),
         "read_first": read_first,
         "do_next": do_next,
-        "path": _relpath(directory / CHECKPOINT_FILENAME, root),
+        "path": display_path(directory / CHECKPOINT_FILENAME, root, posix=True),
     }
 
 

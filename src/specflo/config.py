@@ -38,6 +38,20 @@ def find_root(start: Path) -> Path | None:
     return None
 
 
+def display_path(path: Path, root: Path, *, posix: bool = False) -> str:
+    """``path`` expressed relative to the repo ``root``, or absolute if outside it.
+
+    Defaults to the OS-native separator for terminal display; pass ``posix=True``
+    for stored artifact references that must read the same on every platform
+    (e.g. the paths written into ``checkpoint.md``).
+    """
+    try:
+        rel = path.relative_to(root)
+    except ValueError:
+        return path.as_posix() if posix else str(path)
+    return rel.as_posix() if posix else str(rel)
+
+
 def load_config(root: Path) -> SpecfloConfig:
     path = config_path(root)
     if not path.is_file():

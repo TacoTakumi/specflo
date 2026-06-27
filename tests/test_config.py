@@ -55,3 +55,21 @@ def test_find_root_walks_up_from_a_nested_subdir(tmp_path):
 
 def test_find_root_returns_none_when_not_initialized(tmp_path):
     assert config.find_root(tmp_path) is None
+
+
+def test_display_path_relative_to_root_os_native_by_default(tmp_path):
+    target = tmp_path / "docs" / "projects" / "x"
+    assert config.display_path(target, tmp_path) == str(target.relative_to(tmp_path))
+
+
+def test_display_path_posix_uses_forward_slashes(tmp_path):
+    target = tmp_path / "docs" / "projects" / "x"
+    assert config.display_path(target, tmp_path, posix=True) == "docs/projects/x"
+
+
+def test_display_path_outside_root_falls_back_to_absolute(tmp_path):
+    # a path that isn't under root can't be relativized -> emitted absolute,
+    # honoring the same separator policy (str vs POSIX) as the relative case.
+    outside = (tmp_path / ".." / "elsewhere" / "y").resolve()
+    assert config.display_path(outside, tmp_path) == str(outside)
+    assert config.display_path(outside, tmp_path, posix=True) == outside.as_posix()
