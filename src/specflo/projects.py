@@ -22,6 +22,7 @@ PROJECT_FILENAME = "project.md"
 INITIAL_PHASE = "brainstorm"
 INITIAL_STATUS = "active"
 COMPLETE_STATUS = "complete"
+SHELVED_STATUS = "shelved"
 
 
 @dataclass
@@ -32,6 +33,7 @@ class Project:
     phase: str
     status: str
     path: Path
+    shelved_reason: str = ""
 
 
 def slugify(name: str) -> str:
@@ -78,6 +80,7 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         phase=fields["phase"],
         status=fields["status"],
         path=path.parent,
+        shelved_reason=str(fields.get("shelved_reason", "") or ""),
     )
 
 
@@ -139,16 +142,16 @@ def complete_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
 
 
 def _render(project: Project) -> str:
-    frontmatter = yaml.safe_dump(
-        {
-            "name": project.name,
-            "slug": project.slug,
-            "created": project.created,
-            "phase": project.phase,
-            "status": project.status,
-        },
-        sort_keys=False,
-    ).strip()
+    fields = {
+        "name": project.name,
+        "slug": project.slug,
+        "created": project.created,
+        "phase": project.phase,
+        "status": project.status,
+    }
+    if project.shelved_reason:
+        fields["shelved_reason"] = project.shelved_reason
+    frontmatter = yaml.safe_dump(fields, sort_keys=False).strip()
     return f"---\n{frontmatter}\n---\n\n# {project.name}\n\n_(phase: {project.phase})_\n"
 
 

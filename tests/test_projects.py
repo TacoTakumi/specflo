@@ -136,3 +136,34 @@ def test_complete_project_flips_status_idempotently(tmp_path):
     assert p.status == projects.COMPLETE_STATUS
     assert projects.load_project(tmp_path, cfg, "thing").status == "complete"
     assert projects.complete_project(tmp_path, cfg, "thing").status == "complete"
+
+
+def test_shelved_status_constant_is_distinct_from_active_and_complete():
+    assert projects.SHELVED_STATUS == "shelved"
+    assert projects.SHELVED_STATUS not in (projects.INITIAL_STATUS, projects.COMPLETE_STATUS)
+
+
+def test_project_round_trips_shelved_status_and_reason(tmp_path):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing")
+    projects.advance_project(tmp_path, cfg, "thing")  # phase -> spec
+
+    p = projects.load_project(tmp_path, cfg, "thing")
+    p.status = projects.SHELVED_STATUS
+    p.shelved_reason = "not worth it"
+    (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+
+    loaded = projects.load_project(tmp_path, cfg, "thing")
+    assert loaded.status == "shelved"
+    assert loaded.shelved_reason == "not worth it"
+    assert loaded.phase == "spec"  # shelving leaves phase untouched
+
+
+def test_shelved_reason_is_empty_and_unwritten_when_no_reason_given(tmp_path):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing")
+
+    loaded = projects.load_project(tmp_path, cfg, "thing")
+    assert loaded.shelved_reason == ""
+    text = (loaded.path / projects.PROJECT_FILENAME).read_text()
+    assert "shelved_reason" not in text
