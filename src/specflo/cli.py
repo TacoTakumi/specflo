@@ -185,7 +185,7 @@ def new(
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
-    typer.echo(f"Scaffolded {brainstorm_path} — ready to work.")
+    typer.echo(f"Scaffolded {brainstorm_path} (ready to work).")
 
 
 @app.command(name="list", epilog="Example: specflo list --json")
