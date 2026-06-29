@@ -141,6 +141,22 @@ def complete_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     return project
 
 
+def shelve_project(
+    root: Path, cfg: SpecfloConfig, slug: str, reason: str | None = None
+) -> Project:
+    """Mark the project shelved without touching its phase. Persists and returns it.
+
+    Re-shelving an already-shelved project succeeds; ``shelved_reason`` is set to
+    the latest ``reason`` (empty when none is given). The phase is left unchanged
+    so resume returns to it.
+    """
+    project = load_project(root, cfg, slug)
+    project.status = SHELVED_STATUS
+    project.shelved_reason = reason or ""
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
 def _render(project: Project) -> str:
     fields = {
         "name": project.name,

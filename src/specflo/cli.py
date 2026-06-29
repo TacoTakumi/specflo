@@ -240,6 +240,42 @@ def switch(
     typer.echo(f"Switched to '{project.slug}' (phase: {project.phase}).")
 
 
+@app.command(epilog='Example: specflo shelve --reason "not worth it"')
+def shelve(
+    name: str = typer.Argument(
+        None,
+        metavar="[<name>]",
+        help="Project to shelve (its slug or name); defaults to the active one.",
+    ),
+    reason: str = typer.Option(
+        None, "--reason", help="Why it's being shelved (optional, stored on the project)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Shelve a project: set status to 'shelved', leaving its phase untouched.
+
+    With no name, shelves the active project; the active_project pointer is left
+    where it is (mirroring `complete`). Re-shelving updates the reason.
+    """
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = projects.slugify(name) if name else _require_active(cfg)
+    try:
+        project = projects.shelve_project(root, cfg, slug, reason=reason)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps(
+            {"slug": project.slug, "status": project.status,
+             "reason": project.shelved_reason}))
+    else:
+        message = f"Shelved '{project.slug}' (phase: {project.phase})."
+        if project.shelved_reason:
+            message += f" Reason: {project.shelved_reason}."
+        typer.echo(message)
+
+
 @app.command(epilog="Example: specflo status --json")
 def status(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),

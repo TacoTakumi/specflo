@@ -1038,3 +1038,85 @@ def test_execute_loop_end_to_end(tmp_path, monkeypatch):
     # the guide's Skills line itself must name execute (not merely the pipeline line)
     skills_line = runner.invoke(app, ["guide"]).output.split("Skills:", 1)[1].splitlines()[0]
     assert "execute" in skills_line
+
+
+# --- shelve (T-02) -------------------------------------------------------
+
+
+def _active_project_at_spec(cwd):
+    """init + new + advance to the spec phase; returns the project.md path."""
+    _ready_brainstorm(cwd)
+    runner.invoke(app, ["advance"])  # brainstorm -> spec
+    return cwd / "docs" / "projects" / "my-thing" / "project.md"
+
+
+def test_shelve_sets_status_shelved_and_keeps_phase(cwd):
+    project_md = _active_project_at_spec(cwd)
+    result = runner.invoke(app, ["shelve"])
+    assert result.exit_code == 0
+    text = project_md.read_text()
+    assert "status: shelved" in text
+    assert "phase: spec" in text  # phase preserved
+
+
+def test_shelve_keeps_the_active_project_pointer(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])
+    assert config.load_config(cwd).active_project == "my-thing"
+
+
+def test_shelve_stores_reason_in_frontmatter(cwd):
+    project_md = _active_project_at_spec(cwd)
+    result = runner.invoke(app, ["shelve", "--reason", "not worth it"])
+    assert result.exit_code == 0
+    assert "shelved_reason: not worth it" in project_md.read_text()
+
+
+def test_shelve_without_reason_leaves_reason_absent(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])
+    assert "shelved_reason" not in project_md.read_text()
+
+
+def test_shelve_refreshes_the_checkpoint(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    cp = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    assert cp.is_file()
+
+
+def test_shelve_json_emits_slug_status_and_reason(cwd):
+    _active_project_at_spec(cwd)
+    data = json.loads(
+        runner.invoke(app, ["shelve", "--reason", "nope", "--json"]).output
+    )
+    assert data["slug"] == "my-thing"
+    assert data["status"] == "shelved"
+    assert data["reason"] == "nope"
+
+
+def test_shelve_targets_a_named_non_active_project(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["new", "Bravo"])  # Bravo is now active
+    result = runner.invoke(app, ["shelve", "Alpha"])
+    assert result.exit_code == 0
+    alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
+    assert "status: shelved" in alpha_md.read_text()
+    assert config.load_config(cwd).active_project == "bravo"  # pointer untouched
+
+
+def test_shelve_reshelve_updates_the_reason(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "first"])
+    runner.invoke(app, ["shelve", "--reason", "second"])
+    text = project_md.read_text()
+    assert "status: shelved" in text
+    assert "shelved_reason: second" in text
+    assert "first" not in text
+
+
+def test_shelve_without_active_project_fails(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["shelve"])
+    assert result.exit_code != 0
