@@ -1182,3 +1182,15 @@ def test_resume_json_emits_slug_and_status(cwd):
     data = json.loads(runner.invoke(app, ["resume", "--json"]).output)
     assert data["slug"] == "my-thing"
     assert data["status"] == "active"
+
+
+def test_resume_refuses_a_not_shelved_project(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])  # active, not shelved
+    runner.invoke(app, ["new", "Bravo"])  # Bravo now the active pointer
+    result = runner.invoke(app, ["resume", "Alpha"])  # Alpha is active-status, not shelved
+    assert result.exit_code != 0
+    assert "not shelved" in result.output.lower()
+    alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
+    assert "status: active" in alpha_md.read_text()  # status unchanged
+    assert config.load_config(cwd).active_project == "bravo"  # pointer not stolen

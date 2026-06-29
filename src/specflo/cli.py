@@ -300,6 +300,12 @@ def resume(
     cfg = config.load_config(root)
     slug = projects.slugify(name) if name else _require_active(cfg)
     try:
+        existing = projects.load_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if existing.status != projects.SHELVED_STATUS:
+        raise _die(f"Project '{slug}' is not shelved — nothing to resume.")
+    try:
         project = projects.resume_project(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
