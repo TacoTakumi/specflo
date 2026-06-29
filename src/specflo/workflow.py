@@ -31,15 +31,27 @@ def next_phase(phase: str) -> str | None:
     return None
 
 
-def next_step(phase: str, progress: dict | None = None, complete: bool = False) -> str:
+def next_step(
+    phase: str,
+    progress: dict | None = None,
+    complete: bool = False,
+    shelved: bool = False,
+) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
-    For the ``execute`` phase the hint is progress-aware: pass the
+    ``shelved=True`` takes precedence over everything else (a paused project is
+    not advanced from any phase): the hint directs to resume or start anew. For
+    the ``execute`` phase the hint is otherwise progress-aware: pass the
     ``plan_progress`` dict and/or ``complete=True`` (project finished). All other
     phases ignore ``progress``/``complete`` and return their static hint, so the
     single-argument form is unchanged.
     """
     _require_known(phase)
+    if shelved:
+        return (
+            "Project shelved. Resume it with `specflo resume`, or start a new "
+            "one with `specflo new`."
+        )
     if phase == "execute":
         if complete:
             return "Project complete. Start the next piece of work with `specflo new`."

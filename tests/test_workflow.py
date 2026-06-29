@@ -45,3 +45,13 @@ def test_next_step_execute_is_progress_aware():
     blocked = {"total": 2, "all_done": False, "next_actionable": []}
     assert "actionable" in workflow.next_step("execute", progress=blocked).lower()
     assert "complete" in workflow.next_step("execute", complete=True).lower()
+
+
+def test_next_step_shelved_directs_to_resume_or_new():
+    msg = workflow.next_step("plan", shelved=True)
+    low = msg.lower()
+    assert "resume" in low  # offers resume
+    assert "new" in low     # ...or a new project
+    # shelved is orthogonal to phase: same hint at any phase, taking precedence
+    assert workflow.next_step("execute", shelved=True) == msg
+    assert workflow.next_step("execute", complete=True, shelved=True) == msg

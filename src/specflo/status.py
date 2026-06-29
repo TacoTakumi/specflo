@@ -28,6 +28,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
         progress = plan.plan_progress(root, cfg, project.slug)
     complete = project.status == projects.COMPLETE_STATUS
+    shelved = project.status == projects.SHELVED_STATUS
     info = {
         "initialized": True,
         "active_project": project.slug,
@@ -35,8 +36,11 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "dir": str(project.path),
         "phase": project.phase,
         "status": project.status,
+        "shelved_reason": project.shelved_reason,
         "next_phase": workflow.next_phase(project.phase),
-        "next_step": workflow.next_step(project.phase, progress=progress, complete=complete),
+        "next_step": workflow.next_step(
+            project.phase, progress=progress, complete=complete, shelved=shelved
+        ),
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
     }
     if progress is not None:
@@ -55,6 +59,9 @@ def render_status(root: Path, info: dict) -> str:
     phase_line = f"Phase:   {info['phase']}"
     if info["status"] == projects.COMPLETE_STATUS:
         phase_line += "  (complete)"
+    elif info["status"] == projects.SHELVED_STATUS:
+        reason = info.get("shelved_reason")
+        phase_line += f"  (shelved: {reason})" if reason else "  (shelved)"
     lines.append(phase_line)
     if "progress" in info:
         p = info["progress"]

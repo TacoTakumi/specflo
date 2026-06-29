@@ -1221,3 +1221,32 @@ def test_switch_onto_a_shelved_project_keeps_it_shelved(cwd):
     assert config.load_config(cwd).active_project == "alpha"  # pointer moved
     alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
     assert "status: shelved" in alpha_md.read_text()  # status unchanged by switch
+
+
+# --- status surfaces shelved state (T-09) --------------------------------
+
+
+def test_status_marks_a_shelved_project_and_shows_reason(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "waiting on api"])
+    out = runner.invoke(app, ["status"]).output
+    assert "(shelved" in out         # phase line marked shelved (mirrors '(complete)')
+    assert "waiting on api" in out   # reason shown when set
+    low = out.lower()
+    assert "resume" in low           # Next line directs to resume-or-new
+    assert "new" in low
+
+
+def test_status_shelved_without_reason_is_marked_without_reason_text(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])
+    out = runner.invoke(app, ["status"]).output
+    assert "(shelved)" in out        # marked, no trailing reason
+
+
+def test_status_json_reports_shelved_status_and_reason(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["status"] == "shelved"
+    assert data["shelved_reason"] == "later"
