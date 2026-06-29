@@ -46,3 +46,10 @@ def test_brainstorm_skill_weaves_in_research():
     assert "skills/research" in text, "brainstorm skill must reference the research skill path"
     for phrase in ["landscape scan", "opportunistic", "research subagent"]:
         assert phrase in lower, f"missing research seam phrase: {phrase}"
+
+
+def test_brainstorm_skill_warns_against_research_agent_type():
+    """The dispatch must steer to general-purpose, not the non-existent agent type."""
+    text = SKILL.read_text()
+    assert "general-purpose" in text
+    assert "subagent_type: research" in text  # named as the thing NOT to do

@@ -86,10 +86,12 @@ explicitly approved. This applies regardless of how simple the work looks.
 ## Researching (the woven research seam)
 
 Research is done by a **research subagent**, not by you inline — that keeps raw
-search noise out of this conversation. Dispatch a subagent that follows the
-`skills/research` skill (it runs with least-privilege, read/research-only tools
-and owns wiki search + save-back). Hand it one research question and fold the
-**digest** it returns into the artifact:
+search noise out of this conversation. Dispatch a **general-purpose** subagent and
+instruct it to follow the `skills/research` skill (it runs with least-privilege,
+read/research-only tools and owns wiki search + save-back) — do **not** pass
+`subagent_type: research`; research is a *skill*, not an agent type, and that call
+fails. Hand it one research question and fold the **digest** it returns into the
+artifact:
 
 - **Findings / Surprises** → `## Research` (and revise **Current understanding**).
 - **Sources** → **Canonical refs**.
