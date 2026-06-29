@@ -180,11 +180,12 @@ def new(
     # Scaffold the first artifact so a new project is immediately ready to work
     # (no separate `brainstorm start`). create_project stays container-only;
     # the scaffold is CLI orchestration over the idempotent helper.
-    brainstorm.start_brainstorm(root, cfg, project.slug)
+    brainstorm_path, _ = brainstorm.start_brainstorm(root, cfg, project.slug)
     _refresh_checkpoint(root, cfg, project.slug)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
+    typer.echo(f"Scaffolded {brainstorm_path} — ready to work.")
 
 
 @app.command(name="list", epilog="Example: specflo list --json")

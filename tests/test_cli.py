@@ -101,6 +101,18 @@ def test_new_scaffolds_brainstorm(cwd):
         assert header in text
 
 
+def test_new_output_names_brainstorm_path(cwd):
+    """`new`'s output is self-sufficient: it names the scaffolded brainstorm.md (REQ-04)."""
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "My Thing"])
+    assert result.exit_code == 0
+    out = result.output
+    assert "my-thing" in out  # the slug
+    assert "now active" in out  # the existing line is retained
+    assert "brainstorm" in out
+    assert "my-thing/brainstorm.md" in out  # the scaffolded artifact, by path
+
+
 def test_new_without_init_fails(cwd):
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code != 0
