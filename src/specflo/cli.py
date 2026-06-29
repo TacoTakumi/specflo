@@ -218,7 +218,14 @@ def list_(
 
     for p in items:
         marker = "*" if p.slug == cfg.active_project else " "
-        suffix = "  ✓ complete" if p.status == "complete" else ""
+        if p.status == projects.COMPLETE_STATUS:
+            suffix = "  ✓ complete"
+        elif p.status == projects.SHELVED_STATUS:
+            suffix = "  ⏸ shelved"
+            if p.shelved_reason:
+                suffix += f": {p.shelved_reason}"
+        else:
+            suffix = ""
         typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
 
 

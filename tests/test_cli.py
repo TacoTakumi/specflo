@@ -1250,3 +1250,41 @@ def test_status_json_reports_shelved_status_and_reason(cwd):
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
     assert data["status"] == "shelved"
     assert data["shelved_reason"] == "later"
+
+
+# --- list marks shelved projects (T-10) ----------------------------------
+
+
+def test_list_marks_a_shelved_project_with_reason(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["shelve", "--reason", "on hold"])
+    out = runner.invoke(app, ["list"]).output
+    assert "shelved" in out.lower()   # shelved marker present
+    assert "on hold" in out           # reason appended when set
+    assert "✓ complete" not in out    # distinct from the complete marker
+
+
+def test_list_shelved_marker_is_distinct_from_complete(cwd):
+    from specflo import projects
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["shelve"])     # Alpha shelved
+    runner.invoke(app, ["new", "Bravo"])
+    projects.complete_project(cwd, config.load_config(cwd), "bravo")
+    out = runner.invoke(app, ["list"]).output
+    alpha_line = next(l for l in out.splitlines() if "alpha" in l)
+    bravo_line = next(l for l in out.splitlines() if "bravo" in l)
+    assert "shelved" in alpha_line.lower()
+    assert "complete" not in alpha_line.lower()   # shelved entry isn't marked complete
+    assert "complete" in bravo_line.lower()
+    assert "shelved" not in bravo_line.lower()    # ...and vice versa
+
+
+def test_list_json_reports_shelved_status(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    data = json.loads(runner.invoke(app, ["list", "--json"]).output)
+    alpha = next(p for p in data["projects"] if p["slug"] == "alpha")
+    assert alpha["status"] == "shelved"
