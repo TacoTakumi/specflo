@@ -23,7 +23,7 @@ from .projects import COMPLETE_STATUS, SHELVED_STATUS
 # auto-running the checkpoint's "Do next" (D-04). Source-neutral so it reads
 # naturally for `startup`, `clear`, and `resume` alike.
 CONFIRMATION_DIRECTIVE = (
-    "You are resuming a specflo project. Do NOT begin work yet — the user may "
+    "You are resuming a specflo project. Do NOT begin work yet - the user may "
     "want to do something else, or not continue at all. Present the checkpoint "
     "below to the user and ask whether they want to continue, do something "
     "else, or stop, then wait for their answer."
@@ -34,7 +34,7 @@ CONFIRMATION_DIRECTIVE = (
 # next piece (`specflo new`) instead. Used in place of CONFIRMATION_DIRECTIVE
 # when the active project's status is COMPLETE_STATUS.
 COMPLETE_DIRECTIVE = (
-    "The active specflo project is complete — there is nothing to resume. Do "
+    "The active specflo project is complete - there is nothing to resume. Do "
     "NOT begin work or pick the finished project back up. Tell the user the "
     "project is complete and ask whether they'd like to start a new project "
     "(`specflo new`) or do something else, then wait for their answer."
@@ -117,7 +117,7 @@ def _user_message(root: Path, cfg, project) -> str:
     if project.status == COMPLETE_STATUS:
         prompt = (
             "This project is complete. Would you like to start a new project? "
-            "(`specflo new`) — or tell me what you'd like to do."
+            "(`specflo new`) - or tell me what you'd like to do."
         )
     elif project.status == SHELVED_STATUS:
         prompt = (
@@ -126,7 +126,7 @@ def _user_message(root: Path, cfg, project) -> str:
         )
     else:
         prompt = (
-            "I won't pick up on my own — type `continue` and I'll surface the "
+            "I won't pick up on my own - type `continue` and I'll surface the "
             "checkpoint and resume from there, or tell me what you'd like to do."
         )
     return f"{status_block}\n\n{prompt}"

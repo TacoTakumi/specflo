@@ -88,9 +88,9 @@ def render_checkpoint(payload: dict) -> str:
     subtitle = f"_phase: {payload['phase']}"
     if shelved:
         subtitle += " (shelved)"
-    subtitle += f" · generated {payload['generated']}_"
+    subtitle += f" | generated {payload['generated']}_"
     lines = [
-        f"# Checkpoint — {payload['project']}",
+        f"# Checkpoint - {payload['project']}",
         subtitle,
         "",
     ]
@@ -104,8 +104,8 @@ def render_checkpoint(payload: dict) -> str:
         payload["do_next"],
         "",
         "## Resume",
-        "- `specflo status`     — confirm phase/step",
-        "- `specflo checkpoint` — reprint this prompt",
+        "- `specflo status`     - confirm phase/step",
+        "- `specflo checkpoint` - reprint this prompt",
         "",
     ]
     return "\n".join(lines)

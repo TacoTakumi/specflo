@@ -1363,3 +1363,68 @@ def test_list_json_reports_shelved_status(cwd):
     data = json.loads(runner.invoke(app, ["list", "--json"]).output)
     alpha = next(p for p in data["projects"] if p["slug"] == "alpha")
     assert alpha["status"] == "shelved"
+
+
+def test_hook_directives_are_ascii():
+    """Guard: session-start directive strings stay ASCII (no em-dashes/arrows)."""
+    from specflo import hook
+
+    for name in dir(hook):
+        if name.isupper() and isinstance(getattr(hook, name), str):
+            getattr(hook, name).encode("ascii")  # raises on any non-ASCII
+
+
+def test_cli_output_stays_ascii(tmp_path, monkeypatch):
+    """Guard: user-facing command output stays ASCII across the pipeline.
+
+    Locks the em-dash/arrow/middle-dot -> ASCII cleanup so the glyphs can't
+    creep back into terminal output.
+    """
+    monkeypatch.chdir(tmp_path)
+    proj = tmp_path / "docs" / "projects" / "my-thing"
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    # valid brainstorm -> advance to spec
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    bs = proj / "brainstorm.md"
+    bs.write_text(
+        bs.read_text().replace(
+            "## Out of scope / Deferred\n"
+            "<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\n- nothing else.",
+        )
+    )
+    runner.invoke(app, ["advance"])
+    # valid spec -> advance to plan
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(
+        app,
+        ["requirement", "add", "--text", "store data",
+         "--acceptance", "survives restart", "--from", "D-01"],
+    )
+    sp = proj / "spec.md"
+    sp.write_text(
+        sp.read_text()
+        .replace("### In scope\n<!-- required, non-empty -->", "### In scope\n- it.")
+        .replace(
+            "### Out of scope\n"
+            "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+            "### Out of scope\n- not it.",
+        )
+    )
+    runner.invoke(app, ["advance"])
+    # plan + task -> advance to execute
+    runner.invoke(app, ["plan", "start"])
+    runner.invoke(
+        app,
+        ["task", "add", "--text", "build it", "--acceptance", "works",
+         "--verify", "uv run pytest", "--from", "REQ-01"],
+    )
+    runner.invoke(app, ["advance"])
+    runner.invoke(app, ["task", "start", "T-01"])
+
+    for cmd in (
+        ["status"], ["status", "--json"], ["checkpoint"], ["list"], ["guide"],
+        ["task", "list"], ["task", "show"], ["validate", "execute"], ["hook", "print"],
+    ):
+        runner.invoke(app, cmd).output.encode("ascii")  # raises on any non-ASCII

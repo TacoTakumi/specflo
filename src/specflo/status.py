@@ -68,7 +68,7 @@ def render_status(root: Path, info: dict) -> str:
     lines.append(phase_line)
     if "progress" in info:
         p = info["progress"]
-        nxt = " · next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
+        nxt = " | next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
         lines.append(f"Tasks:   {p['done']}/{p['total']} done{nxt}")
     lines.append(f"Next:    {info['next_step']}")
     lines.append("Resume:  specflo checkpoint")

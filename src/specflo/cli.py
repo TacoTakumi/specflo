@@ -224,9 +224,9 @@ def list_(
     for p in items:
         marker = "*" if p.slug == cfg.active_project else " "
         if p.status == projects.COMPLETE_STATUS:
-            suffix = "  ✓ complete"
+            suffix = "  [complete]"
         elif p.status == projects.SHELVED_STATUS:
-            suffix = "  ⏸ shelved"
+            suffix = "  [shelved]"
             if p.shelved_reason:
                 suffix += f": {p.shelved_reason}"
         else:
@@ -277,7 +277,7 @@ def shelve(
     except SpecfloError as exc:
         raise _die(str(exc))
     if existing.status == projects.COMPLETE_STATUS:
-        raise _die(f"Project '{slug}' is complete (terminal) — cannot shelve it.")
+        raise _die(f"Project '{slug}' is complete (terminal) - cannot shelve it.")
     try:
         project = projects.shelve_project(root, cfg, slug, reason=reason)
     except SpecfloError as exc:
@@ -316,7 +316,7 @@ def resume(
     except SpecfloError as exc:
         raise _die(str(exc))
     if existing.status != projects.SHELVED_STATUS:
-        raise _die(f"Project '{slug}' is not shelved — nothing to resume.")
+        raise _die(f"Project '{slug}' is not shelved - nothing to resume.")
     try:
         project = projects.resume_project(root, cfg, slug)
     except SpecfloError as exc:
@@ -377,7 +377,7 @@ def status(
 def _render_pipeline(data: dict) -> str:
     current = data.get("phase")
     parts = [f"*{p}*" if p == current else p for p in data["pipeline"]]
-    return " → ".join(parts)
+    return " -> ".join(parts)
 
 
 def _render_you_are_here(data: dict) -> list[str]:
@@ -393,7 +393,7 @@ def _render_you_are_here(data: dict) -> list[str]:
             "  Run `specflo new <name>` to start one.",
         ]
     return [
-        f"Project '{data['active_project']}' · phase: {data['phase']}",
+        f"Project '{data['active_project']}' | phase: {data['phase']}",
         f"  Next: {data['next_step']}",
     ]
 
@@ -418,7 +418,7 @@ def guide_(
 ) -> None:
     """Show what specflo is, the workflow, and what to do next here.
 
-    Runs cold — works before `specflo init` — so an agent can get oriented in any
+    Runs cold - works before `specflo init` - so an agent can get oriented in any
     repo with a single command.
     """
     root = config.find_root(Path.cwd())
@@ -430,7 +430,7 @@ def guide_(
         return
 
     lines = [
-        "specflo — a spec-driven software-engineering workflow.",
+        "specflo - a spec-driven software-engineering workflow.",
         "",
         f"Pipeline:  {_render_pipeline(data)}",
         "",
@@ -481,11 +481,11 @@ def hook_reseed(
     """Emit the clear-and-continue reseed payload for the active project.
 
     Default (`text`) prints the confirmation-gate directive + the verbatim
-    checkpoint — portable across harnesses. `--format claude` emits Claude Code
+    checkpoint - portable across harnesses. `--format claude` emits Claude Code
     SessionStart JSON: the same payload as `additionalContext` plus a visible
     `systemMessage` telling the user what to type. Either way, prints nothing
     when there is no active project. Always exits 0, reads no stdin, makes no
-    network calls — safe to wire into SessionStart unconditionally.
+    network calls - safe to wire into SessionStart unconditionally.
     """
     out = (
         hook.claude_session_start_output()
@@ -509,7 +509,7 @@ def hook_print(
     if install:
         root = _require_root()
         path = hook.install_hook(root)
-        typer.echo(f"Installed SessionStart hook → {config.display_path(path, root)}")
+        typer.echo(f"Installed SessionStart hook -> {config.display_path(path, root)}")
     else:
         typer.echo(json.dumps(hook.settings_snippet(), indent=2))
 
@@ -596,7 +596,7 @@ def validate(
         for w in warnings:
             typer.echo(f"  - {w}", err=True)
     if not issues:
-        typer.echo(f"ok — {artifact} is ready.")
+        typer.echo(f"ok - {artifact} is ready.")
         return
     typer.secho(f"{artifact} has issues:", fg=typer.colors.YELLOW, err=True)
     for issue in issues:
@@ -619,7 +619,7 @@ def advance(
 
     if project.status == projects.SHELVED_STATUS:
         raise _die(
-            f"Project '{slug}' is shelved — run `specflo resume` first, then advance."
+            f"Project '{slug}' is shelved - run `specflo resume` first, then advance."
         )
 
     from_phase = project.phase
@@ -642,7 +642,7 @@ def advance(
                     typer.echo(json.dumps(
                         {"advanced": False, "from": from_phase, "to": None, "issues": issues}))
                     raise typer.Exit(code=1)
-                typer.secho(f"cannot complete — {from_phase} is not ready:",
+                typer.secho(f"cannot complete - {from_phase} is not ready:",
                             fg=typer.colors.YELLOW, err=True)
                 for issue in issues:
                     typer.echo(f"  - {issue}", err=True)
@@ -658,7 +658,7 @@ def advance(
             typer.echo(f"Completed project '{slug}'.")
             typer.echo(f"Next:    {workflow.next_step(from_phase, complete=True)}")
             typer.echo(f"Checkpoint saved: {cp_display}")
-            typer.echo("You may clear context now — this project is complete.")
+            typer.echo("You may clear context now - this project is complete.")
         return
 
     # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
@@ -671,7 +671,7 @@ def advance(
                 typer.echo(json.dumps(
                     {"advanced": False, "from": from_phase, "to": to_phase, "issues": issues}))
                 raise typer.Exit(code=1)
-            typer.secho(f"cannot advance — {from_phase} is not ready:",
+            typer.secho(f"cannot advance - {from_phase} is not ready:",
                         fg=typer.colors.YELLOW, err=True)
             for issue in issues:
                 typer.echo(f"  - {issue}", err=True)
@@ -702,7 +702,7 @@ def advance(
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
         typer.echo(f"Next:    {next_step}")
         typer.echo(f"Checkpoint saved: {cp_display}")
-        typer.echo("You may clear context now — resume with `specflo checkpoint`.")
+        typer.echo("You may clear context now - resume with `specflo checkpoint`.")
 
 
 @spec_app.command("start", epilog="Example: specflo spec start")
@@ -801,7 +801,7 @@ def task_add(
     acceptance: str = typer.Option(..., "--acceptance", help="Pass/fail acceptance criterion (required)."),
     verify: str = typer.Option(..., "--verify", help="Verification command or step (required)."),
     from_: list[str] = typer.Option(
-        ..., "--from", metavar="REQ-NN", help="Requirement(s) this task implements (repeatable; ≥1)."
+        ..., "--from", metavar="REQ-NN", help="Requirement(s) this task implements (repeatable; >=1)."
     ),
     depends_on: list[str] = typer.Option(
         None, "--depends-on", metavar="T-NN", help="Task(s) this depends on (repeatable)."
@@ -840,7 +840,7 @@ def _report_transition(task: plan.Task, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps({"id": task.id, "progress": task.progress, "blocked": task.blocked}))
     else:
-        line = f"{task.id} → {task.progress}"
+        line = f"{task.id} -> {task.progress}"
         if task.blocked:
             line += f" ({task.blocked})"
         typer.echo(line)
@@ -934,13 +934,13 @@ def task_list(
         typer.echo("No tasks yet. Add one with `specflo task add`.")
         return
     for t in tasks:
-        marker = "→" if t.id in nexts else " "
+        marker = ">" if t.id in nexts else " "
         sup = "  (superseded)" if t.status != "active" else ""
         deps = f"  deps: {', '.join(t.depends_on)}" if t.depends_on else ""
         typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{sup}")
     tail = ""
     if progress["next_actionable"]:
-        tail = " · next: " + ", ".join(progress["next_actionable"])
+        tail = " | next: " + ", ".join(progress["next_actionable"])
     typer.echo(f"\n{progress['done']}/{progress['total']} done{tail}")
 
 
@@ -962,7 +962,7 @@ def task_show(
         return
     t = brief["task"]
     lines = [
-        f"{t['id']} — {t['text']}  [{t['progress']}]",
+        f"{t['id']} - {t['text']}  [{t['progress']}]",
         f"  Acceptance: {t['acceptance']}",
         f"  Verify:     {t['verify']}",
         f"  Implements: {', '.join(t['implements'])}",
@@ -972,7 +972,7 @@ def task_show(
     lines.append("")
     for req in brief["requirements"]:
         lines.append(req["section"].rstrip() if req["section"]
-                     else f"### {req['id']} — (not found in spec)")
+                     else f"### {req['id']} - (not found in spec)")
         lines.append("")
     if brief["global_constraints"]:
         lines.append("## Global constraints")

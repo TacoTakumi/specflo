@@ -35,7 +35,7 @@ def test_render_checkpoint_has_the_sections(tmp_path):
     _cfg, project = _project(tmp_path)
     data = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-21")
     text = checkpoint.render_checkpoint(data)
-    assert "# Checkpoint — my-thing" in text
+    assert "# Checkpoint - my-thing" in text
     assert "generated 2026-06-21" in text
     assert "## Read first" in text
     assert "## Do next" in text
