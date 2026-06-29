@@ -1207,3 +1207,17 @@ def test_advance_refuses_a_shelved_project(cwd):
     text = project_md.read_text()
     assert "phase: plan" in text      # phase unchanged
     assert "status: shelved" in text  # status unchanged
+
+
+def test_switch_onto_a_shelved_project_keeps_it_shelved(cwd):
+    # Regression lock: switch moves the pointer but must not un-shelve. Only
+    # 'resume' un-shelves; switching to a shelved project leaves it shelved.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["shelve", "--reason", "later"])  # Alpha shelved (still active pointer)
+    runner.invoke(app, ["new", "Bravo"])                 # Bravo now active
+    result = runner.invoke(app, ["switch", "Alpha"])
+    assert result.exit_code == 0
+    assert config.load_config(cwd).active_project == "alpha"  # pointer moved
+    alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
+    assert "status: shelved" in alpha_md.read_text()  # status unchanged by switch
