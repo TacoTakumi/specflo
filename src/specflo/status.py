@@ -36,13 +36,16 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "dir": str(project.path),
         "phase": project.phase,
         "status": project.status,
-        "shelved_reason": project.shelved_reason,
         "next_phase": workflow.next_phase(project.phase),
         "next_step": workflow.next_step(
             project.phase, progress=progress, complete=complete, shelved=shelved
         ),
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
     }
+    # Only carried when meaningful (a shelved project with a reason), so active
+    # and complete payloads don't ship an empty field — mirrors `progress`.
+    if shelved and project.shelved_reason:
+        info["shelved_reason"] = project.shelved_reason
     if progress is not None:
         info["progress"] = progress
     return info

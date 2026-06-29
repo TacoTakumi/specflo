@@ -49,11 +49,13 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     for filename in _ARTIFACT_ORDER:
         if (directory / filename).is_file():
             read_first.append(display_path(directory / filename, root, posix=True))
+    shelved = project.status == SHELVED_STATUS
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
-    if project.phase in ("plan", "execute") and plan_file.is_file():
+    # A shelved project's do_next ignores progress, so skip the plan-file read.
+    if not shelved and project.phase in ("plan", "execute") and plan_file.is_file():
         prog = plan_module.progress_from_doc(plan_file.read_text())
-    if project.status == SHELVED_STATUS:
+    if shelved:
         # Paused: don't direct to the phase's work step — resume (or start new),
         # while the recorded phase below is preserved so resume returns to it.
         do_next = workflow.next_step(project.phase, shelved=True)

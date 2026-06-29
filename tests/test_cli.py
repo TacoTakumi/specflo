@@ -1252,6 +1252,13 @@ def test_status_json_reports_shelved_status_and_reason(cwd):
     assert data["shelved_reason"] == "later"
 
 
+def test_status_json_omits_shelved_reason_for_a_non_shelved_project(cwd):
+    _active_project_at_spec(cwd)  # active, not shelved
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["status"] == "active"
+    assert "shelved_reason" not in data  # no empty field on non-shelved payloads
+
+
 # --- list marks shelved projects (T-10) ----------------------------------
 
 
