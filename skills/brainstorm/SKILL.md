@@ -32,10 +32,12 @@ explicitly approved. This applies regardless of how simple the work looks.
 
 ## Process
 
-1. **Preflight.** Confirm an active project (`specflo status`). Run
-   `specflo brainstorm start` to create or locate `brainstorm.md` (the command
-   prints its path — never build the path yourself). If resuming, read the
-   existing file to load prior decisions; do not re-litigate them.
+1. **Preflight.** Confirm an active project (`specflo status`). A new project's
+   `brainstorm.md` is already **scaffolded by `specflo new`**, so here
+   `specflo brainstorm start` just **locates** it (creating it only if missing —
+   e.g. a pre-existing project) and prints its path — never build the path
+   yourself. If resuming, read the existing file to load prior decisions; do not
+   re-litigate them.
 2. **Decompose-first.** If the request spans multiple independent subsystems, say
    so now and split it; brainstorm one piece at a time. Don't refine details of
    something that should be decomposed.
@@ -134,7 +136,7 @@ the strongest version of the user's idea, not a strawman.
 
 ## Verification checklist
 
-- [ ] `specflo brainstorm start` was run; `brainstorm.md` exists for the active project.
+- [ ] `brainstorm.md` exists for the active project (scaffolded by `specflo new`; `specflo brainstorm start` locates it).
 - [ ] Every decision reached is in the Decisions section via `specflo decision add`.
 - [ ] **Out of scope / Deferred** is filled in (not just the scaffold comment).
 - [ ] **Open questions** is present (may say "none").
