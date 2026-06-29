@@ -135,6 +135,19 @@ def test_advance_does_not_scaffold(cwd):
     assert spec_md.is_file()  # the artifact appears only via its own start
 
 
+def test_brainstorm_start_idempotent_after_new(cwd):
+    """Regression-lock: after `new`, `brainstorm start` locates the file, reports
+    already-started, and leaves it byte-for-byte unchanged (REQ-05)."""
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    bs = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    before = bs.read_bytes()
+    result = runner.invoke(app, ["brainstorm", "start"])
+    assert result.exit_code == 0
+    assert "already started" in result.output
+    assert bs.read_bytes() == before  # non-destructive
+
+
 def test_new_without_init_fails(cwd):
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code != 0
