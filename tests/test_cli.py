@@ -1120,3 +1120,14 @@ def test_shelve_without_active_project_fails(cwd):
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["shelve"])
     assert result.exit_code != 0
+
+
+def test_shelve_refuses_a_complete_project(cwd):
+    from specflo import projects
+    _active_project_at_spec(cwd)
+    projects.complete_project(cwd, config.load_config(cwd), "my-thing")  # terminal
+    result = runner.invoke(app, ["shelve"])
+    assert result.exit_code != 0
+    assert "complete" in result.output.lower()  # message names the terminal state
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    assert "status: complete" in project_md.read_text()  # status unchanged
