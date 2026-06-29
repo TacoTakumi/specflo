@@ -18,7 +18,13 @@ from pathlib import Path
 from . import plan as plan_module, workflow
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
-from .projects import COMPLETE_STATUS, PROJECT_FILENAME, Project, project_dir
+from .projects import (
+    COMPLETE_STATUS,
+    PROJECT_FILENAME,
+    SHELVED_STATUS,
+    Project,
+    project_dir,
+)
 from .spec import SPEC_FILENAME
 
 CHECKPOINT_FILENAME = "checkpoint.md"
@@ -47,7 +53,11 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     prog = None
     if project.phase in ("plan", "execute") and plan_file.is_file():
         prog = plan_module.progress_from_doc(plan_file.read_text())
-    if project.phase == "execute":
+    if project.status == SHELVED_STATUS:
+        # Paused: don't direct to the phase's work step — resume (or start new),
+        # while the recorded phase below is preserved so resume returns to it.
+        do_next = workflow.next_step(project.phase, shelved=True)
+    elif project.phase == "execute":
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS
         )
@@ -61,6 +71,8 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     return {
         "project": project.slug,
         "phase": project.phase,
+        "status": project.status,
+        "shelved_reason": project.shelved_reason,
         "generated": today or datetime.date.today().isoformat(),
         "read_first": read_first,
         "do_next": do_next,
@@ -70,10 +82,19 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
 
 def render_checkpoint(payload: dict) -> str:
     """Render the payload to the markdown written to ``checkpoint.md``."""
+    shelved = payload.get("status") == SHELVED_STATUS
+    subtitle = f"_phase: {payload['phase']}"
+    if shelved:
+        subtitle += " (shelved)"
+    subtitle += f" · generated {payload['generated']}_"
     lines = [
         f"# Checkpoint — {payload['project']}",
-        f"_phase: {payload['phase']} · generated {payload['generated']}_",
+        subtitle,
         "",
+    ]
+    if shelved and payload.get("shelved_reason"):
+        lines += [f"**Shelved:** {payload['shelved_reason']}", ""]
+    lines += [
         "## Read first",
         *(f"- {path}" for path in payload["read_first"]),
         "",

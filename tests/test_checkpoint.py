@@ -88,3 +88,46 @@ def test_checkpoint_execute_phase_progress_aware(tmp_path):
     payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-24")
     assert "T-01" in payload["do_next"]                          # names the next task
     assert "task show" in payload["do_next"]
+
+
+# --- shelved-aware checkpoint (T-11) -------------------------------------
+
+
+def _shelved_project(tmp_path, reason="paused", phase="plan"):
+    """A 'My Thing' project moved to ``phase`` then shelved with ``reason``."""
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "My Thing")
+    proj_md = tmp_path / "docs" / "projects" / "my-thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", f"phase: {phase}"))
+    project = projects.shelve_project(tmp_path, cfg, "my-thing", reason=reason)
+    return cfg, project
+
+
+def test_build_checkpoint_shelved_directs_to_resume_and_preserves_phase(tmp_path):
+    _cfg, project = _shelved_project(tmp_path, reason="paused", phase="plan")
+    data = checkpoint.build_checkpoint(tmp_path, project, today="2026-06-29")
+    assert data["phase"] == "plan"               # recorded phase preserved for resume
+    assert data["status"] == "shelved"
+    assert data["shelved_reason"] == "paused"
+    assert data["do_next"] == workflow.next_step("plan", shelved=True)
+    assert "resume" in data["do_next"].lower()   # directs to resume, not the work step
+    assert data["do_next"] != workflow.next_step("plan")
+
+
+def test_render_checkpoint_shelved_identifies_and_shows_reason(tmp_path):
+    _cfg, project = _shelved_project(tmp_path, reason="waiting on api", phase="spec")
+    text = checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(tmp_path, project, today="2026-06-29")
+    )
+    assert "shelved" in text.lower()    # identified as shelved
+    assert "waiting on api" in text     # reason shown when set
+    assert "resume" in text.lower()     # Do next directs to resume
+    assert "phase: spec" in text        # recorded phase preserved
+
+
+def test_render_checkpoint_shelved_without_reason_still_identifies(tmp_path):
+    _cfg, project = _shelved_project(tmp_path, reason=None, phase="plan")
+    text = checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(tmp_path, project, today="2026-06-29")
+    )
+    assert "shelved" in text.lower()
