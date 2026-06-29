@@ -157,6 +157,20 @@ def shelve_project(
     return project
 
 
+def resume_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
+    """Un-shelve a project: status -> active, clear the reason, phase untouched.
+
+    Persists and returns it. The ``active_project`` pointer is the caller's to
+    move (mirroring how ``new`` sets it in the CLI), so this stays a pure
+    project-file mutation like ``shelve_project``/``complete_project``.
+    """
+    project = load_project(root, cfg, slug)
+    project.status = INITIAL_STATUS
+    project.shelved_reason = ""
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
 def _render(project: Project) -> str:
     fields = {
         "name": project.name,

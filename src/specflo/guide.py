@@ -32,6 +32,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Make another project active."},
     {"name": "shelve", "group": "setup", "args": "[<name>]",
      "summary": "Shelve a project (pause it); status -> shelved, phase kept."},
+    {"name": "resume", "group": "setup", "args": "[<name>]",
+     "summary": "Resume a shelved project; status -> active, make it active."},
     {"name": "status", "group": "setup", "args": "",
      "summary": "Show the active project, its phase, and what's next."},
     {"name": "guide", "group": "setup", "args": "",

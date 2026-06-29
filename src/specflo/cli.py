@@ -282,6 +282,36 @@ def shelve(
         typer.echo(message)
 
 
+@app.command(epilog="Example: specflo resume my-project")
+def resume(
+    name: str = typer.Argument(
+        None,
+        metavar="[<name>]",
+        help="Project to resume (its slug or name); defaults to the active one.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Resume a shelved project: status -> active, clear its reason, make it active.
+
+    With no name, resumes the active project (when it is shelved). The phase is
+    left untouched, so resume returns you to where the work was paused.
+    """
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = projects.slugify(name) if name else _require_active(cfg)
+    try:
+        project = projects.resume_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    cfg.active_project = project.slug
+    config.save_config(root, cfg)
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"slug": project.slug, "status": project.status}))
+    else:
+        typer.echo(f"Resumed '{project.slug}' (phase: {project.phase}). Now active.")
+
+
 @app.command(epilog="Example: specflo status --json")
 def status(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),

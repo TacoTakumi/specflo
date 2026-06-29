@@ -1131,3 +1131,54 @@ def test_shelve_refuses_a_complete_project(cwd):
     assert "complete" in result.output.lower()  # message names the terminal state
     project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
     assert "status: complete" in project_md.read_text()  # status unchanged
+
+
+# --- resume (T-04) -------------------------------------------------------
+
+
+def test_resume_unshelves_and_reactivates(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    result = runner.invoke(app, ["resume", "my-thing"])
+    assert result.exit_code == 0
+    text = project_md.read_text()
+    assert "status: active" in text
+    assert "shelved_reason" not in text  # reason cleared
+    assert "phase: spec" in text  # phase unchanged
+    assert config.load_config(cwd).active_project == "my-thing"
+
+
+def test_resume_bare_resumes_the_active_shelved_project(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])  # my-thing stays the active pointer
+    result = runner.invoke(app, ["resume"])
+    assert result.exit_code == 0
+    assert "status: active" in project_md.read_text()
+
+
+def test_resume_sets_active_pointer_to_a_named_project(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Alpha"])
+    runner.invoke(app, ["shelve"])        # Alpha shelved, still the active pointer
+    runner.invoke(app, ["new", "Bravo"])  # Bravo now active
+    result = runner.invoke(app, ["resume", "Alpha"])
+    assert result.exit_code == 0
+    assert config.load_config(cwd).active_project == "alpha"
+    alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
+    assert "status: active" in alpha_md.read_text()
+
+
+def test_resume_refreshes_the_checkpoint(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])
+    runner.invoke(app, ["resume"])
+    cp = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+    assert cp.is_file()
+
+
+def test_resume_json_emits_slug_and_status(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve"])
+    data = json.loads(runner.invoke(app, ["resume", "--json"]).output)
+    assert data["slug"] == "my-thing"
+    assert data["status"] == "active"
