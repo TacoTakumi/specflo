@@ -1194,3 +1194,16 @@ def test_resume_refuses_a_not_shelved_project(cwd):
     alpha_md = cwd / "docs" / "projects" / "alpha" / "project.md"
     assert "status: active" in alpha_md.read_text()  # status unchanged
     assert config.load_config(cwd).active_project == "bravo"  # pointer not stolen
+
+
+def test_advance_refuses_a_shelved_project(cwd):
+    _ready_spec(cwd)
+    runner.invoke(app, ["advance"])  # spec -> plan
+    runner.invoke(app, ["shelve", "--reason", "paused"])
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    result = runner.invoke(app, ["advance"])
+    assert result.exit_code != 0
+    assert "resume" in result.output.lower()  # guidance to resume first
+    text = project_md.read_text()
+    assert "phase: plan" in text      # phase unchanged
+    assert "status: shelved" in text  # status unchanged

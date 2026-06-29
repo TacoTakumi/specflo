@@ -605,6 +605,11 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
+    if project.status == projects.SHELVED_STATUS:
+        raise _die(
+            f"Project '{slug}' is shelved — run `specflo resume` first, then advance."
+        )
+
     from_phase = project.phase
     to_phase = workflow.next_phase(from_phase)
 
