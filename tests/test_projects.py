@@ -38,6 +38,14 @@ def test_create_project_writes_artifact_and_returns_project(root, cfg):
     assert project.created == "2026-06-15"
 
 
+def test_create_project_leaves_no_brainstorm(root, cfg):
+    """create_project is container-only: project.md but no brainstorm.md (REQ-03)."""
+    projects.create_project(root, cfg, "My Thing")
+    pdir = root / "docs" / "projects" / "my-thing"
+    assert (pdir / "project.md").is_file()
+    assert not (pdir / "brainstorm.md").exists()
+
+
 def test_creating_a_duplicate_project_raises(root, cfg):
     projects.create_project(root, cfg, "My Thing")
     with pytest.raises(SpecfloError):

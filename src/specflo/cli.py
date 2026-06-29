@@ -177,6 +177,10 @@ def new(
         raise _die(str(exc))
     cfg.active_project = project.slug
     config.save_config(root, cfg)
+    # Scaffold the first artifact so a new project is immediately ready to work
+    # (no separate `brainstorm start`). create_project stays container-only;
+    # the scaffold is CLI orchestration over the idempotent helper.
+    brainstorm.start_brainstorm(root, cfg, project.slug)
     _refresh_checkpoint(root, cfg, project.slug)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."

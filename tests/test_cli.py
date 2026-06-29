@@ -84,6 +84,23 @@ def test_new_creates_project_and_makes_it_active(cwd):
     assert config.load_config(cwd).active_project == "my-thing"
 
 
+def test_new_scaffolds_brainstorm(cwd):
+    """`new` leaves the project ready to work: brainstorm.md is scaffolded (REQ-01)."""
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "My Thing"])
+    assert result.exit_code == 0
+    bs = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    assert bs.is_file()
+    text = bs.read_text()
+    for header in (
+        "## Current understanding",
+        "## Decisions",
+        "## Out of scope / Deferred",
+        "## Open questions",
+    ):
+        assert header in text
+
+
 def test_new_without_init_fails(cwd):
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code != 0
@@ -305,6 +322,8 @@ def test_brainstorm_start_without_active_project_fails(cwd):
 def test_brainstorm_start_json(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
+    # `new` auto-scaffolds brainstorm.md; remove it to exercise start's create path.
+    (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").unlink()
     result = runner.invoke(app, ["brainstorm", "start", "--json"])
     assert result.exit_code == 0
     data = json.loads(result.output)
@@ -339,9 +358,11 @@ def test_decision_add_supersede(cwd):
     assert "superseded by D-02" in text
 
 
-def test_decision_add_without_start_fails(cwd):
+def test_decision_add_without_brainstorm_fails(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
+    # `new` auto-scaffolds brainstorm.md; remove it to exercise the missing-file guard.
+    (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").unlink()
     result = runner.invoke(app, ["decision", "add", "--text", "Too early"])
     assert result.exit_code != 0
 
