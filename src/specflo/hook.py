@@ -17,7 +17,7 @@ import json
 from pathlib import Path
 
 from . import checkpoint, config, projects, status
-from .projects import COMPLETE_STATUS
+from .projects import COMPLETE_STATUS, SHELVED_STATUS
 
 # Leads the reseed payload so the agent surfaces state and asks rather than
 # auto-running the checkpoint's "Do next" (D-04). Source-neutral so it reads
@@ -38,6 +38,17 @@ COMPLETE_DIRECTIVE = (
     "NOT begin work or pick the finished project back up. Tell the user the "
     "project is complete and ask whether they'd like to start a new project "
     "(`specflo new`) or do something else, then wait for their answer."
+)
+
+# The shelved-project counterpart: the project is paused, so the agent must not
+# pick the work back up on its own — it surfaces the shelved state and offers
+# resume *or* a new project. Used in place of CONFIRMATION_DIRECTIVE when the
+# active project's status is SHELVED_STATUS.
+SHELVED_DIRECTIVE = (
+    "The active specflo project is shelved (paused). Do NOT begin work or pick "
+    "it back up on your own. Tell the user it is shelved and ask whether they'd "
+    "like to resume it (`specflo resume`), start a new project (`specflo new`), "
+    "or do something else, then wait for their answer."
 )
 
 
@@ -61,10 +72,11 @@ def reseed_text(cwd: Path | None = None) -> str:
 
     The payload is a leading directive followed by the verbatim
     ``specflo checkpoint`` render (single source of truth). The directive is
-    :data:`CONFIRMATION_DIRECTIVE` for a project still in flight, or
+    :data:`CONFIRMATION_DIRECTIVE` for a project still in flight,
     :data:`COMPLETE_DIRECTIVE` once it is complete (nothing to resume — offer a
-    new project instead). Resolves the specflo root and active project from
-    ``cwd`` (defaulting to the current directory).
+    new project instead), or :data:`SHELVED_DIRECTIVE` when it is shelved (paused
+    — offer resume or a new project). Resolves the specflo root and active
+    project from ``cwd`` (defaulting to the current directory).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) — even resolving the
@@ -79,11 +91,12 @@ def reseed_text(cwd: Path | None = None) -> str:
             return ""
         root, _cfg, project = found
         body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(root, project))
-        directive = (
-            COMPLETE_DIRECTIVE
-            if project.status == COMPLETE_STATUS
-            else CONFIRMATION_DIRECTIVE
-        )
+        if project.status == COMPLETE_STATUS:
+            directive = COMPLETE_DIRECTIVE
+        elif project.status == SHELVED_STATUS:
+            directive = SHELVED_DIRECTIVE
+        else:
+            directive = CONFIRMATION_DIRECTIVE
         return f"{directive}\n\n{body}"
     except Exception:
         return ""
@@ -96,14 +109,20 @@ def _user_message(root: Path, cfg, project) -> str:
     cannot make it take a turn — so this is surfaced to the *human* at startup.
     It leads with the verbatim ``specflo status`` render (so "what the user sees"
     *is* status) and closes with the concrete next move: ``continue`` to resume a
-    project still in flight, or ``specflo new`` once it is complete (nothing to
-    resume). Harness-neutral wording.
+    project still in flight, ``specflo resume``/``specflo new`` when it is shelved,
+    or ``specflo new`` once it is complete (nothing to resume). Harness-neutral
+    wording.
     """
     status_block = status.render_status(root, status.build_status(root, cfg, project))
     if project.status == COMPLETE_STATUS:
         prompt = (
             "This project is complete. Would you like to start a new project? "
             "(`specflo new`) — or tell me what you'd like to do."
+        )
+    elif project.status == SHELVED_STATUS:
+        prompt = (
+            "This project is shelved. Tell me to resume it (`specflo resume`), "
+            "start a new project (`specflo new`), or what you'd like to do instead."
         )
     else:
         prompt = (

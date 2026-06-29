@@ -287,3 +287,47 @@ def test_reseed_text_defaults_to_cwd(tmp_path, monkeypatch):
     _active(tmp_path)
     monkeypatch.chdir(tmp_path)
     assert hook.reseed_text().startswith(hook.CONFIRMATION_DIRECTIVE)
+
+
+# --- shelved-project reseed (T-08) --------------------------------------
+
+
+def _shelved(tmp_path, name="My Thing", reason="not now"):
+    """Active project advanced to the plan phase, then shelved with a reason."""
+    cfg = _active(tmp_path, name)
+    for _ in range(2):  # brainstorm -> spec -> plan
+        projects.advance_project(tmp_path, cfg, "my-thing")
+    projects.shelve_project(tmp_path, cfg, "my-thing", reason=reason)
+    return cfg
+
+
+def test_reseed_text_shelved_project_uses_shelved_directive(tmp_path):
+    _shelved(tmp_path)
+    out = hook.reseed_text(tmp_path)
+    # leads with a shelved-specific directive, distinct from the other two
+    assert out.startswith(hook.SHELVED_DIRECTIVE)
+    assert hook.SHELVED_DIRECTIVE not in (hook.CONFIRMATION_DIRECTIVE, hook.COMPLETE_DIRECTIVE)
+    assert hook.CONFIRMATION_DIRECTIVE not in out
+    assert hook.COMPLETE_DIRECTIVE not in out
+    low = hook.SHELVED_DIRECTIVE.lower()
+    assert "resume" in low                 # offers resume
+    assert "new" in low                    # ...or a new project
+    assert "continue" not in low           # does not nudge continuing the work
+
+
+def test_claude_session_start_output_shelved_offers_resume_or_new(tmp_path):
+    _shelved(tmp_path)
+    payload = json.loads(hook.claude_session_start_output(tmp_path))
+    msg = payload["systemMessage"].lower()
+    assert "resume" in msg                  # offers resume
+    assert "specflo new" in msg             # ...or a new project
+    assert "type `continue`" not in msg     # not the in-flight nudge
+    ctx = payload["hookSpecificOutput"]["additionalContext"]
+    assert ctx.startswith(hook.SHELVED_DIRECTIVE)
+
+
+def test_reseed_text_shelved_corrupt_project_is_silent(tmp_path):
+    # the never-raises guard still holds when a shelved project won't load
+    _shelved(tmp_path)
+    (tmp_path / "docs" / "projects" / "my-thing" / "project.md").unlink()
+    assert hook.reseed_text(tmp_path) == ""
