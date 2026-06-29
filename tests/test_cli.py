@@ -113,6 +113,28 @@ def test_new_output_names_brainstorm_path(cwd):
     assert "my-thing/brainstorm.md" in out  # the scaffolded artifact, by path
 
 
+def test_advance_does_not_scaffold(cwd):
+    """Regression-lock: advance creates no phase artifact; spec.md appears only via spec start (REQ-02)."""
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    # Make the brainstorm valid so advance proceeds (a decision + non-empty out-of-scope).
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    bs = cwd / "docs" / "projects" / "my-thing" / "brainstorm.md"
+    bs.write_text(
+        bs.read_text().replace(
+            "## Out of scope / Deferred\n"
+            "<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\n- nothing else.",
+        )
+    )
+    r = runner.invoke(app, ["advance"])  # brainstorm -> spec
+    assert r.exit_code == 0
+    spec_md = cwd / "docs" / "projects" / "my-thing" / "spec.md"
+    assert not spec_md.exists()  # advance scaffolds nothing
+    runner.invoke(app, ["spec", "start"])
+    assert spec_md.is_file()  # the artifact appears only via its own start
+
+
 def test_new_without_init_fails(cwd):
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code != 0
