@@ -824,16 +824,30 @@ def task_add(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    # Detect-and-offer: when this task supersedes another, surface any active
+    # tasks still depending on the superseded one and the literal rewire command
+    # to repoint them. We never modify those dependents here (that is `task rewire`).
+    dependents = (
+        plan.active_dependents(root, cfg, slug, task.supersedes) if task.supersedes else []
+    )
     if json_output:
         typer.echo(json.dumps({
             "id": task.id, "implements": task.implements,
             "depends_on": task.depends_on, "supersedes": task.supersedes,
+            "dependents": dependents,
         }))
     else:
         message = f"Recorded {task.id} (implements {', '.join(task.implements)})."
         if task.supersedes:
             message += f" Supersedes {task.supersedes}."
         typer.echo(message)
+        if dependents:
+            typer.echo(
+                f"Note: {len(dependents)} active task(s) still depend on "
+                f"{task.supersedes}: {', '.join(dependents)}."
+            )
+            typer.echo("  To repoint them onto the replacement, run:")
+            typer.echo(f"  specflo task rewire --from {task.supersedes} --to {task.id}")
 
 
 @task_app.command("rewire", epilog="Example: specflo task rewire --from T-04 --to T-11")

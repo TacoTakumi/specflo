@@ -1053,6 +1053,39 @@ def test_task_rewire_rejects_bad_inputs_without_mutating(tmp_path, monkeypatch):
     assert plan_md.read_bytes() == before  # rejected commands leave plan.md untouched
 
 
+def test_task_add_supersede_offers_rewire_for_dependents(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "base", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                          # T-01
+    runner.invoke(app, ["task", "add", "--text", "dep one", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-02
+    runner.invoke(app, ["task", "add", "--text", "dep two", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-03
+    r = runner.invoke(app, ["task", "add", "--text", "replacement", "--acceptance", "a",
+                            "--verify", "v", "--from", "REQ-01", "--supersedes", "T-01"])  # T-04
+    assert r.exit_code == 0
+    out = r.output
+    assert "T-02" in out and "T-03" in out
+    assert "specflo task rewire --from T-01 --to T-04" in out
+    # the detect-and-offer must NOT modify the dependents
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert plan_md.count("- Depends on: T-01") == 2
+
+
+def test_task_add_supersede_prints_no_offer_when_no_dependents(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "lonely", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                       # T-01
+    r = runner.invoke(app, ["task", "add", "--text", "replace", "--acceptance", "a",
+                            "--verify", "v", "--from", "REQ-01", "--supersedes", "T-01"])  # T-02
+    assert r.exit_code == 0
+    assert "task rewire" not in r.output
+
+
 def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

@@ -367,6 +367,19 @@ def add_task(
     )
 
 
+def active_dependents(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str
+) -> list[str]:
+    """Ids of active tasks whose Depends-on list includes *task_id*, in order."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return []
+    return [
+        t.id for t in _parse_tasks(path.read_text())
+        if t.status == "active" and task_id in t.depends_on
+    ]
+
+
 def rewire_dependency(
     root: Path,
     cfg: SpecfloConfig,
