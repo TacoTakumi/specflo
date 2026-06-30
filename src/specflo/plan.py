@@ -72,6 +72,7 @@ class Task:
     progress: str
     status: str
     supersedes: str | None = None
+    superseded_by: str | None = None
     blocked: str | None = None
 
 
@@ -107,6 +108,14 @@ def _parse_tasks(doc: str) -> list[Task]:
                 key, _, val = ln[2:].partition(":")
                 fields[key.strip()] = val.strip()
         status_raw = fields.get("Status", "")
+        # A task is superseded if it carries the new bidirectional `Superseded by:`
+        # field or only the legacy `Status: superseded by <id>` marker. The new
+        # field is canonical; fall back to parsing the id out of the legacy line.
+        superseded_by = fields.get("Superseded by")
+        if superseded_by is None and "superseded by" in status_raw:
+            m = re.search(r"superseded by\s+(\S+)", status_raw)
+            superseded_by = m.group(1) if m else None
+        is_superseded = superseded_by is not None or "superseded by" in status_raw
         tasks.append(Task(
             id=task_id, text=title,
             acceptance=fields.get("Acceptance", ""),
@@ -115,8 +124,9 @@ def _parse_tasks(doc: str) -> list[Task]:
             depends_on=_split_refs(fields.get("Depends on", "")),
             files=fields.get("Files"), scope=fields.get("Scope"),
             progress=fields.get("Progress", "pending"),
-            status="superseded" if "superseded by" in status_raw else "active",
+            status="superseded" if is_superseded else "active",
             supersedes=fields.get("Supersedes"),
+            superseded_by=superseded_by,
             blocked=fields.get("Blocked"),
         ))
     return tasks

@@ -304,6 +304,40 @@ def test_list_tasks_hides_superseded_by_default(root, cfg, project):
     assert [t.id for t in plan.list_tasks(root, cfg, project, include_superseded=True)] == ["T-01", "T-02"]
 
 
+def test_parser_recognizes_superseded_via_new_field_and_legacy_status(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "keeper", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")    # T-01 active
+    plan.add_task(root, cfg, project, "new-field", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")    # T-02
+    plan.add_task(root, cfg, project, "legacy", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")    # T-03
+    path = _ppath(root, cfg, project)
+    text = path.read_text()
+    # T-02 carries ONLY the new bidirectional field; its Status line stays active,
+    # so the new field alone must drive superseded detection.
+    text = text.replace(
+        "### T-02 — new-field\n- Acceptance: a\n- Verify: v\n- Implements: REQ-01\n",
+        "### T-02 — new-field\n- Acceptance: a\n- Verify: v\n- Implements: REQ-01\n- Superseded by: T-11\n",
+    )
+    # T-03 carries only the legacy Status marker.
+    text = text.replace(
+        "### T-03 — legacy\n- Acceptance: a\n- Verify: v\n- Implements: REQ-01\n- Progress: pending\n- Status: active\n",
+        "### T-03 — legacy\n- Acceptance: a\n- Verify: v\n- Implements: REQ-01\n- Progress: pending\n- Status: superseded by T-11\n",
+    )
+    path.write_text(text)
+
+    all_tasks = {t.id: t for t in plan.list_tasks(root, cfg, project, include_superseded=True)}
+    assert all_tasks["T-02"].status == "superseded"
+    assert all_tasks["T-02"].superseded_by == "T-11"
+    assert all_tasks["T-03"].status == "superseded"
+    assert all_tasks["T-03"].superseded_by == "T-11"
+
+    assert [t.id for t in plan.list_tasks(root, cfg, project)] == ["T-01"]  # both excluded
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]
+
+
 def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=2)
     plan.start_plan(root, cfg, project, today="2026-06-22")
