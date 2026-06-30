@@ -60,6 +60,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Create the plan.md artifact."},
     {"name": "task add", "group": "workflow", "args": "",
      "summary": "Record a plan task (T-NN)."},
+    {"name": "task rewire", "group": "workflow", "args": "",
+     "summary": "Repoint dependents of one task onto another (--from/--to)."},
     {"name": "task start", "group": "workflow", "args": "<T-NN>",
      "summary": "Mark a task in_progress."},
     {"name": "task done", "group": "workflow", "args": "<T-NN>",
