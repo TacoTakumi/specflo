@@ -332,7 +332,12 @@ def add_task(
 
     new_id = markdown.next_id(doc, "T-")
     if supersedes is not None:
+        # Tidy the superseded task: legacy Status marker (back-compat) plus the
+        # canonical bidirectional `Superseded by:` field, and reset its Progress
+        # so a half-done task does not linger as in_progress.
         doc = markdown.mark_superseded(doc, supersedes, new_id)
+        doc = markdown.set_entry_field(doc, supersedes, "Superseded by", new_id)
+        doc = markdown.set_entry_field(doc, supersedes, "Progress", "pending")
 
     entry_lines = [
         f"### {new_id} — {text}",

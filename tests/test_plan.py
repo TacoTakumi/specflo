@@ -118,6 +118,23 @@ def test_add_task_validates_dependency_and_supersede_targets(root, cfg, project)
     assert "- Supersedes: T-01" in text
 
 
+def test_supersede_resets_progress_and_writes_bidirectional_link(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "old", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                       # T-01
+    plan.start_task(root, cfg, project, "T-01")                                    # -> in_progress
+    plan.add_task(root, cfg, project, "new", acceptance="b", verify="v",
+                  implements=["REQ-01"], supersedes="T-01", today="2026-06-22")    # T-02
+    text = _ppath(root, cfg, project).read_text()
+    t1 = {t.id: t for t in
+          plan.list_tasks(root, cfg, project, include_superseded=True)}["T-01"]
+    assert t1.progress == "pending"          # REQ-06: reset from in_progress
+    assert t1.superseded_by == "T-02"        # REQ-07: forward link parses
+    assert "- Superseded by: T-02" in text   # REQ-07: explicit field written
+    assert "- Supersedes: T-01" in text      # REQ-07: back link on the new task
+
+
 def test_add_task_without_start_raises(root, cfg, project):
     with pytest.raises(SpecfloError):
         plan.add_task(root, cfg, project, "early", acceptance="a", verify="v", implements=["REQ-01"])
