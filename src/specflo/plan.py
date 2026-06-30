@@ -367,6 +367,51 @@ def add_task(
     )
 
 
+def blocked_on_superseded(
+    root: Path, cfg: SpecfloConfig, slug: str
+) -> list[dict]:
+    """Pending active tasks blocked by a superseded dependency.
+
+    Returns one entry per (blocked task, superseded dependency) pair, each naming
+    the superseding task id, so callers (``task show``, ``status``, ``checkpoint``)
+    can render rewire remediation. Empty when nothing is blocked this way.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return []
+    tasks = _parse_tasks(path.read_text())
+    superseded = {t.id: t.superseded_by for t in tasks if t.status == "superseded"}
+    findings: list[dict] = []
+    for t in tasks:
+        if t.status != "active" or t.progress != "pending":
+            continue
+        for dep in t.depends_on:
+            if dep in superseded:
+                findings.append({
+                    "blocked": t.id, "dependency": dep,
+                    "superseded_by": superseded[dep],
+                })
+    return findings
+
+
+def superseded_block_remediation(blocks: list[dict]) -> list[str]:
+    """One human remediation line per ``blocked_on_superseded`` finding."""
+    lines: list[str] = []
+    for b in blocks:
+        dep, by, blocked = b["dependency"], b["superseded_by"], b["blocked"]
+        if by:
+            lines.append(
+                f"{blocked} depends on superseded {dep} (superseded by {by}); "
+                f"run: specflo task rewire --from {dep} --to {by}"
+            )
+        else:
+            lines.append(
+                f"{blocked} depends on superseded {dep} with no known replacement; "
+                f"update {blocked}'s dependencies."
+            )
+    return lines
+
+
 def active_dependents(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str
 ) -> list[str]:
@@ -552,6 +597,13 @@ def task_brief(
     if task_id is None:
         actionable = _progress_from_tasks(active)["next_actionable"]
         if not actionable:
+            blocks = blocked_on_superseded(root, cfg, slug)
+            if blocks:
+                detail = "\n".join("  " + ln for ln in superseded_block_remediation(blocks))
+                raise SpecfloError(
+                    "No actionable task: a pending task is blocked by a superseded "
+                    "dependency.\n" + detail
+                )
             raise SpecfloError(
                 "No actionable task (all done, or remaining tasks are blocked "
                 "or waiting on dependencies). See `specflo task list`."

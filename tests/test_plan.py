@@ -454,6 +454,21 @@ def test_rewire_dependency_refuses_a_cycle_and_stays_inert(root, cfg, project):
     assert path.read_bytes() == before  # cycle-refused, byte-identical
 
 
+def test_blocked_on_superseded_detects_and_task_brief_guides(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-04", status="superseded by T-11"),
+        _raw_task_entry("T-05", deps=["T-04"]),   # pending, blocked by superseded T-04
+    ])
+    blocks = plan.blocked_on_superseded(root, cfg, project)
+    assert blocks == [{"blocked": "T-05", "dependency": "T-04", "superseded_by": "T-11"}]
+    with pytest.raises(SpecfloError) as exc:
+        plan.task_brief(root, cfg, project)       # no id -> nothing actionable
+    msg = str(exc.value)
+    for token in ("T-05", "T-04", "T-11", "specflo task rewire --from T-04 --to T-11"):
+        assert token in msg
+
+
 def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=2)
     plan.start_plan(root, cfg, project, today="2026-06-22")

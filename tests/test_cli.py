@@ -1086,6 +1086,25 @@ def test_task_add_supersede_prints_no_offer_when_no_dependents(tmp_path, monkeyp
     assert "task rewire" not in r.output
 
 
+def test_task_show_guides_when_blocked_by_superseded_dep(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "base", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                          # T-01
+    runner.invoke(app, ["task", "add", "--text", "dependent", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-02
+    runner.invoke(app, ["task", "add", "--text", "replacement", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--supersedes", "T-01"])  # T-03
+    runner.invoke(app, ["task", "start", "T-03"])
+    runner.invoke(app, ["task", "done", "T-03"])   # T-03 done -> nothing actionable, T-02 stuck
+    r = runner.invoke(app, ["task", "show"])        # no id
+    assert r.exit_code != 0
+    out = r.output
+    for token in ("T-02", "T-01", "T-03", "specflo task rewire --from T-01 --to T-03"):
+        assert token in out
+
+
 def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app
