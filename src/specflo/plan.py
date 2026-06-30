@@ -362,6 +362,37 @@ def add_task(
     )
 
 
+def rewire_dependency(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    from_id: str,
+    to_id: str,
+    today: str | None = None,
+) -> list[str]:
+    """Repoint every active task depending on *from_id* to depend on *to_id*.
+
+    Returns the ids of the tasks that were changed, in document order. Active
+    tasks whose Depends-on list does not include *from_id*, and all superseded
+    tasks, are left untouched; a no-op redirect leaves ``plan.md`` byte-identical.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    changed: list[str] = []
+    for t in _parse_tasks(doc):
+        if t.status != "active" or from_id not in t.depends_on:
+            continue
+        new_deps = [to_id if d == from_id else d for d in t.depends_on]
+        doc = markdown.set_entry_field(doc, t.id, "Depends on", ", ".join(new_deps))
+        changed.append(t.id)
+    if changed:
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
+    return changed
+
+
 def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     progress: str, reason: str | None = None, today: str | None = None,

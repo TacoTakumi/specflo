@@ -836,6 +836,32 @@ def task_add(
         typer.echo(message)
 
 
+@task_app.command("rewire", epilog="Example: specflo task rewire --from T-04 --to T-11")
+def task_rewire(
+    from_: str = typer.Option(
+        ..., "--from", metavar="T-NN",
+        help="The (superseded) task whose active dependents are repointed."
+    ),
+    to: str = typer.Option(
+        ..., "--to", metavar="T-MM", help="The task to repoint those dependents onto."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Repoint every active task depending on --from to depend on --to instead."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        changed = plan.rewire_dependency(root, cfg, slug, from_, to)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"from": from_, "to": to, "rewired": changed}))
+    elif changed:
+        typer.echo(f"Rewired {', '.join(changed)} from {from_} to {to}.")
+    else:
+        typer.echo(f"No active tasks depended on {from_}; nothing to rewire.")
+
+
 def _report_transition(task: plan.Task, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps({"id": task.id, "progress": task.progress, "blocked": task.blocked}))

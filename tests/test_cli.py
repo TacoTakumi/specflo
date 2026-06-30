@@ -1016,6 +1016,24 @@ def test_task_block_records_reason(tmp_path, monkeypatch):
     assert "- Blocked: waiting on API" in plan_md
 
 
+def test_task_rewire_repoints_dependents(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "base", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                       # T-01
+    runner.invoke(app, ["task", "add", "--text", "dependent", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-02
+    runner.invoke(app, ["task", "add", "--text", "replacement", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                       # T-03
+    r = runner.invoke(app, ["task", "rewire", "--from", "T-01", "--to", "T-03", "--json"])
+    assert r.exit_code == 0
+    assert _json.loads(r.output)["rewired"] == ["T-02"]
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "- Depends on: T-03" in plan_md
+    assert "- Depends on: T-01" not in plan_md
+
+
 def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

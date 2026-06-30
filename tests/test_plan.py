@@ -1,6 +1,6 @@
 import pytest
 
-from specflo import brainstorm, config, plan, projects, spec
+from specflo import brainstorm, config, markdown, plan, projects, spec
 from specflo.errors import SpecfloError
 
 
@@ -336,6 +336,58 @@ def test_parser_recognizes_superseded_via_new_field_and_legacy_status(root, cfg,
 
     assert [t.id for t in plan.list_tasks(root, cfg, project)] == ["T-01"]  # both excluded
     assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]
+
+
+def _raw_task_entry(tid, deps=None, status="active", implements="REQ-01"):
+    """A well-formed task entry block for crafting plans with explicit ids."""
+    lines = [f"### {tid} — task {tid}", "- Acceptance: a", "- Verify: v",
+             f"- Implements: {implements}"]
+    if deps:
+        lines.append(f"- Depends on: {', '.join(deps)}")
+    lines += ["- Progress: pending", f"- Status: {status}"]
+    return "\n".join(lines) + "\n"
+
+
+def _plan_with_entries(root, cfg, project, entries):
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    path = _ppath(root, cfg, project)
+    doc = path.read_text()
+    for entry in entries:
+        doc = markdown.append_to_section(doc, "## Tasks", entry)
+    path.write_text(doc)
+    return path
+
+
+def test_rewire_dependency_repoints_active_dependents_only(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-04"),
+        _raw_task_entry("T-05", deps=["T-04", "T-09"]),
+        _raw_task_entry("T-06", deps=["T-04"]),
+        _raw_task_entry("T-07", deps=["T-09"]),                              # not on T-04
+        _raw_task_entry("T-08", deps=["T-04"], status="superseded by T-99"),  # superseded
+        _raw_task_entry("T-09"),
+        _raw_task_entry("T-11"),
+    ])
+    changed = plan.rewire_dependency(root, cfg, project, "T-04", "T-11")
+    assert changed == ["T-05", "T-06"]
+
+    tasks = {t.id: t for t in plan.list_tasks(root, cfg, project, include_superseded=True)}
+    assert tasks["T-05"].depends_on == ["T-11", "T-09"]   # T-04 -> T-11, T-09 kept, order kept
+    assert tasks["T-06"].depends_on == ["T-11"]
+    assert tasks["T-07"].depends_on == ["T-09"]           # non-dependent untouched
+    assert tasks["T-08"].depends_on == ["T-04"]           # superseded untouched
+
+
+def test_rewire_dependency_noop_leaves_plan_byte_identical(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    path = _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01"),
+        _raw_task_entry("T-02", deps=["T-01"]),
+    ])
+    before = path.read_bytes()
+    assert plan.rewire_dependency(root, cfg, project, "T-09", "T-01") == []
+    assert path.read_bytes() == before
 
 
 def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):
