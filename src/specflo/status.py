@@ -29,6 +29,16 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         progress = plan.plan_progress(root, cfg, project.slug)
     complete = project.status == projects.COMPLETE_STATUS
     shelved = project.status == projects.SHELVED_STATUS
+    next_step = workflow.next_step(
+        project.phase, progress=progress, complete=complete, shelved=shelved
+    )
+    # In the stuck execute state (nothing actionable, a pending task blocked by a
+    # superseded dependency), replace the generic hint with targeted rewire
+    # remediation from the shared detector.
+    if project.phase == "execute" and not complete and not shelved:
+        stuck = plan.stuck_next_step(root, cfg, project.slug)
+        if stuck:
+            next_step = stuck
     info = {
         "initialized": True,
         "active_project": project.slug,
@@ -37,9 +47,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "phase": project.phase,
         "status": project.status,
         "next_phase": workflow.next_phase(project.phase),
-        "next_step": workflow.next_step(
-            project.phase, progress=progress, complete=complete, shelved=shelved
-        ),
+        "next_step": next_step,
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
     }
     # Only carried when meaningful (a shelved project with a reason), so active

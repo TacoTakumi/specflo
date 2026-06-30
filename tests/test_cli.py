@@ -1105,6 +1105,29 @@ def test_task_show_guides_when_blocked_by_superseded_dep(tmp_path, monkeypatch):
         assert token in out
 
 
+def test_status_and_checkpoint_guide_when_blocked_by_superseded_dep(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "base", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                          # T-01
+    runner.invoke(app, ["task", "add", "--text", "dependent", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-02
+    runner.invoke(app, ["advance"])                 # plan -> execute (valid plan)
+    runner.invoke(app, ["task", "add", "--text", "replacement", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--supersedes", "T-01"])  # T-03
+    runner.invoke(app, ["task", "start", "T-03"])
+    runner.invoke(app, ["task", "done", "T-03"])    # nothing actionable; T-02 stuck on superseded T-01
+
+    out = runner.invoke(app, ["status"]).output
+    assert "T-02" in out
+    assert "specflo task rewire --from T-01 --to T-03" in out
+
+    cp = runner.invoke(app, ["checkpoint"]).output
+    assert "T-02" in cp
+    assert "specflo task rewire --from T-01 --to T-03" in cp
+
+
 def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

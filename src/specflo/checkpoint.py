@@ -52,9 +52,11 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     shelved = project.status == SHELVED_STATUS
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
+    plan_doc = None
     # A shelved project's do_next ignores progress, so skip the plan-file read.
     if not shelved and project.phase in ("plan", "execute") and plan_file.is_file():
-        prog = plan_module.progress_from_doc(plan_file.read_text())
+        plan_doc = plan_file.read_text()
+        prog = plan_module.progress_from_doc(plan_doc)
     if shelved:
         # Paused: don't direct to the phase's work step — resume (or start new),
         # while the recorded phase below is preserved so resume returns to it.
@@ -63,6 +65,12 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS
         )
+        # Stuck on a superseded dependency: surface the same targeted rewire
+        # remediation as `task show`/`status`, replacing the generic hint.
+        if project.status != COMPLETE_STATUS and plan_doc is not None:
+            stuck = plan_module.stuck_next_step_from_doc(plan_doc)
+            if stuck:
+                do_next = stuck
     else:
         do_next = workflow.next_step(project.phase)
         if project.phase == "plan" and prog is not None:

@@ -367,19 +367,14 @@ def add_task(
     )
 
 
-def blocked_on_superseded(
-    root: Path, cfg: SpecfloConfig, slug: str
-) -> list[dict]:
-    """Pending active tasks blocked by a superseded dependency.
+def blocked_on_superseded_from_doc(doc: str) -> list[dict]:
+    """Pending active tasks in *doc* blocked by a superseded dependency.
 
     Returns one entry per (blocked task, superseded dependency) pair, each naming
     the superseding task id, so callers (``task show``, ``status``, ``checkpoint``)
     can render rewire remediation. Empty when nothing is blocked this way.
     """
-    path = plan_path(root, cfg, slug)
-    if not path.is_file():
-        return []
-    tasks = _parse_tasks(path.read_text())
+    tasks = _parse_tasks(doc)
     superseded = {t.id: t.superseded_by for t in tasks if t.status == "superseded"}
     findings: list[dict] = []
     for t in tasks:
@@ -392,6 +387,12 @@ def blocked_on_superseded(
                     "superseded_by": superseded[dep],
                 })
     return findings
+
+
+def blocked_on_superseded(root: Path, cfg: SpecfloConfig, slug: str) -> list[dict]:
+    """File-backed wrapper of :func:`blocked_on_superseded_from_doc`."""
+    path = plan_path(root, cfg, slug)
+    return blocked_on_superseded_from_doc(path.read_text()) if path.is_file() else []
 
 
 def superseded_block_remediation(blocks: list[dict]) -> list[str]:
@@ -410,6 +411,24 @@ def superseded_block_remediation(blocks: list[dict]) -> list[str]:
                 f"update {blocked}'s dependencies."
             )
     return lines
+
+
+def stuck_next_step_from_doc(doc: str) -> str | None:
+    """A rewire-remediation next-step line when *doc* is stuck on a superseded
+    dependency (nothing actionable, yet a pending task depends on a superseded
+    task), or None when the plan is not stuck this way."""
+    if progress_from_doc(doc)["next_actionable"]:
+        return None
+    blocks = blocked_on_superseded_from_doc(doc)
+    if not blocks:
+        return None
+    return "Blocked: " + " | ".join(superseded_block_remediation(blocks))
+
+
+def stuck_next_step(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
+    """File-backed wrapper of :func:`stuck_next_step_from_doc`."""
+    path = plan_path(root, cfg, slug)
+    return stuck_next_step_from_doc(path.read_text()) if path.is_file() else None
 
 
 def active_dependents(
