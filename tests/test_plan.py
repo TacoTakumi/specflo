@@ -384,10 +384,31 @@ def test_rewire_dependency_noop_leaves_plan_byte_identical(root, cfg, project):
     path = _plan_with_entries(root, cfg, project, [
         _raw_task_entry("T-01"),
         _raw_task_entry("T-02", deps=["T-01"]),
+        _raw_task_entry("T-03"),
     ])
     before = path.read_bytes()
-    assert plan.rewire_dependency(root, cfg, project, "T-09", "T-01") == []
+    # T-03 is a valid target but nothing depends on it -> no-op, byte-identical.
+    assert plan.rewire_dependency(root, cfg, project, "T-03", "T-01") == []
     assert path.read_bytes() == before
+
+
+def test_rewire_dependency_validates_inputs_and_stays_inert(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    path = _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01"),
+        _raw_task_entry("T-02", deps=["T-01"]),
+        _raw_task_entry("T-03", status="superseded by T-99"),
+    ])
+    before = path.read_bytes()
+    with pytest.raises(SpecfloError):  # --to nonexistent
+        plan.rewire_dependency(root, cfg, project, "T-01", "T-99")
+    with pytest.raises(SpecfloError):  # --to a superseded task
+        plan.rewire_dependency(root, cfg, project, "T-01", "T-03")
+    with pytest.raises(SpecfloError):  # --to equals --from
+        plan.rewire_dependency(root, cfg, project, "T-01", "T-01")
+    with pytest.raises(SpecfloError):  # --from nonexistent
+        plan.rewire_dependency(root, cfg, project, "T-99", "T-01")
+    assert path.read_bytes() == before  # byte-identical after every rejection
 
 
 def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):

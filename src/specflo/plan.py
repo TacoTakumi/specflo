@@ -380,8 +380,20 @@ def rewire_dependency(
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
     doc = path.read_text()
+    tasks = _parse_tasks(doc)
+    by_id = {t.id: t for t in tasks}
+    # Validate before any write so a rejected redirect leaves plan.md untouched.
+    if from_id not in by_id:
+        raise SpecfloError(f"No task {from_id} to rewire from.")
+    if to_id == from_id:
+        raise SpecfloError(f"Cannot rewire {from_id} to itself (--to must differ from --from).")
+    to_task = by_id.get(to_id)
+    if to_task is None:
+        raise SpecfloError(f"No task {to_id} to rewire to.")
+    if to_task.status != "active":
+        raise SpecfloError(f"Cannot rewire to {to_id}: it is superseded (--to must be active).")
     changed: list[str] = []
-    for t in _parse_tasks(doc):
+    for t in tasks:
         if t.status != "active" or from_id not in t.depends_on:
             continue
         new_deps = [to_id if d == from_id else d for d in t.depends_on]

@@ -1034,6 +1034,25 @@ def test_task_rewire_repoints_dependents(tmp_path, monkeypatch):
     assert "- Depends on: T-01" not in plan_md
 
 
+def test_task_rewire_rejects_bad_inputs_without_mutating(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "base", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])                       # T-01
+    runner.invoke(app, ["task", "add", "--text", "dependent", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--depends-on", "T-01"])  # T-02
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_bytes()
+    r = runner.invoke(app, ["task", "rewire", "--from", "T-01", "--to", "T-99"])  # --to nonexistent
+    assert r.exit_code != 0
+    r = runner.invoke(app, ["task", "rewire", "--from", "T-01", "--to", "T-01"])  # --to == --from
+    assert r.exit_code != 0
+    r = runner.invoke(app, ["task", "rewire", "--from", "T-99", "--to", "T-01"])  # --from nonexistent
+    assert r.exit_code != 0
+    assert plan_md.read_bytes() == before  # rejected commands leave plan.md untouched
+
+
 def test_status_shows_progress_line_at_plan_phase(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app
