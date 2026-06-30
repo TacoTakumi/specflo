@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from . import markdown, spec as spec_mod
@@ -392,16 +392,40 @@ def rewire_dependency(
         raise SpecfloError(f"No task {to_id} to rewire to.")
     if to_task.status != "active":
         raise SpecfloError(f"Cannot rewire to {to_id}: it is superseded (--to must be active).")
+
+    # Compute each dependent's post-rewire deps (order-preserving dedupe so a
+    # dependent already listing --to ends with a single entry, not a duplicate).
+    new_deps_by_id: dict[str, list[str]] = {}
     changed: list[str] = []
     for t in tasks:
         if t.status != "active" or from_id not in t.depends_on:
             continue
-        new_deps = [to_id if d == from_id else d for d in t.depends_on]
-        doc = markdown.set_entry_field(doc, t.id, "Depends on", ", ".join(new_deps))
+        rewired: list[str] = []
+        for d in t.depends_on:
+            nd = to_id if d == from_id else d
+            if nd not in rewired:
+                rewired.append(nd)
+        new_deps_by_id[t.id] = rewired
         changed.append(t.id)
-    if changed:
-        doc = markdown.bump_updated(doc, today)
-        path.write_text(doc)
+    if not changed:
+        return []
+
+    # Refuse a redirect that would introduce a cycle (validate before write).
+    proposed = [
+        replace(t, depends_on=new_deps_by_id.get(t.id, t.depends_on))
+        for t in tasks if t.status == "active"
+    ]
+    cycle = _find_cycle(proposed)
+    if cycle:
+        raise SpecfloError(
+            f"Rewiring {from_id} to {to_id} would create a dependency cycle: "
+            + " -> ".join(cycle) + "."
+        )
+
+    for tid in changed:
+        doc = markdown.set_entry_field(doc, tid, "Depends on", ", ".join(new_deps_by_id[tid]))
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
     return changed
 
 

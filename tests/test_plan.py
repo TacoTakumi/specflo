@@ -411,6 +411,32 @@ def test_rewire_dependency_validates_inputs_and_stays_inert(root, cfg, project):
     assert path.read_bytes() == before  # byte-identical after every rejection
 
 
+def test_rewire_dependency_dedupes_existing_target(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-04"),
+        _raw_task_entry("T-05", deps=["T-04", "T-11"]),  # already lists the target
+        _raw_task_entry("T-11"),
+    ])
+    assert plan.rewire_dependency(root, cfg, project, "T-04", "T-11") == ["T-05"]
+    tasks = {t.id: t for t in plan.list_tasks(root, cfg, project, include_superseded=True)}
+    assert tasks["T-05"].depends_on == ["T-11"]  # single entry, no duplicate
+
+
+def test_rewire_dependency_refuses_a_cycle_and_stays_inert(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    # T-11 depends on T-05; rewiring T-05's dep T-04 -> T-11 would make T-05 -> T-11 -> T-05.
+    path = _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-04"),
+        _raw_task_entry("T-05", deps=["T-04"]),
+        _raw_task_entry("T-11", deps=["T-05"]),
+    ])
+    before = path.read_bytes()
+    with pytest.raises(SpecfloError):
+        plan.rewire_dependency(root, cfg, project, "T-04", "T-11")
+    assert path.read_bytes() == before  # cycle-refused, byte-identical
+
+
 def test_task_brief_assembles_task_reqs_and_constraints(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=2)
     plan.start_plan(root, cfg, project, today="2026-06-22")
