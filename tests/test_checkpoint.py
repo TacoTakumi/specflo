@@ -131,3 +131,41 @@ def test_render_checkpoint_shelved_without_reason_still_identifies(tmp_path):
         checkpoint.build_checkpoint(tmp_path, project, today="2026-06-29")
     )
     assert "shelved" in text.lower()
+
+
+# --- current-milestone-aware checkpoint (T-08) ---------------------------
+
+
+def _plan_at_execute(tmp_path, with_milestone=False):
+    """A 'Thing' project at execute with T-01 pending, optionally in M-01."""
+    from specflo import config, plan, projects, spec
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-02")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-07-02")
+    spec.add_requirement(tmp_path, cfg, "thing", "r", acceptance="a", today="2026-07-02")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-07-02")
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-07-02")     # T-01 pending
+    if with_milestone:
+        plan.add_milestone(tmp_path, cfg, "thing", "First", exit_items=["ships"],
+                           today="2026-07-02")                   # M-01
+        plan.set_milestone(tmp_path, cfg, "thing", "T-01", "M-01", today="2026-07-02")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def test_checkpoint_names_current_milestone_when_milestones_exist(tmp_path):
+    _cfg, project = _plan_at_execute(tmp_path, with_milestone=True)
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["milestone"]["id"] == "M-01"
+    assert payload["milestone"]["done"] == 0 and payload["milestone"]["total"] == 1
+    text = checkpoint.render_checkpoint(payload)
+    assert "M-01" in text and "First" in text           # named in the resume block
+
+
+def test_checkpoint_omits_milestone_line_for_a_milestone_free_plan(tmp_path):
+    _cfg, project = _plan_at_execute(tmp_path, with_milestone=False)
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["milestone"] is None
+    assert "milestone" not in checkpoint.render_checkpoint(payload).lower()

@@ -53,10 +53,15 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
     plan_doc = None
+    milestone = None
     # A shelved project's do_next ignores progress, so skip the plan-file read.
     if not shelved and project.phase in ("plan", "execute") and plan_file.is_file():
         plan_doc = plan_file.read_text()
         prog = plan_module.progress_from_doc(plan_doc)
+        # The current milestone (None on a milestone-free or all-complete plan),
+        # named in the resume block at plan/execute so a resumed agent knows which
+        # slice the plan is on (REQ-15). Dormant without milestones (REQ-04).
+        milestone = plan_module.current_milestone_from_doc(plan_doc)
     if shelved:
         # Paused: don't direct to the phase's work step — resume (or start new),
         # while the recorded phase below is preserved so resume returns to it.
@@ -86,6 +91,7 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         "generated": today or datetime.date.today().isoformat(),
         "read_first": read_first,
         "do_next": do_next,
+        "milestone": milestone,
         "path": display_path(directory / CHECKPOINT_FILENAME, root, posix=True),
     }
 
@@ -110,6 +116,16 @@ def render_checkpoint(payload: dict) -> str:
         "",
         "## Do next",
         payload["do_next"],
+    ]
+    # Name the current milestone in the resume block so a resumed agent knows
+    # which slice the plan is on (REQ-15); absent on a milestone-free plan.
+    milestone = payload.get("milestone")
+    if milestone:
+        lines.append(
+            f"Current milestone: {milestone['id']} {milestone['title']} "
+            f"— {milestone['done']}/{milestone['total']} done."
+        )
+    lines += [
         "",
         "## Resume",
         "- `specflo status`     - confirm phase/step",

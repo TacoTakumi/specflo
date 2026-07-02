@@ -25,8 +25,13 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     for humans.
     """
     progress = None
+    milestone = None
     if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
         progress = plan.plan_progress(root, cfg, project.slug)
+        # The current milestone (None when the plan has no milestones or all are
+        # complete) — a finer-grained "where are we" that stays dormant on a
+        # milestone-free plan (REQ-04, REQ-15).
+        milestone = plan.current_milestone(root, cfg, project.slug)
     complete = project.status == projects.COMPLETE_STATUS
     shelved = project.status == projects.SHELVED_STATUS
     next_step = workflow.next_step(
@@ -56,6 +61,15 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         info["shelved_reason"] = project.shelved_reason
     if progress is not None:
         info["progress"] = progress
+    # Only carried when there's a current milestone, so milestone-free plans (and
+    # all-complete ones) ship no milestone field — mirrors `progress`.
+    if milestone is not None:
+        info["milestone"] = {
+            "id": milestone["id"],
+            "title": milestone["title"],
+            "done": milestone["done"],
+            "total": milestone["total"],
+        }
     return info
 
 
@@ -78,6 +92,9 @@ def render_status(root: Path, info: dict) -> str:
         p = info["progress"]
         nxt = " | next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
         lines.append(f"Tasks:   {p['done']}/{p['total']} done{nxt}")
+    if "milestone" in info:
+        m = info["milestone"]
+        lines.append(f"Milestone: {m['id']} {m['title']} — {m['done']}/{m['total']} done")
     lines.append(f"Next:    {info['next_step']}")
     lines.append("Resume:  specflo checkpoint")
     return "\n".join(lines)

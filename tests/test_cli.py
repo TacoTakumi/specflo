@@ -1202,6 +1202,26 @@ def test_task_show_labels_working_ahead_in_text_and_json(tmp_path, monkeypatch):
     assert data["task"]["id"] == "T-02" and data["working_ahead"] is True
 
 
+def test_status_shows_current_milestone_line(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_with_two_milestones(runner, app, tmp_path)   # current M-01 holds T-01
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["milestone"]["id"] == "M-01"
+    assert data["milestone"]["done"] == 0 and data["milestone"]["total"] == 1
+    out = runner.invoke(app, ["status"]).output
+    assert "Milestone:" in out and "M-01" in out and "0/1" in out
+
+
+def test_status_shows_no_milestone_line_for_a_milestone_free_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)            # no milestones
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert "milestone" not in data                        # omitted when not meaningful
+    assert "Milestone:" not in runner.invoke(app, ["status"]).output
+
+
 def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

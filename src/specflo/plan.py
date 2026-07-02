@@ -865,6 +865,24 @@ def milestone_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     return milestone_progress_from_doc(path.read_text() if path.is_file() else "")
 
 
+def current_milestone_from_doc(doc: str) -> dict | None:
+    """The current milestone's rollup (``id``, ``title``, ``done``, ``total``, …),
+    or None when the plan has no milestones or all are complete.
+
+    The single source status and checkpoint share for their "where are we"
+    milestone line, so both name the same milestone the same way (REQ-15).
+    """
+    view = milestone_progress_from_doc(doc)
+    if view["current"] is None:
+        return None
+    return next(r for r in view["milestones"] if r["id"] == view["current"])
+
+
+def current_milestone(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
+    path = plan_path(root, cfg, slug)
+    return current_milestone_from_doc(path.read_text() if path.is_file() else "")
+
+
 def milestone_detail_from_doc(doc: str, milestone_id: str) -> dict | None:
     """Full derived detail for one milestone, or None if it is not in *doc*.
 
