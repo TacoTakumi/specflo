@@ -839,3 +839,48 @@ def test_validate_ignores_milestone_rules_when_no_milestones(root, cfg, project)
     issues = plan.validate_plan(root, cfg, project)
     assert issues == []
     assert not any("milestone" in i.lower() for i in issues)
+
+
+# --- validate plan: dependency direction + milestone coverage (T-06) ----------
+
+
+def test_validate_flags_forward_milestone_dependency(root, cfg, project):
+    # T-01 (M-01) depends on T-02 (M-02) — a forward dependency (REQ-11).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01", deps=["T-02"]),
+         _raw_task_entry("T-02", milestone="M-02", implements="REQ-02")],
+        n_reqs=2)
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("T-01" in i and "T-02" in i and ("forward" in i.lower() or "later" in i.lower())
+               for i in issues)
+
+
+def test_validate_allows_backward_and_same_milestone_dependencies(root, cfg, project):
+    # T-02 (M-02) -> T-01 (M-01) is backward; T-03 (M-02) -> T-02 (M-02) is same-milestone.
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-02", implements="REQ-02", deps=["T-01"]),
+         _raw_task_entry("T-03", milestone="M-02", implements="REQ-03", deps=["T-02"])],
+        n_reqs=3)
+    assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_validate_flags_req_not_covered_by_any_milestone(root, cfg, project):
+    # REQ-02 is implemented only by T-02, which belongs to no milestone, so it is
+    # covered task-wise but falls outside the union of milestone REQ sets (REQ-12).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", implements="REQ-02")],
+        n_reqs=2)
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("REQ-02" in i and "milestone" in i.lower() for i in issues)
+
+
+def test_validate_milestone_union_equals_active_reqs_when_valid(root, cfg, project):
+    # A fully valid milestoned plan: union of milestone REQ sets == active REQ set,
+    # so no coverage issue is raised (REQ-12, positive case).
+    _valid_milestoned_plan(root, cfg, project)  # M-01/REQ-01, M-02/REQ-02
+    assert plan.validate_plan(root, cfg, project) == []

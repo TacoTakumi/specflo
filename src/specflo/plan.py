@@ -296,6 +296,32 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
             if not m.exit_items:
                 issues.append(f"{m.id} has an empty Exit checklist (needs at least one item).")
 
+        # Backward-only dependency invariant (REQ-11): no task may depend on a task
+        # in a later milestone. Milestone order is document order; deps whose
+        # milestone is unknown/missing are left to the membership/reference checks.
+        order = {m.id: i for i, m in enumerate(milestones)}
+        task_ms = {t.id: t.milestone for t in active}
+        for t in active:
+            if t.milestone not in order:
+                continue
+            for dep in t.depends_on:
+                dep_ms = task_ms.get(dep)
+                if dep_ms in order and order[dep_ms] > order[t.milestone]:
+                    issues.append(
+                        f"{t.id} (in {t.milestone}) depends on {dep} (in {dep_ms}), "
+                        f"which is a later milestone; dependencies must not point forward."
+                    )
+
+        # The union of all milestones' derived REQ coverage must equal the active
+        # REQ set (REQ-12): every active requirement is implemented by some task
+        # that belongs to a milestone. (sp/active_reqs come from the coverage block
+        # above; active_reqs is bound iff the spec file exists.)
+        if sp.is_file():
+            milestone_reqs = {r for t in active if t.milestone in order for r in t.implements}
+            for req in active_reqs:
+                if req not in milestone_reqs:
+                    issues.append(f"{req} is not covered by any milestone's tasks.")
+
     if markdown.section_body(doc, "## Open questions") is None:
         issues.append("missing 'Open questions' section.")
 
