@@ -212,3 +212,14 @@ def test_checkpoint_has_no_boundary_beat_for_a_milestone_free_plan(tmp_path):
     payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
     assert payload["boundary"] is None
     assert "exit checklist" not in checkpoint.render_checkpoint(payload).lower()
+
+
+def test_milestone_free_checkpoint_carries_no_milestone_vocabulary(tmp_path):
+    # REQ-04 consolidated guard: a zero-milestone checkpoint is pre-feature — both
+    # payload fields dormant and none of the milestone vocabulary in the render.
+    _cfg, project = _plan_at_execute(tmp_path, with_milestone=False)
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["milestone"] is None and payload["boundary"] is None
+    text = checkpoint.render_checkpoint(payload).lower()
+    for word in ("milestone", "exit checklist", "proceed"):
+        assert word not in text, f"checkpoint leaked {word!r}: {text}"

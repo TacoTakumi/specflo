@@ -1013,3 +1013,51 @@ def test_task_brief_carries_the_boundary_beat_at_a_boundary(root, cfg, project):
 def test_task_brief_boundary_is_none_off_a_boundary(root, cfg, project):
     _good_plan(root, cfg, project)
     assert plan.task_brief(root, cfg, project)["boundary"] is None
+
+
+# --- Backward-compatibility dormancy guard (T-10) ----------------------------
+
+
+def test_milestone_free_plan_derivations_stay_dormant(root, cfg, project):
+    # REQ-04: with zero milestones every milestone rule/derivation is inert and
+    # the plan behaves exactly as it did before the feature existed.
+    _good_plan(root, cfg, project)   # T-01, T-02 (T-02 depends on T-01); no milestones
+    # validate raises no milestone-worded issue.
+    assert all("milestone" not in issue.lower()
+               for issue in plan.validate_plan(root, cfg, project))
+    # Every milestone derivation is empty / None.
+    view = plan.milestone_progress(root, cfg, project)
+    assert view["milestones"] == [] and view["current"] is None
+    assert plan.current_milestone(root, cfg, project) is None
+    assert plan.milestone_boundary(root, cfg, project) is None
+    # next_actionable / the task-show default is pre-feature: the first ready
+    # pending task, never flagged working-ahead, never carrying a boundary beat.
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]
+    brief = plan.task_brief(root, cfg, project)              # default -> next actionable
+    assert brief["task"]["id"] == "T-01"
+    assert brief["working_ahead"] is False and brief["boundary"] is None
+
+
+def test_every_milestone_command_leaves_spec_untouched(root, cfg, project):
+    # REQ-01: no milestone command ever writes spec.md — content AND mtime survive
+    # *every* one of them, not just `milestone add`.
+    _started_plan(root, cfg, project)
+    sp = spec.spec_path(root, cfg, project)
+    before_bytes = sp.read_bytes()
+    before_mtime = sp.stat().st_mtime_ns
+
+    # Every plan-mutating milestone command.
+    plan.add_milestone(root, cfg, project, "First", exit_items=["ships"], today="2026-06-22")
+    plan.add_milestone(root, cfg, project, "Second", exit_items=["done"], today="2026-06-22")
+    plan.add_task(root, cfg, project, "build", acceptance="a", verify="v",
+                  implements=["REQ-01"], milestone="M-01", today="2026-06-22")   # T-01
+    plan.set_milestone(root, cfg, project, "T-01", "M-02")
+
+    # Every read-only milestone derivation (belt-and-suspenders: reads must not write).
+    plan.milestone_progress(root, cfg, project)
+    plan.milestone_detail(root, cfg, project, "M-02")
+    plan.current_milestone(root, cfg, project)
+    plan.milestone_boundary(root, cfg, project)
+
+    assert sp.read_bytes() == before_bytes         # spec content byte-for-byte unchanged
+    assert sp.stat().st_mtime_ns == before_mtime   # spec mtime untouched

@@ -1815,3 +1815,33 @@ def test_milestone_show_cli_unknown_fails(tmp_path, monkeypatch):
     _project_at_plan_phase(runner, app, tmp_path)
     r = runner.invoke(app, ["milestone", "show", "M-09"])
     assert r.exit_code != 0
+
+
+# --- Backward-compatibility dormancy guard across CLI surfaces (T-10) --------
+
+
+def test_milestone_free_plan_text_surfaces_stay_silent_about_milestones(tmp_path, monkeypatch):
+    # REQ-04: with zero milestones, no human-facing surface says a word about
+    # milestones — validate/show/list/status/checkpoint match pre-feature output.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)              # T-01 pending, no milestones
+    words = ("milestone", "working ahead", "exit checklist", "proceed")
+    for argv in (["validate", "plan"], ["task", "show"], ["task", "list"],
+                 ["status"], ["checkpoint"]):
+        r = runner.invoke(app, argv)
+        assert r.exit_code == 0, f"{argv} -> {r.exit_code}: {r.output}"
+        low = r.output.lower()
+        assert not any(w in low for w in words), f"{argv} leaked milestone output: {r.output}"
+
+
+def test_milestone_free_plan_json_surfaces_carry_dormant_contract(tmp_path, monkeypatch):
+    # The machine contract stays stable and dormant: status omits the milestone /
+    # boundary fields entirely; task show reports working_ahead False, boundary None.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    status = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert "milestone" not in status and "boundary" not in status
+    brief = _json.loads(runner.invoke(app, ["task", "show", "--json"]).output)
+    assert brief["working_ahead"] is False and brief["boundary"] is None
