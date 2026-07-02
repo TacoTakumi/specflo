@@ -19,3 +19,14 @@ def test_skill_references_the_real_commands():
     for cmd in ["specflo task show", "specflo task start", "specflo task done",
                 "specflo validate execute", "specflo advance", "specflo checkpoint"]:
         assert cmd in text, f"missing command reference: {cmd}"
+
+
+def test_skill_gives_thin_milestone_guidance():
+    # REQ-17: the executor honours the soft boundary verify beat and the
+    # working-ahead label, deferring the mechanics to the milestone commands.
+    text = SKILL.read_text()
+    assert "specflo milestone" in text      # reference the commands, don't reimplement
+    low = text.lower()
+    assert "boundary" in low                # the soft milestone-boundary verify beat
+    assert "exit checklist" in low          # surfaced/verified at the boundary
+    assert "working ahead" in low or "working-ahead" in low

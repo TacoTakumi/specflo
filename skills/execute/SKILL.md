@@ -73,6 +73,24 @@ superseding requirement — never silently mutate a task or drift off its
    `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
    the project — the user's to call; **wait** for their go.
 
+## Milestones
+
+When the plan groups tasks into **milestones**, the CLI surfaces two soft signals
+in the `specflo task show` brief (and in `status` / `checkpoint`) — honour them,
+don't reimplement them:
+
+- **Boundary verify beat.** When a milestone's last task completes, the brief
+  surfaces the just-completed milestone's **Exit checklist** with a soft,
+  user-gated *proceed* prompt. It never blocks the loop: pause, verify the Exit
+  items with the human, then continue. There is deliberately no "milestone done"
+  verb — the beat is derived, not marked.
+- **Working-ahead label.** With no ready task left in the current milestone,
+  `task show` steers to the earliest ready later-milestone task, labelled
+  *working ahead* — fine to take, just know you've crossed the boundary.
+
+Inspect milestones read-only with `specflo milestone list` / `specflo milestone
+show M-NN`; milestone state is derived from task progress, never hand-edited.
+
 ## `task done` is earned
 
 A task is done when its Verify step ran and passed and the diff matches the

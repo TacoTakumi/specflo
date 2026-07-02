@@ -60,6 +60,24 @@ not planning.
    `specflo advance` (moves `plan → execute`) is the user's to call — **wait** for
    their go; don't start executing tasks yourself.
 
+## Milestones
+
+Group the plan's tasks into ordered **milestones** — user-verifiable slices —
+when it spans more than a couple. The CLI owns every milestone mechanic
+(document-order sequence, rollup, the current milestone, the boundary beat); this
+skill only directs *authoring*, so reference the commands rather than restating
+that logic:
+
+- Author each milestone with an **Exit checklist** (what proves the slice works):
+  `specflo milestone add --text "Auth works" --exit "login" --exit "logout"`.
+- Assign **every** task to a milestone — `--milestone M-NN` on `specflo task add`,
+  or `specflo task set-milestone T-NN M-NN` after the fact. Once milestones
+  exist, `specflo validate plan` flags any unassigned task, requires milestone
+  dependencies to point backward, and checks the per-milestone `REQ-NN` union
+  covers the spec.
+- Milestones are **optional**: a plan with zero milestones stays dormant and
+  behaves exactly as today — add them only when they earn their keep.
+
 ## Anti-sycophancy
 
 Do not open with "Great plan!", "You're absolutely right", or similar. State the

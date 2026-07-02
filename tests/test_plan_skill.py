@@ -19,3 +19,14 @@ def test_skill_references_the_real_commands():
     for cmd in ["specflo plan start", "specflo task add", "specflo validate plan",
                 "specflo advance"]:
         assert cmd in text, f"missing command reference: {cmd}"
+
+
+def test_skill_gives_thin_milestone_guidance():
+    # REQ-17: the planner authors milestones with Exit checklists and assigns
+    # every task to one — via the milestone commands, deferring mechanics to CLI.
+    text = SKILL.read_text()
+    for cmd in ["specflo milestone add", "specflo task set-milestone"]:
+        assert cmd in text, f"missing milestone command reference: {cmd}"
+    low = text.lower()
+    assert "exit checklist" in low          # Exit checklists authored per milestone
+    assert "--milestone" in text            # every task assigned to a milestone
