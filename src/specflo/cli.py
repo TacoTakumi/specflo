@@ -1096,5 +1096,36 @@ def milestone_list(
                "\nCurrent: none (all milestones complete).")
 
 
+@milestone_app.command("show", epilog="Example: specflo milestone show M-01")
+def milestone_show(
+    milestone_id: str = typer.Argument(..., metavar="<M-NN>", help="Milestone to show."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show a milestone: its Exit checklist, member tasks, rollup, and derived REQ set."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    detail = plan.milestone_detail(root, cfg, slug, milestone_id)
+    if detail is None:
+        raise _die(f"No milestone {milestone_id} in this plan.")
+    if json_output:
+        typer.echo(json.dumps(detail))
+        return
+    suffix = "  (complete)" if detail["complete"] else ""
+    lines = [
+        f"{detail['id']} - {detail['title']}  [{detail['done']}/{detail['total']}]{suffix}",
+        "",
+        "Exit:",
+        *(f"  - {item}" for item in detail["exit_items"]),
+        "",
+        "Tasks:",
+    ]
+    if detail["members"]:
+        lines += [f"  {t['id']}  [{t['progress']}]  {t['text']}" for t in detail["members"]]
+    else:
+        lines.append("  (none)")
+    lines.append("")
+    lines.append("Requirements: " + (", ".join(detail["reqs"]) if detail["reqs"] else "(none)"))
+    typer.echo("\n".join(lines))
+
+
 def main() -> None:
     app()

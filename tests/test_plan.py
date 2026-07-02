@@ -596,10 +596,10 @@ def test_milestone_add_creates_section_only_once(root, cfg, project):
 # --- Milestone rollup / completion / current (T-02) ---------------------------
 
 
-def _plan_with_milestones_and_tasks(root, cfg, project, milestones, task_entries):
+def _plan_with_milestones_and_tasks(root, cfg, project, milestones, task_entries, n_reqs=1):
     """Start a plan, author *milestones* [(title, [exit,...]), ...] via add_milestone,
     then append raw *task_entries* (from _raw_task_entry) to ## Tasks. Returns path."""
-    _spec_with_reqs(root, cfg, project, n=1)
+    _spec_with_reqs(root, cfg, project, n=n_reqs)
     plan.start_plan(root, cfg, project, today="2026-06-22")
     for title, exits in milestones:
         plan.add_milestone(root, cfg, project, title, exit_items=exits, today="2026-06-22")
@@ -737,3 +737,41 @@ def test_set_milestone_rejects_unknown_task_or_milestone(root, cfg, project):
         plan.set_milestone(root, cfg, project, "T-01", "M-09")
     with pytest.raises(SpecfloError):  # unknown task
         plan.set_milestone(root, cfg, project, "T-99", "M-01")
+
+
+# --- milestone show detail (T-04) ---------------------------------------------
+
+
+def test_milestone_detail_assembles_members_reqs_and_completeness(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["ships"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-01", implements="REQ-01, REQ-02")],
+        n_reqs=2)
+    d = plan.milestone_detail(root, cfg, project, "M-01")
+    assert d["id"] == "M-01" and d["title"] == "First"
+    assert d["exit_items"] == ["ships"]
+    assert [m["id"] for m in d["members"]] == ["T-01", "T-02"]
+    assert d["members"][0]["progress"] == "pending"
+    assert (d["done"], d["total"]) == (0, 2)
+    assert d["reqs"] == ["REQ-01", "REQ-02"]          # union of member Implements
+    assert d["complete"] is False
+    plan.start_task(root, cfg, project, "T-01"); plan.done_task(root, cfg, project, "T-01")
+    plan.start_task(root, cfg, project, "T-02"); plan.done_task(root, cfg, project, "T-02")
+    d2 = plan.milestone_detail(root, cfg, project, "M-01")
+    assert d2["done"] == 2 and d2["complete"] is True  # complete only once all done
+
+
+def test_milestone_detail_req_appears_under_both_milestones(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-02", implements="REQ-01")])
+    assert plan.milestone_detail(root, cfg, project, "M-01")["reqs"] == ["REQ-01"]
+    assert plan.milestone_detail(root, cfg, project, "M-02")["reqs"] == ["REQ-01"]
+
+
+def test_milestone_detail_unknown_returns_none(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    assert plan.milestone_detail(root, cfg, project, "M-09") is None

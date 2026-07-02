@@ -80,6 +80,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Group tasks into a milestone (M-NN) with an Exit checklist."},
     {"name": "milestone list", "group": "workflow", "args": "",
      "summary": "List milestones with done/total rollup and the current one."},
+    {"name": "milestone show", "group": "workflow", "args": "<M-NN>",
+     "summary": "Show a milestone's Exit checklist, member tasks, and REQ set."},
 ]
 
 

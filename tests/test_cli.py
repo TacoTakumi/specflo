@@ -1662,3 +1662,35 @@ def test_task_set_milestone_cli_reassigns(tmp_path, monkeypatch):
     assert data["id"] == "T-01" and data["milestone"] == "M-02"
     plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
     assert "- Milestone: M-02" in plan_md and "- Milestone: M-01" not in plan_md
+
+
+# --- milestone show (T-04) ----------------------------------------------------
+
+
+def test_milestone_show_cli_renders_detail(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["milestone", "add", "--text", "First",
+                        "--exit", "login works", "--exit", "logout works"])   # M-01
+    runner.invoke(app, ["task", "add", "--text", "build login", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--milestone", "M-01"])  # T-01
+    data = _json.loads(runner.invoke(app, ["milestone", "show", "M-01", "--json"]).output)
+    assert data["id"] == "M-01" and data["title"] == "First"
+    assert data["exit_items"] == ["login works", "logout works"]
+    assert [m["id"] for m in data["members"]] == ["T-01"]
+    assert data["reqs"] == ["REQ-01"]
+    assert data["total"] == 1 and data["complete"] is False
+
+    out = runner.invoke(app, ["milestone", "show", "M-01"]).output
+    assert "M-01" in out and "First" in out
+    assert "login works" in out and "logout works" in out
+    assert "T-01" in out and "REQ-01" in out
+
+
+def test_milestone_show_cli_unknown_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["milestone", "show", "M-09"])
+    assert r.exit_code != 0

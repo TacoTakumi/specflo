@@ -766,6 +766,40 @@ def milestone_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     return milestone_progress_from_doc(path.read_text() if path.is_file() else "")
 
 
+def milestone_detail_from_doc(doc: str, milestone_id: str) -> dict | None:
+    """Full derived detail for one milestone, or None if it is not in *doc*.
+
+    Bundles the authored Exit checklist, member tasks (with progress), the
+    done/total rollup and derived completeness, and the milestone's REQ set —
+    the sorted union of member tasks' ``Implements`` citations (REQ-12), so a REQ
+    implemented in two milestones surfaces under both.
+    """
+    m = next((x for x in _parse_milestones(doc) if x.id == milestone_id), None)
+    if m is None:
+        return None
+    members = [
+        t for t in _parse_tasks(doc)
+        if t.status == "active" and t.milestone == milestone_id
+    ]
+    done = sum(1 for t in members if t.progress == "done")
+    total = len(members)
+    reqs = sorted({r for t in members for r in t.implements})
+    return {
+        "id": m.id, "title": m.title, "exit_items": m.exit_items,
+        "members": [{"id": t.id, "text": t.text, "progress": t.progress} for t in members],
+        "done": done, "total": total,
+        "complete": total > 0 and done == total,
+        "reqs": reqs,
+    }
+
+
+def milestone_detail(
+    root: Path, cfg: SpecfloConfig, slug: str, milestone_id: str
+) -> dict | None:
+    path = plan_path(root, cfg, slug)
+    return milestone_detail_from_doc(path.read_text(), milestone_id) if path.is_file() else None
+
+
 def list_tasks(
     root: Path, cfg: SpecfloConfig, slug: str, include_superseded: bool = False
 ) -> list[Task]:
