@@ -1026,8 +1026,11 @@ def task_show(
         typer.echo(json.dumps(brief))
         return
     t = brief["task"]
+    header = f"{t['id']} - {t['text']}  [{t['progress']}]"
+    if brief.get("working_ahead"):
+        header += "  — working ahead (later milestone than current)"
     lines = [
-        f"{t['id']} - {t['text']}  [{t['progress']}]",
+        header,
         f"  Acceptance: {t['acceptance']}",
         f"  Verify:     {t['verify']}",
         f"  Implements: {', '.join(t['implements'])}",

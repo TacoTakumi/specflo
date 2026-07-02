@@ -884,3 +884,52 @@ def test_validate_milestone_union_equals_active_reqs_when_valid(root, cfg, proje
     # so no coverage issue is raised (REQ-12, positive case).
     _valid_milestoned_plan(root, cfg, project)  # M-01/REQ-01, M-02/REQ-02
     assert plan.validate_plan(root, cfg, project) == []
+
+
+# --- next_actionable steers to the current milestone (T-07) -------------------
+
+
+def test_task_brief_default_steers_to_current_milestone_over_later(root, cfg, project):
+    # Ready tasks in both the current (M-01) and a later (M-02) milestone: the
+    # no-arg default is the current-milestone task, never the later one (REQ-13).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-02")])
+    brief = plan.task_brief(root, cfg, project)   # no id -> steered default
+    assert brief["task"]["id"] == "T-01"
+    assert brief["working_ahead"] is False
+
+
+def test_task_brief_offers_later_milestone_labelled_working_ahead(root, cfg, project):
+    # The current milestone M-01 has no dependency-ready pending task (its only
+    # task is in progress); a later milestone M-02 has one. It is offered, not
+    # blocked, and flagged working-ahead.
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", progress="in_progress"),
+         _raw_task_entry("T-02", milestone="M-02")])
+    brief = plan.task_brief(root, cfg, project)   # no id -> steered default
+    assert brief["task"]["id"] == "T-02"
+    assert brief["working_ahead"] is True
+
+
+def test_milestone_state_never_makes_a_ready_task_unselectable(root, cfg, project):
+    # next_actionable still lists every dependency-ready task regardless of
+    # milestone, and a ready later-milestone task is selectable by id (REQ-13:
+    # milestones steer the default, they never block).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", progress="in_progress"),
+         _raw_task_entry("T-02", milestone="M-02")])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-02"]
+    brief = plan.task_brief(root, cfg, project, "T-02")   # explicit id resolves
+    assert brief["task"]["id"] == "T-02" and brief["working_ahead"] is True
+
+
+def test_task_brief_default_actionable_is_dormant_without_milestones(root, cfg, project):
+    # No milestones: the default is today's first next_actionable, never flagged.
+    _good_plan(root, cfg, project)   # T-01, then T-02 (depends on T-01); no milestones
+    brief = plan.task_brief(root, cfg, project)
+    assert brief["task"]["id"] == "T-01"
+    assert brief["working_ahead"] is False

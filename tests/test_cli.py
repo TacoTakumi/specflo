@@ -1170,6 +1170,38 @@ def test_task_show_defaults_to_next_actionable(tmp_path, monkeypatch):
     assert "T-01" in r.output
 
 
+def _execute_with_two_milestones(runner, app, tmp_path):
+    """At execute with T-01 in current M-01 and a ready T-02 in later M-02."""
+    _project_at_execute(runner, app, tmp_path)                       # T-01 pending
+    runner.invoke(app, ["milestone", "add", "--text", "First", "--exit", "a"])   # M-01
+    runner.invoke(app, ["milestone", "add", "--text", "Second", "--exit", "b"])  # M-02
+    runner.invoke(app, ["task", "set-milestone", "T-01", "M-01"])
+    runner.invoke(app, ["task", "add", "--text", "later work", "--acceptance", "ok",
+                        "--verify", "true", "--from", "REQ-01", "--milestone", "M-02"])  # T-02
+
+
+def test_task_show_steers_default_to_current_milestone(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_with_two_milestones(runner, app, tmp_path)   # T-01 (M-01) and T-02 (M-02) both ready
+    r = runner.invoke(app, ["task", "show"])              # no id -> current milestone
+    assert r.exit_code == 0
+    assert "T-01" in r.output and "working ahead" not in r.output.lower()
+
+
+def test_task_show_labels_working_ahead_in_text_and_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_with_two_milestones(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])     # current M-01 now has no ready pending task
+    r = runner.invoke(app, ["task", "show"])          # no id -> steers ahead to T-02
+    assert r.exit_code == 0
+    assert "T-02" in r.output and "working ahead" in r.output.lower()
+    rj = runner.invoke(app, ["task", "show", "--json"])
+    data = _json.loads(rj.output)
+    assert data["task"]["id"] == "T-02" and data["working_ahead"] is True
+
+
 def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

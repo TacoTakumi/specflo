@@ -806,6 +806,52 @@ def _current_milestone(rollups: list[dict]) -> str | None:
     return None
 
 
+def _default_actionable(active: list[Task], milestones: list[Milestone]) -> str | None:
+    """The task ``task show`` defaults to: among dependency-ready pending tasks,
+    steer to the current milestone (REQ-13).
+
+    The candidate set is exactly ``next_actionable`` — every dependency-ready
+    pending task — so milestones never make a ready task *unselectable*; they only
+    pick *which* ready task is the default. A ready task in the current milestone
+    wins; if none is ready there, the earliest-milestone ready task is offered
+    (and flagged working-ahead separately). With no milestones — or all complete
+    — this is today's ``next_actionable[0]`` (REQ-04 dormancy).
+    """
+    actionable = _progress_from_tasks(active)["next_actionable"]
+    if not actionable:
+        return None
+    rollups = _milestone_rollups(milestones, active)
+    current = _current_milestone(rollups)
+    if current is None:
+        return actionable[0]
+    order = {r["id"]: i for i, r in enumerate(rollups)}
+    by_id = {t.id: t for t in active}
+    in_current = [tid for tid in actionable if by_id[tid].milestone == current]
+    if in_current:
+        return in_current[0]
+    # Only later-milestone tasks are ready: offer the earliest, preserving
+    # document order within a milestone (sorted is stable). Unassigned tasks (an
+    # invalid, mixed plan) sort last.
+    return sorted(actionable, key=lambda tid: order.get(by_id[tid].milestone, len(order)))[0]
+
+
+def _task_working_ahead(
+    task: Task, milestones: list[Milestone], active: list[Task]
+) -> bool:
+    """True when *task* sits in a milestone later (in document order) than the
+    current one — i.e. it is dependency-ready but ahead of the milestone the plan
+    is on. Always False when there are no milestones, all are complete, or the
+    task is unassigned (REQ-04 dormancy)."""
+    rollups = _milestone_rollups(milestones, active)
+    current = _current_milestone(rollups)
+    if current is None or task.milestone is None:
+        return False
+    order = {r["id"]: i for i, r in enumerate(rollups)}
+    if task.milestone not in order:
+        return False
+    return order[task.milestone] > order[current]
+
+
 def milestone_progress_from_doc(doc: str) -> dict:
     """Derived milestone view of *doc*: ordered rollups + the current milestone."""
     milestones = _parse_milestones(doc)
@@ -879,9 +925,10 @@ def task_brief(
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
     doc = path.read_text()
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    milestones = _parse_milestones(doc)
     if task_id is None:
-        actionable = _progress_from_tasks(active)["next_actionable"]
-        if not actionable:
+        task_id = _default_actionable(active, milestones)
+        if task_id is None:
             blocks = blocked_on_superseded(root, cfg, slug)
             if blocks:
                 detail = "\n".join("  " + ln for ln in superseded_block_remediation(blocks))
@@ -893,7 +940,6 @@ def task_brief(
                 "No actionable task (all done, or remaining tasks are blocked "
                 "or waiting on dependencies). See `specflo task list`."
             )
-        task_id = actionable[0]
     task = next((t for t in active if t.id == task_id), None)
     if task is None:
         raise SpecfloError(f"No active task {task_id}.")
@@ -916,4 +962,5 @@ def task_brief(
         },
         "requirements": requirements,
         "global_constraints": constraints,
+        "working_ahead": _task_working_ahead(task, milestones, active),
     }
