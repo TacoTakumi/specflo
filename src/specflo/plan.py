@@ -75,6 +75,7 @@ class Task:
     supersedes: str | None = None
     superseded_by: str | None = None
     blocked: str | None = None
+    milestone: str | None = None
 
 
 @dataclass
@@ -136,6 +137,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             supersedes=fields.get("Supersedes"),
             superseded_by=superseded_by,
             blocked=fields.get("Blocked"),
+            milestone=fields.get("Milestone"),
         ))
     return tasks
 
@@ -683,6 +685,47 @@ def progress_from_doc(doc: str) -> dict:
 def plan_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     path = plan_path(root, cfg, slug)
     return progress_from_doc(path.read_text() if path.is_file() else "")
+
+
+def _milestone_rollups(milestones: list[Milestone], active: list[Task]) -> list[dict]:
+    """Per-milestone rollup in document order, derived purely from member tasks.
+
+    A milestone is ``complete`` iff it has ≥1 member task and all are done (REQ-06);
+    an empty milestone is never complete (validate flags it separately, REQ-09).
+    """
+    rollups: list[dict] = []
+    for m in milestones:
+        members = [t.id for t in active if t.milestone == m.id]
+        done = sum(1 for t in active if t.milestone == m.id and t.progress == "done")
+        total = len(members)
+        rollups.append({
+            "id": m.id, "title": m.title, "exit_items": m.exit_items,
+            "members": members, "done": done, "total": total,
+            "complete": total > 0 and done == total,
+        })
+    return rollups
+
+
+def _current_milestone(rollups: list[dict]) -> str | None:
+    """The earliest-in-document-order incomplete milestone id, or None if all are
+    complete (or there are no milestones)."""
+    for r in rollups:
+        if not r["complete"]:
+            return r["id"]
+    return None
+
+
+def milestone_progress_from_doc(doc: str) -> dict:
+    """Derived milestone view of *doc*: ordered rollups + the current milestone."""
+    milestones = _parse_milestones(doc)
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    rollups = _milestone_rollups(milestones, active)
+    return {"milestones": rollups, "current": _current_milestone(rollups)}
+
+
+def milestone_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    path = plan_path(root, cfg, slug)
+    return milestone_progress_from_doc(path.read_text() if path.is_file() else "")
 
 
 def list_tasks(

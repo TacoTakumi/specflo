@@ -1051,5 +1051,28 @@ def milestone_add(
         )
 
 
+@milestone_app.command("list", epilog="Example: specflo milestone list")
+def milestone_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List milestones in order with done/total rollup, marking the current one."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    view = plan.milestone_progress(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps(view))
+        return
+    milestones = view["milestones"]
+    if not milestones:
+        typer.echo("No milestones yet. Add one with `specflo milestone add`.")
+        return
+    for m in milestones:
+        marker = ">" if m["id"] == view["current"] else " "
+        suffix = "  (complete)" if m["complete"] else ""
+        typer.echo(f"{marker} {m['id']}  [{m['done']}/{m['total']}]  {m['title']}{suffix}")
+    current = view["current"]
+    typer.echo(f"\nCurrent: {current}" if current else
+               "\nCurrent: none (all milestones complete).")
+
+
 def main() -> None:
     app()

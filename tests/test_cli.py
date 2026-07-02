@@ -1572,3 +1572,53 @@ def test_milestone_command_appears_in_help():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "milestone" in result.output
+
+
+# --- milestone list (T-02) ----------------------------------------------------
+
+
+def _set_task_milestone(tmp_path, tid, mid):
+    """Directly stamp a `- Milestone:` field onto a task in plan.md (CLI assignment
+    lands in T-03; this crafts membership for list/rollup tests)."""
+    from specflo import markdown
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    plan_md.write_text(markdown.set_entry_field(plan_md.read_text(), tid, "Milestone", mid))
+
+
+def test_milestone_list_cli_reports_rollup_and_current(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "one", "--acceptance", "a",
+                        "--verify", "true", "--from", "REQ-01"])                 # T-01
+    runner.invoke(app, ["task", "add", "--text", "two", "--acceptance", "a",
+                        "--verify", "true", "--from", "REQ-01"])                 # T-02
+    runner.invoke(app, ["milestone", "add", "--text", "First", "--exit", "ships"])  # M-01
+    _set_task_milestone(tmp_path, "T-01", "M-01")
+    _set_task_milestone(tmp_path, "T-02", "M-01")
+
+    data = _json.loads(runner.invoke(app, ["milestone", "list", "--json"]).output)
+    assert data["current"] == "M-01"
+    assert data["milestones"][0]["id"] == "M-01"
+    assert data["milestones"][0]["done"] == 0 and data["milestones"][0]["total"] == 2
+
+    out = runner.invoke(app, ["milestone", "list"]).output
+    assert "M-01" in out and "0/2" in out and "First" in out
+
+    # completing both member tasks flips the milestone complete; current -> none
+    for tid in ("T-01", "T-02"):
+        runner.invoke(app, ["task", "start", tid]); runner.invoke(app, ["task", "done", tid])
+    data = _json.loads(runner.invoke(app, ["milestone", "list", "--json"]).output)
+    assert data["milestones"][0]["complete"] is True
+    assert data["current"] is None
+
+
+def test_milestone_list_cli_is_friendly_when_empty(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["milestone", "list"])
+    assert r.exit_code == 0
+    assert "no milestones" in r.output.lower()
+    data = _json.loads(runner.invoke(app, ["milestone", "list", "--json"]).output)
+    assert data["milestones"] == [] and data["current"] is None

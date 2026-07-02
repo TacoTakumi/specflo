@@ -355,13 +355,16 @@ def test_parser_recognizes_superseded_via_new_field_and_legacy_status(root, cfg,
     assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]
 
 
-def _raw_task_entry(tid, deps=None, status="active", implements="REQ-01"):
+def _raw_task_entry(tid, deps=None, status="active", implements="REQ-01",
+                    milestone=None, progress="pending"):
     """A well-formed task entry block for crafting plans with explicit ids."""
     lines = [f"### {tid} — task {tid}", "- Acceptance: a", "- Verify: v",
              f"- Implements: {implements}"]
     if deps:
         lines.append(f"- Depends on: {', '.join(deps)}")
-    lines += ["- Progress: pending", f"- Status: {status}"]
+    if milestone:
+        lines.append(f"- Milestone: {milestone}")
+    lines += [f"- Progress: {progress}", f"- Status: {status}"]
     return "\n".join(lines) + "\n"
 
 
@@ -588,3 +591,89 @@ def test_milestone_add_creates_section_only_once(root, cfg, project):
     plan.add_milestone(root, cfg, project, "Second", exit_items=["b"], today="2026-06-22")
     text = _ppath(root, cfg, project).read_text()
     assert text.count("## Milestones") == 1
+
+
+# --- Milestone rollup / completion / current (T-02) ---------------------------
+
+
+def _plan_with_milestones_and_tasks(root, cfg, project, milestones, task_entries):
+    """Start a plan, author *milestones* [(title, [exit,...]), ...] via add_milestone,
+    then append raw *task_entries* (from _raw_task_entry) to ## Tasks. Returns path."""
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    for title, exits in milestones:
+        plan.add_milestone(root, cfg, project, title, exit_items=exits, today="2026-06-22")
+    path = _ppath(root, cfg, project)
+    doc = path.read_text()
+    for entry in task_entries:
+        doc = markdown.append_to_section(doc, "## Tasks", entry)
+    path.write_text(doc)
+    return path
+
+
+def test_task_parses_milestone_membership(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01"), _raw_task_entry("T-02")])
+    tasks = {t.id: t for t in plan.list_tasks(root, cfg, project)}
+    assert tasks["T-01"].milestone == "M-01"
+    assert tasks["T-02"].milestone is None
+
+
+def test_milestone_progress_rolls_up_member_tasks_in_doc_order(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-01"),
+         _raw_task_entry("T-03", milestone="M-02")])
+    view = plan.milestone_progress(root, cfg, project)
+    assert [m["id"] for m in view["milestones"]] == ["M-01", "M-02"]  # document order
+    m1, m2 = view["milestones"]
+    assert (m1["done"], m1["total"], m1["members"]) == (0, 2, ["T-01", "T-02"])
+    assert (m2["done"], m2["total"], m2["members"]) == (0, 1, ["T-03"])
+    assert m1["complete"] is False and m2["complete"] is False
+
+
+def test_milestone_completion_is_derived_and_flips_on_last_task(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-01")])
+    plan.start_task(root, cfg, project, "T-01"); plan.done_task(root, cfg, project, "T-01")
+    assert plan.milestone_progress(root, cfg, project)["milestones"][0]["complete"] is False
+    plan.start_task(root, cfg, project, "T-02"); plan.done_task(root, cfg, project, "T-02")
+    view = plan.milestone_progress(root, cfg, project)
+    assert view["milestones"][0]["complete"] is True   # flipped with no extra command
+    assert view["milestones"][0]["done"] == 2
+
+
+def test_current_milestone_is_earliest_incomplete_then_none(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project,
+        [("First", ["a"]), ("Second", ["b"]), ("Third", ["c"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-02"),
+         _raw_task_entry("T-03", milestone="M-03")])
+    assert plan.milestone_progress(root, cfg, project)["current"] == "M-01"
+    plan.start_task(root, cfg, project, "T-01"); plan.done_task(root, cfg, project, "T-01")
+    assert plan.milestone_progress(root, cfg, project)["current"] == "M-02"  # M-01 complete
+    for tid in ("T-02", "T-03"):
+        plan.start_task(root, cfg, project, tid); plan.done_task(root, cfg, project, tid)
+    assert plan.milestone_progress(root, cfg, project)["current"] is None    # all complete
+
+
+def test_milestone_completion_writes_no_persisted_flag(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01")])
+    plan.start_task(root, cfg, project, "T-01"); plan.done_task(root, cfg, project, "T-01")
+    # The milestone entry carries only its heading + Exit block — no completion field.
+    body = markdown.section_body(_ppath(root, cfg, project).read_text(), "## Milestones")
+    for banned in ("Complete", "Status:", "Progress:", "Done:"):
+        assert banned not in body
+
+
+def test_milestone_progress_empty_when_no_milestones(root, cfg, project):
+    _good_plan(root, cfg, project)  # tasks, but no milestones
+    view = plan.milestone_progress(root, cfg, project)
+    assert view["milestones"] == [] and view["current"] is None
