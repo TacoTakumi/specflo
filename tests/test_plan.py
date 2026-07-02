@@ -516,3 +516,75 @@ def test_reconcile_surfaces_coverage_issues(root, cfg, project):
     plan.add_task(root, cfg, project, "only a", acceptance="a", verify="v",
                   implements=["REQ-01"], today="2026-06-22")   # REQ-02 uncovered
     assert any("REQ-02" in i for i in plan.reconcile_issues(root, cfg, project))
+
+
+# --- Milestones (T-01) --------------------------------------------------------
+
+
+def _started_plan(root, cfg, project, n_reqs=1):
+    """A spec with *n_reqs* requirements and a started (empty) plan.md."""
+    _spec_with_reqs(root, cfg, project, n=n_reqs)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+
+
+def test_milestone_add_creates_section_and_exit_block(root, cfg, project):
+    _started_plan(root, cfg, project)
+    m = plan.add_milestone(root, cfg, project, "Auth works",
+                           exit_items=["login succeeds", "logout clears session"],
+                           today="2026-06-22")
+    assert m.id == "M-01"
+    assert m.exit_items == ["login succeeds", "logout clears session"]
+    text = _ppath(root, cfg, project).read_text()
+    assert "## Milestones" in text
+    # the new section is inserted immediately before ## Tasks
+    assert text.index("## Milestones") < text.index("## Tasks")
+    assert "### M-01 — Auth works" in text
+    assert "- Exit:" in text
+    assert "  - login succeeds" in text
+    assert "  - logout clears session" in text
+
+
+def test_milestone_add_mints_sequential_ids_and_round_trips(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    m2 = plan.add_milestone(root, cfg, project, "Second", exit_items=["b", "c"],
+                            today="2026-06-22")
+    assert m2.id == "M-02"
+    doc = _ppath(root, cfg, project).read_text()
+    parsed = plan._parse_milestones(doc)
+    assert [ms.id for ms in parsed] == ["M-01", "M-02"]        # document order
+    assert parsed[0].title == "First" and parsed[0].exit_items == ["a"]
+    assert parsed[1].title == "Second" and parsed[1].exit_items == ["b", "c"]
+
+
+def test_milestone_add_rejects_zero_exit_items(root, cfg, project):
+    _started_plan(root, cfg, project)
+    with pytest.raises(SpecfloError):
+        plan.add_milestone(root, cfg, project, "No exit", exit_items=[])
+    with pytest.raises(SpecfloError):  # whitespace-only items collapse to zero
+        plan.add_milestone(root, cfg, project, "Blank exit", exit_items=["  ", ""])
+
+
+def test_milestone_add_without_plan_raises(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)  # spec but no plan.md
+    with pytest.raises(SpecfloError):
+        plan.add_milestone(root, cfg, project, "x", exit_items=["a"])
+
+
+def test_milestone_add_leaves_spec_untouched(root, cfg, project):
+    _started_plan(root, cfg, project)
+    sp = spec.spec_path(root, cfg, project)
+    before_bytes = sp.read_bytes()
+    before_mtime = sp.stat().st_mtime_ns
+    plan.add_milestone(root, cfg, project, "Milestone one", exit_items=["ships"],
+                       today="2026-06-22")
+    assert sp.read_bytes() == before_bytes       # REQ-01: spec content unchanged
+    assert sp.stat().st_mtime_ns == before_mtime  # REQ-01: spec mtime unchanged
+
+
+def test_milestone_add_creates_section_only_once(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    plan.add_milestone(root, cfg, project, "Second", exit_items=["b"], today="2026-06-22")
+    text = _ppath(root, cfg, project).read_text()
+    assert text.count("## Milestones") == 1

@@ -25,6 +25,7 @@ PLAN_FILENAME = "plan.md"
 PROGRESS_STATES = ("pending", "in_progress", "done", "blocked")
 
 _TASK_ID_RE = re.compile(r"^### (T-\d+) —", re.MULTILINE)
+_MILESTONE_ID_RE = re.compile(r"^### (M-\d+) —")
 
 # Scope-reduction warning vocabulary (deferral/degradation signals), kept distinct
 # from the hard placeholder terms (TODO/TBD/???) so nothing is both a hard failure
@@ -74,6 +75,13 @@ class Task:
     supersedes: str | None = None
     superseded_by: str | None = None
     blocked: str | None = None
+
+
+@dataclass
+class Milestone:
+    id: str
+    title: str
+    exit_items: list[str]
 
 
 def plan_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
@@ -130,6 +138,58 @@ def _parse_tasks(doc: str) -> list[Task]:
             blocked=fields.get("Blocked"),
         ))
     return tasks
+
+
+def _parse_exit_items(entry_lines: list[str]) -> list[str]:
+    """Extract a milestone's Exit checklist items from its entry lines.
+
+    The block opens at a ``- Exit:`` line (an inline ``- Exit: item`` counts too)
+    and its items are the indented ``  - item`` lines that follow, until a
+    base-indent line (a new ``- Field:`` or a header) closes it. Blank lines are
+    skipped so a stray gap does not truncate a hand-edited checklist.
+    """
+    items: list[str] = []
+    in_exit = False
+    for ln in entry_lines:
+        stripped = ln.strip()
+        if not in_exit:
+            if stripped == "- Exit:" or stripped.startswith("- Exit: "):
+                in_exit = True
+                rest = stripped[len("- Exit:"):].strip()
+                if rest:
+                    items.append(rest)
+            continue
+        if not (ln.startswith(" ") or ln.startswith("\t")):
+            if stripped == "":
+                continue
+            break  # base-indent field or header closes the Exit block
+        m = re.match(r"^\s+-\s+(.*\S)\s*$", ln)
+        if m:
+            items.append(m.group(1))
+    return items
+
+
+def _parse_milestones(doc: str) -> list[Milestone]:
+    """Parse the ordered ``## Milestones`` entries from *doc* (empty when absent)."""
+    body = markdown.section_body(doc, "## Milestones")
+    if body is None:
+        return []
+    lines = body.splitlines(keepends=True)
+    heads: list[tuple[int, str, str]] = []
+    for i, line, in_fence in markdown.iter_lines_with_fence(body):
+        if in_fence:
+            continue
+        m = _MILESTONE_ID_RE.match(line)
+        if m:
+            title = line.split("—", 1)[1].strip()
+            heads.append((i, m.group(1), title))
+    milestones: list[Milestone] = []
+    for n, (start, mid, title) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        milestones.append(
+            Milestone(id=mid, title=title, exit_items=_parse_exit_items(lines[start + 1:end]))
+        )
+    return milestones
 
 
 def _find_cycle(tasks: list[Task]) -> list[str] | None:
@@ -365,6 +425,44 @@ def add_task(
         implements=implements, depends_on=depends_on, files=files, scope=scope,
         progress="pending", status="active", supersedes=supersedes,
     )
+
+
+def add_milestone(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    text: str,
+    exit_items: list[str],
+    today: str | None = None,
+) -> Milestone:
+    """Append a milestone (``M-NN``) to the plan and return it.
+
+    Creates the ``## Milestones`` section on demand (immediately before
+    ``## Tasks``) so a zero-milestone plan stays byte-identical to today's. The
+    ``exit_items`` list must contain at least one non-blank authored string
+    (REQ-05). Touches only ``plan.md`` — never ``spec.md`` (REQ-01).
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    if "## Tasks" not in doc:
+        raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
+
+    exit_items = [item.strip() for item in (exit_items or []) if item.strip()]
+    if not exit_items:
+        raise SpecfloError("A milestone needs at least one --exit checklist item.")
+
+    doc = markdown.ensure_section_before(doc, "## Milestones", "## Tasks")
+    new_id = markdown.next_id(doc, "M-")
+    entry_lines = [f"### {new_id} — {text}", "- Exit:"]
+    entry_lines += [f"  - {item}" for item in exit_items]
+    entry = "\n".join(entry_lines) + "\n"
+
+    doc = markdown.append_to_section(doc, "## Milestones", entry)
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+    return Milestone(id=new_id, title=text, exit_items=exit_items)
 
 
 def blocked_on_superseded_from_doc(doc: str) -> list[dict]:

@@ -91,6 +91,9 @@ app.add_typer(plan_app, name="plan")
 task_app = typer.Typer(help="Capture plan tasks and track their progress.")
 app.add_typer(task_app, name="task")
 
+milestone_app = typer.Typer(help="Group plan tasks into ordered milestones.")
+app.add_typer(milestone_app, name="milestone")
+
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
 
@@ -1018,6 +1021,34 @@ def task_show(
         lines.append("## Global constraints")
         lines.append(brief["global_constraints"])
     typer.echo("\n".join(lines))
+
+
+@milestone_app.command(
+    "add",
+    epilog='Example: specflo milestone add --text "Auth works" --exit "login" --exit "logout"',
+)
+def milestone_add(
+    text: str = typer.Option(..., "--text", help="The milestone title (one line)."),
+    exit_: list[str] = typer.Option(
+        ..., "--exit", metavar="ITEM",
+        help="Exit checklist item — an observable behaviour (repeatable; >=1).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Append a milestone (M-NN) with its Exit checklist to the active plan.md."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        milestone = plan.add_milestone(root, cfg, slug, text, exit_items=list(exit_))
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps(
+            {"id": milestone.id, "title": milestone.title, "exit": milestone.exit_items}))
+    else:
+        typer.echo(
+            f"Recorded {milestone.id} ({len(milestone.exit_items)} exit item(s))."
+        )
 
 
 def main() -> None:

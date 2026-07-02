@@ -79,6 +79,24 @@ def append_to_section(doc: str, header: str, entry: str) -> str:
     return "".join(lines)
 
 
+def ensure_section_before(doc: str, header: str, before_header: str) -> str:
+    """Ensure *header* exists; if absent, insert it (blank-line padded) immediately
+    before *before_header*. Fence-aware; a no-op (byte-identical) when *header* is
+    already present. Raises ValueError if *before_header* is not found.
+    """
+    header = header.strip()
+    before_header = before_header.strip()
+    for _, line, in_fence in iter_lines_with_fence(doc):
+        if not in_fence and line.strip() == header:
+            return doc
+    lines = doc.splitlines(keepends=True)
+    for i, line, in_fence in iter_lines_with_fence(doc):
+        if not in_fence and line.strip() == before_header:
+            lines.insert(i, f"{header}\n\n")
+            return "".join(lines)
+    raise ValueError(f"section {before_header!r} not found")
+
+
 def next_id(doc: str, prefix: str) -> str:
     """Return the next ``<prefix>NN`` id (zero-padded), scanning fence-aware.
 

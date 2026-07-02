@@ -1540,3 +1540,35 @@ def test_cli_output_stays_ascii(tmp_path, monkeypatch):
         ["task", "list"], ["task", "show"], ["validate", "execute"], ["hook", "print"],
     ):
         runner.invoke(app, cmd).output.encode("ascii")  # raises on any non-ASCII
+
+
+# --- Milestones (T-01) --------------------------------------------------------
+
+
+def test_milestone_add_cli_appends_entry(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["milestone", "add", "--text", "Auth works",
+                            "--exit", "login", "--exit", "logout", "--json"])
+    assert r.exit_code == 0
+    data = _json.loads(r.output)
+    assert data["id"] == "M-01"
+    assert data["exit"] == ["login", "logout"]
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "### M-01 — Auth works" in plan_md
+    assert "  - login" in plan_md and "  - logout" in plan_md
+
+
+def test_milestone_add_cli_requires_an_exit_item(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["milestone", "add", "--text", "No exit"])
+    assert r.exit_code != 0  # --exit is required (>=1)
+
+
+def test_milestone_command_appears_in_help():
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "milestone" in result.output

@@ -74,6 +74,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "List tasks, progress, and the next actionable."},
     {"name": "task show", "group": "workflow", "args": "[<T-NN>]",
      "summary": "Show a task's brief (acceptance + cited REQ-NN + constraints)."},
+    {"name": "milestone add", "group": "workflow", "args": "",
+     "summary": "Group tasks into a milestone (M-NN) with an Exit checklist."},
 ]
 
 
