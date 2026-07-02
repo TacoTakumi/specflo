@@ -169,3 +169,46 @@ def test_checkpoint_omits_milestone_line_for_a_milestone_free_plan(tmp_path):
     payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
     assert payload["milestone"] is None
     assert "milestone" not in checkpoint.render_checkpoint(payload).lower()
+
+
+# --- soft milestone-boundary verify beat (T-09) --------------------------
+
+
+def _plan_at_boundary(tmp_path):
+    """A 'Thing' at execute with M-01 (T-01) done and M-02 (T-02) pending — i.e.
+    sitting exactly at the M-01 -> M-02 milestone boundary."""
+    from specflo import config, plan, projects, spec
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-02")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-07-02")
+    spec.add_requirement(tmp_path, cfg, "thing", "r", acceptance="a", today="2026-07-02")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-07-02")
+    plan.add_milestone(tmp_path, cfg, "thing", "First", exit_items=["ships to prod"],
+                       today="2026-07-02")                                   # M-01
+    plan.add_milestone(tmp_path, cfg, "thing", "Second", exit_items=["b"],
+                       today="2026-07-02")                                   # M-02
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], milestone="M-01", today="2026-07-02")   # T-01
+    plan.add_task(tmp_path, cfg, "thing", "more", acceptance="a", verify="v",
+                  implements=["REQ-01"], milestone="M-02", today="2026-07-02")   # T-02
+    plan.start_task(tmp_path, cfg, "thing", "T-01", today="2026-07-02")
+    plan.done_task(tmp_path, cfg, "thing", "T-01", today="2026-07-02")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def test_checkpoint_surfaces_boundary_beat_at_a_milestone_boundary(tmp_path):
+    _cfg, project = _plan_at_boundary(tmp_path)
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["boundary"]["id"] == "M-01"
+    text = checkpoint.render_checkpoint(payload)
+    assert "ships to prod" in text          # the just-completed milestone's Exit checklist
+    assert "proceed" in text.lower()        # user-gated proceed prompt
+
+
+def test_checkpoint_has_no_boundary_beat_for_a_milestone_free_plan(tmp_path):
+    _cfg, project = _plan_at_execute(tmp_path, with_milestone=False)
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["boundary"] is None
+    assert "exit checklist" not in checkpoint.render_checkpoint(payload).lower()

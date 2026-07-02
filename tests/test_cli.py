@@ -1222,6 +1222,75 @@ def test_status_shows_no_milestone_line_for_a_milestone_free_plan(tmp_path, monk
     assert "Milestone:" not in runner.invoke(app, ["status"]).output
 
 
+# --- soft milestone-boundary verify beat surfaced in the CLI (T-09) ------
+
+
+def _execute_at_boundary(runner, app, tmp_path):
+    """At execute: M-01 (T-01) done with a distinctive Exit item, M-02 (T-02)
+    pending — sitting exactly at the M-01 -> M-02 milestone boundary."""
+    _project_at_execute(runner, app, tmp_path)                       # T-01 pending
+    runner.invoke(app, ["milestone", "add", "--text", "First",
+                        "--exit", "login flow ships"])               # M-01
+    runner.invoke(app, ["milestone", "add", "--text", "Second", "--exit", "b"])  # M-02
+    runner.invoke(app, ["task", "set-milestone", "T-01", "M-01"])
+    runner.invoke(app, ["task", "add", "--text", "later work", "--acceptance", "ok",
+                        "--verify", "true", "--from", "REQ-01", "--milestone", "M-02"])  # T-02
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+
+
+def test_status_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_at_boundary(runner, app, tmp_path)
+    r = runner.invoke(app, ["status"])
+    assert r.exit_code == 0                                  # soft beat never blocks
+    assert "M-01" in r.output and "login flow ships" in r.output
+    assert "proceed" in r.output.lower()
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["boundary"]["id"] == "M-01" and data["boundary"]["all_complete"] is False
+
+
+def test_task_show_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_at_boundary(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "show"])                # default -> T-02, plus the M-01 beat
+    assert r.exit_code == 0
+    assert "T-02" in r.output                               # still shows the next task
+    assert "login flow ships" in r.output and "proceed" in r.output.lower()
+    data = _json.loads(runner.invoke(app, ["task", "show", "--json"]).output)
+    assert data["boundary"]["id"] == "M-01"
+
+
+def test_checkpoint_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_at_boundary(runner, app, tmp_path)
+    r = runner.invoke(app, ["checkpoint"])
+    assert r.exit_code == 0
+    assert "login flow ships" in r.output and "proceed" in r.output.lower()
+
+
+def test_no_boundary_beat_off_a_boundary_and_none_for_milestone_free(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)              # no milestones
+    assert "proceed" not in runner.invoke(app, ["status"]).output.lower()
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert "boundary" not in data                           # omitted when not meaningful
+
+
+def test_boundary_beat_has_no_milestone_gate_verb_in_the_cli(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    # The boundary is a soft, derived beat — there is deliberately no verb that
+    # gates or marks a milestone verified/done/complete (REQ-14).
+    for verb in ("verify", "gate", "done", "complete", "pass", "advance"):
+        r = runner.invoke(app, ["milestone", verb])
+        assert r.exit_code != 0, f"unexpected `milestone {verb}` command exists"
+
+
 def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

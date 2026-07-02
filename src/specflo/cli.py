@@ -1045,6 +1045,11 @@ def task_show(
     if brief["global_constraints"]:
         lines.append("## Global constraints")
         lines.append(brief["global_constraints"])
+    # Surface the soft milestone-boundary verify beat (the just-completed
+    # milestone's Exit checklist) after the brief, when at a boundary (REQ-14).
+    if brief.get("boundary"):
+        lines.append("")
+        lines.extend(plan.boundary_beat_lines(brief["boundary"]))
     typer.echo("\n".join(lines))
 
 

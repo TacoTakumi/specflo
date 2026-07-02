@@ -54,6 +54,7 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
     prog = None
     plan_doc = None
     milestone = None
+    boundary = None
     # A shelved project's do_next ignores progress, so skip the plan-file read.
     if not shelved and project.phase in ("plan", "execute") and plan_file.is_file():
         plan_doc = plan_file.read_text()
@@ -62,6 +63,10 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         # named in the resume block at plan/execute so a resumed agent knows which
         # slice the plan is on (REQ-15). Dormant without milestones (REQ-04).
         milestone = plan_module.current_milestone_from_doc(plan_doc)
+        # The soft milestone-boundary verify beat (None off a boundary): the
+        # just-completed milestone's Exit checklist to verify before proceeding
+        # (REQ-14). Surfaced in the resume block; never a hard stop.
+        boundary = plan_module.milestone_boundary_from_doc(plan_doc)
     if shelved:
         # Paused: don't direct to the phase's work step — resume (or start new),
         # while the recorded phase below is preserved so resume returns to it.
@@ -92,6 +97,7 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
         "read_first": read_first,
         "do_next": do_next,
         "milestone": milestone,
+        "boundary": boundary,
         "path": display_path(directory / CHECKPOINT_FILENAME, root, posix=True),
     }
 
@@ -125,6 +131,11 @@ def render_checkpoint(payload: dict) -> str:
             f"Current milestone: {milestone['id']} {milestone['title']} "
             f"— {milestone['done']}/{milestone['total']} done."
         )
+    # The soft milestone-boundary verify beat: the just-completed milestone's Exit
+    # checklist for a user-gated proceed (REQ-14). Absent off a boundary.
+    boundary = payload.get("boundary")
+    if boundary:
+        lines += ["", "## Milestone boundary", *plan_module.boundary_beat_lines(boundary)]
     lines += [
         "",
         "## Resume",

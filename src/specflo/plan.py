@@ -883,6 +883,83 @@ def current_milestone(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     return current_milestone_from_doc(path.read_text() if path.is_file() else "")
 
 
+def milestone_boundary_from_doc(doc: str) -> dict | None:
+    """The soft milestone-boundary verify beat for *doc*, or None when not at one.
+
+    Purely derived (REQ-14) — nothing is persisted. Returns the *just-completed*
+    milestone whose authored Exit checklist should be surfaced for a user-gated,
+    soft proceed. The beat fires in exactly two situations:
+
+    - **Mid-plan boundary:** the current (earliest-incomplete) milestone is
+      immediately preceded by a complete milestone and none of the current
+      milestone's member tasks have started yet — we sit exactly at the boundary
+      the finished milestone opened. The Exit checklist surfaced is the finished
+      (preceding) milestone's, with ``all_complete`` False.
+    - **All complete:** every milestone is complete — the last milestone's Exit
+      checklist is surfaced with ``all_complete`` True, alongside the all-done
+      next step.
+
+    Dormant (None) on a milestone-free plan, while still on the first milestone,
+    and once any task of the next milestone is under way — so the beat shows once,
+    at the crossing, not for the rest of the milestone.
+    """
+    milestones = _parse_milestones(doc)
+    if not milestones:
+        return None
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    rollups = _milestone_rollups(milestones, active)
+    current = _current_milestone(rollups)
+    if current is None:
+        last = rollups[-1]
+        return {
+            "id": last["id"], "title": last["title"],
+            "exit_items": last["exit_items"], "all_complete": True,
+        }
+    order = {r["id"]: i for i, r in enumerate(rollups)}
+    idx = order[current]
+    if idx == 0:
+        return None  # still on the first milestone — no boundary crossed yet
+    # We sit *at* the boundary only while no task of the current milestone has
+    # started; the moment one is in progress or done we have moved past it.
+    if any(
+        t.milestone == current and t.progress in ("in_progress", "done")
+        for t in active
+    ):
+        return None
+    prev = rollups[idx - 1]  # current is earliest-incomplete, so idx-1 is complete
+    return {
+        "id": prev["id"], "title": prev["title"],
+        "exit_items": prev["exit_items"], "all_complete": False,
+    }
+
+
+def milestone_boundary(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
+    """File-backed wrapper of :func:`milestone_boundary_from_doc`."""
+    path = plan_path(root, cfg, slug)
+    return milestone_boundary_from_doc(path.read_text()) if path.is_file() else None
+
+
+def boundary_beat_lines(boundary: dict) -> list[str]:
+    """Human-readable lines for the soft milestone-boundary verify beat, shared by
+    status, checkpoint, and task show so all three phrase the beat identically
+    (REQ-14). A user-gated proceed prompt that mirrors ``advance``: it surfaces the
+    just-completed milestone's Exit checklist and invites — never forces — a
+    proceed. Nothing here ever blocks or changes an exit code.
+    """
+    tail = (
+        "All milestones complete — confirm this Exit checklist, then run "
+        "`specflo advance` to proceed and finish the project."
+        if boundary.get("all_complete")
+        else "Soft check — nothing blocks. Proceed to the next milestone once satisfied."
+    )
+    return [
+        f"Milestone {boundary['id']} ({boundary['title']}) complete — "
+        "verify its Exit checklist before proceeding:",
+        *(f"  - {item}" for item in boundary["exit_items"]),
+        tail,
+    ]
+
+
 def milestone_detail_from_doc(doc: str, milestone_id: str) -> dict | None:
     """Full derived detail for one milestone, or None if it is not in *doc*.
 
@@ -981,4 +1058,8 @@ def task_brief(
         "requirements": requirements,
         "global_constraints": constraints,
         "working_ahead": _task_working_ahead(task, milestones, active),
+        # The soft milestone-boundary verify beat (None off a boundary), so the
+        # execute surface can surface the just-completed milestone's Exit checklist
+        # alongside the next task (REQ-14).
+        "boundary": milestone_boundary_from_doc(doc),
     }

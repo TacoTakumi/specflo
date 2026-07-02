@@ -26,12 +26,17 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     """
     progress = None
     milestone = None
+    boundary = None
     if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
         progress = plan.plan_progress(root, cfg, project.slug)
         # The current milestone (None when the plan has no milestones or all are
         # complete) — a finer-grained "where are we" that stays dormant on a
         # milestone-free plan (REQ-04, REQ-15).
         milestone = plan.current_milestone(root, cfg, project.slug)
+        # The soft milestone-boundary verify beat (None off a boundary): the
+        # just-completed milestone's Exit checklist to verify before proceeding
+        # (REQ-14). Never blocks — surfaced only, status still exits 0.
+        boundary = plan.milestone_boundary(root, cfg, project.slug)
     complete = project.status == projects.COMPLETE_STATUS
     shelved = project.status == projects.SHELVED_STATUS
     next_step = workflow.next_step(
@@ -70,6 +75,10 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
             "done": milestone["done"],
             "total": milestone["total"],
         }
+    # Only carried at a milestone boundary, so off-boundary and milestone-free
+    # payloads ship no boundary field — mirrors `milestone`.
+    if boundary is not None:
+        info["boundary"] = boundary
     return info
 
 
@@ -95,6 +104,8 @@ def render_status(root: Path, info: dict) -> str:
     if "milestone" in info:
         m = info["milestone"]
         lines.append(f"Milestone: {m['id']} {m['title']} — {m['done']}/{m['total']} done")
+    if "boundary" in info:
+        lines.extend(plan.boundary_beat_lines(info["boundary"]))
     lines.append(f"Next:    {info['next_step']}")
     lines.append("Resume:  specflo checkpoint")
     return "\n".join(lines)

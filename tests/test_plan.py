@@ -933,3 +933,83 @@ def test_task_brief_default_actionable_is_dormant_without_milestones(root, cfg, 
     brief = plan.task_brief(root, cfg, project)
     assert brief["task"]["id"] == "T-01"
     assert brief["working_ahead"] is False
+
+
+# --- Soft milestone-boundary verify beat (T-09) -------------------------------
+
+
+def _two_milestone_plan_m1_done(root, cfg, project):
+    """M-01 (T-01) fully done; M-02 (T-02) all pending — sitting at the boundary."""
+    _plan_with_milestones_and_tasks(
+        root, cfg, project,
+        [("First", ["login works", "logout works"]), ("Second", ["ships"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-02")])
+    plan.start_task(root, cfg, project, "T-01")
+    plan.done_task(root, cfg, project, "T-01")
+
+
+def test_boundary_beat_fires_when_a_milestone_just_completed(root, cfg, project):
+    # M-01's last task is done and M-02 has not started: the beat surfaces the
+    # just-completed milestone (M-01) and its authored Exit checklist (REQ-14).
+    _two_milestone_plan_m1_done(root, cfg, project)
+    b = plan.milestone_boundary(root, cfg, project)
+    assert b is not None
+    assert b["id"] == "M-01" and b["title"] == "First"
+    assert b["exit_items"] == ["login works", "logout works"]
+    assert b["all_complete"] is False
+
+
+def test_boundary_beat_dormant_before_any_milestone_completes(root, cfg, project):
+    # Still on the first milestone (nothing complete) -> no boundary crossed yet.
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01"),
+         _raw_task_entry("T-02", milestone="M-02")])
+    assert plan.milestone_boundary(root, cfg, project) is None
+
+
+def test_boundary_beat_clears_once_the_next_milestone_starts(root, cfg, project):
+    # M-01 done, then a task of M-02 starts: we have moved past the boundary, so
+    # the beat shows once (at the crossing), not for the rest of the milestone.
+    _two_milestone_plan_m1_done(root, cfg, project)
+    plan.start_task(root, cfg, project, "T-02")
+    assert plan.milestone_boundary(root, cfg, project) is None
+
+
+def test_boundary_beat_surfaces_last_exit_when_all_complete(root, cfg, project):
+    # Every milestone complete: the last milestone's Exit checklist is surfaced.
+    _two_milestone_plan_m1_done(root, cfg, project)
+    plan.start_task(root, cfg, project, "T-02")
+    plan.done_task(root, cfg, project, "T-02")
+    b = plan.milestone_boundary(root, cfg, project)
+    assert b is not None
+    assert b["id"] == "M-02" and b["exit_items"] == ["ships"]
+    assert b["all_complete"] is True
+
+
+def test_boundary_beat_dormant_without_milestones(root, cfg, project):
+    # REQ-04 dormancy: a milestone-free plan never produces a boundary beat.
+    _good_plan(root, cfg, project)
+    assert plan.milestone_boundary(root, cfg, project) is None
+
+
+def test_boundary_beat_lines_carry_exit_items_and_a_proceed_prompt(root, cfg, project):
+    _two_milestone_plan_m1_done(root, cfg, project)
+    lines = plan.boundary_beat_lines(plan.milestone_boundary(root, cfg, project))
+    text = "\n".join(lines)
+    assert "M-01" in text and "login works" in text and "logout works" in text
+    assert "proceed" in text.lower()          # user-gated proceed prompt (soft)
+
+
+def test_task_brief_carries_the_boundary_beat_at_a_boundary(root, cfg, project):
+    # task show (the execute surface) carries the beat alongside the next task.
+    _two_milestone_plan_m1_done(root, cfg, project)
+    brief = plan.task_brief(root, cfg, project)   # default steers to T-02 (M-02)
+    assert brief["task"]["id"] == "T-02"
+    assert brief["boundary"] is not None and brief["boundary"]["id"] == "M-01"
+
+
+def test_task_brief_boundary_is_none_off_a_boundary(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.task_brief(root, cfg, project)["boundary"] is None
