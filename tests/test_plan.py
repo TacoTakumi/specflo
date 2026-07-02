@@ -677,3 +677,63 @@ def test_milestone_progress_empty_when_no_milestones(root, cfg, project):
     _good_plan(root, cfg, project)  # tasks, but no milestones
     view = plan.milestone_progress(root, cfg, project)
     assert view["milestones"] == [] and view["current"] is None
+
+
+# --- Task milestone membership (T-03) -----------------------------------------
+
+
+def test_add_task_with_milestone_writes_single_field(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    t = plan.add_task(root, cfg, project, "member", acceptance="a", verify="v",
+                      implements=["REQ-01"], milestone="M-01", today="2026-06-22")
+    assert t.milestone == "M-01"
+    text = _ppath(root, cfg, project).read_text()
+    assert "- Milestone: M-01" in text
+    assert text.count("- Milestone:") == 1  # never two fields on one task
+
+
+def test_add_task_rejects_unknown_or_absent_milestone(root, cfg, project):
+    _started_plan(root, cfg, project)
+    with pytest.raises(SpecfloError):  # no milestones exist at all
+        plan.add_task(root, cfg, project, "x", acceptance="a", verify="v",
+                      implements=["REQ-01"], milestone="M-01")
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    with pytest.raises(SpecfloError):  # M-09 not present
+        plan.add_task(root, cfg, project, "x", acceptance="a", verify="v",
+                      implements=["REQ-01"], milestone="M-09")
+
+
+def test_set_milestone_reassigns_in_place_without_duplicating(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    plan.add_milestone(root, cfg, project, "Second", exit_items=["b"], today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], milestone="M-01", today="2026-06-22")  # T-01
+    t = plan.set_milestone(root, cfg, project, "T-01", "M-02", today="2026-06-22")
+    assert t.milestone == "M-02"
+    text = _ppath(root, cfg, project).read_text()
+    assert "- Milestone: M-02" in text
+    assert "- Milestone: M-01" not in text
+    assert text.count("- Milestone:") == 1  # reassigned in place, not appended
+
+
+def test_set_milestone_assigns_a_previously_unassigned_task(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")  # T-01, no milestone
+    plan.set_milestone(root, cfg, project, "T-01", "M-01", today="2026-06-22")
+    tasks = {t.id: t for t in plan.list_tasks(root, cfg, project)}
+    assert tasks["T-01"].milestone == "M-01"
+
+
+def test_set_milestone_rejects_unknown_task_or_milestone(root, cfg, project):
+    _started_plan(root, cfg, project)
+    plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
+    plan.add_task(root, cfg, project, "t", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")  # T-01
+    with pytest.raises(SpecfloError):  # unknown milestone
+        plan.set_milestone(root, cfg, project, "T-01", "M-09")
+    with pytest.raises(SpecfloError):  # unknown task
+        plan.set_milestone(root, cfg, project, "T-99", "M-01")

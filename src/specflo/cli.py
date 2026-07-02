@@ -812,6 +812,9 @@ def task_add(
     files: str = typer.Option(None, "--files", help="Files likely touched."),
     scope: str = typer.Option(None, "--scope", help="Estimated scope (Small/Medium/Large)."),
     supersedes: str = typer.Option(None, "--supersedes", metavar="T-NN", help="The task this replaces."),
+    milestone: str = typer.Option(
+        None, "--milestone", metavar="M-NN", help="The milestone this task belongs to."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Append a task (T-NN) to the active project's plan.md."""
@@ -822,7 +825,7 @@ def task_add(
         task = plan.add_task(
             root, cfg, slug, text, acceptance, verify,
             implements=list(from_), depends_on=list(depends_on or []),
-            files=files, scope=scope, supersedes=supersedes,
+            files=files, scope=scope, supersedes=supersedes, milestone=milestone,
         )
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -837,7 +840,7 @@ def task_add(
         typer.echo(json.dumps({
             "id": task.id, "implements": task.implements,
             "depends_on": task.depends_on, "supersedes": task.supersedes,
-            "dependents": dependents,
+            "milestone": task.milestone, "dependents": dependents,
         }))
     else:
         message = f"Recorded {task.id} (implements {', '.join(task.implements)})."
@@ -877,6 +880,25 @@ def task_rewire(
         typer.echo(f"Rewired {', '.join(changed)} from {from_} to {to}.")
     else:
         typer.echo(f"No active tasks depended on {from_}; nothing to rewire.")
+
+
+@task_app.command("set-milestone", epilog="Example: specflo task set-milestone T-01 M-02")
+def task_set_milestone(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to (re)assign."),
+    milestone_id: str = typer.Argument(..., metavar="<M-NN>", help="Milestone to assign it to."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Assign (or reassign) a task's milestone in place."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        task = plan.set_milestone(root, cfg, slug, task_id, milestone_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"id": task.id, "milestone": task.milestone}))
+    else:
+        typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
 def _report_transition(task: plan.Task, json_output: bool) -> None:

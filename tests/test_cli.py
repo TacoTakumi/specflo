@@ -1622,3 +1622,43 @@ def test_milestone_list_cli_is_friendly_when_empty(tmp_path, monkeypatch):
     assert "no milestones" in r.output.lower()
     data = _json.loads(runner.invoke(app, ["milestone", "list", "--json"]).output)
     assert data["milestones"] == [] and data["current"] is None
+
+
+# --- Task milestone assignment (T-03) -----------------------------------------
+
+
+def test_task_add_milestone_cli_writes_field(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["milestone", "add", "--text", "First", "--exit", "ships"])  # M-01
+    r = runner.invoke(app, ["task", "add", "--text", "member", "--acceptance", "a",
+                            "--verify", "v", "--from", "REQ-01", "--milestone", "M-01", "--json"])
+    assert r.exit_code == 0
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "- Milestone: M-01" in plan_md
+
+
+def test_task_add_milestone_cli_rejects_unknown(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "add", "--text", "x", "--acceptance", "a",
+                            "--verify", "v", "--from", "REQ-01", "--milestone", "M-09"])
+    assert r.exit_code != 0  # M-09 does not exist
+
+
+def test_task_set_milestone_cli_reassigns(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["milestone", "add", "--text", "First", "--exit", "a"])   # M-01
+    runner.invoke(app, ["milestone", "add", "--text", "Second", "--exit", "b"])  # M-02
+    runner.invoke(app, ["task", "add", "--text", "t", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--milestone", "M-01"])  # T-01
+    r = runner.invoke(app, ["task", "set-milestone", "T-01", "M-02", "--json"])
+    assert r.exit_code == 0
+    data = _json.loads(r.output)
+    assert data["id"] == "T-01" and data["milestone"] == "M-02"
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "- Milestone: M-02" in plan_md and "- Milestone: M-01" not in plan_md

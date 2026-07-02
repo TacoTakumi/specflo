@@ -357,13 +357,16 @@ def add_task(
     files: str | None = None,
     scope: str | None = None,
     supersedes: str | None = None,
+    milestone: str | None = None,
     today: str | None = None,
 ) -> Task:
     """Append a task to the Tasks section and return it.
 
     Mints the next ``T-NN``. ``acceptance``/``verify`` are mandatory; ``implements``
     must name ≥1 active requirement in ``spec.md``. ``depends_on`` and
-    ``supersedes`` must reference existing tasks.
+    ``supersedes`` must reference existing tasks. ``milestone``, when given, must
+    name a milestone present in ``## Milestones`` and is written as the task's
+    single ``- Milestone:`` field.
     """
     path = plan_path(root, cfg, slug)
     if not path.is_file():
@@ -392,6 +395,11 @@ def add_task(
     ):
         raise SpecfloError(f"No task {supersedes} to supersede.")
 
+    if milestone is not None and milestone not in {m.id for m in _parse_milestones(doc)}:
+        raise SpecfloError(
+            f"No milestone {milestone} in this plan (add it with `specflo milestone add`)."
+        )
+
     new_id = markdown.next_id(doc, "T-")
     if supersedes is not None:
         # Tidy the superseded task: legacy Status marker (back-compat) plus the
@@ -415,6 +423,8 @@ def add_task(
         entry_lines.append(f"- Scope: {scope}")
     if supersedes is not None:
         entry_lines.append(f"- Supersedes: {supersedes}")
+    if milestone is not None:
+        entry_lines.append(f"- Milestone: {milestone}")
     entry_lines.append("- Progress: pending")
     entry_lines.append("- Status: active")
     entry = "\n".join(entry_lines) + "\n"
@@ -426,6 +436,7 @@ def add_task(
         id=new_id, text=text, acceptance=acceptance, verify=verify,
         implements=implements, depends_on=depends_on, files=files, scope=scope,
         progress="pending", status="active", supersedes=supersedes,
+        milestone=milestone,
     )
 
 
@@ -657,6 +668,33 @@ def block_task(root, cfg, slug, task_id, reason=None, today=None) -> Task:
 
 def reopen_task(root, cfg, slug, task_id, today=None) -> Task:
     return _set_progress(root, cfg, slug, task_id, "pending", today=today)
+
+
+def set_milestone(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
+    milestone_id: str, today: str | None = None,
+) -> Task:
+    """(Re)assign an active task's milestone in place, updating its single
+    ``- Milestone:`` field. The task must be active and the milestone must exist.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+    if task is None:
+        raise SpecfloError(f"No task {task_id}.")
+    if task.status != "active":
+        raise SpecfloError(f"Task {task_id} is superseded; its milestone is frozen.")
+    if milestone_id not in {m.id for m in _parse_milestones(doc)}:
+        raise SpecfloError(
+            f"No milestone {milestone_id} in this plan (add it with `specflo milestone add`)."
+        )
+    doc = markdown.set_entry_field(doc, task_id, "Milestone", milestone_id)
+    doc = markdown.bump_updated(doc, today)
+    path.write_text(doc)
+    task.milestone = milestone_id
+    return task
 
 
 def _progress_from_tasks(active: list[Task]) -> dict:
