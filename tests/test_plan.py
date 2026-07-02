@@ -775,3 +775,67 @@ def test_milestone_detail_unknown_returns_none(root, cfg, project):
     _started_plan(root, cfg, project)
     plan.add_milestone(root, cfg, project, "First", exit_items=["a"], today="2026-06-22")
     assert plan.milestone_detail(root, cfg, project, "M-09") is None
+
+
+# --- Milestone-aware validate plan (T-05) -------------------------------------
+
+
+def _valid_milestoned_plan(root, cfg, project):
+    """A plan that passes base validation AND the milestone rules: two milestones
+    with non-empty Exit checklists, every task assigned, full REQ coverage."""
+    return _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-02", implements="REQ-02", deps=["T-01"])],
+        n_reqs=2)
+
+
+def test_validate_passes_a_fully_assigned_milestoned_plan(root, cfg, project):
+    _valid_milestoned_plan(root, cfg, project)
+    assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_validate_flags_task_without_milestone_when_milestones_exist(root, cfg, project):
+    # Same plan, but strip T-02's Milestone field -> membership violation (REQ-08).
+    path = _valid_milestoned_plan(root, cfg, project)
+    path.write_text(path.read_text().replace("- Milestone: M-02\n", ""))
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("T-02" in i and "milestone" in i.lower() for i in issues)
+
+
+def test_validate_flags_empty_milestone(root, cfg, project):
+    # M-02 has a non-empty Exit but no member task (REQ-09).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-01", implements="REQ-02")],
+        n_reqs=2)
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("M-02" in i and "member" in i.lower() for i in issues)
+
+
+def test_validate_flags_milestone_with_empty_exit(root, cfg, project):
+    path = _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["placeholder"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01")])
+    path.write_text(path.read_text().replace("  - placeholder\n", ""))  # empty the Exit block
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("M-01" in i and "exit" in i.lower() for i in issues)
+
+
+def test_validate_flags_unknown_milestone_reference(root, cfg, project):
+    path = _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01")])
+    path.write_text(path.read_text().replace("- Milestone: M-01\n", "- Milestone: M-09\n"))
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("T-01" in i and "M-09" in i for i in issues)
+
+
+def test_validate_ignores_milestone_rules_when_no_milestones(root, cfg, project):
+    # A milestone-free plan: tasks carry no Milestone field and validate still passes
+    # (REQ-04 dormancy) — no membership/empty-milestone/exit issues appear.
+    _good_plan(root, cfg, project)
+    issues = plan.validate_plan(root, cfg, project)
+    assert issues == []
+    assert not any("milestone" in i.lower() for i in issues)

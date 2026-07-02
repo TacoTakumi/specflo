@@ -269,6 +269,33 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if cycle:
         issues.append(f"dependency cycle: {' -> '.join(cycle)}.")
 
+    # Milestone rules are dormant until at least one milestone exists (REQ-04);
+    # then membership is all-or-nothing (REQ-08), every milestone needs ≥1 member
+    # task (REQ-09) and a non-empty Exit checklist (REQ-10), and no task may cite
+    # an undefined milestone.
+    milestones = _parse_milestones(doc)
+    if milestones:
+        m_ids = {m.id for m in milestones}
+        members: dict[str, list[str]] = {m.id: [] for m in milestones}
+        for t in active:
+            if not t.milestone:
+                issues.append(
+                    f"{t.id} has no milestone — every task must belong to one when "
+                    f"milestones exist (assign via `specflo task set-milestone`)."
+                )
+            elif t.milestone not in m_ids:
+                issues.append(
+                    f"{t.id} references milestone {t.milestone}, which is not defined "
+                    f"in ## Milestones."
+                )
+            else:
+                members[t.milestone].append(t.id)
+        for m in milestones:
+            if not members[m.id]:
+                issues.append(f"{m.id} has no member tasks (empty milestone).")
+            if not m.exit_items:
+                issues.append(f"{m.id} has an empty Exit checklist (needs at least one item).")
+
     if markdown.section_body(doc, "## Open questions") is None:
         issues.append("missing 'Open questions' section.")
 
