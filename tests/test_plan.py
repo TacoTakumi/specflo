@@ -935,6 +935,28 @@ def test_task_brief_default_actionable_is_dormant_without_milestones(root, cfg, 
     assert brief["working_ahead"] is False
 
 
+def test_plan_progress_next_actionable_steers_current_milestone_first(root, cfg, project):
+    # status's "next:" line, the next-step hint, and checkpoint all read
+    # plan_progress["next_actionable"]; with milestones it must lead with the same
+    # task task show steers to (the current milestone), not raw document order —
+    # here T-01 (document-first) sits in a *later* milestone (REQ-13).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-02"),      # later milestone, appears first
+         _raw_task_entry("T-02", milestone="M-01")])     # current milestone, appears second
+    nxt = plan.plan_progress(root, cfg, project)["next_actionable"]
+    assert nxt[0] == "T-02"                              # current M-01 leads...
+    assert set(nxt) == {"T-01", "T-02"}                 # ...but every ready task is still listed
+    assert plan.task_brief(root, cfg, project)["task"]["id"] == "T-02"   # agrees with task show
+
+
+def test_plan_progress_next_actionable_unsteered_without_milestones(root, cfg, project):
+    # Dormancy (REQ-04): a milestone-free plan keeps raw document order untouched.
+    _plan_with_entries(root, cfg, project,
+                       [_raw_task_entry("T-01"), _raw_task_entry("T-02")])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01", "T-02"]
+
+
 # --- Soft milestone-boundary verify beat (T-09) -------------------------------
 
 

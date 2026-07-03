@@ -1213,6 +1213,21 @@ def test_status_shows_current_milestone_line(tmp_path, monkeypatch):
     assert "Milestone:" in out and "M-01" in out and "0/1" in out
 
 
+def test_status_next_line_steers_to_current_milestone(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)                         # creates T-01 (pending)
+    runner.invoke(app, ["milestone", "add", "--text", "First", "--exit", "a"])    # M-01
+    runner.invoke(app, ["milestone", "add", "--text", "Second", "--exit", "b"])   # M-02
+    runner.invoke(app, ["task", "set-milestone", "T-01", "M-02"])      # T-01 -> later milestone
+    runner.invoke(app, ["task", "add", "--text", "current work", "--acceptance", "ok",
+                        "--verify", "true", "--from", "REQ-01", "--milestone", "M-01"])  # T-02 -> current
+    out = runner.invoke(app, ["status"]).output
+    # Current milestone is M-01 (holds T-02); the next line leads with T-02 — the
+    # same task `task show` steers to — not document-order T-01 (REQ-13).
+    assert "next: T-02" in out
+
+
 def test_status_shows_no_milestone_line_for_a_milestone_free_plan(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

@@ -770,7 +770,14 @@ def _progress_from_tasks(active: list[Task]) -> dict:
 
 
 def progress_from_doc(doc: str) -> dict:
-    return _progress_from_tasks([t for t in _parse_tasks(doc) if t.status == "active"])
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    prog = _progress_from_tasks(active)
+    # Steer the ready-task ordering to the current milestone so status's "next"
+    # line, the next-step hint, and checkpoint's next-task note all lead with the
+    # same task `task show` picks (REQ-13); dormant on milestone-free plans (REQ-04).
+    prog["next_actionable"] = _steer_actionable(
+        prog["next_actionable"], active, _parse_milestones(doc))
+    return prog
 
 
 def plan_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
@@ -806,33 +813,49 @@ def _current_milestone(rollups: list[dict]) -> str | None:
     return None
 
 
+def _steer_actionable(
+    actionable: list[str], active: list[Task], milestones: list[Milestone]
+) -> list[str]:
+    """Order dependency-ready task ids so the current milestone's tasks lead, then
+    later milestones in document order (unassigned tasks last), stably preserving
+    document order within each group (REQ-13). Dormant — returns *actionable*
+    unchanged — with no milestones or once all are complete (REQ-04 dormancy).
+
+    Shared by :func:`_default_actionable` (which takes the head) and
+    :func:`progress_from_doc` (so status, the next-step hint, and checkpoint lead
+    with the same task ``task show`` picks).
+    """
+    if not actionable or not milestones:
+        return actionable
+    rollups = _milestone_rollups(milestones, active)
+    current = _current_milestone(rollups)
+    if current is None:
+        return actionable
+    order = {r["id"]: i for i, r in enumerate(rollups)}
+    by_id = {t.id: t for t in active}
+
+    def _key(tid: str) -> tuple[int, int]:
+        ms = by_id[tid].milestone
+        return (0, 0) if ms == current else (1, order.get(ms, len(order)))
+
+    return sorted(actionable, key=_key)
+
+
 def _default_actionable(active: list[Task], milestones: list[Milestone]) -> str | None:
     """The task ``task show`` defaults to: among dependency-ready pending tasks,
     steer to the current milestone (REQ-13).
 
     The candidate set is exactly ``next_actionable`` — every dependency-ready
     pending task — so milestones never make a ready task *unselectable*; they only
-    pick *which* ready task is the default. A ready task in the current milestone
-    wins; if none is ready there, the earliest-milestone ready task is offered
-    (and flagged working-ahead separately). With no milestones — or all complete
-    — this is today's ``next_actionable[0]`` (REQ-04 dormancy).
+    pick *which* ready task is the default (:func:`_steer_actionable`). A ready
+    task in the current milestone wins; if none is ready there, the
+    earliest-milestone ready task is offered (and flagged working-ahead
+    separately). With no milestones — or all complete — this is today's
+    ``next_actionable[0]`` (REQ-04 dormancy).
     """
-    actionable = _progress_from_tasks(active)["next_actionable"]
-    if not actionable:
-        return None
-    rollups = _milestone_rollups(milestones, active)
-    current = _current_milestone(rollups)
-    if current is None:
-        return actionable[0]
-    order = {r["id"]: i for i, r in enumerate(rollups)}
-    by_id = {t.id: t for t in active}
-    in_current = [tid for tid in actionable if by_id[tid].milestone == current]
-    if in_current:
-        return in_current[0]
-    # Only later-milestone tasks are ready: offer the earliest, preserving
-    # document order within a milestone (sorted is stable). Unassigned tasks (an
-    # invalid, mixed plan) sort last.
-    return sorted(actionable, key=lambda tid: order.get(by_id[tid].milestone, len(order)))[0]
+    steered = _steer_actionable(
+        _progress_from_tasks(active)["next_actionable"], active, milestones)
+    return steered[0] if steered else None
 
 
 def _task_working_ahead(
