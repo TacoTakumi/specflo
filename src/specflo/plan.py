@@ -278,6 +278,14 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
         m_ids = {m.id for m in milestones}
         members: dict[str, list[str]] = {m.id: [] for m in milestones}
         for t in active:
+            # `_parse_tasks` keeps only the last of repeated fields, so a
+            # hand-edited task with two `- Milestone:` lines would parse as
+            # single-membership; catch the raw duplicate here (REQ-03).
+            if markdown.count_entry_field(doc, t.id, "Milestone") > 1:
+                issues.append(
+                    f"{t.id} carries more than one Milestone field — a task must "
+                    f"cite exactly one milestone."
+                )
             if not t.milestone:
                 issues.append(
                     f"{t.id} has no milestone — every task must belong to one when "

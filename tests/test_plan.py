@@ -814,6 +814,19 @@ def test_validate_flags_empty_milestone(root, cfg, project):
     assert any("M-02" in i and "member" in i.lower() for i in issues)
 
 
+def test_validate_flags_duplicate_milestone_field(root, cfg, project):
+    # A hand-edited task with two `- Milestone:` lines: the field parser keeps only
+    # the last, so validate must catch the raw duplicate — single membership (REQ-03).
+    path = _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01"),
+         _raw_task_entry("T-02", milestone="M-02", implements="REQ-01")])
+    path.write_text(path.read_text().replace(
+        "- Milestone: M-01\n", "- Milestone: M-01\n- Milestone: M-02\n", 1))
+    issues = plan.validate_plan(root, cfg, project)
+    assert any("T-01" in i and "one milestone" in i.lower() for i in issues)
+
+
 def test_validate_flags_milestone_with_empty_exit(root, cfg, project):
     path = _plan_with_milestones_and_tasks(
         root, cfg, project, [("First", ["placeholder"])],

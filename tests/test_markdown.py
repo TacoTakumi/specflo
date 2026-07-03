@@ -81,3 +81,12 @@ def test_mark_superseded_still_flips_status():
     out = markdown.mark_superseded(_ENTRY, "T-01", "T-02")
     assert "### T-01 — first" in out
     assert "- Status: superseded by T-02\n" in out
+
+
+def test_count_entry_field_counts_repeated_fields():
+    doc = ("### T-01 — a\n- Milestone: M-01\n- Milestone: M-02\n- Status: active\n"
+           "### T-02 — b\n- Milestone: M-01\n")
+    assert markdown.count_entry_field(doc, "T-01", "Milestone") == 2   # hand-edited duplicate
+    assert markdown.count_entry_field(doc, "T-02", "Milestone") == 1   # well-formed single
+    assert markdown.count_entry_field(doc, "T-02", "Depends on") == 0  # field absent
+    assert markdown.count_entry_field(doc, "T-99", "Milestone") == 0   # entry not present

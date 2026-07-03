@@ -161,6 +161,27 @@ def clear_entry_field(doc: str, item_id: str, field: str) -> str:
     return "".join(lines)
 
 
+def count_entry_field(doc: str, item_id: str, field: str) -> int:
+    """Number of ``- {field}:`` lines in the ``### {item_id} —`` entry (0 if the
+    entry is absent). Field parsing collapses repeated fields (last wins), so a
+    "at most one" check must count the raw entry lines. Fence-aware via the
+    heading scan; mirrors :func:`set_entry_field`/:func:`clear_entry_field`."""
+    lines = doc.splitlines(keepends=True)
+    start = next(
+        (i for i, line, in_fence in iter_lines_with_fence(doc)
+         if not in_fence and line.startswith(f"### {item_id} —")),
+        None,
+    )
+    if start is None:
+        return 0
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("### ") or lines[i].startswith("## "):
+            end = i
+            break
+    return sum(1 for i in range(start + 1, end) if lines[i].startswith(f"- {field}:"))
+
+
 def mark_superseded(doc: str, item_id: str, by_id: str) -> str:
     """Flip the ``- Status:`` line of the ``### <item_id> —`` entry to superseded."""
     return set_entry_field(doc, item_id, "Status", f"superseded by {by_id}")
