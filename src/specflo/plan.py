@@ -813,10 +813,12 @@ def _milestone_rollups(milestones: list[Milestone], active: list[Task]) -> list[
 
 
 def _current_milestone(rollups: list[dict]) -> str | None:
-    """The earliest-in-document-order incomplete milestone id, or None if all are
-    complete (or there are no milestones)."""
+    """The earliest-in-document-order incomplete milestone id that has member
+    tasks, or None if all are complete (or there are no milestones). An empty
+    milestone (no members) carries no work, so it is skipped rather than treated
+    as the current milestone (validate flags it separately, REQ-09)."""
     for r in rollups:
-        if not r["complete"]:
+        if not r["complete"] and r["total"] > 0:
             return r["id"]
     return None
 
@@ -940,16 +942,16 @@ def milestone_boundary_from_doc(doc: str) -> dict | None:
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
     rollups = _milestone_rollups(milestones, active)
     current = _current_milestone(rollups)
-    if current is None:
-        last = rollups[-1]
-        return {
-            "id": last["id"], "title": last["title"],
-            "exit_items": last["exit_items"], "all_complete": True,
+
+    def _beat(r: dict | None, all_complete: bool) -> dict | None:
+        return None if r is None else {
+            "id": r["id"], "title": r["title"],
+            "exit_items": r["exit_items"], "all_complete": all_complete,
         }
-    order = {r["id"]: i for i, r in enumerate(rollups)}
-    idx = order[current]
-    if idx == 0:
-        return None  # still on the first milestone — no boundary crossed yet
+
+    if current is None:
+        # Every milestone is complete (or empty): surface the last *complete* one.
+        return _beat(next((r for r in reversed(rollups) if r["complete"]), None), True)
     # We sit *at* the boundary only while no task of the current milestone has
     # started; the moment one is in progress or done we have moved past it.
     if any(
@@ -957,11 +959,11 @@ def milestone_boundary_from_doc(doc: str) -> dict | None:
         for t in active
     ):
         return None
-    prev = rollups[idx - 1]  # current is earliest-incomplete, so idx-1 is complete
-    return {
-        "id": prev["id"], "title": prev["title"],
-        "exit_items": prev["exit_items"], "all_complete": False,
-    }
+    # The just-completed milestone is the nearest *complete* one before the
+    # current milestone — nearest-complete, not idx-1, so an empty earlier
+    # milestone (invalid plan) never masquerades as just-completed (REQ-14).
+    idx = next(i for i, r in enumerate(rollups) if r["id"] == current)
+    return _beat(next((r for r in reversed(rollups[:idx]) if r["complete"]), None), False)
 
 
 def milestone_boundary(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:

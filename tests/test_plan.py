@@ -662,6 +662,26 @@ def test_current_milestone_is_earliest_incomplete_then_none(root, cfg, project):
     assert plan.milestone_progress(root, cfg, project)["current"] is None    # all complete
 
 
+def test_current_milestone_skips_an_empty_milestone(root, cfg, project):
+    # An empty milestone (invalid plan; validate flags it via REQ-09) carries no
+    # work, so it never becomes the derived current milestone — current steers to
+    # the earliest incomplete milestone that has member tasks (REQ-07).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("Empty", ["a"]), ("Real", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-02")])   # M-01 has no members
+    assert plan.milestone_progress(root, cfg, project)["current"] == "M-02"
+
+
+def test_boundary_beat_skips_an_empty_earlier_milestone(root, cfg, project):
+    # With an empty M-01 before the in-progress M-02, there is no just-*completed*
+    # milestone, so the boundary beat stays silent rather than naming the empty
+    # M-01 (the beat only ever names a genuinely complete milestone) (REQ-14).
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("Empty", ["a"]), ("Real", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-02")])   # M-01 has no members
+    assert plan.milestone_boundary(root, cfg, project) is None
+
+
 def test_milestone_completion_writes_no_persisted_flag(root, cfg, project):
     _plan_with_milestones_and_tasks(
         root, cfg, project, [("First", ["a"])],
