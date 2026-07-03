@@ -1021,9 +1021,22 @@ def task_brief(
     doc = path.read_text()
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
     milestones = _parse_milestones(doc)
+    constraints = markdown.strip_comments(
+        markdown.section_body(doc, "## Global constraints") or ""
+    ).strip() or None
     if task_id is None:
         task_id = _default_actionable(active, milestones)
         if task_id is None:
+            boundary = milestone_boundary_from_doc(doc)
+            if boundary is not None and boundary.get("all_complete"):
+                # Every task is done: there is no task to brief, but the execute
+                # surface must still surface the final milestone's Exit checklist
+                # as the all-complete boundary beat rather than error out (REQ-14).
+                return {
+                    "task": None, "requirements": [],
+                    "global_constraints": constraints,
+                    "working_ahead": None, "boundary": boundary,
+                }
             blocks = blocked_on_superseded(root, cfg, slug)
             if blocks:
                 detail = "\n".join("  " + ln for ln in superseded_block_remediation(blocks))
@@ -1045,9 +1058,6 @@ def task_brief(
         {"id": req, "section": spec_mod.requirement_section(spec_doc, req)}
         for req in task.implements
     ]
-    constraints = markdown.strip_comments(
-        markdown.section_body(doc, "## Global constraints") or ""
-    ).strip() or None
     return {
         "task": {
             "id": task.id, "text": task.text, "acceptance": task.acceptance,

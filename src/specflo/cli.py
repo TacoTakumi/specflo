@@ -1026,6 +1026,14 @@ def task_show(
         typer.echo(json.dumps(brief))
         return
     t = brief["task"]
+    if t is None:
+        # Every task is done: no task to brief, just the all-complete boundary
+        # beat (the final milestone's Exit checklist + a proceed prompt) (REQ-14).
+        typer.echo("\n".join(
+            ["All tasks done — nothing left to brief.", ""]
+            + plan.boundary_beat_lines(brief["boundary"])
+        ))
+        return
     header = f"{t['id']} - {t['text']}  [{t['progress']}]"
     if brief.get("working_ahead"):
         header += "  — working ahead (later milestone than current)"

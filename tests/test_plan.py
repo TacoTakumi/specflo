@@ -1015,6 +1015,33 @@ def test_task_brief_boundary_is_none_off_a_boundary(root, cfg, project):
     assert plan.task_brief(root, cfg, project)["boundary"] is None
 
 
+def test_task_brief_surfaces_all_complete_boundary_instead_of_erroring(root, cfg, project):
+    # Every task done in a milestoned plan: the execute surface (task show) must
+    # still surface the final milestone's Exit checklist as the all-complete
+    # boundary beat, not raise "No actionable task" (REQ-14, all-complete case).
+    _two_milestone_plan_m1_done(root, cfg, project)
+    plan.start_task(root, cfg, project, "T-02")
+    plan.done_task(root, cfg, project, "T-02")
+    brief = plan.task_brief(root, cfg, project)   # no id, nothing left actionable
+    assert brief["task"] is None                  # no task to brief...
+    assert brief["working_ahead"] is None
+    assert brief["requirements"] == []
+    assert brief["boundary"] is not None          # ...but the beat still surfaces
+    assert brief["boundary"]["id"] == "M-02"
+    assert brief["boundary"]["all_complete"] is True
+    assert brief["boundary"]["exit_items"] == ["ships"]
+
+
+def test_task_brief_all_done_no_boundary_without_milestones_still_raises(root, cfg, project):
+    # Dormancy (REQ-04): a milestone-free plan with everything done keeps the
+    # pre-feature behaviour — no boundary to surface, so task show still raises.
+    _good_plan(root, cfg, project)
+    for tid in ("T-01", "T-02"):
+        plan.start_task(root, cfg, project, tid); plan.done_task(root, cfg, project, tid)
+    with pytest.raises(SpecfloError, match="No actionable task"):
+        plan.task_brief(root, cfg, project)
+
+
 # --- Backward-compatibility dormancy guard (T-10) ----------------------------
 
 

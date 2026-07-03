@@ -1263,6 +1263,20 @@ def test_task_show_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
     assert data["boundary"]["id"] == "M-01"
 
 
+def test_task_show_surfaces_all_complete_boundary_instead_of_erroring(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_at_boundary(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-02"])
+    runner.invoke(app, ["task", "done", "T-02"])            # every task now done
+    r = runner.invoke(app, ["task", "show"])                # nothing actionable -> all-complete beat
+    assert r.exit_code == 0                                 # soft beat, never a non-zero stop
+    assert "M-02" in r.output
+    assert "proceed" in r.output.lower() and "advance" in r.output.lower()
+    data = _json.loads(runner.invoke(app, ["task", "show", "--json"]).output)
+    assert data["task"] is None and data["boundary"]["all_complete"] is True
+
+
 def test_checkpoint_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app
