@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import checkpoint, plan, projects, workflow
+from . import checkpoint, plan, projects, validators, workflow
 from .config import SpecfloConfig, display_path
 
 
@@ -39,8 +39,18 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         boundary = plan.milestone_boundary(root, cfg, project.slug)
     complete = project.status == projects.COMPLETE_STATUS
     shelved = project.status == projects.SHELVED_STATUS
+    # Derived doneness (REQ-01/03): for brainstorm/spec/plan, run the current
+    # phase's real validator inline (no memoization) so a validating artifact
+    # reads as "offer advance" and a failing/missing one as work-in-progress.
+    # Execute is untouched (REQ-05) — its progress-based hint owns next_step.
+    validates = False
+    if project.phase in ("brainstorm", "spec", "plan") and not complete and not shelved:
+        validator = validators.VALIDATORS.get(project.phase)
+        if validator is not None:
+            validates = not validator(root, cfg, project.slug)
     next_step = workflow.next_step(
-        project.phase, progress=progress, complete=complete, shelved=shelved
+        project.phase, progress=progress, complete=complete, shelved=shelved,
+        validates=validates,
     )
     # In the stuck execute state (nothing actionable, a pending task blocked by a
     # superseded dependency), replace the generic hint with targeted rewire
