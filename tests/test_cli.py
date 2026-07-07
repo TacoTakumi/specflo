@@ -261,6 +261,23 @@ def test_advance_help_has_no_auto_flag(cwd):
     assert "--auto" not in r.output
 
 
+def test_reopen_refuses_a_shelved_project(cwd):
+    """reopen refuses a shelved project (like advance), directing to resume first,
+    and leaves project.md untouched."""
+    from specflo import projects
+
+    _reopen_project_at(cwd, "plan")
+    cfg = config.load_config(cwd)
+    projects.shelve_project(cwd, cfg, cfg.active_project, reason="paused")
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    before = project_md.read_bytes()
+
+    r = runner.invoke(app, ["reopen"])
+    assert r.exit_code != 0
+    assert "resume" in r.output.lower()          # directs to `specflo resume` first
+    assert project_md.read_bytes() == before     # phase/status untouched
+
+
 def test_brainstorm_start_idempotent_after_new(cwd):
     """Regression-lock: after `new`, `brainstorm start` locates the file, reports
     already-started, and leaves it byte-for-byte unchanged (REQ-05)."""
