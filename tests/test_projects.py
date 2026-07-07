@@ -175,3 +175,96 @@ def test_shelved_reason_is_empty_and_unwritten_when_no_reason_given(tmp_path):
     assert loaded.shelved_reason == ""
     text = (loaded.path / projects.PROJECT_FILENAME).read_text()
     assert "shelved_reason" not in text
+
+
+def _advance_to(root, cfg, slug, phase):
+    """Advance the project until it reaches ``phase`` and return it."""
+    while True:
+        p = projects.load_project(root, cfg, slug)
+        if p.phase == phase:
+            return p
+        projects.advance_project(root, cfg, slug)
+
+
+def test_reopen_project_bare_moves_to_the_previous_phase_and_persists(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "plan")
+
+    reopened = projects.reopen_project(root, cfg, "my-thing")
+    assert reopened.phase == "spec"
+    assert projects.load_project(root, cfg, "my-thing").phase == "spec"
+
+
+def test_reopen_project_named_target_jumps_back_to_that_phase(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "execute")
+
+    reopened = projects.reopen_project(root, cfg, "my-thing", "brainstorm")
+    assert reopened.phase == "brainstorm"
+    assert projects.load_project(root, cfg, "my-thing").phase == "brainstorm"
+
+
+def test_reopen_project_uncompletes_a_complete_project(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "execute")
+    projects.complete_project(root, cfg, "my-thing")
+
+    reopened = projects.reopen_project(root, cfg, "my-thing", "plan")
+    assert reopened.phase == "plan"
+    assert reopened.status == projects.INITIAL_STATUS
+    loaded = projects.load_project(root, cfg, "my-thing")
+    assert loaded.status == "active"
+
+
+def test_reopen_project_leaves_an_active_project_status_untouched(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "plan")
+
+    reopened = projects.reopen_project(root, cfg, "my-thing")
+    assert reopened.status == projects.INITIAL_STATUS  # stays active
+
+
+def test_reopen_project_does_not_touch_downstream_artifacts(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "plan")
+    pdir = projects.project_dir(root, cfg, "my-thing")
+    spec = pdir / "spec.md"
+    plan = pdir / "plan.md"
+    spec.write_text("# spec\nREQ-01 ...\n")
+    plan.write_text("# plan\nT-01 ...\n")
+    spec_bytes, plan_bytes = spec.read_bytes(), plan.read_bytes()
+    spec_mtime, plan_mtime = spec.stat().st_mtime_ns, plan.stat().st_mtime_ns
+
+    projects.reopen_project(root, cfg, "my-thing", "brainstorm")
+
+    # byte-for-byte and mtime-unchanged: reopen is a pure pointer move (REQ-09).
+    assert spec.read_bytes() == spec_bytes
+    assert plan.read_bytes() == plan_bytes
+    assert spec.stat().st_mtime_ns == spec_mtime
+    assert plan.stat().st_mtime_ns == plan_mtime
+
+
+def test_reopen_project_invalid_target_raises_specflo_error(root, cfg):
+    projects.create_project(root, cfg, "My Thing")  # at brainstorm (first phase)
+    with pytest.raises(SpecfloError):
+        projects.reopen_project(root, cfg, "my-thing")  # nothing earlier
+
+    _advance_to(root, cfg, "my-thing", "spec")
+    with pytest.raises(SpecfloError):
+        projects.reopen_project(root, cfg, "my-thing", "plan")  # later phase
+    with pytest.raises(SpecfloError):
+        projects.reopen_project(root, cfg, "my-thing", "spec")  # current phase
+    with pytest.raises(SpecfloError):
+        projects.reopen_project(root, cfg, "my-thing", "nonsense")  # unknown
+
+
+def test_reopen_project_invalid_target_does_not_change_project_md(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+    _advance_to(root, cfg, "my-thing", "spec")
+    before = (projects.project_dir(root, cfg, "my-thing") / "project.md").read_bytes()
+
+    with pytest.raises(SpecfloError):
+        projects.reopen_project(root, cfg, "my-thing", "plan")
+
+    after = (projects.project_dir(root, cfg, "my-thing") / "project.md").read_bytes()
+    assert after == before

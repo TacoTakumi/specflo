@@ -16,7 +16,7 @@ import yaml
 
 from .config import SpecfloConfig, save_config
 from .errors import SpecfloError
-from .workflow import next_phase
+from .workflow import next_phase, resolve_reopen_target
 
 PROJECT_FILENAME = "project.md"
 INITIAL_PHASE = "brainstorm"
@@ -129,6 +129,32 @@ def advance_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
             f"Project {slug!r} is already at the final phase {project.phase!r}."
         )
     project.phase = nxt
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
+def reopen_project(
+    root: Path, cfg: SpecfloConfig, slug: str, target: str | None = None
+) -> Project:
+    """Move the project's phase pointer backward (and un-complete). Persists.
+
+    The strict inverse of ``advance_project``: bare (``target=None``) moves to the
+    immediately previous phase, a named ``target`` jumps back to that earlier
+    phase. An invalid target — nothing earlier, the current phase, a later phase,
+    or an unknown name — raises ``SpecfloError`` (forward movement is
+    ``advance``), leaving ``project.md`` unchanged. A ``complete`` project is
+    un-completed (status -> active) so the reopened phase is revisitable
+    (REQ-07). Only ``project.md`` is rewritten: no downstream artifact (spec.md,
+    plan.md, execute work) is touched (REQ-09).
+    """
+    project = load_project(root, cfg, slug)
+    try:
+        dest = resolve_reopen_target(project.phase, target)
+    except ValueError as exc:
+        raise SpecfloError(str(exc)) from exc
+    project.phase = dest
+    if project.status == COMPLETE_STATUS:
+        project.status = INITIAL_STATUS
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 
