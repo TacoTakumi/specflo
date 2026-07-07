@@ -254,6 +254,13 @@ def test_reopen_json_stale_is_empty_when_no_downstream_artifacts(cwd):
     assert data["stale"] == []
 
 
+def test_advance_help_has_no_auto_flag(cwd):
+    """Regression guard: advance stays safe-by-default — no --auto option (REQ-11)."""
+    r = runner.invoke(app, ["advance", "--help"])
+    assert r.exit_code == 0
+    assert "--auto" not in r.output
+
+
 def test_brainstorm_start_idempotent_after_new(cwd):
     """Regression-lock: after `new`, `brainstorm start` locates the file, reports
     already-started, and leaves it byte-for-byte unchanged (REQ-05)."""

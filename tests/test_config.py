@@ -1,7 +1,22 @@
+import dataclasses
+
 import pytest
 
 from specflo import config
 from specflo.errors import SpecfloError
+
+
+def test_config_has_no_auto_advance_field():
+    """Regression guard: this project adds no auto_advance config key (REQ-11)."""
+    names = {f.name for f in dataclasses.fields(config.SpecfloConfig)}
+    assert "auto_advance" not in names
+
+
+def test_written_config_has_no_auto_advance_key(tmp_path):
+    config.init_config(tmp_path)
+    text = (tmp_path / ".specflo" / "config.yaml").read_text()
+    assert "auto_advance" not in text
+    assert not hasattr(config.load_config(tmp_path), "auto_advance")
 
 
 def test_init_creates_config_file_and_projects_dir(tmp_path):
