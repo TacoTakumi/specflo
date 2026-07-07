@@ -56,6 +56,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Lint an artifact/phase (brainstorm|spec|plan|execute)."},
     {"name": "advance", "group": "workflow", "args": "",
      "summary": "Gate the current artifact, then move to the next phase."},
+    {"name": "reopen", "group": "workflow", "args": "[<phase>]",
+     "summary": "Move the phase pointer back to an earlier phase (undo an advance)."},
     {"name": "plan start", "group": "workflow", "args": "",
      "summary": "Create the plan.md artifact."},
     {"name": "task add", "group": "workflow", "args": "",

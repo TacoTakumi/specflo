@@ -135,6 +135,86 @@ def test_advance_does_not_scaffold(cwd):
     assert spec_md.is_file()  # the artifact appears only via its own start
 
 
+def _reopen_project_at(cwd, phase):
+    """init + new, then move the active project's phase pointer to ``phase``.
+
+    Bypasses advance gates via the projects layer — these tests exercise reopen,
+    not the forward gates.
+    """
+    from specflo import projects
+
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    cfg = config.load_config(cwd)
+    slug = cfg.active_project
+    while projects.load_project(cwd, cfg, slug).phase != phase:
+        projects.advance_project(cwd, cfg, slug)
+    return slug
+
+
+def test_reopen_from_plan_moves_to_spec_and_exits_zero(cwd):
+    _reopen_project_at(cwd, "plan")
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+
+    r = runner.invoke(app, ["reopen"])  # bare -> previous phase
+    assert r.exit_code == 0
+    assert "spec" in r.output  # prints the move
+    assert "phase: spec" in project_md.read_text()
+
+
+def test_reopen_named_phase_jumps_back(cwd):
+    _reopen_project_at(cwd, "plan")
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+
+    r = runner.invoke(app, ["reopen", "brainstorm"])
+    assert r.exit_code == 0
+    assert "phase: brainstorm" in project_md.read_text()
+
+
+def test_reopen_at_first_phase_errors_and_leaves_project_unchanged(cwd):
+    _reopen_project_at(cwd, "brainstorm")
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    before = project_md.read_bytes()
+
+    r = runner.invoke(app, ["reopen"])
+    assert r.exit_code != 0
+    assert project_md.read_bytes() == before
+
+
+def test_reopen_current_or_later_phase_errors_and_leaves_project_unchanged(cwd):
+    _reopen_project_at(cwd, "spec")
+    project_md = cwd / "docs" / "projects" / "my-thing" / "project.md"
+    before = project_md.read_bytes()
+
+    r_current = runner.invoke(app, ["reopen", "spec"])
+    assert r_current.exit_code != 0
+    r_later = runner.invoke(app, ["reopen", "plan"])
+    assert r_later.exit_code != 0
+    assert project_md.read_bytes() == before
+
+
+def test_reopen_unknown_phase_errors(cwd):
+    _reopen_project_at(cwd, "spec")
+    r = runner.invoke(app, ["reopen", "nonsense"])
+    assert r.exit_code != 0
+
+
+def test_reopen_appears_in_help(cwd):
+    r = runner.invoke(app, ["--help"])
+    assert r.exit_code == 0
+    assert "reopen" in r.output
+
+
+def test_reopen_refreshes_the_checkpoint(cwd):
+    _reopen_project_at(cwd, "plan")
+    checkpoint_md = cwd / "docs" / "projects" / "my-thing" / "checkpoint.md"
+
+    r = runner.invoke(app, ["reopen"])  # plan -> spec
+    assert r.exit_code == 0
+    assert checkpoint_md.is_file()
+    assert "_phase: spec" in checkpoint_md.read_text()
+
+
 def test_brainstorm_start_idempotent_after_new(cwd):
     """Regression-lock: after `new`, `brainstorm start` locates the file, reports
     already-started, and leaves it byte-for-byte unchanged (REQ-05)."""

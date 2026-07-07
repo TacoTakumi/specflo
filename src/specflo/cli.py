@@ -705,6 +705,50 @@ def advance(
         typer.echo("You may clear context now - resume with `specflo checkpoint`.")
 
 
+@app.command(epilog="Example: specflo reopen  |  specflo reopen brainstorm")
+def reopen(
+    phase: str = typer.Argument(
+        None, metavar="[<phase>]",
+        help="Earlier phase to reopen to; omit for the immediately previous phase.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Move the phase pointer backward (undo an advance); un-completes if complete.
+
+    The inverse of `advance`: strictly backward. Bare reopen returns to the
+    immediately previous phase; `reopen <phase>` jumps back to a named earlier
+    phase. It is a pure pointer move — no downstream artifact is rewritten.
+    """
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        project = projects.load_project(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+    if project.status == projects.SHELVED_STATUS:
+        raise _die(
+            f"Project '{slug}' is shelved - run `specflo resume` first, then reopen."
+        )
+
+    from_phase = project.phase
+    try:
+        updated = projects.reopen_project(root, cfg, slug, phase)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
+    if json_output:
+        typer.echo(json.dumps(
+            {"reopened": True, "from": from_phase, "to": updated.phase,
+             "checkpoint": cp_display}))
+    else:
+        typer.echo(f"Reopened '{slug}' from {from_phase} to {updated.phase}.")
+        typer.echo(f"Checkpoint saved: {cp_display}")
+        typer.echo("You may clear context now - resume with `specflo checkpoint`.")
+
+
 @spec_app.command("start", epilog="Example: specflo spec start")
 def spec_start(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
