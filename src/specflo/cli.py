@@ -705,6 +705,30 @@ def advance(
         typer.echo("You may clear context now - resume with `specflo checkpoint`.")
 
 
+# The file each phase produces; execute has no artifact of its own (its work
+# lives in plan.md). Used by `reopen` to flag downstream files that may now be
+# stale after moving the pointer back.
+_PHASE_ARTIFACT = {
+    "brainstorm": brainstorm.BRAINSTORM_FILENAME,
+    "spec": spec.SPEC_FILENAME,
+    "plan": plan.PLAN_FILENAME,
+}
+
+
+def _stale_downstream_artifacts(project: projects.Project) -> list[str]:
+    """Names of artifacts for phases *after* ``project.phase`` that exist on disk.
+
+    A pure read of what already exists beyond the reopened phase, so `reopen` can
+    warn which files may now be stale without touching any of them (REQ-10).
+    """
+    downstream = workflow.PHASES[workflow.PHASES.index(project.phase) + 1:]
+    return [
+        _PHASE_ARTIFACT[ph]
+        for ph in downstream
+        if ph in _PHASE_ARTIFACT and (project.path / _PHASE_ARTIFACT[ph]).is_file()
+    ]
+
+
 @app.command(epilog="Example: specflo reopen  |  specflo reopen brainstorm")
 def reopen(
     phase: str = typer.Argument(
@@ -738,13 +762,18 @@ def reopen(
     except SpecfloError as exc:
         raise _die(str(exc))
 
+    stale = _stale_downstream_artifacts(updated)
     cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
     if json_output:
         typer.echo(json.dumps(
             {"reopened": True, "from": from_phase, "to": updated.phase,
-             "checkpoint": cp_display}))
+             "stale": stale, "checkpoint": cp_display}))
     else:
         typer.echo(f"Reopened '{slug}' from {from_phase} to {updated.phase}.")
+        if stale:
+            typer.echo("Possibly stale downstream artifacts (unchanged on disk):")
+            for name in stale:
+                typer.echo(f"  - {name}")
         typer.echo(f"Checkpoint saved: {cp_display}")
         typer.echo("You may clear context now - resume with `specflo checkpoint`.")
 

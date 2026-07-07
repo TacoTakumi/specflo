@@ -215,6 +215,45 @@ def test_reopen_refreshes_the_checkpoint(cwd):
     assert "_phase: spec" in checkpoint_md.read_text()
 
 
+def test_reopen_lists_downstream_artifacts_as_possibly_stale(cwd):
+    _reopen_project_at(cwd, "plan")
+    pdir = cwd / "docs" / "projects" / "my-thing"
+    (pdir / "spec.md").write_text("# spec\n")
+    (pdir / "plan.md").write_text("# plan\n")
+
+    r = runner.invoke(app, ["reopen", "brainstorm"])  # downstream: spec, plan, execute
+    assert r.exit_code == 0
+    assert "spec.md" in r.output
+    assert "plan.md" in r.output
+
+
+def test_reopen_json_reports_stale_downstream_artifacts(cwd):
+    _reopen_project_at(cwd, "plan")
+    pdir = cwd / "docs" / "projects" / "my-thing"
+    (pdir / "spec.md").write_text("# spec\n")
+    (pdir / "plan.md").write_text("# plan\n")
+
+    data = json.loads(runner.invoke(app, ["reopen", "brainstorm", "--json"]).output)
+    assert data["reopened"] is True
+    assert set(data["stale"]) == {"spec.md", "plan.md"}
+
+
+def test_reopen_prints_no_stale_list_when_no_downstream_artifacts(cwd):
+    _reopen_project_at(cwd, "spec")  # advanced via the projects layer; no spec.md on disk
+    r = runner.invoke(app, ["reopen"])  # spec -> brainstorm
+    assert r.exit_code == 0
+    assert "spec.md" not in r.output
+    assert "plan.md" not in r.output
+    assert "stale" not in r.output.lower()
+
+
+def test_reopen_json_stale_is_empty_when_no_downstream_artifacts(cwd):
+    _reopen_project_at(cwd, "spec")
+    data = json.loads(runner.invoke(app, ["reopen", "--json"]).output)  # spec -> brainstorm
+    assert data["reopened"] is True
+    assert data["stale"] == []
+
+
 def test_brainstorm_start_idempotent_after_new(cwd):
     """Regression-lock: after `new`, `brainstorm start` locates the file, reports
     already-started, and leaves it byte-for-byte unchanged (REQ-05)."""
