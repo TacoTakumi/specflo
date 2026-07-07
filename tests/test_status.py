@@ -104,3 +104,58 @@ def test_build_status_execute_phase_progress_based_and_untouched(tmp_path):
     assert "T-01" in info["next_step"]                            # names the next task
     assert "task show" in info["next_step"]
     assert "specflo advance" not in info["next_step"]
+
+
+# --- derived doneness at the other two read-path phases (brainstorm, plan) ---
+# The spec phase is covered above; these lock the shared VALIDATORS.get(phase)
+# path at brainstorm and plan too.
+
+
+def _validating_brainstorm_project(tmp_path):
+    """A brainstorm-phase, active 'Thing' whose brainstorm.md validates."""
+    from specflo import brainstorm
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06")
+    projects.switch_project(tmp_path, cfg, "Thing")
+    brainstorm.start_brainstorm(tmp_path, cfg, "thing", today="2026-07-06")
+    brainstorm.add_decision(tmp_path, cfg, "thing", "use SQLite", today="2026-07-06")
+    bs = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs.write_text(bs.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\n- the GUI."))
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def _validating_plan_project(tmp_path):
+    """A plan-phase, active 'Thing' whose plan.md validates (1 req, 1 task)."""
+    from specflo import plan
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06")
+    projects.switch_project(tmp_path, cfg, "Thing")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-07-06")
+    spec.add_requirement(tmp_path, cfg, "thing", "r", acceptance="a", today="2026-07-06")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: plan"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-07-06")
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a passes",
+                  verify="uv run pytest", implements=["REQ-01"], today="2026-07-06")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def test_build_status_brainstorm_that_validates_offers_advance(tmp_path):
+    from specflo import brainstorm
+    cfg, project = _validating_brainstorm_project(tmp_path)
+    assert brainstorm.validate_brainstorm(tmp_path, cfg, "thing") == []  # precondition
+    info = status.build_status(tmp_path, cfg, project)
+    assert "specflo advance" in info["next_step"]                        # offers the move
+    assert "spec" in info["next_step"]                                   # names next phase
+
+
+def test_build_status_plan_that_validates_offers_advance(tmp_path):
+    from specflo import plan
+    cfg, project = _validating_plan_project(tmp_path)
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []              # precondition
+    info = status.build_status(tmp_path, cfg, project)
+    assert "specflo advance" in info["next_step"]                        # offers the move
+    assert "execute" in info["next_step"]                               # names next phase

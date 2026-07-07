@@ -304,3 +304,68 @@ def test_checkpoint_shelved_unchanged_when_cfg_passed(tmp_path):
     cfg, project = _shelved_project(tmp_path, reason="paused", phase="spec")
     payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-06-29")
     assert payload["do_next"] == workflow.next_step("spec", shelved=True)
+
+
+# --- derived doneness at the other two read-path phases (brainstorm, plan) ---
+# The spec phase is covered above; brainstorm and plan ride the same generic
+# VALIDATORS.get(phase) path. These lock that path at both ends, and prove a
+# validating plan drops the `(next task: …)` enrichment for the offer-advance hint.
+
+
+def _validating_brainstorm_project(tmp_path):
+    """A brainstorm-phase 'Thing' whose brainstorm.md passes validate_brainstorm."""
+    from specflo import brainstorm
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06")
+    brainstorm.start_brainstorm(tmp_path, cfg, "thing", today="2026-07-06")
+    brainstorm.add_decision(tmp_path, cfg, "thing", "use SQLite", today="2026-07-06")
+    bs = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs.write_text(bs.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\n- the GUI."))
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def _validating_plan_project(tmp_path):
+    """A plan-phase 'Thing' whose plan.md passes validate_plan (1 req, 1 task)."""
+    from specflo import plan, spec
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06")
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-07-06")
+    spec.add_requirement(tmp_path, cfg, "thing", "a req", acceptance="it passes",
+                         today="2026-07-06")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: plan"))
+    plan.start_plan(tmp_path, cfg, "thing", today="2026-07-06")
+    plan.add_task(tmp_path, cfg, "thing", "build it", acceptance="a passes",
+                  verify="uv run pytest", implements=["REQ-01"], today="2026-07-06")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def test_checkpoint_brainstorm_that_validates_offers_advance(tmp_path):
+    from specflo import brainstorm
+    cfg, project = _validating_brainstorm_project(tmp_path)
+    assert brainstorm.validate_brainstorm(tmp_path, cfg, "thing") == []   # precondition
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-07-06")
+    assert "specflo advance" in payload["do_next"]                        # offers the move
+    assert "spec" in payload["do_next"]                                   # names next phase
+    bare = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-06")
+    assert bare["do_next"] == workflow.next_step("brainstorm")            # no-cfg: work hint
+
+
+def test_checkpoint_plan_that_validates_offers_advance_and_drops_task_suffix(tmp_path):
+    from specflo import plan
+    cfg, project = _validating_plan_project(tmp_path)
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []               # precondition
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-07-06")
+    assert "specflo advance" in payload["do_next"]                        # offers the move
+    assert "execute" in payload["do_next"]                               # names next phase
+    # a validating plan's hint stands alone — the (next task: T-NN) enrichment is
+    # only for a plan that has NOT yet validated (checkpoint.py:106).
+    assert "next task" not in payload["do_next"]
+    assert "T-01" not in payload["do_next"]
+    # contrast: without cfg no doneness is derived, so the task enrichment stands.
+    bare = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-06")
+    assert "specflo advance" not in bare["do_next"]
+    assert "T-01" in bare["do_next"]
