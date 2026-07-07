@@ -12,6 +12,7 @@ from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan,
 from . import status as status_view
 from . import workflow
 from .errors import SpecfloError
+from .validators import VALIDATORS
 
 
 class DefaultHelpGroup(TyperGroup):
@@ -132,18 +133,14 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
         pass
 
 
-# Phase/artifact registries. Defined once so `validate` and `advance` agree.
-VALIDATORS = {
-    "brainstorm": brainstorm.validate_brainstorm,
-    "spec": spec.validate_spec,
-    "plan": plan.validate_plan,
-    "execute": plan.reconcile_issues,
-}
+# Phase/artifact registries. The phase->validator map is shared (`validators`)
+# so `validate`, `advance`, and the read-path doneness derivation all agree;
+# GATES pairs each shared validator with its completer for `advance`.
 WARNERS = {"plan": plan.plan_warnings}
 GATES = {
-    "brainstorm": (brainstorm.validate_brainstorm, brainstorm.complete_brainstorm),
-    "spec": (spec.validate_spec, spec.complete_spec),
-    "plan": (plan.validate_plan, plan.complete_plan),
+    "brainstorm": (VALIDATORS["brainstorm"], brainstorm.complete_brainstorm),
+    "spec": (VALIDATORS["spec"], spec.complete_spec),
+    "plan": (VALIDATORS["plan"], plan.complete_plan),
 }
 
 
