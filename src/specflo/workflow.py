@@ -31,6 +31,41 @@ def next_phase(phase: str) -> str | None:
     return None
 
 
+def resolve_reopen_target(phase: str, target: str | None = None) -> str:
+    """Return the earlier phase ``reopen`` should move to, or raise ``ValueError``.
+
+    ``reopen`` is the strict inverse of ``advance``: it only moves *backward*.
+
+    - Bare (``target=None``): the immediately previous phase (undo the last
+      advance). At the first phase this raises — there is nowhere earlier to go.
+    - Named ``target``: must be an *earlier* phase than ``phase``. A target that
+      is unknown, the current phase, or a later phase each raises a distinct
+      ``ValueError`` (forward movement is ``specflo advance``).
+    """
+    _require_known(phase)
+    current = PHASES.index(phase)
+    if target is None:
+        if current == 0:
+            raise ValueError(
+                f"Already at the first phase {phase!r}; there is nothing earlier "
+                "to reopen."
+            )
+        return PHASES[current - 1]
+    _require_known(target)
+    dest = PHASES.index(target)
+    if dest == current:
+        raise ValueError(
+            f"{target!r} is already the current phase; reopen moves to an earlier "
+            "phase."
+        )
+    if dest > current:
+        raise ValueError(
+            f"{target!r} is later than the current phase {phase!r}; reopen only "
+            "moves backward (use `specflo advance` to move forward)."
+        )
+    return target
+
+
 def next_step(
     phase: str,
     progress: dict | None = None,
