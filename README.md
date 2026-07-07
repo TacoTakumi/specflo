@@ -73,10 +73,50 @@ An agent can't clear its own context *or* remember what to do across a `/clear` 
   ln -s "$PWD/skills/research" ~/.claude/skills/research
   ```
 
+## Requirements
+
+- **Python 3.12+**
+- **[uv](https://docs.astral.sh/uv/)** — used for the environment, dependencies, building, and installing.
+  (`curl -LsSf https://astral.sh/uv/install.sh | sh`)
+
+## Install the CLI
+
+To produce a `specflo` command on your `PATH`, install the project as a uv tool from a checkout:
+
+```bash
+uv tool install .          # from the repo root — installs `specflo` globally
+specflo --help             # verify it's on PATH
+```
+
+Reinstall after pulling changes with `uv tool install --reinstall .` (or `uv tool upgrade specflo`).
+Uninstall with `uv tool uninstall specflo`.
+
+Equivalent alternatives if you prefer other installers:
+
+```bash
+pipx install .             # via pipx
+pip install .              # into the active environment/venv
+```
+
+## Build distributables
+
+Build a wheel and source distribution into `dist/`:
+
+```bash
+uv build                   # writes dist/specflo-<version>-py3-none-any.whl and .tar.gz
+```
+
+Install the built wheel anywhere (no source checkout needed):
+
+```bash
+uv tool install ./dist/specflo-0.1.0-py3-none-any.whl
+# or: pipx install ./dist/specflo-0.1.0-py3-none-any.whl
+```
+
 ## Development
 
 ```bash
-uv sync        # create the venv and install deps
-uv run pytest  # run the tests
-uv run specflo --help
+uv sync                    # create the venv and install deps (incl. dev group)
+uv run pytest              # run the tests
+uv run specflo --help      # run the CLI without installing it
 ```
