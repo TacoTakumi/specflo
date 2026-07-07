@@ -55,3 +55,32 @@ def test_next_step_shelved_directs_to_resume_or_new():
     # shelved is orthogonal to phase: same hint at any phase, taking precedence
     assert workflow.next_step("execute", shelved=True) == msg
     assert workflow.next_step("execute", complete=True, shelved=True) == msg
+
+
+def test_next_step_validates_offers_advance_and_names_next_phase():
+    for phase in ("brainstorm", "spec", "plan"):
+        hint = workflow.next_step(phase, validates=True)
+        assert "specflo advance" in hint         # names the verb to run
+        assert workflow.next_phase(phase) in hint  # names the phase it moves to
+    # concretely: a validating spec offers a move to the plan phase
+    assert "plan" in workflow.next_step("spec", validates=True)
+
+
+def test_next_step_validates_false_or_omitted_returns_the_work_hint():
+    for phase in ("brainstorm", "spec", "plan"):
+        assert workflow.next_step(phase, validates=False) == workflow.next_step(phase)
+        assert workflow.next_step(phase) == workflow._NEXT_STEP[phase]
+
+
+def test_next_step_execute_ignores_validates():
+    # execute keeps its progress-based hint; the validated branch never fires
+    assert workflow.next_step("execute", validates=True) == workflow.next_step("execute")
+    pending = {"total": 2, "all_done": False, "next_actionable": ["T-01"]}
+    assert workflow.next_step("execute", progress=pending, validates=True) == (
+        workflow.next_step("execute", progress=pending)
+    )
+
+
+def test_next_step_shelved_takes_precedence_over_validates():
+    shelved = workflow.next_step("spec", shelved=True)
+    assert workflow.next_step("spec", validates=True, shelved=True) == shelved

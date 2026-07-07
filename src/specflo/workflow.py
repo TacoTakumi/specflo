@@ -36,15 +36,20 @@ def next_step(
     progress: dict | None = None,
     complete: bool = False,
     shelved: bool = False,
+    validates: bool = False,
 ) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
     ``shelved=True`` takes precedence over everything else (a paused project is
     not advanced from any phase): the hint directs to resume or start anew. For
     the ``execute`` phase the hint is otherwise progress-aware: pass the
-    ``plan_progress`` dict and/or ``complete=True`` (project finished). All other
-    phases ignore ``progress``/``complete`` and return their static hint, so the
-    single-argument form is unchanged.
+    ``plan_progress`` dict and/or ``complete=True`` (project finished).
+
+    For brainstorm/spec/plan, ``validates=True`` means the phase's artifact
+    passed its real validator, so the hint offers ``specflo advance`` and names
+    the next phase instead of the static work hint (REQ-01). ``execute`` ignores
+    ``validates`` and keeps its progress-based hint (REQ-05). With everything at
+    its default the single-argument form is unchanged.
     """
     _require_known(phase)
     if shelved:
@@ -68,4 +73,11 @@ def next_step(
                 "Tasks remain but none are actionable - unblock or reopen one "
                 "(`specflo task list`)."
             )
+    elif validates:
+        # brainstorm/spec/plan whose artifact passes its validator: derived
+        # doneness -> offer the move rather than the work hint (REQ-01).
+        return (
+            f"The {phase} validates - run `specflo advance` to move to "
+            f"the {next_phase(phase)} phase."
+        )
     return _NEXT_STEP[phase]
