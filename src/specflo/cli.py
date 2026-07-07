@@ -128,7 +128,7 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
     """
     try:
         project = projects.load_project(root, cfg, slug)
-        checkpoint.write_checkpoint(root, project)
+        checkpoint.write_checkpoint(root, project, cfg=cfg)
     except Exception:
         pass
 
@@ -458,8 +458,8 @@ def checkpoint_(
         project = projects.load_project(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    payload = checkpoint.build_checkpoint(root, project)
-    checkpoint.write_checkpoint(root, project)
+    payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
+    checkpoint.write_checkpoint(root, project, cfg=cfg)
     if json_output:
         typer.echo(json.dumps(payload))
     else:
@@ -649,7 +649,7 @@ def advance(
                 typer.echo("Fix these, then run `specflo advance` again.", err=True)
                 raise typer.Exit(code=1)
         updated = projects.complete_project(root, cfg, slug)
-        cp_display = config.display_path(checkpoint.write_checkpoint(root, updated), root)
+        cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
@@ -684,7 +684,7 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
-    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated), root)
+    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
     # execute names the first actionable task). Non-task targets keep the static

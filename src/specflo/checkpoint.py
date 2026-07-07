@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from . import plan as plan_module, workflow
+from . import plan as plan_module, validators, workflow
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
 from .projects import (
@@ -39,10 +39,19 @@ def checkpoint_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return project_dir(root, cfg, slug) / CHECKPOINT_FILENAME
 
 
-def build_checkpoint(root: Path, project: Project, today: str | None = None) -> dict:
+def build_checkpoint(
+    root: Path,
+    project: Project,
+    cfg: SpecfloConfig | None = None,
+    today: str | None = None,
+) -> dict:
     """Derive the resume-prompt payload for ``project`` from current state.
 
     Read-only: inspects which artifacts exist on disk but mutates nothing.
+
+    ``cfg`` is threaded from the write path so brainstorm/spec/plan can derive
+    honest doneness — running the phase's real validator inline (REQ-01/03).
+    Without it (a bare ``build_checkpoint`` call), the static work hint stands.
     """
     directory = project.path
     read_first = [display_path(directory / PROJECT_FILENAME, root, posix=True)]
@@ -82,8 +91,19 @@ def build_checkpoint(root: Path, project: Project, today: str | None = None) -> 
             if stuck:
                 do_next = stuck
     else:
-        do_next = workflow.next_step(project.phase)
-        if project.phase == "plan" and prog is not None:
+        # Derived doneness (REQ-01/03): run the phase's real validator inline
+        # (no memoization) — a passing validator flips the hint to offer-advance,
+        # a failing or missing artifact reads as work-in-progress. cfg is threaded
+        # from the write path; without it the static work hint stands.
+        validates = False
+        if cfg is not None:
+            validator = validators.VALIDATORS.get(project.phase)
+            if validator is not None:
+                validates = not validator(root, cfg, project.slug)
+        do_next = workflow.next_step(project.phase, validates=validates)
+        # A plan that doesn't yet validate still names its next task; once it
+        # validates the offer-advance hint stands alone.
+        if project.phase == "plan" and not validates and prog is not None:
             if prog["next_actionable"]:
                 do_next += "  (next task: " + ", ".join(prog["next_actionable"]) + ")"
             elif prog["all_done"]:
@@ -146,9 +166,18 @@ def render_checkpoint(payload: dict) -> str:
     return "\n".join(lines)
 
 
-def write_checkpoint(root: Path, project: Project, today: str | None = None) -> Path:
-    """Render the checkpoint for ``project`` and write ``checkpoint.md``."""
-    payload = build_checkpoint(root, project, today=today)
+def write_checkpoint(
+    root: Path,
+    project: Project,
+    cfg: SpecfloConfig | None = None,
+    today: str | None = None,
+) -> Path:
+    """Render the checkpoint for ``project`` and write ``checkpoint.md``.
+
+    ``cfg`` is forwarded to :func:`build_checkpoint` so the written checkpoint
+    reflects derived doneness for brainstorm/spec/plan (REQ-01).
+    """
+    payload = build_checkpoint(root, project, cfg=cfg, today=today)
     path = project.path / CHECKPOINT_FILENAME
     path.write_text(render_checkpoint(payload))
     return path

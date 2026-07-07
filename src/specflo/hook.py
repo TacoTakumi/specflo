@@ -90,7 +90,9 @@ def reseed_text(cwd: Path | None = None) -> str:
         if found is None:
             return ""
         root, _cfg, project = found
-        body = checkpoint.render_checkpoint(checkpoint.build_checkpoint(root, project))
+        body = checkpoint.render_checkpoint(
+            checkpoint.build_checkpoint(root, project, cfg=_cfg)
+        )
         if project.status == COMPLETE_STATUS:
             directive = COMPLETE_DIRECTIVE
         elif project.status == SHELVED_STATUS:
