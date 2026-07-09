@@ -13,3 +13,7 @@ dist/
 
 # Editor / backup cruft
 *.OLD
+
+# Local feedback / scratch notes — never commit (they'd leak: top-level, not
+# under an EXCLUDE_PATHS dir, so publish-to-github.sh would NOT strip them).
+specflo-feedback*

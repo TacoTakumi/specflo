@@ -4,7 +4,8 @@ A spec-driven software-engineering workflow: a Python CLI + skills + subagents,
 pluggable into multiple agents. Drives a **brainstorm → spec → plan → execute**
 loop over markdown artifacts on disk.
 
-See `docs/MASTER.md` for project status and `docs/intent.md` for the vision.
+Run `specflo guide` for a one-shot orientation to what specflo is, the pipeline,
+and the full command surface.
 
 ## v0.1 commands
 

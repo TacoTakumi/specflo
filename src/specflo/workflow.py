@@ -2,7 +2,7 @@
 
 The workflow is a fixed linear sequence of phases. This is deliberately
 hardcoded for now; if we ever need fork-able, per-project workflows we can
-lift this into a YAML schema (see docs/MASTER Phase 2 open questions).
+lift this into a YAML schema.
 """
 
 PHASES: list[str] = ["brainstorm", "spec", "plan", "execute"]
