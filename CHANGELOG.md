@@ -14,14 +14,14 @@ Initial public release.
 
 ### Added
 - **Spec-driven pipeline CLI.** `specflo` drives a linear
-  **brainstorm → spec → plan → execute** loop over markdown artifacts on disk,
+  **brainstorm -> spec -> plan -> execute** loop over markdown artifacts on disk,
   with active-project tracking and switch-anytime support (monorepo-friendly).
 - **Orientation & scaffolding.** `specflo guide` (runs cold, before `init`),
   `specflo init`, `new`, `list`, `switch`, `status`.
 - **Artifact commands.** `brainstorm start` + `decision add`; `spec start` +
   `requirement add`; `plan start` + `task add`/`start`/`done`/`block`/`reopen`/
   `list`/`show`; per-phase `validate` (brainstorm, spec, plan, execute) with
-  bidirectional REQ↔task coverage and acyclic dependency checks.
+  bidirectional REQ<->task coverage and acyclic dependency checks.
 - **Phase transitions.** `advance` (validate-then-move) and `reopen` (reversible
   phases), plus `checkpoint` for a resume prompt refreshed after every
   state-mutating command.
