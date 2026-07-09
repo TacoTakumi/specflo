@@ -19,6 +19,21 @@ from . import projects, workflow
 from .config import SpecfloConfig
 from .errors import SpecfloError
 
+# A thin, version-less pointer users paste once into their agent memory file
+# (CLAUDE.md / AGENTS.md / GEMINI.md / ...). Deliberately static: no version and
+# no fence, so it never goes stale and never needs re-committing when specflo is
+# upgraded. Its only job is to make specflo *discoverable* to a cold agent — the
+# live detail (command surface, next action) lives behind `specflo guide`, which
+# the snippet points at, so it never has to be duplicated here.
+MEMORY_SNIPPET = (
+    "This repo uses **specflo**, a spec-driven workflow "
+    "(brainstorm -> spec -> plan -> execute) run via the `specflo` CLI.\n"
+    "- Run `specflo status` to see the active project and what's next.\n"
+    "- Run `specflo guide` for the full command surface and orientation.\n"
+    "In a skill-capable harness, the `brainstorm`/`spec`/`plan`/`execute` skills "
+    "drive each phase over these commands."
+)
+
 # Curated command table. ``name`` is the canonical command path (matched against
 # the live CLI by the coverage guard); ``args`` is the metavar shown to humans.
 COMMANDS: list[dict[str, str]] = [
@@ -96,6 +111,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
     payload: dict = {
         "pipeline": list(workflow.PHASES),
         "commands": [dict(entry) for entry in COMMANDS],
+        "memory_snippet": MEMORY_SNIPPET,
     }
 
     if root is None or cfg is None:

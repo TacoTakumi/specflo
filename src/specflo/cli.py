@@ -429,8 +429,15 @@ def guide_(
         typer.echo(json.dumps(data))
         return
 
+    rule = "-" * 72
     lines = [
         "specflo - a spec-driven software-engineering workflow.",
+        "",
+        "Add this to your agent memory file (CLAUDE.md / AGENTS.md) once, so a "
+        "fresh\nagent always knows specflo is here (static - no version to keep in sync):",
+        rule,
+        data["memory_snippet"],
+        rule,
         "",
         f"Pipeline:  {_render_pipeline(data)}",
         "",

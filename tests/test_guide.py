@@ -99,6 +99,29 @@ def test_guide_json_uninitialized(cwd):
     assert any(c["name"] == "advance" for c in data["commands"])
 
 
+def test_guide_offers_paste_ready_memory_snippet(cwd):
+    # The paste-into-CLAUDE.md snippet shows in the text output, points at the
+    # live commands rather than embedding them, and carries no version string
+    # (it must never need re-syncing on a specflo upgrade).
+    result = runner.invoke(app, ["guide"])
+    assert result.exit_code == 0
+    assert guide.MEMORY_SNIPPET in result.output
+    assert "CLAUDE.md" in result.output
+    assert "specflo guide" in guide.MEMORY_SNIPPET
+    assert "v0." not in guide.MEMORY_SNIPPET  # version-less by design
+
+
+def test_guide_json_carries_memory_snippet_in_every_state(cwd):
+    # Available to programmatic consumers, cold and with an active project.
+    cold = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert cold["memory_snippet"] == guide.MEMORY_SNIPPET
+
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    warm = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert warm["memory_snippet"] == guide.MEMORY_SNIPPET
+
+
 def test_guide_shows_you_are_here_for_active_project(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
