@@ -2017,3 +2017,21 @@ def test_milestone_free_plan_json_surfaces_carry_dormant_contract(tmp_path, monk
     assert "milestone" not in status and "boundary" not in status
     brief = _json.loads(runner.invoke(app, ["task", "show", "--json"]).output)
     assert brief["working_ahead"] is False and brief["boundary"] is None
+
+
+def test_version_flag_prints_version_and_exits_zero():
+    from specflo import __version__
+
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"specflo {__version__}"
+
+
+def test_version_flag_is_eager_and_short_circuits_subcommands():
+    # --version is eager: it prints and exits before any subcommand runs, so it
+    # needs no project context.
+    from specflo import __version__
+
+    result = runner.invoke(app, ["--version", "status"])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == f"specflo {__version__}"

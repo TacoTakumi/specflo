@@ -8,6 +8,7 @@ from pathlib import Path
 import typer
 from typer.core import TyperGroup
 
+from . import __version__
 from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
 from . import status as status_view
 from . import workflow
@@ -73,6 +74,25 @@ app = typer.Typer(
         "specflo new 'My Project'  |  specflo status --json"
     ),
 )
+
+def _version_callback(value: bool) -> None:
+    if value:
+        typer.echo(f"specflo {__version__}")
+        raise typer.Exit()
+
+
+@app.callback()
+def _root(
+    version: bool = typer.Option(
+        None,
+        "--version",
+        callback=_version_callback,
+        is_eager=True,
+        help="Show the specflo version and exit.",
+    ),
+) -> None:
+    """A spec-driven software-engineering workflow."""
+
 
 brainstorm_app = typer.Typer(help="Work with the brainstorm artifact.")
 app.add_typer(brainstorm_app, name="brainstorm")
