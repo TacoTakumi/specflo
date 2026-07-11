@@ -107,10 +107,19 @@ def test_sdist_carries_source_skill(dist, name):
 
 
 def test_wheel_has_no_duplicate_root_a_skills(dist):
-    # A skills/ tree inside the importable package (Root A) would collide with
-    # Root B on the same names and raise DuplicateSkillError at resolution time.
-    stray = [n for n in dist["wheel_names"] if n.startswith("specflo/skills/")]
+    # Root A ships only as an empty marker (specflo/skills/.gitkeep); no skill
+    # DIR may ship there -- a specflo/skills/<name>/SKILL.md would collide with
+    # Root B on the same name and raise DuplicateSkillError at resolution time.
+    stray = [
+        n
+        for n in dist["wheel_names"]
+        if n.startswith("specflo/skills/") and n.endswith("/SKILL.md")
+    ]
     assert not stray, f"wheel unexpectedly ships Root A skills: {stray}"
+
+
+def test_wheel_ships_empty_root_a_marker(dist):
+    assert "specflo/skills/.gitkeep" in dist["wheel_names"]
 
 
 def test_wheel_requires_agentsquire_floor(dist):
@@ -163,8 +172,12 @@ def test_build_with_hook_wired_still_ships_all_skills(dist):
         assert f"specflo/_repo_skills/{name}/SKILL.md" in dist["wheel_names"]
 
 
-def test_no_committed_src_skills_tree():
-    # Root B must never be committed as a source tree -- it is built, not stored.
+def test_no_committed_src_skill_trees():
+    # No skill *tree* may be committed under src/: Root B (specflo/_repo_skills)
+    # is built, not stored, and Root A (specflo/skills) is a deliberately empty
+    # marker directory -- the 6 skills live only at repo-root skills/. An empty
+    # Root A marker file (e.g. .gitkeep) is allowed; a committed skill directory
+    # under either root (any .../SKILL.md) is not.
     out = subprocess.run(
         ["git", "ls-files", "src/specflo/skills", "src/specflo/_repo_skills"],
         cwd=str(REPO_ROOT),
@@ -172,7 +185,25 @@ def test_no_committed_src_skills_tree():
         text=True,
         check=True,
     )
-    assert out.stdout.strip() == "", (
-        "a src skills tree is committed; Root B must be force-included, not stored:\n"
-        + out.stdout
+    committed = out.stdout.split()
+    # _repo_skills must not be committed at all.
+    stored_root_b = [p for p in committed if p.startswith("src/specflo/_repo_skills")]
+    assert not stored_root_b, f"Root B must be force-included, not stored: {stored_root_b}"
+    # Root A may exist only as marker files, never as skill directories.
+    stored_skills = [p for p in committed if p.endswith("/SKILL.md")]
+    assert not stored_skills, f"a skill tree is committed under src/: {stored_skills}"
+
+
+def test_root_a_is_committed_empty():
+    # The empty Root A marker is present so agentsquire's zero-arg union can
+    # enumerate Root A without a FileNotFoundError, but carries no skills.
+    out = subprocess.run(
+        ["git", "ls-files", "src/specflo/skills"],
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+        check=True,
     )
+    committed = out.stdout.split()
+    assert "src/specflo/skills/.gitkeep" in committed
+    assert all(not p.endswith("/SKILL.md") for p in committed)

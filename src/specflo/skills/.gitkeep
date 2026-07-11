@@ -1,0 +1,13 @@
+# Empty Root A marker (agentsquire package-data skill root).
+#
+# specflo carries no package-data skills -- its 6 workflow skills live at
+# repo-root skills/ and ride in as Root B (specflo/_repo_skills, force-included).
+# But agentsquire 0.5.0's zero-arg default_source('specflo') enumerates Root A
+# (this directory) unconditionally, and BundledPackageDataSource.list_skills()
+# does an unguarded iterdir(); with this directory absent, verify_skill_roots and
+# every skills verb crash with FileNotFoundError. This marker keeps Root A present
+# but empty (a non-directory file is never enumerated as a skill), so the union
+# resolves exactly the 6 Root B skills.
+#
+# TEMPORARY: remove this file once agentsquire's default_source tolerates an
+# absent Root A. See docs/agent-ideas.md.
