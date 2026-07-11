@@ -20,6 +20,14 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/specflo"]
 
+# Ship the repo-root skills/ as agentsquire Root B package data. One line copies
+# the whole tree into the wheel at specflo/_repo_skills/<name>/ (NOT
+# specflo/skills, which would duplicate Root A and raise DuplicateSkillError).
+# The sdist carries the source skills/ (hatchling includes VCS-tracked files by
+# default), so a wheel built from the sdist reproduces the same Root B.
+[tool.hatch.build.targets.wheel.force-include]
+"skills" = "specflo/_repo_skills"
+
 [dependency-groups]
 dev = [
     "pytest>=8.0",
