@@ -72,6 +72,22 @@ def test_mutated_install_is_detected_then_force_update_restores(fixture_roots):
     assert "<!-- tampered -->" not in plan_md.read_text()
 
 
+def test_default_scope_installs_into_the_user_root(fixture_roots):
+    home, project = fixture_roots
+    result = _run("skills", "install")
+    assert result.exit_code == 0, result.output
+    assert _user_skill(home, "plan").is_file()
+    assert not (project / ".claude" / "skills").exists()
+
+
+def test_scope_project_flag_routes_to_the_project_root(fixture_roots):
+    home, project = fixture_roots
+    result = _run("skills", "install", "--scope", "project")
+    assert result.exit_code == 0, result.output
+    assert (project / ".claude" / "skills" / "plan" / "SKILL.md").is_file()
+    assert not (home / ".claude" / "skills").exists()
+
+
 def test_uninstall_removes_all_six(fixture_roots):
     home, _ = fixture_roots
     _run("skills", "install")
