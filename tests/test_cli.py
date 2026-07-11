@@ -1,5 +1,7 @@
 import json
 import json as _json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -2034,4 +2036,46 @@ def test_version_flag_is_eager_and_short_circuits_subcommands():
 
     result = runner.invoke(app, ["--version", "status"])
     assert result.exit_code == 0
+    assert result.stdout.strip() == f"specflo {__version__}"
+
+
+# --- T-05: agentsquire skills group mounted on the specflo CLI ---
+# These drive the real installed console script via subprocess. typer 0.26
+# vendors click, so `skills --help` (which raises real-click's Exit) only exits
+# cleanly through main()'s shim -- CliRunner on the mounted group can't observe
+# that path -- hence end-to-end subprocess checks here.
+
+_SPECFLO_BIN = str(Path(sys.executable).parent / "specflo")
+
+
+def _run_specflo(*args, cwd=None):
+    return subprocess.run(
+        [_SPECFLO_BIN, *args], capture_output=True, text=True, cwd=cwd
+    )
+
+
+def test_skills_group_help_lists_all_four_verbs():
+    result = _run_specflo("skills", "--help")
+    assert result.returncode == 0, result.stderr
+    for verb in ("install", "status", "update", "uninstall"):
+        assert verb in result.stdout
+
+
+@pytest.mark.parametrize("verb", ["install", "status", "update", "uninstall"])
+def test_skills_verb_help_exits_zero(verb):
+    result = _run_specflo("skills", verb, "--help")
+    assert result.returncode == 0, result.stderr
+
+
+def test_status_still_exits_zero_after_skills_mount(tmp_path):
+    # A pre-existing command keeps working unchanged after the mount.
+    result = _run_specflo("status", cwd=str(tmp_path))
+    assert result.returncode == 0, result.stderr
+
+
+def test_version_still_exits_zero_after_skills_mount():
+    from specflo import __version__
+
+    result = _run_specflo("--version")
+    assert result.returncode == 0
     assert result.stdout.strip() == f"specflo {__version__}"

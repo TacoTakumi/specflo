@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import click
 import typer
+import typer.main
 from typer.core import TyperGroup
+
+from agentsquire.cli import skills_command_group
 
 from . import __version__
 from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
@@ -1240,5 +1244,46 @@ def milestone_show(
     typer.echo("\n".join(lines))
 
 
+def build_cli():
+    """The specflo click command with agentsquire's skills group mounted.
+
+    The group is mounted onto the click command underlying the Typer app (Typer
+    can't nest a ready-made click group directly). No ``source=`` is passed, so
+    every verb resolves through agentsquire's zero-arg default union: Root A
+    (specflo's package data, empty) plus Root B (repo-root ``skills/`` -- read
+    from ``specflo/_repo_skills`` in a wheel, or via marker-walk in an editable
+    checkout). ``source_package``/``source_version`` stamp installs with specflo
+    provenance so status/update/uninstall attribute correctly.
+    """
+    cli = typer.main.get_command(app)
+    cli.add_command(
+        skills_command_group(
+            "specflo",
+            default_scope="user",
+            source_package="specflo",
+            source_version=__version__,
+        )
+    )
+    return cli
+
+
 def main() -> None:
-    app()
+    # typer 0.26 vendors its own copy of click (typer._click), so exceptions
+    # raised by the mounted agentsquire group -- which uses the real `click` --
+    # are a different class than the ones typer's runner catches. On `specflo
+    # skills ... --help` (and agentsquire usage errors) the real-click exception
+    # escapes typer's handler; catch those foreign exceptions here so the process
+    # exits cleanly instead of dumping a traceback. typer's own exits (top-level
+    # --help/--version, the existing commands) are handled inside cli() and reach
+    # us as SystemExit, which passes straight through.
+    cli = build_cli()
+    try:
+        cli()
+    except click.exceptions.Exit as exc:
+        raise SystemExit(exc.exit_code)
+    except click.exceptions.Abort:
+        typer.echo("Aborted!", err=True)
+        raise SystemExit(1)
+    except click.exceptions.ClickException as exc:
+        exc.show()
+        raise SystemExit(exc.exit_code)
