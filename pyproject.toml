@@ -13,6 +13,11 @@ dependencies = [
 [project.scripts]
 specflo = "specflo.cli:main"
 
+# Mark specflo as a skill-carrying package for agentsquire. Inert today (nothing
+# reads it); reserved for a future environment-wide listing of such packages.
+[project.entry-points.'agentsquire.skills']
+specflo = "specflo"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
