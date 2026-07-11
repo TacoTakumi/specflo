@@ -10,7 +10,9 @@ import typer
 import typer.main
 from typer.core import TyperGroup
 
+from agentsquire import check_stale
 from agentsquire.cli import skills_command_group
+from agentsquire.sources import default_source
 
 from . import __version__
 from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
@@ -1267,7 +1269,26 @@ def build_cli():
     return cli
 
 
+def _notify_stale_skills() -> None:
+    # Notice-only startup hook: one stderr line when installed specflo skills
+    # have updates available (never prompts, never updates, never touches the
+    # exit code). Resolved over the ZERO-ARG default union (Root A + Root B), NOT
+    # a bare BundledPackageDataSource -- the union is what sees the repo-level
+    # skills, so staleness is measured against what `specflo skills` installs.
+    # check_stale already swallows its own errors; this try/except is
+    # belt-and-suspenders so a startup notice can never break the command.
+    try:
+        check_stale(
+            default_source("specflo"),
+            prog_name="specflo",
+            update_command="specflo skills update",
+        )
+    except Exception:
+        pass
+
+
 def main() -> None:
+    _notify_stale_skills()
     # typer 0.26 vendors its own copy of click (typer._click), so exceptions
     # raised by the mounted agentsquire group -- which uses the real `click` --
     # are a different class than the ones typer's runner catches. On `specflo
