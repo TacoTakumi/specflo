@@ -13,6 +13,7 @@ dropped skill silently shrink the expected set. If a skill goes missing from the
 build (or from the repo), its parametrized case fails loudly.
 """
 
+import importlib.util
 import subprocess
 import tarfile
 import zipfile
@@ -24,6 +25,33 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The 6 workflow skills, hardcoded so a dropped skill fails the build test.
 SKILL_NAMES = ["brainstorm", "execute", "plan", "research", "shelve", "spec"]
+
+
+def _load_hatch_build():
+    """Load the repo-root hatch_build.py by path.
+
+    It lives at the repo root (not on sys.path), and its hatchling import is
+    guarded so it stays importable here even though the test venv has no
+    hatchling -- only its completeness-check function is exercised.
+    """
+    spec = importlib.util.spec_from_file_location(
+        "hatch_build", REPO_ROOT / "hatch_build.py"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+hatch_build = _load_hatch_build()
+
+
+def _make_skills(root: Path, names):
+    """Create a skills/ tree with a minimal SKILL.md per name."""
+    for name in names:
+        skill_dir = root / name
+        skill_dir.mkdir(parents=True)
+        (skill_dir / "SKILL.md").write_text(f"---\nname: {name}\n---\n")
+    return root
 
 
 def _run(cmd, cwd):
@@ -99,6 +127,40 @@ def test_wheel_requires_agentsquire_floor(dist):
 @pytest.mark.parametrize("name", SKILL_NAMES)
 def test_repo_root_skill_is_present_on_disk(name):
     assert (REPO_ROOT / "skills" / name / "SKILL.md").is_file()
+
+
+def test_hook_check_passes_for_the_real_repo_skills():
+    found = hatch_build.check_skills_complete(REPO_ROOT / "skills")
+    assert set(SKILL_NAMES) <= set(found)
+
+
+@pytest.mark.parametrize("dropped", SKILL_NAMES)
+def test_hook_check_raises_when_a_skill_is_removed(tmp_path, dropped):
+    _make_skills(tmp_path, [n for n in SKILL_NAMES if n != dropped])
+    with pytest.raises(ValueError) as exc:
+        hatch_build.check_skills_complete(tmp_path)
+    assert dropped in str(exc.value)
+
+
+def test_hook_check_raises_when_a_skill_lacks_skill_md(tmp_path):
+    _make_skills(tmp_path, SKILL_NAMES)
+    (tmp_path / "plan" / "SKILL.md").unlink()  # dir stays, marker gone
+    with pytest.raises(ValueError) as exc:
+        hatch_build.check_skills_complete(tmp_path)
+    assert "plan" in str(exc.value)
+
+
+def test_hook_check_raises_when_skills_dir_missing(tmp_path):
+    with pytest.raises(ValueError):
+        hatch_build.check_skills_complete(tmp_path / "does-not-exist")
+
+
+def test_build_with_hook_wired_still_ships_all_skills(dist):
+    # dist builds with the completeness hook wired in pyproject; a successful
+    # build that still carries every skill proves the hook guards the build
+    # without blocking the normal all-6-present case.
+    for name in SKILL_NAMES:
+        assert f"specflo/_repo_skills/{name}/SKILL.md" in dist["wheel_names"]
 
 
 def test_no_committed_src_skills_tree():
