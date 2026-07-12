@@ -217,6 +217,7 @@ version = "0.1.1"
 source = { editable = "." }
 dependencies = [
     { name = "agentsquire" },
+    { name = "click" },
     { name = "pyyaml" },
     { name = "typer" },
 ]
@@ -229,6 +230,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "agentsquire", specifier = ">=0.5.0" },
+    { name = "click", specifier = ">=8.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "typer", specifier = ">=0.12" },
 ]

@@ -28,6 +28,12 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **`specflo --version`.** A top-level `--version` option prints the released
   version (`specflo <X.Y.Z>`) and exits 0.
 
+### Changed
+- **`click` is now a declared dependency** (`click>=8.1`). The CLI imports it
+  directly to catch click's control-flow exceptions; previously it relied on
+  typer and agentsquire to pull it in transitively. No behaviour change - the
+  same click was already being installed.
+
 ## [0.1.1]
 
 ### Added

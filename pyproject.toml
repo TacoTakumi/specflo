@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
+    # Imported directly by cli.py to catch click's control-flow exceptions;
+    # declared explicitly rather than leaning on typer/agentsquire to pull it in.
+    "click>=8.1",
     "pyyaml>=6.0",
     "agentsquire>=0.5.0",
 ]
