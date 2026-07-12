@@ -24,8 +24,9 @@ coding agent at this repo and ask it to install and set up specflo**. The
 `specflo guide` command is built to orient a fresh agent cold, so it can take it
 from there.
 
-## v0.1 commands
+## Commands
 
+- `specflo --version` -- print the installed version and exit.
 - `specflo guide [--json]` -- orientation in one shot: what specflo is, the pipeline, the full command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo.
 - `specflo init` -- scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 - `specflo new <name>` -- create a project and make it active.
@@ -52,6 +53,7 @@ from there.
 - `specflo checkpoint [--json]` -- print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
 - `specflo hook reseed [--format text|claude]` -- emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Default `--format text` is portable plain text (any harness); `--format claude` wraps it as Claude Code `SessionStart` JSON -- the payload as `additionalContext` (re-grounds the agent) plus a user-visible `systemMessage` that tells you **what to type** to kick it off (Claude can't make the agent take a turn on its own). Prints nothing for no active project. **Always exits 0, reads no stdin, makes no network calls** -- safe to wire into a session-start hook unconditionally.
 - `specflo hook print [--install]` -- print the `.claude/settings.json` `SessionStart` wiring that calls `specflo hook reseed --format claude` on the `startup`, `clear`, and `resume` sources (`compact` excluded -- its digest is retained). `--install` idempotently merges it into `.claude/settings.json`, preserving existing content; a previously-installed (older) reseed entry is rewired in place rather than duplicated.
+- `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` -- install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)** below.
 
 ### Session-start integration (clear-and-continue)
 
@@ -61,35 +63,50 @@ An agent can't clear its own context *or* remember what to do across a `/clear` 
 
 ## Skills
 
-- **`brainstorm`** (`skills/brainstorm/SKILL.md`) -- drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase). Install by symlinking it into your agent's skills dir:
+specflo ships its six workflow skills inside the package and installs them into
+whatever agent harness it finds on your machine (Claude Code, pi, Hermes,
+opencode). Let the CLI do it -- no copying or symlinking by hand:
 
-  ```bash
-  ln -s "$PWD/skills/brainstorm" ~/.claude/skills/brainstorm
-  ```
+```bash
+specflo skills install     # into the user skills dir of every detected harness
+specflo skills status      # what is installed, and whether it is current
+specflo skills update      # bring stale installs up to the bundled version
+specflo skills uninstall   # remove the ones specflo's stamp owns
+```
 
-- **`spec`** (`skills/spec/SKILL.md`) -- drives the spec phase over the CLI above (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase). Install by symlinking it into your agent's skills dir:
+On an interactive terminal, `install` asks which harnesses and scopes to use;
+pass `--no-input` (with `--harness`/`--scope`) to script it. Every verb takes
+`--scope user|project` -- `user` (the default) is the harness's user-level skills
+dir such as `~/.claude/skills/`, and `project` is the repo-local one such as
+`./.claude/skills/` -- plus a repeatable `--harness NAME[:SCOPE]` to target one
+harness instead of all detected ones.
 
-  ```bash
-  ln -s "$PWD/skills/spec" ~/.claude/skills/spec
-  ```
+Each install is a plain copy carrying a specflo provenance stamp, so `update` and
+`uninstall` only ever touch skills specflo itself installed, and a skill you have
+edited locally is never overwritten without `--force`. When an installed skill
+falls behind the bundled version, any specflo command prints a single advisory
+line on stderr pointing at `specflo skills update`. It is notice-only: it never
+prompts, never updates anything, and never changes the exit code. Silence it by
+setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
-- **`plan`** (`skills/plan/SKILL.md`) -- drives the plan phase over the CLI above (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase). Install by symlinking it into your agent's skills dir:
+The six skills:
 
-  ```bash
-  ln -s "$PWD/skills/plan" ~/.claude/skills/plan
-  ```
+- **`brainstorm`** (`skills/brainstorm/SKILL.md`) -- drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
+- **`spec`** (`skills/spec/SKILL.md`) -- drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
+- **`plan`** (`skills/plan/SKILL.md`) -- drives the plan phase (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase).
+- **`execute`** (`skills/execute/SKILL.md`) -- drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`).
+- **`research`** (`skills/research/SKILL.md`) -- a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated -- searches the Agent Wiki first and saves findings back (soft dependency).
+- **`shelve`** (`skills/shelve/SKILL.md`) -- recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
 
-- **`execute`** (`skills/execute/SKILL.md`) -- drives the execute phase over the CLI above (work through tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`). Install by symlinking it into your agent's skills dir:
+### Working on the skills themselves
 
-  ```bash
-  ln -s "$PWD/skills/execute" ~/.claude/skills/execute
-  ```
+If you are editing specflo's own skills from a checkout, symlink them instead so
+your edits take effect immediately. specflo recognizes a symlinked live-edit
+install and stays quiet about updates for it:
 
-- **`research`** (`skills/research/SKILL.md`) -- a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated -- searches the Agent Wiki first and saves findings back (soft dependency). Symlink it like the brainstorm skill:
-
-  ```sh
-  ln -s "$PWD/skills/research" ~/.claude/skills/research
-  ```
+```bash
+ln -s "$PWD/skills/brainstorm" ~/.claude/skills/brainstorm
+```
 
 ## Requirements
 
