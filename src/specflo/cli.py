@@ -745,20 +745,22 @@ def advance(
                 raise typer.Exit(code=1)
         updated = projects.complete_project(root, cfg, slug)
         cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
+        # Terminal continuation: a clear-point with no continue-instruction and
+        # neither resume command named (REQ-07). Rendered once so the JSON field
+        # and the prose carry the identical text (REQ-12).
+        cont = continuation.build_continuation(
+            from_phase,
+            workflow.next_step(from_phase, complete=True),
+            complete=True,
+        )
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
-                 "complete": True, "checkpoint": cp_display}))
+                 "complete": True, "checkpoint": cp_display, "continuation": cont}))
         else:
             typer.echo(f"Completed project '{slug}'.")
             typer.echo(f"Checkpoint saved: {cp_display}")
-            # Terminal continuation: a clear-point with no continue-instruction
-            # and neither resume command named (REQ-07).
-            typer.echo(continuation.build_continuation(
-                from_phase,
-                workflow.next_step(from_phase, complete=True),
-                complete=True,
-            ))
+            typer.echo(cont)
         return
 
     # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
@@ -793,17 +795,20 @@ def advance(
     if updated.phase in ("plan", "execute") and plan.plan_path(root, cfg, slug).is_file():
         progress = plan.plan_progress(root, cfg, slug)
     next_step = workflow.next_step(updated.phase, progress=progress)
+    # The shared continuation: the entered phase's next action, the phase skill
+    # carrying it, and the clear-point naming both resume paths. Rendered once so
+    # the JSON field and the prose carry the identical text (REQ-12).
+    cont = continuation.build_continuation(updated.phase, next_step)
 
     if json_output:
         typer.echo(json.dumps(
             {"advanced": True, "from": from_phase, "to": updated.phase,
-             "next_step": next_step, "checkpoint": cp_display}))
+             "next_step": next_step, "checkpoint": cp_display,
+             "continuation": cont}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
         typer.echo(f"Checkpoint saved: {cp_display}")
-        # The shared continuation: the entered phase's next action, the phase
-        # skill carrying it, and the clear-point naming both resume paths.
-        typer.echo(continuation.build_continuation(updated.phase, next_step))
+        typer.echo(cont)
 
 
 # The file each phase produces; execute has no artifact of its own (its work
@@ -1072,31 +1077,49 @@ def task_set_milestone(
         typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
-def _echo_task_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
-    """Emit the checkpoint path and the shared continuation after `task done`.
+def _task_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict | None:
+    """The continuation fields for the `task done` seam, or None if underivable.
 
     Completing a task is a clean place to clear context, so the seam carries the
-    same four-part shape `advance` does (REQ-01): the transition line (already
-    printed), the checkpoint location, and the continuation block — whose
-    next-step hint comes from ``build_checkpoint`` so it cannot drift from what
-    `status` and `checkpoint` report for the same state (REQ-05).
+    same four-part shape `advance` does (REQ-01): the transition line (printed by
+    :func:`_report_transition`), the checkpoint location, and the continuation
+    block — whose next-step hint comes from ``build_checkpoint`` so it cannot
+    drift from what `status` and `checkpoint` report for the same state (REQ-05).
+
+    Rendered once and shared by the prose and `--json` paths, so the two carry
+    identical text (REQ-12).
 
     Best-effort, mirroring :func:`_refresh_checkpoint`: the task mutation has
-    already succeeded and been persisted, so failing to render the continuation
+    already succeeded and been persisted, so failing to derive the continuation
     must never fail the command.
     """
     try:
         project = projects.load_project(root, cfg, slug)
         payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
     except Exception:
-        return
-    typer.echo(f"Checkpoint saved: {payload['path']}")
-    typer.echo(continuation.build_continuation(payload["phase"], payload["do_next"]))
+        return None
+    return {
+        "next_step": payload["do_next"],
+        "checkpoint": payload["path"],
+        "continuation": continuation.build_continuation(
+            payload["phase"], payload["do_next"]
+        ),
+    }
 
 
-def _report_transition(task: plan.Task, json_output: bool) -> None:
+def _report_transition(
+    task: plan.Task, json_output: bool, extra: dict | None = None
+) -> None:
+    """Print a task's state transition; ``extra`` adds fields to the JSON form.
+
+    Only `task done` passes ``extra`` — the other verbs stay terse, since
+    completing a task is the one task-level clear-point (REQ-01).
+    """
     if json_output:
-        typer.echo(json.dumps({"id": task.id, "progress": task.progress, "blocked": task.blocked}))
+        payload = {"id": task.id, "progress": task.progress, "blocked": task.blocked}
+        if extra:
+            payload.update(extra)
+        typer.echo(json.dumps(payload))
     else:
         line = f"{task.id} -> {task.progress}"
         if task.blocked:
@@ -1131,11 +1154,13 @@ def task_done(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
-    _report_transition(task, json_output)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
-    if not json_output:
-        _echo_task_continuation(root, cfg, slug)
+    cont = _task_continuation(root, cfg, slug)
+    _report_transition(task, json_output, extra=cont)
+    if not json_output and cont is not None:
+        typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
+        typer.echo(cont["continuation"])
 
 
 @task_app.command("block", epilog='Example: specflo task block T-01 --reason "waiting on API"')

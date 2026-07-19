@@ -10,9 +10,9 @@ rewrite (spec: "Structural assertions", REQ-01's acceptance).
 
 from __future__ import annotations
 
-import ast
-import inspect
 import re
+
+from conftest import executable_identifiers
 
 from specflo import continuation
 from specflo.workflow import PHASES
@@ -39,54 +39,19 @@ def _names_a_trigger(text: str) -> str | None:
             return trigger
     return None
 
+
 # Ambient state the builder must never consult. Reading any of these would make
-# the continuation vary with auto-run state, which REQ-03 forbids.
+# the continuation vary with auto-run state, which REQ-03 forbids. Lower-case:
+# `executable_identifiers` folds case, so an upper-case needle would never match.
 AUTO_STATE_READS = [
     "auto-run",
-    "AUTO_RUN_STATE_FILENAME",
+    "auto_run_state_filename",
     "load_run_state",
     "run_state",
     "killed",
     "kill_switch",
     "autonomy",
 ]
-
-
-def _executable_identifiers(module) -> str:
-    """Every identifier and string *value* in ``module``, docstrings excluded.
-
-    A raw substring scan over the source would flag the module's own prose
-    describing what it deliberately does not read. This walks the AST instead —
-    comments never reach it, and statement-position docstrings are dropped — so
-    the scan sees only code: names, attributes, imports, and the string literals
-    the module actually evaluates (f-string parts included).
-    """
-    tree = ast.parse(inspect.getsource(module))
-    scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-    for node in ast.walk(tree):
-        if not isinstance(node, scopes) or not node.body:
-            continue
-        first = node.body[0]
-        if (
-            isinstance(first, ast.Expr)
-            and isinstance(first.value, ast.Constant)
-            and isinstance(first.value.value, str)
-        ):
-            node.body.pop(0)
-
-    found: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Name):
-            found.append(node.id)
-        elif isinstance(node, ast.Attribute):
-            found.append(node.attr)
-        elif isinstance(node, ast.arg):
-            found.append(node.arg)
-        elif isinstance(node, ast.alias):
-            found.append(node.name)
-        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
-            found.append(node.value)
-    return "\n".join(found).lower()
 
 
 def test_builder_carries_the_passed_next_step_hint_verbatim():
@@ -188,7 +153,7 @@ def test_builder_source_reads_no_auto_run_state():
     # even a *latent* read of auto-run state, the kill-switch flag or an autonomy
     # config value is a defect, because it would make mode-awareness reachable
     # without the deliberate design change D-01 defers.
-    code = _executable_identifiers(continuation)
+    code = executable_identifiers(continuation)
     for needle in AUTO_STATE_READS:
         assert needle not in code, f"builder consults auto-run state: {needle!r}"
 
@@ -208,7 +173,7 @@ def test_continuation_names_no_harness_trigger():
 def test_builder_emitted_strings_name_no_harness_trigger():
     # Absence across every string the module can actually emit, so a trigger name
     # cannot hide in an unreached branch.
-    named = _names_a_trigger(_executable_identifiers(continuation))
+    named = _names_a_trigger(executable_identifiers(continuation))
     assert named is None, f"harness trigger {named!r} reachable in builder output"
 
 

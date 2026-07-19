@@ -1208,15 +1208,17 @@ def test_advance_completion_emits_a_clear_point_with_neither_resume_command(tmp_
 
 def test_advance_composes_no_continuation_wording_of_its_own():
     # REQ-04's source-scan half, scoped to this seam: the wording lives in the
-    # builder, so `advance` must carry no continuation literal.
-    import inspect
+    # builder, so `advance` must evaluate no continuation literal of its own.
+    # Scanned over executable code, not raw source - a comment explaining the
+    # delegation legitimately mentions the phase skill.
+    from conftest import executable_identifiers
 
     from specflo import cli, continuation
 
-    source = inspect.getsource(cli.advance)
-    assert continuation.CLEAR_POINT_MARKER not in source
-    assert "resume with" not in source
-    assert "phase skill" not in source
+    code = executable_identifiers(cli.advance)
+    assert continuation.CLEAR_POINT_MARKER.lower() not in code
+    assert "resume with" not in code
+    assert "phase skill" not in code
 
 
 def _project_at_execute_with_two_tasks(runner, app, tmp_path):
@@ -1287,6 +1289,62 @@ def test_task_done_next_step_matches_what_checkpoint_reports(tmp_path, monkeypat
     assert do_next in done_out, (
         f"task done hint drifted from the checkpoint's: {do_next!r} not in output"
     )
+
+
+def test_task_done_json_gains_next_step_checkpoint_and_continuation(tmp_path, monkeypatch):
+    # REQ-12: field parity with advance, plus the rendered continuation as one
+    # field - so a harness can consume the clear-point without parsing prose.
+    # The two runs are identical projects in sibling trees, which lets the JSON
+    # value be compared against the prose actually emitted for the same state.
+    from specflo.cli import app
+    outputs = {}
+    for name, extra in (("prose", []), ("json", ["--json"])):
+        directory = tmp_path / name
+        directory.mkdir()
+        monkeypatch.chdir(directory)
+        _project_at_execute_with_two_tasks(runner, app, directory)
+        runner.invoke(app, ["task", "start", "T-01"])
+        outputs[name] = runner.invoke(app, ["task", "done", "T-01"] + extra).output
+
+    data = _json.loads(outputs["json"])
+    assert {"next_step", "checkpoint", "continuation"} <= set(data)
+    assert data["continuation"] in outputs["prose"], "JSON continuation differs from prose"
+    assert data["next_step"] in data["continuation"]
+
+
+def test_advance_json_carries_the_rendered_continuation(tmp_path, monkeypatch):
+    # REQ-12 at the non-terminal phase-advance seam.
+    from specflo.cli import app
+    outputs = {}
+    for name, extra in (("prose", []), ("json", ["--json"])):
+        directory = tmp_path / name
+        directory.mkdir()
+        monkeypatch.chdir(directory)
+        _project_at_plan_phase(runner, app, directory)
+        runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                            "it works", "--verify", "true", "--from", "REQ-01"])
+        outputs[name] = runner.invoke(app, ["advance"] + extra).output
+
+    data = _json.loads(outputs["json"])
+    assert "continuation" in data
+    assert data["continuation"] in outputs["prose"], "JSON continuation differs from prose"
+
+
+def test_advance_completion_json_continuation_is_clear_point_only(tmp_path, monkeypatch):
+    # REQ-12's terminal clause, deferring to REQ-07: the field carries the
+    # clear-point but neither resume command, so a harness reading only the JSON
+    # is no more invited into another pass than one reading the prose.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import continuation
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    data = _json.loads(runner.invoke(app, ["advance", "--json"]).output)
+    assert data["complete"] is True
+    assert continuation.CLEAR_POINT_MARKER in data["continuation"]
+    assert "specflo checkpoint" not in data["continuation"]
+    assert "specflo auto" not in data["continuation"]
 
 
 def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):

@@ -1,6 +1,52 @@
-"""Shared pytest fixtures for the specflo test suite."""
+"""Shared pytest fixtures and helpers for the specflo test suite."""
+
+import ast
+import inspect
 
 import pytest
+
+
+def executable_identifiers(obj) -> str:
+    """Every identifier and string *value* in ``obj``, docstrings excluded.
+
+    Source-scan tests assert that a module or function does not *do* something —
+    read auto-run state, compose its own continuation wording, name a harness
+    trigger. A raw substring scan over the source cannot express that: it also
+    flags comments and docstrings describing the very thing being ruled out, so
+    documenting an invariant would break its own test.
+
+    This walks the AST instead. Comments never reach it, statement-position
+    docstrings are dropped, and what remains is what the code actually evaluates:
+    names, attributes, arguments, imports, and string literals (f-string parts
+    included). Accepts a module or a function.
+    """
+    source = inspect.getsource(obj)
+    tree = ast.parse(inspect.cleandoc(source) if not inspect.ismodule(obj) else source)
+    scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, scopes) or not node.body:
+            continue
+        first = node.body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            node.body.pop(0)
+
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            found.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.append(node.attr)
+        elif isinstance(node, ast.arg):
+            found.append(node.arg)
+        elif isinstance(node, ast.alias):
+            found.append(node.name)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.append(node.value)
+    return "\n".join(found).lower()
 
 
 @pytest.fixture
