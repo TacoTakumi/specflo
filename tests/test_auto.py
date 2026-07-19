@@ -537,6 +537,99 @@ def test_bootstrap_plan_time_present_at_every_phase():
         assert auto.PLAN_TIME_MARKER in auto.auto_bootstrap(phase)
 
 
+# --- T-13: self-contained three-part reseed payload (REQ-03) ------------------
+# `specflo auto` now emits a payload a freshly-cleared session can act on without
+# re-deriving state: (1) the auto-mode bootstrap, (2) a substring byte-for-byte
+# equal to `specflo checkpoint` (render_checkpoint) output, and (3) a compact
+# next-step block specflo generates from the current phase (naming the phase and
+# its immediate next action, pointing at - not depending on - the phase skill).
+
+def _checkpoint_text(cwd, slug="my-thing"):
+    """`render_checkpoint(build_checkpoint(...))` for the active project at ``cwd``."""
+    cfg = config.load_config(cwd)
+    project = projects.load_project(cwd, cfg, slug)
+    return checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(cwd, project, cfg=cfg)
+    )
+
+
+def test_auto_payload_has_all_three_parts_at_each_phase(tmp_path):
+    # at every phase the payload carries the bootstrap, the verbatim checkpoint as
+    # an exact substring, and the generated next-step block naming the phase.
+    for phase in PHASES:
+        subdir = tmp_path / phase
+        subdir.mkdir()
+        _active_at(subdir, phase)
+        out = auto.auto_text(subdir)
+        assert auto.BOOTSTRAP_MARKER in out, f"part 1 (bootstrap) missing at {phase}"
+        assert _checkpoint_text(subdir) in out, f"part 2 (checkpoint) not verbatim at {phase}"
+        assert auto.NEXT_STEP_MARKER in out, f"part 3 (next-step) missing at {phase}"
+        block = out.split(auto.NEXT_STEP_MARKER, 1)[1]
+        assert phase in block, f"next-step block does not name the {phase} phase"
+
+
+def test_next_step_block_names_phase_action_and_points_at_skill():
+    # the block builder is a pure function: leads with the marker, names the phase,
+    # carries the immediate next action, and points at the phase skill by name.
+    for phase in PHASES:
+        do_next = "SENTINEL NEXT ACTION"
+        block = auto.next_step_block(phase, do_next)
+        assert block.startswith(auto.NEXT_STEP_MARKER)
+        assert phase in block
+        assert do_next in block                      # immediate next action carried
+        assert auto.PHASE_SKILLS[phase] in block      # points at the phase skill
+
+
+def test_auto_payload_next_step_carries_derived_do_next(tmp_path):
+    # part 3 is generated from the current phase's derived next action, so a fresh
+    # session need not re-derive it.
+    _active_at(tmp_path, "execute")
+    cfg = config.load_config(tmp_path)
+    project = projects.load_project(tmp_path, cfg, "my-thing")
+    do_next = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg)["do_next"]
+    block = auto.auto_text(tmp_path).split(auto.NEXT_STEP_MARKER, 1)[1]
+    assert do_next in block
+
+
+def test_auto_payload_ordering_bootstrap_checkpoint_next_step(tmp_path):
+    # the three parts appear in order: bootstrap, then checkpoint, then next-step.
+    _active_at(tmp_path, "spec")
+    out = auto.auto_text(tmp_path)
+    i_boot = out.index(auto.BOOTSTRAP_MARKER)
+    i_cp = out.index(_checkpoint_text(tmp_path))
+    i_step = out.index(auto.NEXT_STEP_MARKER)
+    assert i_boot < i_cp < i_step
+
+
+def test_auto_pass_continue_emits_three_part_payload(tmp_path):
+    # the stateful pass (not a stop directive) emits the full three-part payload.
+    _active_at(tmp_path, "execute")
+    out = auto.auto_pass(tmp_path, max_passes=1000)
+    assert auto.BOOTSTRAP_MARKER in out
+    assert _checkpoint_text(tmp_path) in out
+    assert auto.NEXT_STEP_MARKER in out
+
+
+def test_stop_directives_carry_no_reseed_payload(tmp_path):
+    # a completed project stops without a continue payload - no checkpoint or
+    # next-step block rides a stop directive.
+    _complete(tmp_path)
+    out = auto.auto_text(tmp_path)
+    assert out == auto.AUTO_COMPLETE_DIRECTIVE
+    assert auto.NEXT_STEP_MARKER not in out
+
+
+def test_cli_auto_emits_three_part_payload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["auto"])
+    assert result.exit_code == 0
+    assert auto.BOOTSTRAP_MARKER in result.stdout
+    assert auto.NEXT_STEP_MARKER in result.stdout
+    assert _checkpoint_text(tmp_path) in result.stdout
+
+
 # --- CLI surface --------------------------------------------------------------
 
 def test_cli_auto_no_flag_defaults_to_safe(tmp_path, monkeypatch):

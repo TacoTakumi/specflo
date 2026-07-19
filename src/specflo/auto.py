@@ -19,6 +19,7 @@ from pathlib import Path
 
 from . import (
     brainstorm as brainstorm_module,
+    checkpoint as checkpoint_module,
     config,
     plan as plan_module,
     projects,
@@ -368,6 +369,64 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     return "\n".join([header, "", *clauses])
 
 
+# Fixed marker opening the generated next-step block - part 3 of the reseed
+# payload (REQ-03). Tests key on it structurally so its wording can grow in place.
+NEXT_STEP_MARKER = "== specflo next step =="
+
+# The phase -> phase-skill name map. The next-step block points a resumed agent at
+# the skill that carries the current phase, so a fresh session knows which one to
+# invoke. It is a *pointer, not a dependency*: the block already names the concrete
+# next action, so the run proceeds even if the skill is unavailable. Kept local to
+# auto (the four phase skills happen to share their phase's name).
+PHASE_SKILLS = {
+    "brainstorm": "brainstorm",
+    "spec": "spec",
+    "plan": "plan",
+    "execute": "execute",
+}
+
+
+def next_step_block(phase: str, do_next: str) -> str:
+    """The compact next-step block specflo derives from the current phase (REQ-03).
+
+    Part 3 of the reseed payload: names the phase, carries its immediate next
+    action (``do_next``, the same derived hint the checkpoint shows), and points at
+    the phase skill by name. The skill is a pointer only - the named action stands
+    on its own - so a freshly-cleared session can act on the payload alone without
+    re-deriving state or needing the skill loaded.
+    """
+    skill = PHASE_SKILLS.get(phase, phase)
+    return (
+        f"{NEXT_STEP_MARKER}\n"
+        f"Current phase: {phase}. Immediate next action: {do_next}\n"
+        f"Carry it out with the specflo '{skill}' phase skill - a pointer only; "
+        "the next action above stands on its own if the skill is unavailable."
+    )
+
+
+def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: str) -> str:
+    """Assemble the self-contained three-part reseed payload for a continuing pass.
+
+    In order (REQ-03): (1) the auto-mode bootstrap for the current phase/autonomy;
+    (2) the verbatim ``specflo checkpoint`` render - byte-for-byte, so read-first
+    files, do-next and any milestone/boundary beat ride along unchanged; and (3)
+    the generated :func:`next_step_block`, derived from the *same* checkpoint
+    payload so its next action can't drift from the checkpoint's. A fresh session
+    handed only this can act without re-deriving state.
+
+    Read-only over ``checkpoint`` (``build_checkpoint`` / ``render_checkpoint``);
+    it never touches the ask-first reseed or the advance gate (REQ-02).
+    """
+    bootstrap = auto_bootstrap(project.phase, autonomy=autonomy)
+    payload = checkpoint_module.build_checkpoint(root, project, cfg=cfg)
+    checkpoint_text = checkpoint_module.render_checkpoint(payload)
+    step = next_step_block(payload["phase"], payload["do_next"])
+    # checkpoint_text ends in a newline; the "\n" before ``step`` yields one blank
+    # line between the verbatim checkpoint and the next-step block while keeping
+    # checkpoint_text present as an exact contiguous substring.
+    return f"{bootstrap}\n\n{checkpoint_text}\n{step}"
+
+
 def _active_project(cwd: Path):
     """``(root, cfg, project)`` for the active project found from ``cwd``, or ``None``.
 
@@ -400,10 +459,9 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
 
     The autonomy level is resolved by :func:`resolve_autonomy` - an explicit
     ``autonomy`` (the --autonomy flag) wins, else the project config's default,
-    else ``safe`` (REQ-08). For now the payload is the auto-mode bootstrap for the
-    project's current phase; later tasks wrap it into the self-contained
-    three-part reseed payload (bootstrap + verbatim checkpoint + generated
-    next-step).
+    else ``safe`` (REQ-08). The payload is the self-contained three-part reseed
+    payload (:func:`_reseed_payload`): the auto-mode bootstrap, the verbatim
+    ``specflo checkpoint`` render, and the generated next-step block (REQ-03).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) - even resolving the
@@ -416,13 +474,13 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
         found = _active_project(cwd)
         if found is None:
             return ""
-        _root, cfg, project = found
+        root, cfg, project = found
         # A finished project has nothing to continue: stop and hand off, never
         # re-run it (REQ-13). No bootstrap (continue directive) is emitted.
         if project.status == COMPLETE_STATUS:
             return AUTO_COMPLETE_DIRECTIVE
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
-        return auto_bootstrap(project.phase, autonomy=level)
+        return _reseed_payload(root, cfg, project, level)
     except Exception:
         return ""
 
@@ -443,7 +501,8 @@ def auto_pass(
     - a human-escalation stop (:func:`escalation_message`) when the phase makes no
       forward progress across :data:`STALL_THRESHOLD` consecutive passes (REQ-15)
       or once the pass count reaches the cap (REQ-14) - no continue directive;
-    - otherwise the pure :func:`auto_bootstrap` payload for the current phase.
+    - otherwise the self-contained three-part :func:`_reseed_payload` for the
+      current phase (bootstrap + verbatim checkpoint + generated next-step).
 
     Returns ``""`` and never raises when there is nothing to emit (no root, no
     active project, unreadable project).
@@ -487,6 +546,6 @@ def auto_pass(
                 f"reached the auto-run pass cap of {cap} passes."
             )
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
-        return auto_bootstrap(project.phase, autonomy=level)
+        return _reseed_payload(root, cfg, project, level)
     except Exception:
         return ""

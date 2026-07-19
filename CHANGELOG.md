@@ -27,6 +27,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   file, and on reaching the cap (default `50`) the run escalates to the human
   instead of continuing. Backed by a matching `.specflo` config default; the flag
   overrides it. The run-state is ephemeral -- never a persisted auto-on default.
+- **Self-contained three-part `specflo auto` payload.** The continue payload is
+  now everything a freshly-cleared session needs in one block: the auto-mode
+  bootstrap, the verbatim `specflo checkpoint` text (read-first files, next
+  action, milestone beat), and a compact generated next-step block naming the
+  current phase, its immediate next action, and the phase skill to run. A resumed
+  session can act on the payload alone without re-deriving state.
 
 ## [0.2.0]
 
