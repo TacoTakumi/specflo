@@ -1269,6 +1269,26 @@ def test_task_done_delegates_to_the_shared_continuation_builder(tmp_path, monkey
     assert continuation.build_continuation(payload["phase"], payload["do_next"]) in out
 
 
+def test_task_done_next_step_matches_what_checkpoint_reports(tmp_path, monkeypatch):
+    # REQ-05, asserted CLI-to-CLI: the hint an agent reads at the task-completion
+    # seam is the same text `specflo checkpoint` shows for that same state. Both
+    # come from the one existing derivation, so they cannot drift - and this
+    # compares the two *rendered outputs*, not the shared function they call.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    done_out = runner.invoke(app, ["task", "done", "T-01"]).output
+    checkpoint_out = runner.invoke(app, ["checkpoint"]).output
+
+    # The checkpoint's "## Do next" body is its next-step hint.
+    do_next = checkpoint_out.split("## Do next", 1)[1].strip().splitlines()[0].strip()
+    assert do_next, "checkpoint reported no next step"
+    assert do_next in done_out, (
+        f"task done hint drifted from the checkpoint's: {do_next!r} not in output"
+    )
+
+
 def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):
     # Scope guard: only task *done* is a clear-point. start/block/reopen keep
     # printing just their transition line (spec: other seams are out of scope).
