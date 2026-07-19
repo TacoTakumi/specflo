@@ -783,3 +783,61 @@ def test_auto_adds_no_persisted_auto_on_config_key(tmp_path):
         assert not (key.startswith("auto") and isinstance(val, bool)), (
             f"unexpected auto-on toggle {key!r} in config"
         )
+
+
+# --- clear-and-continue: the payload consumes the shared continuation builder ---
+
+
+def test_phase_skill_map_is_the_shared_one():
+    # REQ-04: one source for the phase -> skill map. `auto` re-exports the
+    # continuation module's map rather than keeping a second copy that could drift.
+    from specflo import continuation
+
+    assert auto.PHASE_SKILLS is continuation.PHASE_SKILLS
+
+
+def test_next_step_block_delegates_to_the_shared_builder():
+    # REQ-04 / D-05: the block is its marker plus the builder's output verbatim -
+    # `auto` composes no continuation wording of its own.
+    from specflo import continuation
+
+    for phase in PHASES:
+        do_next = "SENTINEL NEXT ACTION"
+        expected = f"{auto.NEXT_STEP_MARKER}\n{continuation.build_continuation(phase, do_next)}"
+        assert auto.next_step_block(phase, do_next) == expected
+
+
+def test_auto_payload_carries_the_clear_point(tmp_path):
+    # D-05: the payload's next-step block carries the full continuation, including
+    # the clear-point line. The bootstrap's self-propagation clause outranks the
+    # manual resume command for an agent in an auto run, and the line names
+    # `specflo auto` parenthetically anyway (D-02), so it cannot mislead.
+    from specflo import continuation
+
+    _active_at(tmp_path, "plan")
+    out = auto.auto_text(tmp_path)
+    assert continuation.CLEAR_POINT_MARKER in out
+    assert "`specflo auto`" in out
+
+
+def test_no_module_duplicates_the_continuation_wording():
+    # REQ-04's source-scan half, repo-wide: exactly one module may evaluate the
+    # continuation wording. Scanned over executable code so prose about the
+    # invariant doesn't count as a violation.
+    import importlib
+    import pkgutil
+
+    from conftest import executable_identifiers
+
+    import specflo
+    from specflo import continuation
+
+    offenders = []
+    for info in pkgutil.iter_modules(specflo.__path__):
+        if info.name == "continuation":
+            continue
+        module = importlib.import_module(f"specflo.{info.name}")
+        code = executable_identifiers(module)
+        if continuation.CLEAR_POINT_MARKER.lower() in code or "resume with" in code:
+            offenders.append(info.name)
+    assert not offenders, f"continuation wording duplicated in: {offenders}"

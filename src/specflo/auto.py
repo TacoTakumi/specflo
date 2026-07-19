@@ -21,6 +21,7 @@ from . import (
     brainstorm as brainstorm_module,
     checkpoint as checkpoint_module,
     config,
+    continuation,
     plan as plan_module,
     projects,
     spec as spec_module,
@@ -397,35 +398,29 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
 # payload (REQ-03). Tests key on it structurally so its wording can grow in place.
 NEXT_STEP_MARKER = "== specflo next step =="
 
-# The phase -> phase-skill name map. The next-step block points a resumed agent at
-# the skill that carries the current phase, so a fresh session knows which one to
-# invoke. It is a *pointer, not a dependency*: the block already names the concrete
-# next action, so the run proceeds even if the skill is unavailable. Kept local to
-# auto (the four phase skills happen to share their phase's name).
-PHASE_SKILLS = {
-    "brainstorm": "brainstorm",
-    "spec": "spec",
-    "plan": "plan",
-    "execute": "execute",
-}
+# The phase -> phase-skill name map, re-exported from the continuation module so
+# there is exactly one copy (REQ-04). Kept under this name because the payload's
+# public surface has always exposed it here.
+PHASE_SKILLS = continuation.PHASE_SKILLS
 
 
 def next_step_block(phase: str, do_next: str) -> str:
     """The compact next-step block specflo derives from the current phase (REQ-03).
 
-    Part 3 of the reseed payload: names the phase, carries its immediate next
-    action (``do_next``, the same derived hint the checkpoint shows), and points at
-    the phase skill by name. The skill is a pointer only - the named action stands
-    on its own - so a freshly-cleared session can act on the payload alone without
-    re-deriving state or needing the skill loaded.
+    Part 3 of the reseed payload: this marker followed by the shared continuation
+    - the phase and its immediate next action (``do_next``, the same derived hint
+    the checkpoint shows), the phase skill carrying it, and the clear-point. The
+    skill is a pointer only - the named action stands on its own - so a
+    freshly-cleared session can act on the payload alone without re-deriving state
+    or needing the skill loaded.
+
+    The wording comes wholly from :func:`continuation.build_continuation`, the one
+    producer of continuation text (REQ-04): this block adds only its marker. The
+    continuation names the manual resume command alongside `specflo auto` (D-02),
+    which is harmless here - the bootstrap's self-propagation clause outranks it
+    for an agent inside an auto run (D-05).
     """
-    skill = PHASE_SKILLS.get(phase, phase)
-    return (
-        f"{NEXT_STEP_MARKER}\n"
-        f"Current phase: {phase}. Immediate next action: {do_next}\n"
-        f"Carry it out with the specflo '{skill}' phase skill - a pointer only; "
-        "the next action above stands on its own if the skill is unavailable."
-    )
+    return f"{NEXT_STEP_MARKER}\n{continuation.build_continuation(phase, do_next)}"
 
 
 def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: str) -> str:

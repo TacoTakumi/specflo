@@ -881,7 +881,12 @@ def reopen(
             for name in stale:
                 typer.echo(f"  - {name}")
         typer.echo(f"Checkpoint saved: {cp_display}")
-        typer.echo("You may clear context now - resume with `specflo checkpoint`.")
+        # Reopening is a clear-point too, and has been since before the shared
+        # builder existed. It routes through the builder so no seam keeps its own
+        # copy of the wording (REQ-04, D-06).
+        cont = _seam_continuation(root, cfg, slug)
+        if cont is not None:
+            typer.echo(cont["continuation"])
 
 
 @spec_app.command("start", epilog="Example: specflo spec start")
@@ -1077,8 +1082,11 @@ def task_set_milestone(
         typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
-def _task_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict | None:
-    """The continuation fields for the `task done` seam, or None if underivable.
+def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict | None:
+    """The continuation fields for a seam that has already mutated state.
+
+    Used by `task done` and `reopen` — the seams whose next step is best derived
+    from the project's freshly-written checkpoint rather than computed inline.
 
     Completing a task is a clean place to clear context, so the seam carries the
     same four-part shape `advance` does (REQ-01): the transition line (printed by
@@ -1156,7 +1164,7 @@ def task_done(
     _refresh_checkpoint(root, cfg, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
-    cont = _task_continuation(root, cfg, slug)
+    cont = _seam_continuation(root, cfg, slug)
     _report_transition(task, json_output, extra=cont)
     if not json_output and cont is not None:
         typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
