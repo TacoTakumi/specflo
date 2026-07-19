@@ -1374,6 +1374,29 @@ def test_task_done_json_keeps_its_keys_when_the_continuation_is_underivable(
     assert data["id"] == "T-01" and data["progress"] == "done"
 
 
+def test_task_done_prose_still_emits_a_clear_point_when_underivable(tmp_path, monkeypatch):
+    # Symmetry with reopen: task done is a clear-point seam, so it stays one even
+    # when the next step can't be derived. Otherwise a harness grepping the prose
+    # for the marker would silently stop resuming - the exact failure this whole
+    # project exists to remove.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint as checkpoint_module, continuation
+
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+
+    def boom(*args, **kwargs):
+        raise OSError("checkpoint unreadable")
+
+    monkeypatch.setattr(checkpoint_module, "build_checkpoint", boom)
+    result = runner.invoke(app, ["task", "done", "T-01"])
+
+    assert result.exit_code == 0
+    assert "T-01 -> done" in result.stdout
+    assert continuation.CLEAR_POINT_MARKER in result.stdout
+
+
 def test_underivable_continuation_is_announced_on_stderr(tmp_path, monkeypatch):
     # Degrade visibly, not silently: swallowing the error keeps the command from
     # failing after a committed mutation, but a real bug (a malformed plan.md, an

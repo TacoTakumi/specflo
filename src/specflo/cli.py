@@ -1118,6 +1118,15 @@ def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict
     try:
         project = projects.load_project(root, cfg, slug)
         payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
+        # Inside the guard: reading the payload and rendering must be covered too,
+        # or the "never fail the caller" guarantee would be narrower than stated.
+        return {
+            "next_step": payload["do_next"],
+            "checkpoint": payload["path"],
+            "continuation": continuation.build_continuation(
+                payload["phase"], payload["do_next"]
+            ),
+        }
     except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
         typer.secho(
             f"note: could not derive the continuation ({exc.__class__.__name__}: {exc}).",
@@ -1125,13 +1134,6 @@ def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict
             err=True,
         )
         return dict.fromkeys(_CONTINUATION_KEYS)
-    return {
-        "next_step": payload["do_next"],
-        "checkpoint": payload["path"],
-        "continuation": continuation.build_continuation(
-            payload["phase"], payload["do_next"]
-        ),
-    }
 
 
 def _report_transition(
@@ -1189,9 +1191,15 @@ def task_done(
     # full continuation (REQ-01). start/block/reopen stay terse by design.
     cont = _seam_continuation(root, cfg, slug)
     _report_transition(task, json_output, extra=cont)
-    if not json_output and cont["continuation"] is not None:
-        typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
-        typer.echo(cont["continuation"])
+    if not json_output:
+        if cont["continuation"] is None:
+            # Same fallback reopen takes: a seam that is a clear-point stays one
+            # even when the next step is underivable, so a harness grepping the
+            # prose for the marker never silently stops resuming (REQ-01).
+            typer.echo(continuation.clear_point_only())
+        else:
+            typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
+            typer.echo(cont["continuation"])
 
 
 @task_app.command("block", epilog='Example: specflo task block T-01 --reason "waiting on API"')
