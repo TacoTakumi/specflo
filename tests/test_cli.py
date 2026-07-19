@@ -1130,6 +1130,95 @@ def test_advance_completion_offers_clear_context_affordance(tmp_path, monkeypatc
     assert "may clear context" in out.lower()             # the final phase-end gets it too
 
 
+def _advance_outputs_by_entered_phase(runner, app, tmp_path):
+    """Drive one project through every non-terminal advance, keeping each output.
+
+    Returns {entered phase: the advance output that entered it}, so a single walk
+    covers brainstorm -> spec -> plan -> execute (REQ-06's "every non-terminal
+    phase").
+    """
+    _new_project_with_spec(runner, app)
+    base = tmp_path / "docs" / "projects" / "thing"
+    bs_md = base / "brainstorm.md"
+    bs_md.write_text(bs_md.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\nNo auth in v0.1.",
+    ))
+    outputs = {"spec": runner.invoke(app, ["advance"]).output}
+    spec_md = base / "spec.md"
+    spec_md.write_text(spec_md.read_text()
+        .replace("### In scope\n<!-- required, non-empty -->",
+                 "### In scope\n- the thing.")
+        .replace("### Out of scope\n"
+                 "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+                 "### Out of scope\n- other things."))
+    outputs["plan"] = runner.invoke(app, ["advance"]).output
+    runner.invoke(app, ["plan", "start"])
+    runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                        "it works", "--verify", "true", "--from", "REQ-01"])
+    outputs["execute"] = runner.invoke(app, ["advance"]).output
+    return outputs
+
+
+def test_advance_names_the_entered_phase_skill_and_both_resume_paths(tmp_path, monkeypatch):
+    # REQ-06 + REQ-11 at every non-terminal phase: a resumed session learns which
+    # phase skill carries the phase it landed in, and sees both resume paths.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import continuation
+    for phase, out in _advance_outputs_by_entered_phase(runner, app, tmp_path).items():
+        assert "phase skill" in out, f"no skill pointer when entering {phase}"
+        assert continuation.PHASE_SKILLS[phase] in out, f"skill unnamed at {phase}"
+        assert "`specflo checkpoint`" in out, f"manual resume path missing at {phase}"
+        assert "`specflo auto`" in out, f"auto resume path missing at {phase}"
+
+
+def test_advance_delegates_to_the_shared_continuation_builder(tmp_path, monkeypatch):
+    # REQ-04: the seam emits the builder's block verbatim rather than composing a
+    # string of its own, so the two cannot drift.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint, config as config_module, continuation, projects
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                        "it works", "--verify", "true", "--from", "REQ-01"])
+    out = runner.invoke(app, ["advance"]).output          # plan -> execute
+    cfg = config_module.load_config(tmp_path)
+    project = projects.load_project(tmp_path, cfg, "thing")
+    do_next = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg)["do_next"]
+    assert continuation.build_continuation("execute", do_next) in out
+
+
+def test_advance_completion_emits_a_clear_point_with_neither_resume_command(tmp_path, monkeypatch):
+    # REQ-07, by required absence: a complete project gets a clear-point but no
+    # continue-instruction, and never names the auto command - an auto loop halts
+    # on this completion signal and must not be invited into another pass.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    out = runner.invoke(app, ["advance"]).output          # completes the project
+    assert "Completed project" in out
+    assert "may clear context" in out.lower()
+    assert "specflo checkpoint" not in out
+    assert "specflo auto" not in out
+
+
+def test_advance_composes_no_continuation_wording_of_its_own():
+    # REQ-04's source-scan half, scoped to this seam: the wording lives in the
+    # builder, so `advance` must carry no continuation literal.
+    import inspect
+
+    from specflo import cli, continuation
+
+    source = inspect.getsource(cli.advance)
+    assert continuation.CLEAR_POINT_MARKER not in source
+    assert "resume with" not in source
+    assert "phase skill" not in source
+
+
 def test_task_progress_verbs_and_list(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

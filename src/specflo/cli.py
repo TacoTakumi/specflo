@@ -16,7 +16,7 @@ from agentsquire.sources import default_source
 
 from . import __version__
 from . import auto as auto_module
-from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
+from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import status as status_view
 from . import workflow
 from .errors import SpecfloError
@@ -751,9 +751,14 @@ def advance(
                  "complete": True, "checkpoint": cp_display}))
         else:
             typer.echo(f"Completed project '{slug}'.")
-            typer.echo(f"Next:    {workflow.next_step(from_phase, complete=True)}")
             typer.echo(f"Checkpoint saved: {cp_display}")
-            typer.echo("You may clear context now - this project is complete.")
+            # Terminal continuation: a clear-point with no continue-instruction
+            # and neither resume command named (REQ-07).
+            typer.echo(continuation.build_continuation(
+                from_phase,
+                workflow.next_step(from_phase, complete=True),
+                complete=True,
+            ))
         return
 
     # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
@@ -795,9 +800,10 @@ def advance(
              "next_step": next_step, "checkpoint": cp_display}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
-        typer.echo(f"Next:    {next_step}")
         typer.echo(f"Checkpoint saved: {cp_display}")
-        typer.echo("You may clear context now - resume with `specflo checkpoint`.")
+        # The shared continuation: the entered phase's next action, the phase
+        # skill carrying it, and the clear-point naming both resume paths.
+        typer.echo(continuation.build_continuation(updated.phase, next_step))
 
 
 # The file each phase produces; execute has no artifact of its own (its work
