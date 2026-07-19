@@ -15,6 +15,7 @@ from agentsquire.cli import skills_command_group
 from agentsquire.sources import default_source
 
 from . import __version__
+from . import auto as auto_module
 from . import brainstorm, checkpoint, config, guide as guide_module, hook, plan, projects, spec
 from . import status as status_view
 from . import workflow
@@ -497,6 +498,22 @@ def checkpoint_(
         typer.echo(json.dumps(payload))
     else:
         typer.echo(checkpoint.render_checkpoint(payload))
+
+
+@app.command(name="auto", epilog="Example: specflo auto")
+def auto_() -> None:
+    """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
+
+    `specflo auto` is the explicit, per-invocation opt-in that starts or continues
+    an unattended run from the current phase toward project completion. It only
+    prints the payload - it drives no loop, spawns no nested agent, and never
+    clears context (REQ-05); the seamless clear-and-reseed trigger is the outer
+    harness's job. Strictly additive: the ask-first `hook reseed` default is
+    unchanged (REQ-02). Prints nothing when there is no active project.
+    """
+    out = auto_module.auto_text()
+    if out:
+        typer.echo(out)
 
 
 @hook_app.command(

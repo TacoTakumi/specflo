@@ -59,6 +59,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Emit the session-start reseed payload (used by the SessionStart hook)."},
     {"name": "hook print", "group": "setup", "args": "[--install]",
      "summary": "Print (or --install) the SessionStart hook wiring (clear|startup)."},
+    {"name": "auto", "group": "setup", "args": "",
+     "summary": "Emit the auto-mode handoff payload (opt-in unattended run)."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",
