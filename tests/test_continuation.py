@@ -10,11 +10,83 @@ rewrite (spec: "Structural assertions", REQ-01's acceptance).
 
 from __future__ import annotations
 
+import ast
+import inspect
+import re
+
 from specflo import continuation
 from specflo.workflow import PHASES
 
 
 SENTINEL = "SENTINEL NEXT ACTION"
+
+# Trigger names and invocation strings belonging to outer harnesses. specflo owns
+# the payload, never the trigger (auto-mode D-03/REQ-05): the emitted wording must
+# name specflo commands only, so each harness can map the clear-point onto its own
+# trigger.
+HARNESS_TRIGGERS = ["clearthen", "clearanddo", "claude", "pi", "hermes", "codex"]
+
+
+def _names_a_trigger(text: str) -> str | None:
+    """The first harness trigger named in ``text``, or None.
+
+    Word-boundary matched so a short trigger name cannot false-positive inside an
+    ordinary word (``pi`` in "pipeline", ``codex`` in a longer identifier).
+    """
+    lowered = text.lower()
+    for trigger in HARNESS_TRIGGERS:
+        if re.search(rf"\b{re.escape(trigger)}\b", lowered):
+            return trigger
+    return None
+
+# Ambient state the builder must never consult. Reading any of these would make
+# the continuation vary with auto-run state, which REQ-03 forbids.
+AUTO_STATE_READS = [
+    "auto-run",
+    "AUTO_RUN_STATE_FILENAME",
+    "load_run_state",
+    "run_state",
+    "killed",
+    "kill_switch",
+    "autonomy",
+]
+
+
+def _executable_identifiers(module) -> str:
+    """Every identifier and string *value* in ``module``, docstrings excluded.
+
+    A raw substring scan over the source would flag the module's own prose
+    describing what it deliberately does not read. This walks the AST instead —
+    comments never reach it, and statement-position docstrings are dropped — so
+    the scan sees only code: names, attributes, imports, and the string literals
+    the module actually evaluates (f-string parts included).
+    """
+    tree = ast.parse(inspect.getsource(module))
+    scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+    for node in ast.walk(tree):
+        if not isinstance(node, scopes) or not node.body:
+            continue
+        first = node.body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            node.body.pop(0)
+
+    found: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name):
+            found.append(node.id)
+        elif isinstance(node, ast.Attribute):
+            found.append(node.attr)
+        elif isinstance(node, ast.arg):
+            found.append(node.arg)
+        elif isinstance(node, ast.alias):
+            found.append(node.name)
+        elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+            found.append(node.value)
+    return "\n".join(found).lower()
 
 
 def test_builder_carries_the_passed_next_step_hint_verbatim():
@@ -83,6 +155,61 @@ def test_non_terminal_variant_is_unchanged_by_the_terminal_flag_default():
         assert continuation.build_continuation(phase, SENTINEL) == (
             continuation.build_continuation(phase, SENTINEL, complete=False)
         )
+
+
+def test_output_is_identical_with_and_without_auto_run_state(tmp_path, monkeypatch):
+    # REQ-03: the CLI stays mode-agnostic. Writing the auto-run state file into
+    # the working tree must not change a single byte of the emitted continuation
+    # - the wording is one shape, and in an auto run the self-propagating auto
+    # bootstrap supersedes it (D-01).
+    from specflo import auto
+
+    monkeypatch.chdir(tmp_path)
+    before = {
+        (phase, complete): continuation.build_continuation(phase, SENTINEL, complete=complete)
+        for phase in PHASES
+        for complete in (False, True)
+    }
+
+    state = tmp_path / auto.AUTO_RUN_STATE_FILENAME
+    state.write_text('{"passes": 3, "killed": true}')
+    assert state.is_file()
+
+    after = {
+        (phase, complete): continuation.build_continuation(phase, SENTINEL, complete=complete)
+        for phase in PHASES
+        for complete in (False, True)
+    }
+    assert before == after
+
+
+def test_builder_source_reads_no_auto_run_state():
+    # The stronger form of REQ-03, asserted by source scan rather than behaviour:
+    # even a *latent* read of auto-run state, the kill-switch flag or an autonomy
+    # config value is a defect, because it would make mode-awareness reachable
+    # without the deliberate design change D-01 defers.
+    code = _executable_identifiers(continuation)
+    for needle in AUTO_STATE_READS:
+        assert needle not in code, f"builder consults auto-run state: {needle!r}"
+
+
+def test_continuation_names_no_harness_trigger():
+    # REQ-09: harness-neutral at every phase and in both variants. The outer
+    # harness maps this clear-point onto its own trigger; specflo never names one.
+    for phase in PHASES:
+        for complete in (False, True):
+            text = continuation.build_continuation(phase, SENTINEL, complete=complete)
+            named = _names_a_trigger(text)
+            assert named is None, (
+                f"harness trigger {named!r} leaked into the {phase} continuation"
+            )
+
+
+def test_builder_emitted_strings_name_no_harness_trigger():
+    # Absence across every string the module can actually emit, so a trigger name
+    # cannot hide in an unreached branch.
+    named = _names_a_trigger(_executable_identifiers(continuation))
+    assert named is None, f"harness trigger {named!r} reachable in builder output"
 
 
 def test_builder_is_a_pure_function_of_its_arguments():
