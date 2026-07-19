@@ -1219,6 +1219,75 @@ def test_advance_composes_no_continuation_wording_of_its_own():
     assert "phase skill" not in source
 
 
+def _project_at_execute_with_two_tasks(runner, app, tmp_path):
+    """At the execute phase with T-01 and T-02 pending, so completing T-01 leaves
+    a next actionable task for the continuation to name."""
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build more", "--acceptance",
+                        "it also works", "--verify", "true", "--from", "REQ-01"])
+
+
+def test_task_done_emits_the_four_part_continuation_shape(tmp_path, monkeypatch):
+    # REQ-01: task done was the thin seam - it printed only "T-NN -> done". It now
+    # carries the same four parts advance does. Asserted structurally via fixed
+    # markers, not verbatim wording.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import continuation
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    out = runner.invoke(app, ["task", "done", "T-01"]).output
+
+    assert "T-01 -> done" in out                          # 1. transition line
+    assert "T-02" in out and "task show" in out           # 2. derived next-step hint
+    assert "Checkpoint saved:" in out                     # 3. checkpoint location
+    assert continuation.CLEAR_POINT_MARKER in out         # 4. clear-point
+
+
+def test_task_done_names_both_resume_paths(tmp_path, monkeypatch):
+    # REQ-11 at the task-completion seam.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    out = runner.invoke(app, ["task", "done", "T-01"]).output
+    assert "`specflo checkpoint`" in out
+    assert "`specflo auto`" in out
+
+
+def test_task_done_delegates_to_the_shared_continuation_builder(tmp_path, monkeypatch):
+    # REQ-04: the same builder block advance emits, so the two seams cannot drift.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint, config as config_module, continuation, projects
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    out = runner.invoke(app, ["task", "done", "T-01"]).output
+    cfg = config_module.load_config(tmp_path)
+    project = projects.load_project(tmp_path, cfg, "thing")
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg)
+    assert continuation.build_continuation(payload["phase"], payload["do_next"]) in out
+
+
+def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):
+    # Scope guard: only task *done* is a clear-point. start/block/reopen keep
+    # printing just their transition line (spec: other seams are out of scope).
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import continuation
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+
+    started = runner.invoke(app, ["task", "start", "T-01"]).output
+    assert "T-01 -> in_progress" in started
+    assert continuation.CLEAR_POINT_MARKER not in started
+
+    blocked = runner.invoke(app, ["task", "block", "T-01", "--reason", "waiting"]).output
+    assert continuation.CLEAR_POINT_MARKER not in blocked
+
+    reopened = runner.invoke(app, ["task", "reopen", "T-01"]).output
+    assert continuation.CLEAR_POINT_MARKER not in reopened
+
+
 def test_task_progress_verbs_and_list(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

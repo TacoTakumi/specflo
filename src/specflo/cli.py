@@ -1072,6 +1072,28 @@ def task_set_milestone(
         typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
+def _echo_task_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
+    """Emit the checkpoint path and the shared continuation after `task done`.
+
+    Completing a task is a clean place to clear context, so the seam carries the
+    same four-part shape `advance` does (REQ-01): the transition line (already
+    printed), the checkpoint location, and the continuation block — whose
+    next-step hint comes from ``build_checkpoint`` so it cannot drift from what
+    `status` and `checkpoint` report for the same state (REQ-05).
+
+    Best-effort, mirroring :func:`_refresh_checkpoint`: the task mutation has
+    already succeeded and been persisted, so failing to render the continuation
+    must never fail the command.
+    """
+    try:
+        project = projects.load_project(root, cfg, slug)
+        payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
+    except Exception:
+        return
+    typer.echo(f"Checkpoint saved: {payload['path']}")
+    typer.echo(continuation.build_continuation(payload["phase"], payload["do_next"]))
+
+
 def _report_transition(task: plan.Task, json_output: bool) -> None:
     if json_output:
         typer.echo(json.dumps({"id": task.id, "progress": task.progress, "blocked": task.blocked}))
@@ -1110,6 +1132,10 @@ def task_done(
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
     _report_transition(task, json_output)
+    # Unlike the other task verbs, completing a task is a clear-point: it gets the
+    # full continuation (REQ-01). start/block/reopen stay terse by design.
+    if not json_output:
+        _echo_task_continuation(root, cfg, slug)
 
 
 @task_app.command("block", epilog='Example: specflo task block T-01 --reason "waiting on API"')
