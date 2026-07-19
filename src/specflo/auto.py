@@ -25,8 +25,10 @@ BOOTSTRAP_MARKER = "== specflo auto-mode bootstrap =="
 
 # Fixed clause markers within the bootstrap. Tests key on these structurally so
 # later tasks can grow each clause's wording in place. BOUNDARY_OVERRIDE_MARKER
-# labels the clause that supersedes the phase skills' pause gate (REQ-06).
+# labels the clause that supersedes the phase skills' pause gate (REQ-06);
+# FORK_POLICY_MARKER labels the default decision-fork policy (REQ-11).
 BOUNDARY_OVERRIDE_MARKER = "Boundary override:"
+FORK_POLICY_MARKER = "Decision forks:"
 
 
 def _boundary_override_clause() -> str:
@@ -47,13 +49,29 @@ def _boundary_override_clause() -> str:
     )
 
 
+def _fork_policy_clause() -> str:
+    """The default (non-delegated) decision-fork policy (REQ-11).
+
+    On a fork with a defensible default, take it and record it as an assumption
+    via ``specflo decision add`` (visible and reversible via ``specflo reopen``),
+    then continue; stop and ask the human only when there is genuinely no
+    defensible default. T-06 later varies this by ``--autonomy`` level.
+    """
+    return (
+        f"- {FORK_POLICY_MARKER} on a fork with a defensible default, take it and "
+        "record it as an assumption via `specflo decision add` (visible and "
+        "reversible via `specflo reopen`), then keep going. Stop and ask the "
+        "human only when there is genuinely no defensible default."
+    )
+
+
 def auto_bootstrap(phase: str) -> str:
     """Return the auto-mode bootstrap directive block for ``phase``.
 
     The bootstrap is the standing autonomy policy + guardrail stop-conditions the
     unattended run carries: an opt-in framing header followed by the directive
-    clauses. Later tasks grow the fork-policy / autonomy / guardrail clauses
-    beneath the ones here.
+    clauses. Later tasks grow the autonomy / guardrail clauses beneath the ones
+    here.
     """
     header = (
         f"{BOOTSTRAP_MARKER}\n"
@@ -64,6 +82,7 @@ def auto_bootstrap(phase: str) -> str:
     )
     clauses = [
         _boundary_override_clause(),
+        _fork_policy_clause(),
     ]
     return "\n".join([header, "", *clauses])
 

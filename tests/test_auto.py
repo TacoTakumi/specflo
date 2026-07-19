@@ -99,6 +99,31 @@ def test_non_auto_reseed_still_surfaces_pause_and_carries_no_auto_override(tmp_p
     assert auto.BOUNDARY_OVERRIDE_MARKER not in out
 
 
+# --- T-03: default decision-fork policy (REQ-11) ------------------------------
+
+def test_bootstrap_fork_policy_takes_and_records_defensible_default():
+    # on a fork with a defensible default: take it and record it, naming the
+    # `specflo decision add` recording mechanism.
+    block = auto.auto_bootstrap("plan")
+    assert auto.FORK_POLICY_MARKER in block
+    assert "decision add" in block
+    assert "defensible default" in block.lower()
+
+
+def test_bootstrap_fork_policy_stops_and_asks_when_no_default():
+    # the other branch: stop and ask the human only when no defensible default
+    # exists.
+    block = auto.auto_bootstrap("plan")
+    lowered = block.lower()
+    assert "no defensible default" in lowered
+    assert "ask" in lowered
+
+
+def test_bootstrap_fork_policy_present_at_every_phase():
+    for phase in PHASES:
+        assert auto.FORK_POLICY_MARKER in auto.auto_bootstrap(phase)
+
+
 # --- CLI surface --------------------------------------------------------------
 
 def test_auto_appears_in_help():
