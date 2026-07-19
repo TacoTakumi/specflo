@@ -1347,6 +1347,80 @@ def test_advance_completion_json_continuation_is_clear_point_only(tmp_path, monk
     assert "specflo auto" not in data["continuation"]
 
 
+def test_task_done_json_keeps_its_keys_when_the_continuation_is_underivable(
+    tmp_path, monkeypatch
+):
+    # REQ-12 is a contract: a harness reading task done --json must find the keys.
+    # When derivation fails the values go null - the command still succeeds, but it
+    # degrades visibly rather than silently dropping fields and handing the caller
+    # a KeyError.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint as checkpoint_module
+
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+
+    def boom(*args, **kwargs):
+        raise OSError("checkpoint unreadable")
+
+    monkeypatch.setattr(checkpoint_module, "build_checkpoint", boom)
+    result = runner.invoke(app, ["task", "done", "T-01", "--json"])
+
+    assert result.exit_code == 0, "a render failure must not fail the command"
+    data = _json.loads(result.stdout)
+    assert {"next_step", "checkpoint", "continuation"} <= set(data)
+    assert data["continuation"] is None
+    assert data["id"] == "T-01" and data["progress"] == "done"
+
+
+def test_underivable_continuation_is_announced_on_stderr(tmp_path, monkeypatch):
+    # Degrade visibly, not silently: swallowing the error keeps the command from
+    # failing after a committed mutation, but a real bug (a malformed plan.md, an
+    # unreadable checkpoint) must not read as "this project had nothing to say".
+    # stderr only, so `--json` stdout stays machine-parseable.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint as checkpoint_module
+
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+
+    def boom(*args, **kwargs):
+        raise OSError("checkpoint unreadable")
+
+    monkeypatch.setattr(checkpoint_module, "build_checkpoint", boom)
+    result = runner.invoke(app, ["task", "done", "T-01", "--json"], catch_exceptions=False)
+
+    assert result.exit_code == 0
+    assert "could not derive the continuation" in result.stderr
+    _json.loads(result.stdout)  # stdout stays parseable JSON
+
+
+def test_transition_fields_cannot_be_overwritten_by_continuation_fields():
+    # Hardening: the transition identity is applied last, so no future `extra`
+    # payload can shadow id/progress/blocked.
+    from types import SimpleNamespace
+
+    from specflo import cli
+
+    # _report_transition reads only these three attributes.
+    task = SimpleNamespace(id="T-07", progress="done", blocked=None)
+    captured = []
+    original_echo = cli.typer.echo
+    try:
+        cli.typer.echo = captured.append
+        cli._report_transition(
+            task, True, extra={"id": "HIJACKED", "progress": "pending", "next_step": "x"},
+        )
+    finally:
+        cli.typer.echo = original_echo
+    data = _json.loads(captured[0])
+    assert data["id"] == "T-07"
+    assert data["progress"] == "done"
+    assert data["next_step"] == "x"
+
+
 def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):
     # Scope guard: only task *done* is a clear-point. start/block/reopen keep
     # printing just their transition line (spec: other seams are out of scope).

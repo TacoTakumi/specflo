@@ -885,7 +885,7 @@ def reopen(
         # builder existed. It routes through the builder so no seam keeps its own
         # copy of the wording (REQ-04, D-06).
         cont = _seam_continuation(root, cfg, slug)
-        if cont is not None:
+        if cont["continuation"] is not None:
             typer.echo(cont["continuation"])
 
 
@@ -1082,7 +1082,13 @@ def task_set_milestone(
         typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
-def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict | None:
+# The continuation fields a seam contributes to its `--json`. Always present, so
+# a harness can rely on the keys existing even when the values could not be
+# derived (REQ-12); `None` says "underivable", never "absent".
+_CONTINUATION_KEYS = ("next_step", "checkpoint", "continuation")
+
+
+def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
     """The continuation fields for a seam that has already mutated state.
 
     Used by `task done` and `reopen` — the seams whose next step is best derived
@@ -1097,15 +1103,27 @@ def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict
     Rendered once and shared by the prose and `--json` paths, so the two carry
     identical text (REQ-12).
 
-    Best-effort, mirroring :func:`_refresh_checkpoint`: the task mutation has
-    already succeeded and been persisted, so failing to derive the continuation
-    must never fail the command.
+    Best-effort, mirroring :func:`_refresh_checkpoint`: the mutation has already
+    succeeded and been persisted, so failing to derive the continuation must never
+    fail the command — a non-zero exit after a committed state change would be
+    worse than a missing line, and could send a harness into a retry.
+
+    The catch is therefore broad, but the failure is *visible* rather than silent:
+    every key stays present carrying ``None``, so a `--json` consumer reads
+    "underivable" instead of hitting a missing key (REQ-12), and an advisory goes
+    to stderr so a genuine bug (say a malformed ``plan.md``) is not mistaken for a
+    project that simply had nothing to say.
     """
     try:
         project = projects.load_project(root, cfg, slug)
         payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
-    except Exception:
-        return None
+    except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
+        typer.secho(
+            f"note: could not derive the continuation ({exc.__class__.__name__}: {exc}).",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
+        return dict.fromkeys(_CONTINUATION_KEYS)
     return {
         "next_step": payload["do_next"],
         "checkpoint": payload["path"],
@@ -1121,12 +1139,16 @@ def _report_transition(
     """Print a task's state transition; ``extra`` adds fields to the JSON form.
 
     Only `task done` passes ``extra`` — the other verbs stay terse, since
-    completing a task is the one task-level clear-point (REQ-01).
+    completing a task is the one task-level clear-point (REQ-01). The transition
+    fields are applied last, so ``extra`` can never overwrite them.
     """
     if json_output:
-        payload = {"id": task.id, "progress": task.progress, "blocked": task.blocked}
-        if extra:
-            payload.update(extra)
+        payload = {
+            **(extra or {}),
+            "id": task.id,
+            "progress": task.progress,
+            "blocked": task.blocked,
+        }
         typer.echo(json.dumps(payload))
     else:
         line = f"{task.id} -> {task.progress}"
@@ -1166,7 +1188,7 @@ def task_done(
     # full continuation (REQ-01). start/block/reopen stay terse by design.
     cont = _seam_continuation(root, cfg, slug)
     _report_transition(task, json_output, extra=cont)
-    if not json_output and cont is not None:
+    if not json_output and cont["continuation"] is not None:
         typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
         typer.echo(cont["continuation"])
 
