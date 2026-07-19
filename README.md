@@ -64,7 +64,7 @@ An agent can't clear its own context *or* remember what to do across a `/clear` 
 
 ## Skills
 
-specflo ships its six workflow skills inside the package and installs them into
+specflo ships its seven workflow skills inside the package and installs them into
 whatever agent harness it finds on your machine (Claude Code, pi, Hermes,
 opencode). Let the CLI do it -- no copying or symlinking by hand:
 
@@ -90,7 +90,7 @@ line on stderr pointing at `specflo skills update`. It is notice-only: it never
 prompts, never updates anything, and never changes the exit code. Silence it by
 setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
-The six skills:
+The seven skills:
 
 - **`brainstorm`** (`skills/brainstorm/SKILL.md`) -- drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
 - **`spec`** (`skills/spec/SKILL.md`) -- drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
@@ -98,6 +98,7 @@ The six skills:
 - **`execute`** (`skills/execute/SKILL.md`) -- drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`).
 - **`research`** (`skills/research/SKILL.md`) -- a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated -- searches the Agent Wiki first and saves findings back (soft dependency).
 - **`shelve`** (`skills/shelve/SKILL.md`) -- recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
+- **`auto`** (`skills/auto/SKILL.md`) -- recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
 
 ### Working on the skills themselves
 

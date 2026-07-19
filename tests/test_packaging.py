@@ -1,6 +1,6 @@
 """The built wheel and sdist carry the repo-root skills as agentsquire Root B.
 
-The 6 workflow skills live at repo-root ``skills/`` (the single source of truth)
+The 7 workflow skills live at repo-root ``skills/`` (the single source of truth)
 and ride into the wheel via one hatchling force-include line, landing at
 ``specflo/_repo_skills/<name>/`` -- agentsquire's Root B package-data location,
 NOT ``specflo/skills`` (which would duplicate Root A and raise
@@ -23,8 +23,8 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The 6 workflow skills, hardcoded so a dropped skill fails the build test.
-SKILL_NAMES = ["brainstorm", "execute", "plan", "research", "shelve", "spec"]
+# The 7 workflow skills, hardcoded so a dropped skill fails the build test.
+SKILL_NAMES = ["auto", "brainstorm", "execute", "plan", "research", "shelve", "spec"]
 
 
 def _load_hatch_build():

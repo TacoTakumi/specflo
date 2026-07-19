@@ -37,6 +37,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   continuing pass to re-emit it (re-run `specflo auto`, never the manual ask-first
   reseed), so the loop keeps its autonomy policy across a context clear and does
   not silently revert to ask-first after the first phase boundary.
+- **`auto` workflow skill.** A thin skill (the seventh) that recognizes an
+  unattended-run intent and maps it to `specflo auto`, then follows the emitted
+  payload. It reimplements none of the loop/guardrail/payload logic -- the CLI
+  carries that -- mirroring specflo's skill-vs-CLI split. Installed by
+  `specflo skills install` alongside the others.
 
 ## [0.2.0]
 
