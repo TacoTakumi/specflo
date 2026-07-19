@@ -179,6 +179,21 @@ def test_config_persists_non_default_autonomy_and_omits_the_default(tmp_path):
     assert config.load_config(tmp_path).autonomy == "yolo"  # survives round-trip
 
 
+# --- T-05: plan-time avoidance directive (REQ-10) -----------------------------
+
+def test_bootstrap_plan_time_deferred_draft_and_handoff():
+    block = auto.auto_bootstrap("plan")
+    assert auto.PLAN_TIME_MARKER in block
+    low = block.lower()
+    assert "defer" in low            # deferred
+    assert "draft" in low and "hand" in low  # draft-and-handoff
+
+
+def test_bootstrap_plan_time_present_at_every_phase():
+    for phase in PHASES:
+        assert auto.PLAN_TIME_MARKER in auto.auto_bootstrap(phase)
+
+
 # --- CLI surface --------------------------------------------------------------
 
 def test_cli_auto_no_flag_defaults_to_safe(tmp_path, monkeypatch):

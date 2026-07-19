@@ -30,6 +30,7 @@ BOOTSTRAP_MARKER = "== specflo auto-mode bootstrap =="
 BOUNDARY_OVERRIDE_MARKER = "Boundary override:"
 FORK_POLICY_MARKER = "Decision forks:"
 SIDE_EFFECT_MARKER = "Irreversible / outbound actions:"
+PLAN_TIME_MARKER = "Plan-time avoidance:"
 
 # Autonomy levels for `specflo auto` (REQ-08). `safe` (default) and `autonomous`
 # stop-and-hand-off on any irreversible/outbound step; `yolo` permits them. The
@@ -93,6 +94,24 @@ def _side_effect_clause(autonomy: str) -> str:
     )
 
 
+def _plan_time_avoidance_clause() -> str:
+    """Author outward-facing/irreversible work as deferred draft-and-handoff (REQ-10).
+
+    Prevention over bail-out: if the plan writes every posting/sending/publishing/
+    deploying/deleting/spending step as "produce the artifact locally, hand it to
+    the human", the loop only ever does reversible, internal work and never
+    reaches a forced side-effect stop.
+    """
+    return (
+        f"- {PLAN_TIME_MARKER} when authoring the plan, write any outward-facing "
+        "or irreversible step (posting, sending, publishing, deploying, deleting, "
+        "spending) as a deferred draft-and-handoff task - produce the artifact "
+        "locally and hand it to the human, never perform it in the loop - so the "
+        "run does only reversible, internal work and never reaches a forced "
+        "bail-out."
+    )
+
+
 def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     """Return the auto-mode bootstrap directive block for ``phase`` at ``autonomy``.
 
@@ -112,6 +131,7 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
         _boundary_override_clause(),
         _fork_policy_clause(),
         _side_effect_clause(autonomy),
+        _plan_time_avoidance_clause(),
     ]
     return "\n".join([header, "", *clauses])
 
