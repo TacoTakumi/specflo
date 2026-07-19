@@ -207,6 +207,43 @@ def test_fork_policy_differs_between_safe_and_delegated():
         assert safe != deleg  # observable difference between the levels
 
 
+# --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------
+
+def test_floor_is_source_constant_and_sensible():
+    assert isinstance(auto.ALWAYS_STOP_FLOOR, tuple)
+    assert auto.ALWAYS_STOP_FLOOR  # non-empty
+    joined = " ".join(auto.ALWAYS_STOP_FLOOR).lower()
+    # aligned with the global never-post/publish/send rule
+    assert "push" in joined
+    assert "secret" in joined or "credential" in joined
+
+
+def test_floor_named_at_every_level_including_yolo():
+    for level in auto.AUTONOMY_LEVELS:
+        block = auto.auto_bootstrap("execute", autonomy=level)
+        assert auto.FLOOR_MARKER in block
+        clause = _clause(block, auto.FLOOR_MARKER)
+        for item in auto.ALWAYS_STOP_FLOOR:  # every floor item is named
+            assert item in clause, f"{item!r} missing from floor clause at {level}"
+
+
+def test_floor_not_disabled_by_config_default_yolo(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    cfg = config.load_config(tmp_path)
+    cfg.autonomy = "yolo"
+    config.save_config(tmp_path, cfg)  # config default yolo, no flag
+    result = runner.invoke(app, ["auto"])
+    assert auto.FLOOR_MARKER in result.stdout
+
+
+def test_floor_not_read_from_user_config(tmp_path):
+    # the floor is a source constant; config carries no key that could shrink it
+    config.init_config(tmp_path)
+    assert "floor" not in config.config_path(tmp_path).read_text().lower()
+
+
 # --- T-05: plan-time avoidance directive (REQ-10) -----------------------------
 
 def test_bootstrap_plan_time_deferred_draft_and_handoff():

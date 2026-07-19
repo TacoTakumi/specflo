@@ -40,6 +40,20 @@ PLAN_TIME_MARKER = "Plan-time avoidance:"
 AUTONOMY_LEVELS = ("safe", "autonomous", "yolo")
 DEFAULT_AUTONOMY = "safe"
 
+FLOOR_MARKER = "Always-stop floor:"
+
+# The always-stop floor (REQ-09): a fixed, source-defined set of conditions that
+# ALWAYS stop the loop and hand off - at every --autonomy level, yolo included. It
+# is a source constant; no config value or level can disable or shrink it. Aligned
+# with the global "never post/publish/send" rule.
+ALWAYS_STOP_FLOOR = (
+    "git push or force-push",
+    "deleting user or untracked files",
+    "outbound sends or posts (email, PR, issue, comment)",
+    "spending money",
+    "secret or credential operations",
+)
+
 
 def _boundary_override_clause() -> str:
     """The clause superseding the phase skills' boundary-pause HARD-GATE (REQ-06).
@@ -98,7 +112,8 @@ def _side_effect_clause(autonomy: str) -> str:
     if autonomy == "yolo":
         return (
             f"- {SIDE_EFFECT_MARKER} PERMITTED at --autonomy yolo - you may "
-            "perform irreversible or outbound steps without stopping."
+            "perform irreversible or outbound steps without stopping, except the "
+            "always-stop floor below (which no level relaxes)."
         )
     return (
         f"- {SIDE_EFFECT_MARKER} STOP and hand off to the human on any "
@@ -125,6 +140,20 @@ def _plan_time_avoidance_clause() -> str:
     )
 
 
+def _floor_clause() -> str:
+    """The hardcoded always-stop floor, level-independent (REQ-09).
+
+    Names every :data:`ALWAYS_STOP_FLOOR` condition and states that no level or
+    config value relaxes it - so it reads identically under ``yolo``.
+    """
+    items = "; ".join(ALWAYS_STOP_FLOOR)
+    return (
+        f"- {FLOOR_MARKER} regardless of --autonomy level (yolo included), ALWAYS "
+        f"stop and hand off to the human on any of: {items}. No level or config "
+        "value relaxes this floor."
+    )
+
+
 def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     """Return the auto-mode bootstrap directive block for ``phase`` at ``autonomy``.
 
@@ -144,6 +173,7 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
         _boundary_override_clause(),
         _fork_policy_clause(autonomy),
         _side_effect_clause(autonomy),
+        _floor_clause(),
         _plan_time_avoidance_clause(),
     ]
     return "\n".join([header, "", *clauses])
