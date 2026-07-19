@@ -54,6 +54,37 @@ def test_builder_emits_the_clear_point_marker():
         assert continuation.CLEAR_POINT_MARKER in text, f"no clear-point at {phase}"
 
 
+def test_terminal_variant_emits_a_clear_point():
+    # REQ-07: completing the project is still a clean place to clear context.
+    text = continuation.build_continuation("execute", SENTINEL, complete=True)
+    assert continuation.CLEAR_POINT_MARKER in text
+
+
+def test_terminal_variant_names_neither_resume_command():
+    # REQ-07, asserted by *required absence*: a complete project has nothing to
+    # continue to, and naming the auto command here would invite an auto loop -
+    # which halts on the CLI's completion signal - to start another pass.
+    text = continuation.build_continuation("execute", SENTINEL, complete=True)
+    assert "specflo checkpoint" not in text
+    assert "specflo auto" not in text
+
+
+def test_terminal_variant_omits_the_continue_instruction():
+    # A clear-point *without* a continue-instruction: no phase skill to carry on
+    # with, since there is no next phase. Keyed on the pointer sentence rather
+    # than the skill name, which at the terminal phase is also the phase name.
+    text = continuation.build_continuation("execute", SENTINEL, complete=True)
+    assert "phase skill" not in text
+
+
+def test_non_terminal_variant_is_unchanged_by_the_terminal_flag_default():
+    # The flag defaults off, so every existing caller keeps the full continuation.
+    for phase in PHASES:
+        assert continuation.build_continuation(phase, SENTINEL) == (
+            continuation.build_continuation(phase, SENTINEL, complete=False)
+        )
+
+
 def test_builder_is_a_pure_function_of_its_arguments():
     # Same inputs -> byte-identical output, with no ambient state consulted. This
     # is what makes the mode-agnosticism of REQ-03 checkable by construction.

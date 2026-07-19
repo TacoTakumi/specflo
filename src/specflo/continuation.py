@@ -79,14 +79,31 @@ def _continue_line() -> str:
     )
 
 
-def build_continuation(phase: str, do_next: str) -> str:
+def _complete_line() -> str:
+    """The terminal clear-point: a clear-point with *no* continue-instruction.
+
+    Deliberately names neither resume command (REQ-07). A complete project has
+    nothing to continue to, and naming the auto command here would invite an auto
+    loop - which terminates on the CLI's completion signal - to start another
+    pass over a finished project.
+    """
+    return f"{CLEAR_POINT_MARKER} - this project is complete."
+
+
+def build_continuation(phase: str, do_next: str, complete: bool = False) -> str:
     """Render the continuation for ``phase`` with its derived ``do_next`` hint.
 
     Returns one contiguous block: the phase and its immediate next action, the
     phase-skill pointer, and the clear-point-and-continue line. Seams print their
     own transition line and checkpoint path around it; the block itself is what
     every seam shares.
+
+    With ``complete=True`` (the project just finished) the block drops the
+    continue-instruction entirely - no phase-skill pointer, and a clear-point
+    naming neither resume command (REQ-07).
     """
+    if complete:
+        return "\n".join([_action_line(phase, do_next), _complete_line()])
     return "\n".join([
         _action_line(phase, do_next),
         _skill_pointer_line(phase),
