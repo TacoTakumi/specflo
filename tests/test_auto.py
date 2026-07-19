@@ -12,7 +12,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from specflo import auto, checkpoint, config, hook, projects, workflow
+from specflo import auto, brainstorm, checkpoint, config, hook, projects, spec, workflow
 from specflo.cli import app
 
 runner = CliRunner()
@@ -444,6 +444,45 @@ def test_cli_auto_off_and_on_are_mutually_exclusive(tmp_path, monkeypatch):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
     assert runner.invoke(app, ["auto", "--off", "--on"]).exit_code != 0
+
+
+# --- T-10 follow-up: finer within-phase progress signal (brainstorm/spec) -----
+# The initial signal only read plan/execute task counts, so brainstorm and spec
+# were phase-coarse ("<phase>:0/0") and only a phase advance moved them - a stall
+# false-positive for a multi-pass brainstorm/spec. The signal now counts recorded
+# decisions (brainstorm) / requirements (spec) so real within-phase work moves it.
+
+def test_progress_signal_reflects_decision_count_in_brainstorm(tmp_path):
+    slug = _active_at(tmp_path, "brainstorm")
+    cfg = config.load_config(tmp_path)
+    brainstorm.start_brainstorm(tmp_path, cfg, slug)
+    proj = projects.load_project(tmp_path, cfg, slug)
+    before = auto.progress_signal(tmp_path, cfg, proj)
+    brainstorm.add_decision(tmp_path, cfg, slug, text="use argparse", rationale="stdlib")
+    assert auto.progress_signal(tmp_path, cfg, proj) != before  # a decision is progress
+
+
+def test_progress_signal_reflects_requirement_count_in_spec(tmp_path):
+    slug = _active_at(tmp_path, "spec")
+    cfg = config.load_config(tmp_path)
+    spec.start_spec(tmp_path, cfg, slug)
+    proj = projects.load_project(tmp_path, cfg, slug)
+    before = auto.progress_signal(tmp_path, cfg, proj)
+    spec.add_requirement(tmp_path, cfg, slug, text="prints greeting", acceptance="exit 0")
+    assert auto.progress_signal(tmp_path, cfg, proj) != before  # a requirement is progress
+
+
+def test_auto_pass_does_not_stall_while_decisions_accumulate(tmp_path):
+    # the false-positive the dry-run surfaced: recording a decision each pass is
+    # forward progress, so more passes than the stall threshold must NOT escalate.
+    slug = _active_at(tmp_path, "brainstorm")
+    cfg = config.load_config(tmp_path)
+    brainstorm.start_brainstorm(tmp_path, cfg, slug)
+    for i in range(auto.STALL_THRESHOLD + 2):
+        brainstorm.add_decision(tmp_path, cfg, slug, text=f"decision {i}", rationale="r")
+        out = auto.auto_pass(tmp_path, max_passes=1000)
+        assert auto.BOOTSTRAP_MARKER in out
+        assert auto.ESCALATION_MARKER not in out
 
 
 # --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------

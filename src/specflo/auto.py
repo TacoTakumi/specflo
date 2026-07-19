@@ -17,7 +17,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config, plan as plan_module, projects
+from . import (
+    brainstorm as brainstorm_module,
+    config,
+    plan as plan_module,
+    projects,
+    spec as spec_module,
+)
 from .projects import COMPLETE_STATUS
 
 # Fixed marker opening the auto-mode bootstrap section of the payload. Tests key
@@ -146,25 +152,48 @@ def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict
 STALL_THRESHOLD = 3
 
 
+def _count_artifact_headers(doc: str, prefix: str) -> int:
+    """Count ``### <prefix>NN —`` artifact headers in ``doc``.
+
+    A monotonic within-phase progress proxy: every `specflo decision add` /
+    `requirement add` appends one such header, so the count only ever grows as the
+    phase does real work (a supersede adds the new entry and keeps the old, so it
+    still moves the count).
+    """
+    marker = f"### {prefix}"
+    return sum(1 for line in doc.splitlines() if line.startswith(marker))
+
+
 def progress_signal(root: Path, cfg: config.SpecfloConfig, project) -> str:
     """A derived forward-progress signal for ``project``'s current pass (REQ-15).
 
-    Combines the phase (advancing brainstorm -> spec -> plan -> execute is
-    forward progress) with the plan's done/total task counts (completing or
-    adding a task is forward progress). Two consecutive passes yielding the *same*
-    signal made no forward progress; :data:`STALL_THRESHOLD` such passes in a row
-    escalate. Best-effort: any read failure degrades to a phase-only signal
-    rather than raising, so stall detection never breaks the pass itself.
+    Phase-aware so that *within-phase* work moves the signal, not just a phase
+    advance: brainstorm counts recorded decisions, spec counts requirements, and
+    plan/execute use the plan's done/total task counts. Advancing the phase always
+    changes it too. Two consecutive passes yielding the *same* signal made no
+    forward progress; :data:`STALL_THRESHOLD` such passes in a row escalate.
+    Best-effort: any read failure degrades to a phase-only signal rather than
+    raising, so stall detection never breaks the pass itself.
     """
-    done = total = 0
+    phase = project.phase
+    detail = "0"
     try:
-        plan_file = project.path / plan_module.PLAN_FILENAME
-        if project.phase in ("plan", "execute") and plan_file.is_file():
-            prog = plan_module.progress_from_doc(plan_file.read_text())
-            done, total = prog["done"], prog["total"]
+        if phase in ("plan", "execute"):
+            plan_file = project.path / plan_module.PLAN_FILENAME
+            if plan_file.is_file():
+                prog = plan_module.progress_from_doc(plan_file.read_text())
+                detail = f"{prog['done']}/{prog['total']}"
+        elif phase == "brainstorm":
+            bfile = project.path / brainstorm_module.BRAINSTORM_FILENAME
+            if bfile.is_file():
+                detail = str(_count_artifact_headers(bfile.read_text(), "D-"))
+        elif phase == "spec":
+            sfile = project.path / spec_module.SPEC_FILENAME
+            if sfile.is_file():
+                detail = str(_count_artifact_headers(sfile.read_text(), "REQ-"))
     except Exception:
         pass
-    return f"{project.phase}:{done}/{total}"
+    return f"{phase}:{detail}"
 
 
 def resolve_max_passes(flag: int | None, cfg_default: int | None) -> int:
