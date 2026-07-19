@@ -31,6 +31,14 @@ def _active_at(tmp_path, phase, name="My Thing"):
     return slug
 
 
+def _clause(block, marker):
+    """The single bootstrap line carrying ``marker`` (or "" if absent)."""
+    for line in block.splitlines():
+        if marker in line:
+            return line
+    return ""
+
+
 # --- payload derivation -------------------------------------------------------
 
 def test_auto_text_emits_bootstrap_at_each_phase(tmp_path):
@@ -124,7 +132,105 @@ def test_bootstrap_fork_policy_present_at_every_phase():
         assert auto.FORK_POLICY_MARKER in auto.auto_bootstrap(phase)
 
 
+# --- T-04: --autonomy level + irreversible-action gating (REQ-08) -------------
+
+def test_autonomy_levels_and_default():
+    assert auto.AUTONOMY_LEVELS == ("safe", "autonomous", "yolo")
+    assert auto.DEFAULT_AUTONOMY == "safe"
+    # the config-key default matches (no flag / no config -> safe)
+    assert config.SpecfloConfig().autonomy == "safe"
+
+
+def test_bootstrap_safe_and_autonomous_stop_on_irreversible():
+    for level in ("safe", "autonomous"):
+        block = auto.auto_bootstrap("execute", autonomy=level)
+        clause = _clause(block, auto.SIDE_EFFECT_MARKER)
+        assert clause, f"no side-effect clause at {level}"
+        low = clause.lower()
+        assert "stop" in low and "hand off" in low
+        assert "permit" not in low
+
+
+def test_bootstrap_yolo_permits_irreversible():
+    clause = _clause(
+        auto.auto_bootstrap("execute", autonomy="yolo"), auto.SIDE_EFFECT_MARKER
+    )
+    assert "permit" in clause.lower()
+
+
+def test_bootstrap_defaults_to_safe_side_effect_gate():
+    # no autonomy arg -> the safe (stop-on-irreversible) payload, verbatim.
+    assert auto.auto_bootstrap("execute") == auto.auto_bootstrap("execute", autonomy="safe")
+
+
+def test_auto_text_unknown_level_falls_back_to_safe(tmp_path):
+    _active_at(tmp_path, "execute")
+    out = auto.auto_text(tmp_path, autonomy="bogus")
+    assert "permit" not in _clause(out, auto.SIDE_EFFECT_MARKER).lower()
+
+
+def test_config_persists_non_default_autonomy_and_omits_the_default(tmp_path):
+    config.init_config(tmp_path)
+    # a default (safe) config carries no autonomy key at all
+    assert "autonomy" not in config.config_path(tmp_path).read_text()
+    cfg = config.load_config(tmp_path)
+    cfg.autonomy = "yolo"
+    config.save_config(tmp_path, cfg)
+    assert config.load_config(tmp_path).autonomy == "yolo"  # survives round-trip
+
+
 # --- CLI surface --------------------------------------------------------------
+
+def test_cli_auto_no_flag_defaults_to_safe(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["auto"])
+    assert result.exit_code == 0
+    assert "permit" not in _clause(result.stdout, auto.SIDE_EFFECT_MARKER).lower()
+
+
+def test_cli_auto_yolo_flag_permits(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["auto", "--autonomy", "yolo"])
+    assert result.exit_code == 0
+    assert "permit" in _clause(result.stdout, auto.SIDE_EFFECT_MARKER).lower()
+
+
+def test_cli_auto_rejects_invalid_autonomy(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["auto", "--autonomy", "bogus"])
+    assert result.exit_code != 0
+
+
+def test_cli_auto_config_default_applies_when_no_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    cfg = config.load_config(tmp_path)
+    cfg.autonomy = "yolo"
+    config.save_config(tmp_path, cfg)  # hand-set the config default
+    result = runner.invoke(app, ["auto"])  # no flag -> config default
+    assert "permit" in _clause(result.stdout, auto.SIDE_EFFECT_MARKER).lower()
+
+
+def test_readme_and_changelog_document_autonomy():
+    repo = Path(__file__).resolve().parents[1]
+    readme = (repo / "README.md").read_text()
+    changelog = (repo / "CHANGELOG.md").read_text()
+    for doc in (readme, changelog):
+        assert "--autonomy" in doc
+        for level in auto.AUTONOMY_LEVELS:
+            assert level in doc
+    # the default is documented
+    assert "safe" in readme and "default" in readme.lower()
+
+
+# --- CLI surface (skeleton) ---------------------------------------------------
 
 def test_auto_appears_in_help():
     result = runner.invoke(app, ["--help"])
@@ -181,9 +287,15 @@ def test_auto_source_does_not_touch_reseed_or_advance_gate():
 
 
 def test_auto_adds_no_persisted_auto_on_config_key(tmp_path):
-    # REQ-01/D-10: the opt-in is the per-invocation command; no `auto: true`
-    # (or equivalent) auto-on key is persisted to the project config.
-    slug = _active_at(tmp_path, "brainstorm")
+    # REQ-01/D-10: the opt-in is the per-invocation command; no auto-*on* toggle
+    # (`auto: true` or equivalent) is persisted. An `autonomy` *level* string is
+    # allowed (REQ-08); a boolean on/off switch is not.
+    import yaml
+
+    _active_at(tmp_path, "brainstorm")
     auto.auto_text(tmp_path)
-    cfg_text = config.config_path(tmp_path).read_text()
-    assert "auto" not in cfg_text.lower()
+    data = yaml.safe_load(config.config_path(tmp_path).read_text()) or {}
+    for key, val in data.items():
+        assert not (key.startswith("auto") and isinstance(val, bool)), (
+            f"unexpected auto-on toggle {key!r} in config"
+        )

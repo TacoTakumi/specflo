@@ -19,10 +19,17 @@ CONFIG_FILENAME = "config.yaml"
 DEFAULT_PROJECTS_DIR = "docs/projects"
 
 
+DEFAULT_AUTONOMY = "safe"
+
+
 @dataclass
 class SpecfloConfig:
     projects_dir: str = DEFAULT_PROJECTS_DIR
     active_project: str | None = None
+    # Default autonomy level for `specflo auto` when no --autonomy flag is given
+    # (REQ-08). A level *string*, never an auto-*on* toggle (REQ-01/D-10). Kept as
+    # a literal default here to avoid importing `auto` (which imports `config`).
+    autonomy: str = DEFAULT_AUTONOMY
 
 
 def config_path(root: Path) -> Path:
@@ -62,6 +69,7 @@ def load_config(root: Path) -> SpecfloConfig:
     return SpecfloConfig(
         projects_dir=data.get("projects_dir", DEFAULT_PROJECTS_DIR),
         active_project=data.get("active_project"),
+        autonomy=data.get("autonomy", DEFAULT_AUTONOMY),
     )
 
 
@@ -69,6 +77,10 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"projects_dir": cfg.projects_dir, "active_project": cfg.active_project}
+    # Persist the autonomy level only when it is non-default, so a plain project's
+    # config stays minimal and carries no auto-* key at all (REQ-01).
+    if cfg.autonomy != DEFAULT_AUTONOMY:
+        payload["autonomy"] = cfg.autonomy
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
 

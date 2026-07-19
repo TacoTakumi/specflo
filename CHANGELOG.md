@@ -8,6 +8,21 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.3.0]
+
+### Added
+- **`specflo auto` command (auto mode).** An explicit, per-invocation opt-in that
+  emits an auto-mode *handoff payload* -- a bootstrap directive (autonomy policy
+  plus guardrail stop-conditions) that lets an agent run the specflo pipeline
+  unattended from the current phase toward completion, instead of the ask-first
+  confirmation pause. specflo only prints the payload; it drives no loop, spawns
+  no nested agent, and never clears context (the outer harness owns the trigger).
+  Strictly additive: the default `hook reseed` / checkpoint pause is unchanged.
+- **`--autonomy {safe,autonomous,yolo}`.** Governs how far an auto run goes
+  unattended, with a matching `.specflo` config default (default `safe`). `safe`
+  and `autonomous` stop and hand off on any irreversible or outbound step; `yolo`
+  permits them. The flag overrides the config default.
+
 ## [0.2.0]
 
 ### Added

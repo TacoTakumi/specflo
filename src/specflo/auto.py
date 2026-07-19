@@ -29,6 +29,15 @@ BOOTSTRAP_MARKER = "== specflo auto-mode bootstrap =="
 # FORK_POLICY_MARKER labels the default decision-fork policy (REQ-11).
 BOUNDARY_OVERRIDE_MARKER = "Boundary override:"
 FORK_POLICY_MARKER = "Decision forks:"
+SIDE_EFFECT_MARKER = "Irreversible / outbound actions:"
+
+# Autonomy levels for `specflo auto` (REQ-08). `safe` (default) and `autonomous`
+# stop-and-hand-off on any irreversible/outbound step; `yolo` permits them. The
+# level is a per-invocation choice (the --autonomy flag) with a matching config
+# default - never a persisted auto-*on* toggle (REQ-01). DEFAULT_AUTONOMY mirrors
+# config.DEFAULT_AUTONOMY (kept in sync; not imported to avoid a config->auto cycle).
+AUTONOMY_LEVELS = ("safe", "autonomous", "yolo")
+DEFAULT_AUTONOMY = "safe"
 
 
 def _boundary_override_clause() -> str:
@@ -65,13 +74,32 @@ def _fork_policy_clause() -> str:
     )
 
 
-def auto_bootstrap(phase: str) -> str:
-    """Return the auto-mode bootstrap directive block for ``phase``.
+def _side_effect_clause(autonomy: str) -> str:
+    """The irreversible/outbound-action gate, varying by ``autonomy`` (REQ-08).
+
+    ``safe``/``autonomous``: stop and hand off on any irreversible or outbound
+    step. ``yolo``: permit them. (T-07 adds the always-stop floor that no level
+    relaxes.)
+    """
+    if autonomy == "yolo":
+        return (
+            f"- {SIDE_EFFECT_MARKER} PERMITTED at --autonomy yolo - you may "
+            "perform irreversible or outbound steps without stopping."
+        )
+    return (
+        f"- {SIDE_EFFECT_MARKER} STOP and hand off to the human on any "
+        "irreversible or outbound step (the default, --autonomy safe/autonomous). "
+        "Do not perform it unattended."
+    )
+
+
+def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
+    """Return the auto-mode bootstrap directive block for ``phase`` at ``autonomy``.
 
     The bootstrap is the standing autonomy policy + guardrail stop-conditions the
     unattended run carries: an opt-in framing header followed by the directive
-    clauses. Later tasks grow the autonomy / guardrail clauses beneath the ones
-    here.
+    clauses. The side-effect clause varies by ``autonomy`` level (REQ-08); later
+    tasks grow the remaining guardrail clauses.
     """
     header = (
         f"{BOOTSTRAP_MARKER}\n"
@@ -83,6 +111,7 @@ def auto_bootstrap(phase: str) -> str:
     clauses = [
         _boundary_override_clause(),
         _fork_policy_clause(),
+        _side_effect_clause(autonomy),
     ]
     return "\n".join([header, "", *clauses])
 
@@ -103,12 +132,26 @@ def _active_project(cwd: Path):
     return root, cfg, projects.load_project(root, cfg, cfg.active_project)
 
 
-def auto_text(cwd: Path | None = None) -> str:
+def resolve_autonomy(autonomy: str | None, cfg_default: str | None) -> str:
+    """Resolve the effective autonomy level: flag > config default > ``safe``.
+
+    Any unknown value (a stale config or a bad hand-edit) falls back to the
+    conservative :data:`DEFAULT_AUTONOMY`, so an auto run never *widens* its
+    side-effect gate by accident.
+    """
+    level = autonomy or cfg_default or DEFAULT_AUTONOMY
+    return level if level in AUTONOMY_LEVELS else DEFAULT_AUTONOMY
+
+
+def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
     """Return the auto handoff payload for the active project found from ``cwd``.
 
-    For now the payload is the auto-mode bootstrap for the project's current
-    phase; later tasks wrap it into the self-contained three-part reseed payload
-    (bootstrap + verbatim checkpoint + generated next-step).
+    The autonomy level is resolved by :func:`resolve_autonomy` - an explicit
+    ``autonomy`` (the --autonomy flag) wins, else the project config's default,
+    else ``safe`` (REQ-08). For now the payload is the auto-mode bootstrap for the
+    project's current phase; later tasks wrap it into the self-contained
+    three-part reseed payload (bootstrap + verbatim checkpoint + generated
+    next-step).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) - even resolving the
@@ -121,7 +164,8 @@ def auto_text(cwd: Path | None = None) -> str:
         found = _active_project(cwd)
         if found is None:
             return ""
-        _root, _cfg, project = found
-        return auto_bootstrap(project.phase)
+        _root, cfg, project = found
+        level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
+        return auto_bootstrap(project.phase, autonomy=level)
     except Exception:
         return ""

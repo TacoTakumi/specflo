@@ -500,18 +500,32 @@ def checkpoint_(
         typer.echo(checkpoint.render_checkpoint(payload))
 
 
-@app.command(name="auto", epilog="Example: specflo auto")
-def auto_() -> None:
+@app.command(name="auto", epilog="Example: specflo auto --autonomy yolo")
+def auto_(
+    autonomy: str = typer.Option(
+        None,
+        "--autonomy",
+        help="Autonomy level: safe (default), autonomous, or yolo. Overrides the "
+        ".specflo config default. safe/autonomous stop and hand off on any "
+        "irreversible or outbound step; yolo permits them.",
+    ),
+) -> None:
     """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
 
     `specflo auto` is the explicit, per-invocation opt-in that starts or continues
     an unattended run from the current phase toward project completion. It only
     prints the payload - it drives no loop, spawns no nested agent, and never
     clears context (REQ-05); the seamless clear-and-reseed trigger is the outer
-    harness's job. Strictly additive: the ask-first `hook reseed` default is
-    unchanged (REQ-02). Prints nothing when there is no active project.
+    harness's job. `--autonomy` governs how far it runs unattended (REQ-08).
+    Strictly additive: the ask-first `hook reseed` default is unchanged (REQ-02).
+    Prints nothing when there is no active project.
     """
-    out = auto_module.auto_text()
+    if autonomy is not None and autonomy not in auto_module.AUTONOMY_LEVELS:
+        raise _die(
+            f"invalid --autonomy {autonomy!r}; choose from "
+            f"{', '.join(auto_module.AUTONOMY_LEVELS)}."
+        )
+    out = auto_module.auto_text(autonomy=autonomy)
     if out:
         typer.echo(out)
 
