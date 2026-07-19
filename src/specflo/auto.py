@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from . import config, projects
+from .projects import COMPLETE_STATUS
 
 # Fixed marker opening the auto-mode bootstrap section of the payload. Tests key
 # on this structurally (never on verbatim wording), and later tasks grow the
@@ -31,6 +32,22 @@ BOUNDARY_OVERRIDE_MARKER = "Boundary override:"
 FORK_POLICY_MARKER = "Decision forks:"
 SIDE_EFFECT_MARKER = "Irreversible / outbound actions:"
 PLAN_TIME_MARKER = "Plan-time avoidance:"
+COMPLETION_MARKER = "Terminal stop:"
+
+# The terminal signal `specflo advance` prints when the final phase completes the
+# project ("Completed project '<slug>'."). The loop stops when it sees this - the
+# CLI declares done; the loop never guesses completion (REQ-13). Kept as the
+# recognised substring, matched by tests against the CLI's own output.
+COMPLETION_SIGNAL = "Completed project"
+
+# Emitted by `specflo auto` when the active project is already complete: there is
+# nothing to continue, so the run stops and hands off (never re-runs a finished
+# project). Counterpart to hook.COMPLETE_DIRECTIVE; deliberately free of the word
+# "continue" so it can never read as a continue directive.
+AUTO_COMPLETE_DIRECTIVE = (
+    "The active specflo project is complete - the auto run is finished. Do NOT "
+    "resume it or pick the project back up; stop and hand off to the human."
+)
 
 # Autonomy levels for `specflo auto` (REQ-08). `safe` (default) and `autonomous`
 # stop-and-hand-off on any irreversible/outbound step; `yolo` permits them. The
@@ -154,6 +171,19 @@ def _floor_clause() -> str:
     )
 
 
+def _completion_stop_clause() -> str:
+    """Terminate the loop on the CLI's completion signal (REQ-13).
+
+    Names :data:`COMPLETION_SIGNAL` as the one terminal stop - the loop waits for
+    the CLI to declare done rather than guessing completion itself.
+    """
+    return (
+        f"- {COMPLETION_MARKER} terminate the loop when `specflo advance` emits "
+        f'"{COMPLETION_SIGNAL}" (the CLI declares the project done - never guess '
+        "completion yourself). Stop and hand off; do not start another pass."
+    )
+
+
 def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     """Return the auto-mode bootstrap directive block for ``phase`` at ``autonomy``.
 
@@ -175,6 +205,7 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
         _side_effect_clause(autonomy),
         _floor_clause(),
         _plan_time_avoidance_clause(),
+        _completion_stop_clause(),
     ]
     return "\n".join([header, "", *clauses])
 
@@ -228,6 +259,10 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
         if found is None:
             return ""
         _root, cfg, project = found
+        # A finished project has nothing to continue: stop and hand off, never
+        # re-run it (REQ-13). No bootstrap (continue directive) is emitted.
+        if project.status == COMPLETE_STATUS:
+            return AUTO_COMPLETE_DIRECTIVE
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
         return auto_bootstrap(project.phase, autonomy=level)
     except Exception:

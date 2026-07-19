@@ -207,6 +207,48 @@ def test_fork_policy_differs_between_safe_and_delegated():
         assert safe != deleg  # observable difference between the levels
 
 
+# --- T-08: completion-signal termination (REQ-13) -----------------------------
+
+def _complete(tmp_path, name="My Thing"):
+    """Active project driven (via the projects layer) to execute, then completed."""
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, name)
+    projects.switch_project(tmp_path, cfg, name)
+    for _ in range(3):  # brainstorm -> spec -> plan -> execute
+        projects.advance_project(tmp_path, cfg, "my-thing")
+    projects.complete_project(tmp_path, cfg, "my-thing")
+    return cfg
+
+
+def test_bootstrap_names_the_completion_signal():
+    assert auto.COMPLETION_SIGNAL == "Completed project"
+    block = auto.auto_bootstrap("execute")
+    assert auto.COMPLETION_MARKER in block
+    assert auto.COMPLETION_SIGNAL in block
+
+
+def test_auto_on_complete_project_stops_without_continue(tmp_path):
+    _complete(tmp_path)
+    out = auto.auto_text(tmp_path)
+    assert out == auto.AUTO_COMPLETE_DIRECTIVE
+    assert auto.BOOTSTRAP_MARKER not in out  # no continue/bootstrap directive
+    low = out.lower()
+    assert "complete" in low and "stop" in low
+    assert "continue" not in low
+
+
+def test_cli_advance_emits_the_completion_signal_the_bootstrap_names(tmp_path, monkeypatch):
+    # end-to-end: the terminal `advance` prints exactly the string auto keys on.
+    monkeypatch.chdir(tmp_path)
+    from test_cli import _project_at_execute
+
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    result = runner.invoke(app, ["advance"])  # execute -> complete
+    assert auto.COMPLETION_SIGNAL in result.stdout
+
+
 # --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------
 
 def test_floor_is_source_constant_and_sensible():
