@@ -2,6 +2,7 @@
 
 import ast
 import inspect
+import textwrap
 
 import pytest
 
@@ -20,8 +21,12 @@ def executable_identifiers(obj) -> str:
     names, attributes, arguments, imports, and string literals (f-string parts
     included). Accepts a module or a function.
     """
-    source = inspect.getsource(obj)
-    tree = ast.parse(inspect.cleandoc(source) if not inspect.ismodule(obj) else source)
+    # dedent, never cleandoc: cleandoc strips the common indent of lines 2+ while
+    # leaving line 1 alone, which de-indents a function's body relative to its own
+    # `def` and raises IndentationError. A decorated function happens to survive
+    # that (its line 2 is the `def` at column 0), which is exactly the kind of
+    # accident this helper should not rely on.
+    tree = ast.parse(textwrap.dedent(inspect.getsource(obj)))
     scopes = (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
     for node in ast.walk(tree):
         if not isinstance(node, scopes) or not node.body:

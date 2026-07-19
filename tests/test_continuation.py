@@ -177,6 +177,26 @@ def test_builder_emitted_strings_name_no_harness_trigger():
     assert named is None, f"harness trigger {named!r} reachable in builder output"
 
 
+def test_source_scan_helper_handles_undecorated_functions():
+    # The scan helper underpins every absence test here and in test_cli/test_auto.
+    # It must work on a plain indented-body function, not only on a decorated one
+    # whose source happens to start at column 0 - otherwise the absence tests
+    # would error rather than fail, and could be silently narrowed.
+    for func in (
+        continuation.build_continuation,
+        continuation.phase_skill,
+        continuation._continue_line,
+    ):
+        scanned = executable_identifiers(func)
+        assert scanned, f"no identifiers scanned for {func.__name__}"
+
+    # ...and it still sees what it is supposed to see: the fragment helpers the
+    # builder actually calls.
+    scanned = executable_identifiers(continuation.build_continuation)
+    assert "_skill_pointer_line" in scanned
+    assert "_continue_line" in scanned
+
+
 def test_builder_is_a_pure_function_of_its_arguments():
     # Same inputs -> byte-identical output, with no ambient state consulted. This
     # is what makes the mode-agnosticism of REQ-03 checkable by construction.
