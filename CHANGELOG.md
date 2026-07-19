@@ -42,6 +42,30 @@ latter. Release tags are of the form `vX.Y.Z`.
   payload. It reimplements none of the loop/guardrail/payload logic -- the CLI
   carries that -- mirroring specflo's skill-vs-CLI split. Installed by
   `specflo skills install` alongside the others.
+- **Clear-point and continue-instruction at `specflo task done`.** Completing a
+  task previously printed only `T-NN -> done`, so the only thing telling an agent
+  it could clear context between tasks was prose in the execute skill. It now
+  emits the same four-part shape `specflo advance` does: the transition line, the
+  derived next-step hint naming the next actionable task, the saved checkpoint
+  location, and a clear-point naming both resume paths -- `specflo checkpoint`,
+  and `specflo auto` for an unattended run. The hint comes from the same
+  derivation `status` and `checkpoint` use, so it cannot drift from them.
+- **Continuation fields in both seams' `--json`.** `specflo task done --json`
+  gains `next_step` and `checkpoint` (matching what `advance` already emitted),
+  and both seams gain a `continuation` field carrying the rendered text, so a
+  harness can consume the clear-point without parsing prose. At project
+  completion the field carries the clear-point-only form.
+
+### Changed
+- **Phase advance and reopen emit the shared continuation.** The clear-point line
+  at every seam is now produced by one shared builder, so the wording cannot
+  drift between them. Advancing into a phase names the specflo phase skill that
+  carries it; `specflo reopen` gains that same pointer and the auto resume path.
+  Completing a project deliberately emits a clear-point with *no*
+  continue-instruction and names neither resume command, so an auto loop halting
+  on the completion signal is never invited to start another pass. The emitted
+  text stays harness-neutral (specflo commands only) and identical whether or not
+  an auto run is under way -- specflo owns the payload, never the trigger.
 
 ## [0.2.0]
 
