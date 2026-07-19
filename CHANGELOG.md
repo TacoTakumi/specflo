@@ -33,6 +33,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   action, milestone beat), and a compact generated next-step block naming the
   current phase, its immediate next action, and the phase skill to run. A resumed
   session can act on the payload alone without re-deriving state.
+- **Self-propagating bootstrap.** The auto-mode bootstrap now instructs each
+  continuing pass to re-emit it (re-run `specflo auto`, never the manual ask-first
+  reseed), so the loop keeps its autonomy policy across a context clear and does
+  not silently revert to ask-first after the first phase boundary.
 
 ## [0.2.0]
 

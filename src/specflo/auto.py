@@ -41,6 +41,9 @@ FORK_POLICY_MARKER = "Decision forks:"
 SIDE_EFFECT_MARKER = "Irreversible / outbound actions:"
 PLAN_TIME_MARKER = "Plan-time avoidance:"
 COMPLETION_MARKER = "Terminal stop:"
+# Labels the clause telling the continuing pass to re-emit this bootstrap so the
+# loop never reverts to the manual ask-first behavior after a boundary (REQ-04).
+SELF_PROPAGATE_MARKER = "Self-propagation:"
 
 # The terminal signal `specflo advance` prints when the final phase completes the
 # project ("Completed project '<slug>'."). The loop stops when it sees this - the
@@ -249,6 +252,26 @@ def _boundary_override_clause() -> str:
     )
 
 
+def _self_propagation_clause() -> str:
+    """Re-emit this auto bootstrap on every continuing pass (REQ-04).
+
+    The autonomy policy must not silently revert to the manual ask-first behavior
+    after the first boundary. So the continuing pass carries this bootstrap
+    forward: to continue, it runs ``specflo auto`` again (which re-emits this whole
+    bootstrap), never the manual ``specflo checkpoint`` / ask-first reseed. The
+    policy re-propagates itself across every context clear until a terminal stop or
+    a guardrail escalation ends the run.
+    """
+    return (
+        f"- {SELF_PROPAGATE_MARKER} carry this auto bootstrap forward. On every "
+        "continuing pass (including after a context clear) run `specflo auto` "
+        "again to re-emit it - never the manual `specflo checkpoint` / ask-first "
+        "reseed. The auto policy re-propagates itself each pass so the loop does "
+        "not revert to ask-first after a boundary; it ends only at a terminal stop "
+        "or a guardrail escalation."
+    )
+
+
 def _fork_policy_clause(autonomy: str) -> str:
     """The decision-fork policy, varying by ``autonomy`` (REQ-11 default / REQ-12).
 
@@ -360,6 +383,7 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     )
     clauses = [
         _boundary_override_clause(),
+        _self_propagation_clause(),
         _fork_policy_clause(autonomy),
         _side_effect_clause(autonomy),
         _floor_clause(),

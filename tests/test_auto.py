@@ -630,6 +630,39 @@ def test_cli_auto_emits_three_part_payload(tmp_path, monkeypatch):
     assert _checkpoint_text(tmp_path) in result.stdout
 
 
+# --- T-14: bootstrap self-propagation (REQ-04) --------------------------------
+# The auto policy must not silently revert to the manual ask-first behavior after
+# the first boundary: the bootstrap instructs the continuing pass to carry and
+# re-emit the auto bootstrap, so a simulated second pass stays auto - never the
+# ask-first CONFIRMATION_DIRECTIVE.
+
+def test_bootstrap_self_propagation_marker_present_at_every_phase():
+    for phase in PHASES:
+        block = auto.auto_bootstrap(phase)
+        assert auto.SELF_PROPAGATE_MARKER in block
+        clause = _clause(block, auto.SELF_PROPAGATE_MARKER)
+        assert "specflo auto" in clause  # names the re-emit mechanism
+        low = clause.lower()
+        assert "re-emit" in low or "re-propagat" in low or "carry" in low
+
+
+def test_bootstrap_self_propagation_present_at_every_autonomy_level():
+    for level in auto.AUTONOMY_LEVELS:
+        assert auto.SELF_PROPAGATE_MARKER in auto.auto_bootstrap("execute", autonomy=level)
+
+
+def test_second_pass_from_payload_stays_auto_not_ask_first(tmp_path):
+    # simulate the outer harness clearing context and continuing: a second pass
+    # still yields an auto bootstrap, never the manual ask-first reseed directive.
+    _active_at(tmp_path, "brainstorm")
+    first = auto.auto_pass(tmp_path, max_passes=1000)
+    assert auto.BOOTSTRAP_MARKER in first
+    second = auto.auto_pass(tmp_path, max_passes=1000)
+    assert auto.BOOTSTRAP_MARKER in second               # still auto
+    assert hook.CONFIRMATION_DIRECTIVE not in second     # not the ask-first reseed
+    assert auto.SELF_PROPAGATE_MARKER in second          # and it keeps self-propagating
+
+
 # --- CLI surface --------------------------------------------------------------
 
 def test_cli_auto_no_flag_defaults_to_safe(tmp_path, monkeypatch):
