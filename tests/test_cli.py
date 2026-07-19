@@ -1468,6 +1468,85 @@ def test_reopen_emits_the_full_continuation_normally(tmp_path, monkeypatch):
     assert "`specflo auto`" in out
 
 
+def test_neither_seam_reads_auto_run_state():
+    # REQ-03's acceptance covers "the continuation builder AND both seams". The
+    # builder is scanned in test_continuation; this is the seam half - without it
+    # the requirement claims coverage it does not have.
+    from conftest import executable_identifiers
+    from test_continuation import AUTO_STATE_READS
+
+    from specflo import cli
+
+    seams = (cli.advance, cli.task_done, cli._seam_continuation, cli.reopen)
+    for seam in seams:
+        code = executable_identifiers(seam)
+        for needle in AUTO_STATE_READS:
+            assert needle not in code, f"{seam.__name__} consults auto-run state: {needle!r}"
+
+
+def _seam_outputs_with_and_without_auto_run_state(
+    runner, app, tmp_path, monkeypatch, setup, command
+):
+    """Run ``command`` on two identical projects, one carrying auto-run state.
+
+    ``setup(directory)`` builds the project; the auto-run state file is written
+    into the project dir - exactly where `auto` looks for it - before the command
+    under test runs.
+    """
+    from specflo import auto, continuation
+
+    outputs = {}
+    for name, with_state in (("plain", False), ("auto_state", True)):
+        directory = tmp_path / name
+        directory.mkdir()
+        monkeypatch.chdir(directory)
+        setup(directory)
+        if with_state:
+            state = directory / "docs" / "projects" / "thing" / auto.AUTO_RUN_STATE_FILENAME
+            state.write_text('{"passes": 7, "killed": true}')
+            assert state.is_file()
+        outputs[name] = runner.invoke(app, command).output
+
+    # Guard against a vacuous comparison: whatever we compared must actually be a
+    # continuation, or this proves nothing about mode-agnostic wording.
+    assert continuation.CLEAR_POINT_MARKER in outputs["plain"], (
+        "compared output carries no continuation - the test would pass regardless"
+    )
+    return outputs
+
+
+def test_task_done_output_is_identical_with_auto_run_state_present(tmp_path, monkeypatch):
+    # REQ-03 at the task-completion seam, end-to-end through the CLI: the presence
+    # of a live auto-run state file (kill switch set, passes counted) must not
+    # change one byte of what the seam emits.
+    from specflo.cli import app
+
+    def setup(directory):
+        _project_at_execute_with_two_tasks(runner, app, directory)
+        runner.invoke(app, ["task", "start", "T-01"])
+
+    outputs = _seam_outputs_with_and_without_auto_run_state(
+        runner, app, tmp_path, monkeypatch, setup, ["task", "done", "T-01"]
+    )
+    assert outputs["plain"] == outputs["auto_state"]
+
+
+def test_advance_output_is_identical_with_auto_run_state_present(tmp_path, monkeypatch):
+    # REQ-03 at the phase-advance seam, on a real advance that emits a
+    # continuation - not on a refusal, which carries none.
+    from specflo.cli import app
+
+    def setup(directory):
+        _project_at_plan_phase(runner, app, directory)
+        runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance",
+                            "it works", "--verify", "true", "--from", "REQ-01"])
+
+    outputs = _seam_outputs_with_and_without_auto_run_state(
+        runner, app, tmp_path, monkeypatch, setup, ["advance"]
+    )
+    assert outputs["plain"] == outputs["auto_state"]
+
+
 def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):
     # Scope guard: only task *done* is a clear-point. start/block/reopen keep
     # printing just their transition line (spec: other seams are out of scope).
