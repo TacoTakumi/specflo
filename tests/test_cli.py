@@ -1421,6 +1421,53 @@ def test_transition_fields_cannot_be_overwritten_by_continuation_fields():
     assert data["next_step"] == "x"
 
 
+def test_reopen_still_emits_a_clear_point_when_the_next_step_is_underivable(
+    tmp_path, monkeypatch
+):
+    # REQ-10 (no regression): reopen emitted its clear-point unconditionally
+    # before the shared builder. Routing it through the builder must not quietly
+    # downgrade that guarantee to best-effort - a seam that sometimes omits its
+    # clear-point is worse than one that never had it, because a harness keying on
+    # the marker would silently stop resuming.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import checkpoint as checkpoint_module, continuation
+
+    _project_at_execute(runner, app, tmp_path)
+
+    # Fail only the seam's own derivation, not reopen's checkpoint *write* (which
+    # runs first and is deliberately unguarded). Anything broader would crash the
+    # command before the guard under test is even reached.
+    real_build = checkpoint_module.build_checkpoint
+    calls = {"n": 0}
+
+    def fail_after_the_write(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return real_build(*args, **kwargs)
+        raise OSError("checkpoint unreadable")
+
+    monkeypatch.setattr(checkpoint_module, "build_checkpoint", fail_after_the_write)
+    result = runner.invoke(app, ["reopen"])
+
+    assert result.exit_code == 0
+    assert calls["n"] >= 2, "the seam's derivation never ran - test is not exercising the guard"
+    assert continuation.CLEAR_POINT_MARKER in result.stdout
+
+
+def test_reopen_emits_the_full_continuation_normally(tmp_path, monkeypatch):
+    # The happy path still carries the whole block, per D-06.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    from specflo import continuation
+
+    _project_at_execute(runner, app, tmp_path)
+    out = runner.invoke(app, ["reopen"]).output
+    assert continuation.CLEAR_POINT_MARKER in out
+    assert "phase skill" in out
+    assert "`specflo auto`" in out
+
+
 def test_other_task_verbs_stay_terse(tmp_path, monkeypatch):
     # Scope guard: only task *done* is a clear-point. start/block/reopen keep
     # printing just their transition line (spec: other seams are out of scope).

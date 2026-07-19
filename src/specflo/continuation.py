@@ -79,6 +79,17 @@ def _continue_line() -> str:
     )
 
 
+def clear_point_only() -> str:
+    """The clear-point-and-continue line alone, with no next-step hint.
+
+    For a seam that knows it stands at a clear-point but could not derive what
+    comes next: emitting the clear-point unconditionally beats falling silent,
+    and keeps a seam's guarantee from regressing to best-effort (REQ-10). The
+    wording still comes from here, so no seam holds a copy (REQ-04).
+    """
+    return _continue_line()
+
+
 def _complete_line() -> str:
     """The terminal clear-point: a clear-point with *no* continue-instruction.
 

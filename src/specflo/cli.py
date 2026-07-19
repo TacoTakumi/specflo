@@ -883,10 +883,11 @@ def reopen(
         typer.echo(f"Checkpoint saved: {cp_display}")
         # Reopening is a clear-point too, and has been since before the shared
         # builder existed. It routes through the builder so no seam keeps its own
-        # copy of the wording (REQ-04, D-06).
+        # copy of the wording (REQ-04, D-06). The clear-point stays unconditional,
+        # as it was before that rewiring: if the next step can't be derived, fall
+        # back to the clear-point alone rather than emitting nothing (REQ-10).
         cont = _seam_continuation(root, cfg, slug)
-        if cont["continuation"] is not None:
-            typer.echo(cont["continuation"])
+        typer.echo(cont["continuation"] or continuation.clear_point_only())
 
 
 @spec_app.command("start", epilog="Example: specflo spec start")
