@@ -12,7 +12,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from specflo import auto, config, projects
+from specflo import auto, checkpoint, config, hook, projects
 from specflo.cli import app
 
 runner = CliRunner()
@@ -68,6 +68,35 @@ def test_auto_text_defaults_to_cwd(tmp_path, monkeypatch):
     _active_at(tmp_path, "brainstorm")
     monkeypatch.chdir(tmp_path)
     assert auto.BOOTSTRAP_MARKER in auto.auto_text()  # no-arg call resolves cwd
+
+
+# --- T-02: phase-boundary pause override (REQ-06) -----------------------------
+
+def test_bootstrap_overrides_phase_boundary_pause():
+    block = auto.auto_bootstrap("brainstorm")
+    assert auto.BOUNDARY_OVERRIDE_MARKER in block
+    # names the flow the override unblocks (brainstorm -> ... -> execute)
+    assert "brainstorm -> spec -> plan -> execute" in block
+
+
+def test_bootstrap_override_present_at_every_phase():
+    for phase in PHASES:
+        assert auto.BOUNDARY_OVERRIDE_MARKER in auto.auto_bootstrap(phase)
+
+
+def test_non_auto_reseed_still_surfaces_pause_and_carries_no_auto_override(tmp_path):
+    # REQ-06/REQ-02: the manual reseed is byte-for-byte the ask-first payload
+    # (confirmation-gate directive + verbatim checkpoint) and carries none of the
+    # auto boundary-override text - the override is confined to auto mode.
+    _active_at(tmp_path, "spec")
+    cfg = config.load_config(tmp_path)
+    project = projects.load_project(tmp_path, cfg, "my-thing")
+    out = hook.reseed_text(tmp_path)
+    body = checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(tmp_path, project, cfg=cfg)
+    )
+    assert out == f"{hook.CONFIRMATION_DIRECTIVE}\n\n{body}"  # byte-unchanged
+    assert auto.BOUNDARY_OVERRIDE_MARKER not in out
 
 
 # --- CLI surface --------------------------------------------------------------

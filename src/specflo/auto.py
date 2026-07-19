@@ -23,22 +23,49 @@ from . import config, projects
 # autonomy/guardrail directives beneath it without moving the marker.
 BOOTSTRAP_MARKER = "== specflo auto-mode bootstrap =="
 
+# Fixed clause markers within the bootstrap. Tests key on these structurally so
+# later tasks can grow each clause's wording in place. BOUNDARY_OVERRIDE_MARKER
+# labels the clause that supersedes the phase skills' pause gate (REQ-06).
+BOUNDARY_OVERRIDE_MARKER = "Boundary override:"
+
+
+def _boundary_override_clause() -> str:
+    """The clause superseding the phase skills' boundary-pause HARD-GATE (REQ-06).
+
+    In auto mode the brainstorm/spec/plan/execute skills' phase-boundary pause and
+    wait-for-ready gate are overridden so the run flows across the pipeline on its
+    own. The override lives only in this bootstrap; the manual reseed/checkpoint
+    pause beat is untouched (REQ-02).
+    """
+    return (
+        f"- {BOUNDARY_OVERRIDE_MARKER} in auto mode the phase-boundary pause and "
+        "the wait-for-ready HARD-GATE of the brainstorm/spec/plan/execute skills "
+        "are SUPERSEDED. Do not stop to ask at a phase boundary; once a phase "
+        "validates, advance and keep going across "
+        "brainstorm -> spec -> plan -> execute on your own. This override applies "
+        "only under this auto bootstrap - the manual pipeline's pause is unchanged."
+    )
+
 
 def auto_bootstrap(phase: str) -> str:
     """Return the auto-mode bootstrap directive block for ``phase``.
 
     The bootstrap is the standing autonomy policy + guardrail stop-conditions the
-    unattended run carries. This is the skeleton (marker + opt-in framing); later
-    tasks grow the boundary-override / fork-policy / autonomy / guardrail clauses
-    beneath the marker.
+    unattended run carries: an opt-in framing header followed by the directive
+    clauses. Later tasks grow the fork-policy / autonomy / guardrail clauses
+    beneath the ones here.
     """
-    return (
+    header = (
         f"{BOOTSTRAP_MARKER}\n"
         f"You are running in specflo auto mode at the '{phase}' phase: an "
         "explicit, per-invocation unattended run that continues the specflo "
         "pipeline from here toward project completion. specflo only emits this "
         "directive - it does not drive the loop or clear context for you."
     )
+    clauses = [
+        _boundary_override_clause(),
+    ]
+    return "\n".join([header, "", *clauses])
 
 
 def _active_project(cwd: Path):
