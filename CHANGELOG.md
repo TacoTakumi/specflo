@@ -54,7 +54,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   gains `next_step` and `checkpoint` (matching what `advance` already emitted),
   and both seams gain a `continuation` field carrying the rendered text, so a
   harness can consume the clear-point without parsing prose. At project
-  completion the field carries the clear-point-only form.
+  completion the field carries the clear-point-only form. The keys are always
+  present: if the continuation cannot be derived they carry `null` and an
+  advisory goes to stderr, rather than the keys silently going missing.
 
 ### Changed
 - **Phase advance and reopen emit the shared continuation.** The clear-point line

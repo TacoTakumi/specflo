@@ -106,6 +106,16 @@ def test_terminal_variant_names_neither_resume_command():
     assert "specflo auto" not in text
 
 
+def test_terminal_variant_drops_the_next_action_framing():
+    # A finished project has no current phase to be in and nothing "next" to do,
+    # so framing the closing note as `Current phase: X. Next: Project complete.`
+    # reads as a contradiction. The closing note stands on its own.
+    text = continuation.build_continuation("execute", SENTINEL, complete=True)
+    assert "Current phase:" not in text
+    assert "Next:" not in text
+    assert SENTINEL in text, "the closing note itself must survive"
+
+
 def test_terminal_variant_omits_the_continue_instruction():
     # A clear-point *without* a continue-instruction: no phase skill to carry on
     # with, since there is no next phase. Keyed on the pointer sentence rather

@@ -111,10 +111,13 @@ def build_continuation(phase: str, do_next: str, complete: bool = False) -> str:
 
     With ``complete=True`` (the project just finished) the block drops the
     continue-instruction entirely - no phase-skill pointer, and a clear-point
-    naming neither resume command (REQ-07).
+    naming neither resume command (REQ-07). It also drops the phase-and-next-action
+    framing: a finished project has no current phase to be in and nothing next to
+    do, so ``do_next`` (already a closing note, e.g. "Project complete. Start the
+    next piece of work with `specflo new`.") stands on its own.
     """
     if complete:
-        return "\n".join([_action_line(phase, do_next), _complete_line()])
+        return "\n".join([do_next, _complete_line()])
     return "\n".join([
         _action_line(phase, do_next),
         _skill_pointer_line(phase),
