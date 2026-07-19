@@ -22,6 +22,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   unattended, with a matching `.specflo` config default (default `safe`). `safe`
   and `autonomous` stop and hand off on any irreversible or outbound step; `yolo`
   permits them. The flag overrides the config default.
+- **`--max-passes N` iteration cap.** A runaway backstop on the auto loop: each
+  `specflo auto` invocation counts as one pass in a durable per-project run-state
+  file, and on reaching the cap (default `50`) the run escalates to the human
+  instead of continuing. Backed by a matching `.specflo` config default; the flag
+  overrides it. The run-state is ephemeral -- never a persisted auto-on default.
 
 ## [0.2.0]
 

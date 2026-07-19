@@ -14,6 +14,7 @@ per-project auto-on default is introduced (REQ-01).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from . import config, projects
@@ -48,6 +49,59 @@ AUTO_COMPLETE_DIRECTIVE = (
     "The active specflo project is complete - the auto run is finished. Do NOT "
     "resume it or pick the project back up; stop and hand off to the human."
 )
+
+# Leads any guardrail stop that hands the run back to a human (the cap here in
+# T-09; stall / kill-switch reuse it in T-10/T-11). Distinct from the bootstrap
+# so a stop can never be mistaken for a continue directive.
+ESCALATION_MARKER = "AUTO-RUN ESCALATION:"
+
+
+def escalation_message(reason: str) -> str:
+    """A human-escalation stop directive (no continue): ``reason`` + a hand-off."""
+    return (
+        f"{ESCALATION_MARKER} {reason} Stop the auto run and hand off to the "
+        "human - do not start another pass."
+    )
+
+
+# The durable per-project auto-run state (REQ-14): a single dedicated JSON file
+# beside the project's artifacts, holding the ephemeral pass counter (and, later,
+# the stall progress signal and kill flag). It is NOT a persisted auto-*on*
+# default (REQ-01) - it only exists once an auto run is under way.
+AUTO_RUN_STATE_FILENAME = "auto-run.json"
+
+
+def run_state_path(root: Path, cfg: config.SpecfloConfig, slug: str) -> Path:
+    return projects.project_dir(root, cfg, slug) / AUTO_RUN_STATE_FILENAME
+
+
+def load_run_state(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
+    """The project's auto-run state, or ``{}`` when absent/unreadable."""
+    path = run_state_path(root, cfg, slug)
+    if path.is_file():
+        try:
+            data = json.loads(path.read_text())
+            if isinstance(data, dict):
+                return data
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict) -> None:
+    run_state_path(root, cfg, slug).write_text(json.dumps(state, indent=2) + "\n")
+
+
+def resolve_max_passes(flag: int | None, cfg_default: int | None) -> int:
+    """Resolve the effective cap: flag > config default > ``DEFAULT_MAX_PASSES``.
+
+    Any non-positive or non-int candidate (a bad flag or a corrupt config) is
+    skipped, so the loop always has a sane positive backstop.
+    """
+    for candidate in (flag, cfg_default, config.DEFAULT_MAX_PASSES):
+        if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 1:
+            return candidate
+    return config.DEFAULT_MAX_PASSES
 
 # Autonomy levels for `specflo auto` (REQ-08). `safe` (default) and `autonomous`
 # stop-and-hand-off on any irreversible/outbound step; `yolo` permits them. The
@@ -263,6 +317,50 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
         # re-run it (REQ-13). No bootstrap (continue directive) is emitted.
         if project.status == COMPLETE_STATUS:
             return AUTO_COMPLETE_DIRECTIVE
+        level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
+        return auto_bootstrap(project.phase, autonomy=level)
+    except Exception:
+        return ""
+
+
+def auto_pass(
+    cwd: Path | None = None,
+    autonomy: str | None = None,
+    max_passes: int | None = None,
+) -> str:
+    """Advance the auto run by one pass and return the directive for it.
+
+    The stateful entry `specflo auto` invokes. It increments the durable per-
+    project pass counter (a dedicated run-state file, never a config auto-on
+    default), and returns:
+
+    - the complete-project stop (:data:`AUTO_COMPLETE_DIRECTIVE`) if the project
+      is already finished - without touching the counter;
+    - a human-escalation stop (:func:`escalation_message`) once the pass count
+      reaches the cap (REQ-14) - no continue directive;
+    - otherwise the pure :func:`auto_bootstrap` payload for the current phase.
+
+    Returns ``""`` and never raises when there is nothing to emit (no root, no
+    active project, unreadable project).
+    """
+    try:
+        if cwd is None:
+            cwd = Path.cwd()
+        found = _active_project(cwd)
+        if found is None:
+            return ""
+        root, cfg, project = found
+        if project.status == COMPLETE_STATUS:
+            return AUTO_COMPLETE_DIRECTIVE
+        cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
+        state = load_run_state(root, cfg, project.slug)
+        passes = int(state.get("passes", 0)) + 1
+        state["passes"] = passes
+        save_run_state(root, cfg, project.slug, state)
+        if passes >= cap:
+            return escalation_message(
+                f"reached the auto-run pass cap of {cap} passes."
+            )
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
         return auto_bootstrap(project.phase, autonomy=level)
     except Exception:

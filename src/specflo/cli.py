@@ -509,6 +509,13 @@ def auto_(
         ".specflo config default. safe/autonomous stop and hand off on any "
         "irreversible or outbound step; yolo permits them.",
     ),
+    max_passes: int = typer.Option(
+        None,
+        "--max-passes",
+        help="Iteration cap: escalate to the human after this many auto passes "
+        f"(a runaway backstop). Overrides the .specflo config default "
+        f"(default {config.DEFAULT_MAX_PASSES}).",
+    ),
 ) -> None:
     """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
 
@@ -516,7 +523,9 @@ def auto_(
     an unattended run from the current phase toward project completion. It only
     prints the payload - it drives no loop, spawns no nested agent, and never
     clears context (REQ-05); the seamless clear-and-reseed trigger is the outer
-    harness's job. `--autonomy` governs how far it runs unattended (REQ-08).
+    harness's job. `--autonomy` governs how far it runs unattended (REQ-08);
+    `--max-passes` backstops the loop, escalating to the human at the cap (REQ-14).
+    Each invocation counts as one pass in a durable per-project run-state file.
     Strictly additive: the ask-first `hook reseed` default is unchanged (REQ-02).
     Prints nothing when there is no active project.
     """
@@ -525,7 +534,9 @@ def auto_(
             f"invalid --autonomy {autonomy!r}; choose from "
             f"{', '.join(auto_module.AUTONOMY_LEVELS)}."
         )
-    out = auto_module.auto_text(autonomy=autonomy)
+    if max_passes is not None and max_passes < 1:
+        raise _die("--max-passes must be a positive integer.")
+    out = auto_module.auto_pass(autonomy=autonomy, max_passes=max_passes)
     if out:
         typer.echo(out)
 

@@ -20,6 +20,10 @@ DEFAULT_PROJECTS_DIR = "docs/projects"
 
 
 DEFAULT_AUTONOMY = "safe"
+# Default iteration/step cap for `specflo auto` (REQ-14): a runaway backstop on
+# the unattended pass loop. Single source of truth for the config-field default,
+# `resolve_max_passes`, and the CLI help/docs.
+DEFAULT_MAX_PASSES = 50
 
 
 @dataclass
@@ -30,6 +34,9 @@ class SpecfloConfig:
     # (REQ-08). A level *string*, never an auto-*on* toggle (REQ-01/D-10). Kept as
     # a literal default here to avoid importing `auto` (which imports `config`).
     autonomy: str = DEFAULT_AUTONOMY
+    # Default iteration/step cap for `specflo auto` when no --max-passes flag is
+    # given (REQ-14). Not an auto-*on* toggle - a numeric backstop.
+    auto_max_passes: int = DEFAULT_MAX_PASSES
 
 
 def config_path(root: Path) -> Path:
@@ -70,6 +77,7 @@ def load_config(root: Path) -> SpecfloConfig:
         projects_dir=data.get("projects_dir", DEFAULT_PROJECTS_DIR),
         active_project=data.get("active_project"),
         autonomy=data.get("autonomy", DEFAULT_AUTONOMY),
+        auto_max_passes=data.get("auto_max_passes", DEFAULT_MAX_PASSES),
     )
 
 
@@ -77,10 +85,12 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"projects_dir": cfg.projects_dir, "active_project": cfg.active_project}
-    # Persist the autonomy level only when it is non-default, so a plain project's
+    # Persist the auto-mode defaults only when non-default, so a plain project's
     # config stays minimal and carries no auto-* key at all (REQ-01).
     if cfg.autonomy != DEFAULT_AUTONOMY:
         payload["autonomy"] = cfg.autonomy
+    if cfg.auto_max_passes != DEFAULT_MAX_PASSES:
+        payload["auto_max_passes"] = cfg.auto_max_passes
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
 

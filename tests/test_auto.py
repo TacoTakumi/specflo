@@ -249,6 +249,77 @@ def test_cli_advance_emits_the_completion_signal_the_bootstrap_names(tmp_path, m
     assert auto.COMPLETION_SIGNAL in result.stdout
 
 
+# --- T-09: iteration/step cap + durable auto-run state (REQ-14) ----------------
+
+def test_max_passes_default_is_a_documented_number():
+    assert isinstance(config.DEFAULT_MAX_PASSES, int)
+    assert config.DEFAULT_MAX_PASSES == 50
+    assert config.SpecfloConfig().auto_max_passes == config.DEFAULT_MAX_PASSES
+
+
+def test_auto_pass_counts_up_and_escalates_at_cap(tmp_path):
+    _active_at(tmp_path, "execute")
+    cap = 3
+    for _ in range(cap - 1):  # passes below the cap -> continue directive
+        out = auto.auto_pass(tmp_path, max_passes=cap)
+        assert auto.BOOTSTRAP_MARKER in out
+        assert auto.ESCALATION_MARKER not in out
+    out = auto.auto_pass(tmp_path, max_passes=cap)  # the pass that reaches the cap
+    assert auto.ESCALATION_MARKER in out
+    assert auto.BOOTSTRAP_MARKER not in out
+    assert str(cap) in out  # names the cap it hit
+
+
+def test_auto_pass_persists_counter_across_calls(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=10)
+    auto.auto_pass(tmp_path, max_passes=10)
+    cfg = config.load_config(tmp_path)
+    assert auto.load_run_state(tmp_path, cfg, "my-thing")["passes"] == 2
+
+
+def test_run_state_lives_in_a_dedicated_file_not_config(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=10)
+    # the counter is in a dedicated run-state file, never a config auto-on key
+    assert "passes" not in config.config_path(tmp_path).read_text()
+    cfg = config.load_config(tmp_path)
+    assert auto.run_state_path(tmp_path, cfg, "my-thing").is_file()
+
+
+def test_cli_auto_drives_to_cap(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    r1 = runner.invoke(app, ["auto", "--max-passes", "2"])
+    assert auto.BOOTSTRAP_MARKER in r1.stdout and auto.ESCALATION_MARKER not in r1.stdout
+    r2 = runner.invoke(app, ["auto", "--max-passes", "2"])
+    assert auto.ESCALATION_MARKER in r2.stdout and auto.BOOTSTRAP_MARKER not in r2.stdout
+
+
+def test_cli_auto_rejects_nonpositive_max_passes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    assert runner.invoke(app, ["auto", "--max-passes", "0"]).exit_code != 0
+
+
+def test_config_persists_non_default_cap_and_omits_the_default(tmp_path):
+    config.init_config(tmp_path)
+    assert "auto_max_passes" not in config.config_path(tmp_path).read_text()
+    cfg = config.load_config(tmp_path)
+    cfg.auto_max_passes = 7
+    config.save_config(tmp_path, cfg)
+    assert config.load_config(tmp_path).auto_max_passes == 7  # survives round-trip
+
+
+def test_readme_and_changelog_document_the_cap():
+    repo = Path(__file__).resolve().parents[1]
+    for doc in ((repo / "README.md").read_text(), (repo / "CHANGELOG.md").read_text()):
+        assert "--max-passes" in doc
+        assert str(config.DEFAULT_MAX_PASSES) in doc
+
+
 # --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------
 
 def test_floor_is_source_constant_and_sensible():
