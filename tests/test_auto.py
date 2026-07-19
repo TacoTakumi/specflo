@@ -12,7 +12,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from specflo import auto, checkpoint, config, hook, projects
+from specflo import auto, checkpoint, config, hook, projects, workflow
 from specflo.cli import app
 
 runner = CliRunner()
@@ -318,6 +318,69 @@ def test_readme_and_changelog_document_the_cap():
     for doc in ((repo / "README.md").read_text(), (repo / "CHANGELOG.md").read_text()):
         assert "--max-passes" in doc
         assert str(config.DEFAULT_MAX_PASSES) in doc
+
+
+# --- T-10: stall detection (REQ-15) -------------------------------------------
+
+def test_stall_threshold_is_a_source_constant():
+    # N is defined in source (not a user knob) and trips well before the pass cap
+    assert isinstance(auto.STALL_THRESHOLD, int)
+    assert auto.STALL_THRESHOLD >= 1
+    assert auto.STALL_THRESHOLD < config.DEFAULT_MAX_PASSES
+
+
+def test_progress_signal_changes_when_phase_advances(tmp_path):
+    # the forward-progress signal is derived from real project state: advancing
+    # the phase (forward progress) changes it.
+    _active_at(tmp_path, "brainstorm")
+    cfg = config.load_config(tmp_path)
+    before = auto.progress_signal(
+        tmp_path, cfg, projects.load_project(tmp_path, cfg, "my-thing")
+    )
+    projects.advance_project(tmp_path, cfg, "my-thing")  # brainstorm -> spec
+    after = auto.progress_signal(
+        tmp_path, cfg, projects.load_project(tmp_path, cfg, "my-thing")
+    )
+    assert before != after
+
+
+def test_auto_pass_records_progress_signal_in_run_state(tmp_path):
+    # each pass records the phase forward-progress signal in the auto-run state.
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=1000)
+    cfg = config.load_config(tmp_path)
+    state = auto.load_run_state(tmp_path, cfg, "my-thing")
+    assert state.get("progress_signal")
+    assert "execute" in state["progress_signal"]
+
+
+def test_auto_pass_escalates_after_n_unchanged_passes(tmp_path):
+    # a phase that makes no forward progress across N consecutive passes escalates
+    # (a stop/escalate outcome, not a continue directive), naming the stall.
+    _active_at(tmp_path, "execute")
+    n = auto.STALL_THRESHOLD
+    for _ in range(n):  # baseline + (n-1) unchanged passes stay below the trip
+        out = auto.auto_pass(tmp_path, max_passes=1000)  # big cap: isolate stall
+        assert auto.BOOTSTRAP_MARKER in out
+        assert auto.ESCALATION_MARKER not in out
+    out = auto.auto_pass(tmp_path, max_passes=1000)  # the Nth unchanged pass trips
+    assert auto.ESCALATION_MARKER in out
+    assert auto.BOOTSTRAP_MARKER not in out
+    assert "progress" in out.lower()  # a stall, distinct from the pass-cap message
+
+
+def test_auto_pass_does_not_stall_while_phase_progresses(tmp_path):
+    # a progressing phase never trips stall detection, even across more passes
+    # than the threshold: a changing signal resets the streak every pass.
+    _active_at(tmp_path, "brainstorm")
+    cfg = config.load_config(tmp_path)
+    for _ in range(auto.STALL_THRESHOLD + 1):
+        out = auto.auto_pass(tmp_path, max_passes=1000)
+        assert auto.BOOTSTRAP_MARKER in out
+        assert auto.ESCALATION_MARKER not in out
+        proj = projects.load_project(tmp_path, cfg, "my-thing")
+        if workflow.next_phase(proj.phase) is not None:
+            projects.advance_project(tmp_path, cfg, "my-thing")  # forward progress
 
 
 # --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------

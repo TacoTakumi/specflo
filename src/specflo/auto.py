@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import config, projects
+from . import config, plan as plan_module, projects
 from .projects import COMPLETE_STATUS
 
 # Fixed marker opening the auto-mode bootstrap section of the payload. Tests key
@@ -90,6 +90,35 @@ def load_run_state(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
 
 def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict) -> None:
     run_state_path(root, cfg, slug).write_text(json.dumps(state, indent=2) + "\n")
+
+
+# Stall threshold (REQ-15): the number of consecutive no-forward-progress passes
+# that trips a stop/escalate instead of another continue directive. A fixed
+# source constant, not a user knob - a genuinely stuck loop escalates fast, well
+# before the (default 50) pass cap. Verified structurally by tests, not pinned to
+# a magic number here.
+STALL_THRESHOLD = 3
+
+
+def progress_signal(root: Path, cfg: config.SpecfloConfig, project) -> str:
+    """A derived forward-progress signal for ``project``'s current pass (REQ-15).
+
+    Combines the phase (advancing brainstorm -> spec -> plan -> execute is
+    forward progress) with the plan's done/total task counts (completing or
+    adding a task is forward progress). Two consecutive passes yielding the *same*
+    signal made no forward progress; :data:`STALL_THRESHOLD` such passes in a row
+    escalate. Best-effort: any read failure degrades to a phase-only signal
+    rather than raising, so stall detection never breaks the pass itself.
+    """
+    done = total = 0
+    try:
+        plan_file = project.path / plan_module.PLAN_FILENAME
+        if project.phase in ("plan", "execute") and plan_file.is_file():
+            prog = plan_module.progress_from_doc(plan_file.read_text())
+            done, total = prog["done"], prog["total"]
+    except Exception:
+        pass
+    return f"{project.phase}:{done}/{total}"
 
 
 def resolve_max_passes(flag: int | None, cfg_default: int | None) -> int:
@@ -332,12 +361,13 @@ def auto_pass(
 
     The stateful entry `specflo auto` invokes. It increments the durable per-
     project pass counter (a dedicated run-state file, never a config auto-on
-    default), and returns:
+    default), records the phase forward-progress signal, and returns:
 
     - the complete-project stop (:data:`AUTO_COMPLETE_DIRECTIVE`) if the project
       is already finished - without touching the counter;
-    - a human-escalation stop (:func:`escalation_message`) once the pass count
-      reaches the cap (REQ-14) - no continue directive;
+    - a human-escalation stop (:func:`escalation_message`) when the phase makes no
+      forward progress across :data:`STALL_THRESHOLD` consecutive passes (REQ-15)
+      or once the pass count reaches the cap (REQ-14) - no continue directive;
     - otherwise the pure :func:`auto_bootstrap` payload for the current phase.
 
     Returns ``""`` and never raises when there is nothing to emit (no root, no
@@ -356,7 +386,22 @@ def auto_pass(
         state = load_run_state(root, cfg, project.slug)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
+        # Stall detection (REQ-15): compare this pass's forward-progress signal
+        # with the last recorded one. Unchanged -> extend the no-progress streak;
+        # changed (or the first-ever pass, which is the baseline) -> reset it.
+        signal = progress_signal(root, cfg, project)
+        if state.get("progress_signal") == signal:  # None (first pass) never matches
+            stalled = int(state.get("stall_count", 0)) + 1
+        else:
+            stalled = 0
+        state["progress_signal"] = signal
+        state["stall_count"] = stalled
         save_run_state(root, cfg, project.slug, state)
+        if stalled >= STALL_THRESHOLD:
+            return escalation_message(
+                f"no forward progress across {stalled} consecutive passes at the "
+                f"'{project.phase}' phase (stall threshold {STALL_THRESHOLD})."
+            )
         if passes >= cap:
             return escalation_message(
                 f"reached the auto-run pass cap of {cap} passes."
