@@ -59,14 +59,27 @@ def _boundary_override_clause() -> str:
     )
 
 
-def _fork_policy_clause() -> str:
-    """The default (non-delegated) decision-fork policy (REQ-11).
+def _fork_policy_clause(autonomy: str) -> str:
+    """The decision-fork policy, varying by ``autonomy`` (REQ-11 default / REQ-12).
 
-    On a fork with a defensible default, take it and record it as an assumption
-    via ``specflo decision add`` (visible and reversible via ``specflo reopen``),
-    then continue; stop and ask the human only when there is genuinely no
-    defensible default. T-06 later varies this by ``--autonomy`` level.
+    ``safe`` (non-delegated, REQ-11): on a fork with a defensible default, take it
+    and record it via ``specflo decision add``; stop and ask the human only when
+    there is genuinely no defensible default.
+
+    ``autonomous``/``yolo`` (delegated, REQ-12): decision authority is delegated,
+    so decide and record *even* on a genuinely ambiguous fork (no defensible
+    default) instead of stopping - still recording each assumption via
+    ``specflo decision add`` (reversible via ``specflo reopen``).
     """
+    if autonomy in ("autonomous", "yolo"):
+        return (
+            f"- {FORK_POLICY_MARKER} decision authority is delegated at "
+            "--autonomy autonomous/yolo. On a fork, take the best-judgment option "
+            "and record it as an assumption via `specflo decision add` (reversible "
+            "via `specflo reopen`), then keep going - decide and record even when "
+            "there is no defensible default (a genuinely ambiguous fork), rather "
+            "than stopping to ask."
+        )
     return (
         f"- {FORK_POLICY_MARKER} on a fork with a defensible default, take it and "
         "record it as an assumption via `specflo decision add` (visible and "
@@ -129,7 +142,7 @@ def auto_bootstrap(phase: str, autonomy: str = DEFAULT_AUTONOMY) -> str:
     )
     clauses = [
         _boundary_override_clause(),
-        _fork_policy_clause(),
+        _fork_policy_clause(autonomy),
         _side_effect_clause(autonomy),
         _plan_time_avoidance_clause(),
     ]

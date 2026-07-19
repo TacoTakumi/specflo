@@ -179,6 +179,34 @@ def test_config_persists_non_default_autonomy_and_omits_the_default(tmp_path):
     assert config.load_config(tmp_path).autonomy == "yolo"  # survives round-trip
 
 
+# --- T-06: decision delegation by --autonomy level (REQ-12) -------------------
+
+def test_fork_policy_safe_stops_on_unresolvable():
+    clause = _clause(auto.auto_bootstrap("plan", autonomy="safe"), auto.FORK_POLICY_MARKER)
+    low = clause.lower()
+    assert "no defensible default" in low
+    assert "stop" in low and "ask" in low  # stop-and-ask
+    assert "decision add" in clause
+
+
+def test_fork_policy_delegated_decides_and_records_on_ambiguous():
+    for level in ("autonomous", "yolo"):
+        clause = _clause(
+            auto.auto_bootstrap("plan", autonomy=level), auto.FORK_POLICY_MARKER
+        )
+        assert clause, f"no fork clause at {level}"
+        assert "decision add" in clause  # still records each assumption
+        low = clause.lower()
+        assert "even" in low  # decide-and-record *even* on an ambiguous fork
+
+
+def test_fork_policy_differs_between_safe_and_delegated():
+    safe = _clause(auto.auto_bootstrap("plan", autonomy="safe"), auto.FORK_POLICY_MARKER)
+    for level in ("autonomous", "yolo"):
+        deleg = _clause(auto.auto_bootstrap("plan", autonomy=level), auto.FORK_POLICY_MARKER)
+        assert safe != deleg  # observable difference between the levels
+
+
 # --- T-05: plan-time avoidance directive (REQ-10) -----------------------------
 
 def test_bootstrap_plan_time_deferred_draft_and_handoff():
