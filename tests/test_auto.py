@@ -383,6 +383,69 @@ def test_auto_pass_does_not_stall_while_phase_progresses(tmp_path):
             projects.advance_project(tmp_path, cfg, "my-thing")  # forward progress
 
 
+# --- T-11: kill switch (REQ-16) -----------------------------------------------
+
+def test_kill_switch_stops_next_pass_and_clearing_resumes(tmp_path):
+    # set the durable auto-off flag -> the next pass stops (no continue directive);
+    # clearing it restores normal auto continuation.
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    stopped = auto.auto_pass(tmp_path, max_passes=1000)
+    assert auto.KILL_MARKER in stopped
+    assert auto.BOOTSTRAP_MARKER not in stopped
+    auto.set_kill_switch(tmp_path, killed=False)
+    resumed = auto.auto_pass(tmp_path, max_passes=1000)
+    assert auto.BOOTSTRAP_MARKER in resumed
+    assert auto.KILL_MARKER not in resumed
+
+
+def test_kill_switch_is_durable_in_run_state_not_config(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    cfg = config.load_config(tmp_path)
+    assert auto.load_run_state(tmp_path, cfg, "my-thing").get("killed") is True
+    # the flag lives only in the dedicated run-state file, never a config key (REQ-01)
+    assert "killed" not in config.config_path(tmp_path).read_text()
+
+
+def test_kill_switch_clearing_removes_the_flag(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    auto.set_kill_switch(tmp_path, killed=False)
+    cfg = config.load_config(tmp_path)
+    assert "killed" not in auto.load_run_state(tmp_path, cfg, "my-thing")
+
+
+def test_killed_pass_does_not_advance_the_pass_counter(tmp_path):
+    # a killed pass is a halt, not a forward pass - it must not consume the cap.
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    cfg = config.load_config(tmp_path)
+    assert auto.load_run_state(tmp_path, cfg, "my-thing").get("passes", 0) == 0
+
+
+def test_cli_auto_off_stops_then_on_resumes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    assert runner.invoke(app, ["auto", "--off"]).exit_code == 0
+    stopped = runner.invoke(app, ["auto"])
+    assert auto.KILL_MARKER in stopped.stdout
+    assert auto.BOOTSTRAP_MARKER not in stopped.stdout
+    assert runner.invoke(app, ["auto", "--on"]).exit_code == 0
+    resumed = runner.invoke(app, ["auto"])
+    assert auto.BOOTSTRAP_MARKER in resumed.stdout
+    assert auto.KILL_MARKER not in resumed.stdout
+
+
+def test_cli_auto_off_and_on_are_mutually_exclusive(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    assert runner.invoke(app, ["auto", "--off", "--on"]).exit_code != 0
+
+
 # --- T-07: hardcoded always-stop floor (REQ-09) -------------------------------
 
 def test_floor_is_source_constant_and_sensible():

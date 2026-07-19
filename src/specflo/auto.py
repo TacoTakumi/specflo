@@ -64,6 +64,52 @@ def escalation_message(reason: str) -> str:
     )
 
 
+# The durable "auto off" kill switch (REQ-16): a per-project flag in the run-state
+# file that specflo checks each pass. While set, a pass halts instead of
+# continuing - a durable brake complementing the human interrupting the outer
+# harness. KILL_MARKER leads the stop directive a killed pass emits (distinct from
+# ESCALATION_MARKER so a deliberate halt reads apart from a guardrail escalation).
+KILL_MARKER = "AUTO-RUN HALTED:"
+KILL_DIRECTIVE = (
+    f"{KILL_MARKER} the durable auto-off kill switch is set for this project. Do "
+    "NOT start another auto pass; clear it with `specflo auto --on` to resume."
+)
+KILL_SET_MESSAGE = (
+    "Auto-off kill switch SET for the active project: the next `specflo auto` pass "
+    "stops instead of continuing. Clear it with `specflo auto --on`."
+)
+KILL_CLEARED_MESSAGE = (
+    "Auto-off kill switch CLEARED for the active project: `specflo auto` resumes "
+    "normal auto continuation."
+)
+
+
+def set_kill_switch(cwd: Path | None = None, killed: bool = True) -> str:
+    """Set (``killed=True``) or clear (``killed=False``) the durable auto-off flag.
+
+    The flag lives in the dedicated per-project run-state file - never a config
+    key, so it is not a persisted auto-*on* default (REQ-01). Returns a
+    human-facing confirmation, or ``""`` when there is no active project. Never
+    raises.
+    """
+    try:
+        if cwd is None:
+            cwd = Path.cwd()
+        found = _active_project(cwd)
+        if found is None:
+            return ""
+        root, cfg, project = found
+        state = load_run_state(root, cfg, project.slug)
+        if killed:
+            state["killed"] = True
+        else:
+            state.pop("killed", None)
+        save_run_state(root, cfg, project.slug, state)
+        return KILL_SET_MESSAGE if killed else KILL_CLEARED_MESSAGE
+    except Exception:
+        return ""
+
+
 # The durable per-project auto-run state (REQ-14): a single dedicated JSON file
 # beside the project's artifacts, holding the ephemeral pass counter (and, later,
 # the stall progress signal and kill flag). It is NOT a persisted auto-*on*
@@ -384,6 +430,11 @@ def auto_pass(
             return AUTO_COMPLETE_DIRECTIVE
         cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
         state = load_run_state(root, cfg, project.slug)
+        # Kill switch (REQ-16): a set auto-off flag halts before this counts as a
+        # pass - a killed pass is a brake, not forward progress, so it neither
+        # advances the counter nor emits a continue directive.
+        if state.get("killed"):
+            return KILL_DIRECTIVE
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # Stall detection (REQ-15): compare this pass's forward-progress signal

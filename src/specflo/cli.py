@@ -516,6 +516,18 @@ def auto_(
         f"(a runaway backstop). Overrides the .specflo config default "
         f"(default {config.DEFAULT_MAX_PASSES}).",
     ),
+    off: bool = typer.Option(
+        False,
+        "--off",
+        help="Set the durable auto-off kill switch for the active project and "
+        "stop: the next `specflo auto` pass halts instead of continuing. Clear "
+        "it with --on.",
+    ),
+    on: bool = typer.Option(
+        False,
+        "--on",
+        help="Clear the auto-off kill switch, re-enabling normal auto continuation.",
+    ),
 ) -> None:
     """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
 
@@ -525,10 +537,18 @@ def auto_(
     clears context (REQ-05); the seamless clear-and-reseed trigger is the outer
     harness's job. `--autonomy` governs how far it runs unattended (REQ-08);
     `--max-passes` backstops the loop, escalating to the human at the cap (REQ-14).
-    Each invocation counts as one pass in a durable per-project run-state file.
+    `--off`/`--on` set and clear a durable kill switch specflo respects each pass
+    (REQ-16). Each pass counts in a durable per-project run-state file.
     Strictly additive: the ask-first `hook reseed` default is unchanged (REQ-02).
     Prints nothing when there is no active project.
     """
+    if off and on:
+        raise _die("--off and --on are mutually exclusive.")
+    if off or on:
+        out = auto_module.set_kill_switch(killed=off)  # --off sets; --on clears
+        if out:
+            typer.echo(out)
+        return
     if autonomy is not None and autonomy not in auto_module.AUTONOMY_LEVELS:
         raise _die(
             f"invalid --autonomy {autonomy!r}; choose from "
