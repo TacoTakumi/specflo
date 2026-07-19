@@ -73,6 +73,15 @@ superseding requirement — never silently mutate a task or drift off its
    `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
    the project — the user's to call; **wait** for their go.
 
+   **Auto-mode carve-out.** The boundary pauses above are the *manual* default.
+   Under an opt-in `specflo auto` run, the auto-mode bootstrap's **boundary
+   override** (marked `== specflo auto-mode bootstrap ==`) drives the loop into
+   and through execute without pausing at boundaries; completion then follows the
+   bootstrap's terminal-stop — the loop halts on the CLI's `Completed project`
+   signal (or a guardrail/kill escalation) and never auto-completes, so
+   `specflo advance` still remains the user's call. This carve-out applies only
+   under that bootstrap; absent it, pause as above.
+
 ## Milestones
 
 When the plan groups tasks into **milestones**, the CLI surfaces two soft signals

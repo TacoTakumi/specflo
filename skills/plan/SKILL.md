@@ -60,6 +60,13 @@ not planning.
    `specflo advance` (moves `plan → execute`) is the user's to call — **wait** for
    their go; don't start executing tasks yourself.
 
+   **Auto-mode carve-out.** The pause-and-wait above is the *manual* default.
+   Under an opt-in `specflo auto` run, the auto-mode bootstrap's **boundary
+   override** (marked `== specflo auto-mode bootstrap ==`) supersedes it — once
+   the phase validates, advance across `brainstorm → spec → plan → execute` on
+   your own without pausing here. This carve-out applies only under that
+   bootstrap; absent it, pause as above.
+
 ## Milestones
 
 Group the plan's tasks into ordered **milestones** — user-verifiable slices —

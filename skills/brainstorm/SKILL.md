@@ -83,6 +83,13 @@ explicitly approved. This applies regardless of how simple the work looks.
     not re-interview). Then **wait** — `specflo advance` is the next move, but it's
     the user's to call; don't change the phase yourself or start the spec.
 
+    **Auto-mode carve-out.** The pause-and-wait above is the *manual* default.
+    Under an opt-in `specflo auto` run, the auto-mode bootstrap's **boundary
+    override** (marked `== specflo auto-mode bootstrap ==`) supersedes it — once
+    the phase validates, advance across `brainstorm → spec → plan → execute` on
+    your own without pausing here. This carve-out applies only under that
+    bootstrap; absent it, pause as above.
+
 ## Researching (the woven research seam)
 
 Research is done by a **research subagent**, not by you inline — that keeps raw

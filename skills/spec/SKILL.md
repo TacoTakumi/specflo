@@ -82,6 +82,13 @@ requirements with pass/fail acceptance — not merely "don't code yet".
    re-interview). Then **wait** — `specflo advance` is the user's to call; don't
    change the phase yourself or start the plan.
 
+   **Auto-mode carve-out.** The pause-and-wait above is the *manual* default.
+   Under an opt-in `specflo auto` run, the auto-mode bootstrap's **boundary
+   override** (marked `== specflo auto-mode bootstrap ==`) supersedes it — once
+   the phase validates, advance across `brainstorm → spec → plan → execute` on
+   your own without pausing here. This carve-out applies only under that
+   bootstrap; absent it, pause as above.
+
 ## Anti-sycophancy
 
 Take a position on every requirement and state what evidence would change it.
