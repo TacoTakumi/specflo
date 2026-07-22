@@ -74,6 +74,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   out-of-date one is replaced whole. There is no npm publication path - the
   extension's `package.json` is marked private and carries no publish config.
 
+- **The pi extension reseeds a session on cold start.** When a pi session starts
+  or resumes in a specflo repo, the extension runs `specflo hook reseed` and
+  injects that stdout - byte for byte, with no prose of its own - into the first
+  turn of the session, so a fresh pi already knows where the project stands. The
+  ask-first payload is used, not the direct-continuation one: a cold start has
+  nobody's answer yet about whether to keep going. It injects once per session,
+  not once per turn. Outside a specflo repo, with no active project, or with
+  `specflo` not installed at all, it injects nothing and the session is
+  untouched. Sessions opened by a clear or a fork are left alone - those already
+  know what they want next.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and

@@ -29,8 +29,21 @@ import { fileURLToPath } from "node:url";
 /** The pi binary under test. Overridable for a non-PATH install. */
 export const PI_BIN = process.env.SPECFLO_PI_BIN ?? "pi";
 
-/** The specflo binary that installs the extension into the temp agent dir. */
-export const SPECFLO_BIN = process.env.SPECFLO_BIN ?? "specflo";
+/**
+ * The specflo binary that installs the extension into the temp agent dir.
+ *
+ * Deliberately not read from `SPECFLO_BIN`: that variable is how the unit layer
+ * points the extension at a fake, and an end-to-end run must use the real one.
+ * It is stripped from every child environment below for the same reason.
+ */
+export const SPECFLO_BIN = "specflo";
+
+/** The inherited environment with the unit layer's fake-binary override removed. */
+function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
+  const env = { ...process.env, ...extra };
+  delete env.SPECFLO_BIN;
+  return env;
+}
 
 /** Provider and model ids the stub registers; pi is pointed at them by name. */
 export const STUB_PROVIDER = "stub";
@@ -228,7 +241,7 @@ export function createWorkspace(
   if (options.installExtension !== false) {
     execFileSync(SPECFLO_BIN, ["extension", "install"], {
       cwd: project,
-      env: { ...process.env, HOME: home },
+      env: childEnv({ HOME: home }),
       encoding: "utf8",
     });
   }
@@ -241,6 +254,28 @@ export function createWorkspace(
     extensionDir,
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };
+}
+
+// --- specflo state ----------------------------------------------------------
+
+/** Run a real specflo command in ``workspace``'s project and return its stdout. */
+export function runSpecflo(workspace: Workspace, args: string[]): string {
+  return execFileSync(SPECFLO_BIN, args, {
+    cwd: workspace.project,
+    env: childEnv({ HOME: workspace.home }),
+    encoding: "utf8",
+  });
+}
+
+/**
+ * Turn the workspace's project into a real specflo repo with one active project.
+ *
+ * Built by running specflo itself rather than by writing artifacts by hand, so
+ * what the extension reads back is whatever the current CLI actually produces.
+ */
+export function initSpecfloProject(workspace: Workspace, name = "Demo Thing"): void {
+  runSpecflo(workspace, ["init"]);
+  runSpecflo(workspace, ["new", name]);
 }
 
 // --- pi session -------------------------------------------------------------
@@ -283,11 +318,7 @@ export function spawnPi(workspace: Workspace, extra: string[] = []): PiSession {
   ]);
   const child: ChildProcessWithoutNullStreams = spawn(PI_BIN, args, {
     cwd: workspace.project,
-    env: {
-      ...process.env,
-      HOME: workspace.home,
-      PI_CODING_AGENT_DIR: workspace.agentDir,
-    },
+    env: childEnv({ HOME: workspace.home, PI_CODING_AGENT_DIR: workspace.agentDir }),
     stdio: ["pipe", "pipe", "pipe"],
   });
 

@@ -61,8 +61,11 @@ describe("a real pi session with the extension installed", () => {
 
   const workspaceFor = async (turns: Parameters<typeof startStubProvider>[0]) => {
     const provider: StubProvider = await startStubProvider(turns);
+    // Registered before anything else can throw: a listening server left open
+    // by a failed set-up keeps the whole test process alive.
+    cleanups.push(() => provider.close());
     const workspace: Workspace = createWorkspace(provider);
-    cleanups.push(() => workspace.cleanup(), () => provider.close());
+    cleanups.push(() => workspace.cleanup());
     return { provider, workspace };
   };
 
