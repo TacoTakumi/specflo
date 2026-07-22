@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import checkpoint, plan, projects, validators, workflow
+from . import auto, checkpoint, plan, projects, validators, workflow
 from .config import SpecfloConfig, display_path
 
 
@@ -75,6 +75,11 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         # fetches, never by opening `.specflo/config.yaml` itself. Always
         # present and always an int - `load_config` resolves the default.
         "context_threshold_percent": cfg.context_threshold_percent,
+        # Machine-only: whether an auto run is currently live (pi-extension
+        # REQ-12). The extension asks here rather than reading the run-state file,
+        # so the CLI stays the sole judge of whether a clear may fire unattended.
+        # A block, not a bare flag, so later facts about the run can join it.
+        "auto_run": {"under_way": auto.run_under_way(root, cfg, project)},
     }
     # Only carried when meaningful (a shelved project with a reason), so active
     # and complete payloads don't ship an empty field — mirrors `progress`.

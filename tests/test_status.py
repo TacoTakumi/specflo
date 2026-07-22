@@ -191,3 +191,60 @@ def test_render_status_ignores_the_arming_threshold(tmp_path):
     tuned = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
     assert tuned == default
     assert "42" not in tuned
+
+
+# --- the auto-run block on the status payload (pi-extension T-06) -------------
+# The extension asks the CLI whether an auto run is under way instead of reading
+# the run-state file itself (pi-extension REQ-12/REQ-13).
+
+
+def test_build_status_reports_no_auto_run_for_a_project_that_never_ran_auto(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["auto_run"]["under_way"] is False
+
+
+def test_build_status_reports_an_auto_run_under_way_after_a_pass(tmp_path):
+    from specflo import auto
+    cfg, project = _plan_at_execute(tmp_path)
+    auto.auto_pass(tmp_path, max_passes=1000)                     # a continuable pass
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["auto_run"]["under_way"] is True
+
+
+def test_build_status_reports_no_auto_run_once_the_kill_switch_is_set(tmp_path):
+    from specflo import auto
+    cfg, project = _plan_at_execute(tmp_path)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    auto.set_kill_switch(tmp_path, killed=True)
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["auto_run"]["under_way"] is False
+
+
+def test_build_status_reports_no_auto_run_after_a_terminal_stop(tmp_path):
+    from specflo import auto
+    cfg, project = _plan_at_execute(tmp_path)
+    auto.auto_pass(tmp_path, max_passes=2)                        # continuable
+    assert status.build_status(tmp_path, cfg, project)["auto_run"]["under_way"] is True
+    auto.auto_pass(tmp_path, max_passes=2)                        # reaches the cap
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["auto_run"]["under_way"] is False
+
+
+def test_build_status_reports_no_auto_run_for_a_complete_project(tmp_path):
+    from specflo import auto
+    cfg, project = _plan_at_execute(tmp_path)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    projects.complete_project(tmp_path, cfg, "thing")
+    completed = projects.load_project(tmp_path, cfg, "thing")
+    info = status.build_status(tmp_path, cfg, completed)
+    assert info["auto_run"]["under_way"] is False
+
+
+def test_render_status_ignores_the_auto_run_block(tmp_path):
+    from specflo import auto
+    cfg, project = _plan_at_execute(tmp_path)
+    idle = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
+    auto.auto_pass(tmp_path, max_passes=1000)
+    running = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
+    assert running == idle

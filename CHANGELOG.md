@@ -52,6 +52,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   rather than re-derived: a machine caller needs no kill-switch check, pass
   counter or cap of its own. Rejected with `--off`/`--on`, which run no pass.
   The default `specflo auto` output is unchanged.
+- **`specflo status --json` reports an `auto_run` block.** `under_way` is true
+  only while an auto run is genuinely live: the run-state file exists, the
+  project is incomplete, the kill switch is clear, and no terminal stop marked
+  the run ended. Every terminal stop -- kill switch, pass cap, stall, project
+  completion -- now writes that end marker, so a finished run stops reading as a
+  live one; the pass counter is preserved, so the cap still holds if the run
+  resumes, and a fresh pass clears the marker. A project that never ran auto
+  reports false and acquires no run-state file. The human `specflo status` block
+  is unchanged.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes

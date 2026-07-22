@@ -941,3 +941,73 @@ def test_cli_auto_json_is_rejected_with_the_kill_switch_toggles(tmp_path, monkey
     runner.invoke(app, ["new", "My Thing"])
     assert runner.invoke(app, ["auto", "--json", "--off"]).exit_code != 0
     assert runner.invoke(app, ["auto", "--json", "--on"]).exit_code != 0
+
+
+# --- pi-extension T-06: the terminal-stop end marker (REQ-12/REQ-13) ---------
+# `auto-run.json` outlives the run that wrote it, so a stale file would read as a
+# live run and make an attended session fire unattended clears. Every terminal
+# stop marks the run ended; the pass counter is preserved, so the cap still holds.
+
+
+def _state(tmp_path, slug="my-thing"):
+    return auto.load_run_state(tmp_path, config.load_config(tmp_path), slug)
+
+
+def test_a_continuable_pass_leaves_the_run_unended(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=1000)
+    assert _state(tmp_path).get("ended") is not True
+
+
+def test_the_pass_cap_marks_the_run_ended_and_keeps_the_counter(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=2)
+    auto.auto_pass(tmp_path, max_passes=2)      # reaches the cap
+    state = _state(tmp_path)
+    assert state["ended"] is True
+    assert state["passes"] == 2                 # counter preserved, not reset
+
+
+def test_a_stall_marks_the_run_ended(tmp_path):
+    _active_at(tmp_path, "execute")
+    for _ in range(auto.STALL_THRESHOLD + 1):
+        auto.auto_pass(tmp_path, max_passes=1000)
+    assert _state(tmp_path)["ended"] is True
+
+
+def test_the_kill_switch_marks_the_run_ended_and_keeps_the_counter(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=1000)
+    auto.set_kill_switch(tmp_path, killed=True)
+    auto.auto_pass(tmp_path, max_passes=1000)   # halts on the switch
+    state = _state(tmp_path)
+    assert state["ended"] is True
+    assert state["passes"] == 1                 # the halted pass never counted
+
+
+def test_completion_marks_the_run_ended(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.auto_pass(tmp_path, max_passes=1000)
+    cfg = config.load_config(tmp_path)
+    projects.complete_project(tmp_path, cfg, "my-thing")
+    auto.auto_pass(tmp_path, max_passes=1000)   # stops on completion
+    assert _state(tmp_path)["ended"] is True
+
+
+def test_completion_writes_no_run_state_for_a_project_that_never_ran_auto(tmp_path):
+    _complete(tmp_path)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    cfg = config.load_config(tmp_path)
+    assert not auto.run_state_path(tmp_path, cfg, "my-thing").is_file()
+
+
+def test_a_new_pass_reopens_an_ended_run(tmp_path):
+    # clearing the kill switch and passing again is a live run once more, else the
+    # ended marker would outlast the stop that set it.
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    assert _state(tmp_path)["ended"] is True
+    auto.set_kill_switch(tmp_path, killed=False)
+    auto.auto_pass(tmp_path, max_passes=1000)
+    assert _state(tmp_path).get("ended") is not True

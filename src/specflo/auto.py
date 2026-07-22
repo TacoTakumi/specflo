@@ -178,6 +178,44 @@ def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict
     run_state_path(root, cfg, slug).write_text(json.dumps(state, indent=2) + "\n")
 
 
+def _mark_run_ended(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
+    """Record that the auto run ended, preserving everything else in the state.
+
+    The run-state file outlives the run that wrote it, so without this marker a
+    finished run still reads as live and an attended session would be treated as
+    unattended (pi-extension REQ-12). Re-reads the file rather than taking the
+    caller's dict, so the pass counter written moments earlier survives - the cap
+    still holds across a resumed run.
+
+    Writes nothing when no run-state file exists: a project that never ran auto
+    must not acquire one just because a pass looked at it.
+    """
+    if not run_state_path(root, cfg, slug).is_file():
+        return
+    state = load_run_state(root, cfg, slug)
+    state["ended"] = True
+    save_run_state(root, cfg, slug, state)
+
+
+def run_under_way(root: Path, cfg: config.SpecfloConfig, project) -> bool:
+    """Whether an auto run is currently live for ``project`` (pi-extension REQ-12).
+
+    True only while all four hold: a run-state file exists (auto ran at least
+    once), the project is incomplete, the kill switch is clear, and no terminal
+    stop marked the run ended. Consumers ask the CLI this instead of reading the
+    run-state file themselves. Never raises - an unreadable state reads as no run.
+    """
+    try:
+        if project.status == COMPLETE_STATUS:
+            return False
+        if not run_state_path(root, cfg, project.slug).is_file():
+            return False
+        state = load_run_state(root, cfg, project.slug)
+        return not (state.get("killed") or state.get("ended"))
+    except Exception:
+        return False
+
+
 # Stall threshold (REQ-15): the number of consecutive no-forward-progress passes
 # that trips a stop/escalate instead of another continue directive. A fixed
 # source constant, not a user knob - a genuinely stuck loop escalates fast, well
@@ -571,6 +609,7 @@ def auto_pass_result(
             return _pass_result("", STOP_UNAVAILABLE)
         root, cfg, project = found
         if project.status == COMPLETE_STATUS:
+            _mark_run_ended(root, cfg, project.slug)
             return _pass_result(AUTO_COMPLETE_DIRECTIVE, STOP_PROJECT_COMPLETE)
         cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
         state = load_run_state(root, cfg, project.slug)
@@ -578,9 +617,13 @@ def auto_pass_result(
         # pass - a killed pass is a brake, not forward progress, so it neither
         # advances the counter nor emits a continue directive.
         if state.get("killed"):
+            _mark_run_ended(root, cfg, project.slug)
             return _pass_result(KILL_DIRECTIVE, STOP_KILL_SWITCH)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
+        # This pass continues the run, so any end marker left by an earlier stop
+        # is stale - a cleared kill switch or a resumed run is live again.
+        state.pop("ended", None)
         # Stall detection (REQ-15): compare this pass's forward-progress signal
         # with the last recorded one. Unchanged -> extend the no-progress streak;
         # changed (or the first-ever pass, which is the baseline) -> reset it.
@@ -593,6 +636,7 @@ def auto_pass_result(
         state["stall_count"] = stalled
         save_run_state(root, cfg, project.slug, state)
         if stalled >= STALL_THRESHOLD:
+            _mark_run_ended(root, cfg, project.slug)
             return _pass_result(
                 escalation_message(
                     f"no forward progress across {stalled} consecutive passes at the "
@@ -601,6 +645,7 @@ def auto_pass_result(
                 STOP_STALL,
             )
         if passes >= cap:
+            _mark_run_ended(root, cfg, project.slug)
             return _pass_result(
                 escalation_message(f"reached the auto-run pass cap of {cap} passes."),
                 STOP_PASS_CAP,
