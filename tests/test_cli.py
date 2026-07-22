@@ -406,6 +406,22 @@ def test_status_reports_the_active_project_as_json(cwd):
     assert data["next_step"]
 
 
+def test_status_json_reports_the_arming_threshold(cwd):
+    # The pi extension reads the threshold here instead of opening config.yaml
+    # (pi-extension REQ-28): default with no key set, the configured value once set.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["context_threshold_percent"] == 75
+
+    cfg = config.load_config(Path.cwd())
+    cfg.context_threshold_percent = 60
+    config.save_config(Path.cwd(), cfg)
+    tuned = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert tuned["context_threshold_percent"] == 60
+    assert "60" not in runner.invoke(app, ["status"]).output  # human render unchanged
+
+
 def test_list_shows_projects_and_marks_the_active_one(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "Alpha"])

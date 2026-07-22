@@ -39,6 +39,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   than a token count, so it holds across models with different window sizes. An
   unusable value (non-integer, boolean, or outside 1-100) degrades to `75`
   rather than raising, so a hand-edited config cannot break every command.
+- **`specflo status --json` reports `context_threshold_percent`.** The resolved
+  arming percent rides on the status payload the pi extension already fetches at
+  cold start, so the extension never opens `.specflo/config.yaml` itself. Always
+  present, always an integer: `75` with no key set, the configured value once
+  set. The human `specflo status` block is unchanged.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes

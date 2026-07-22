@@ -69,6 +69,12 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "next_phase": workflow.next_phase(project.phase),
         "next_step": next_step,
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
+        # Machine-only: the percent-of-window at which the pi extension arms its
+        # clear-and-continue trigger (pi-extension REQ-28). Carried here so the
+        # extension reads it from the cold-start `status --json` it already
+        # fetches, never by opening `.specflo/config.yaml` itself. Always
+        # present and always an int - `load_config` resolves the default.
+        "context_threshold_percent": cfg.context_threshold_percent,
     }
     # Only carried when meaningful (a shelved project with a reason), so active
     # and complete payloads don't ship an empty field — mirrors `progress`.

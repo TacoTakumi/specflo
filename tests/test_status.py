@@ -159,3 +159,35 @@ def test_build_status_plan_that_validates_offers_advance(tmp_path):
     info = status.build_status(tmp_path, cfg, project)
     assert "specflo advance" in info["next_step"]                        # offers the move
     assert "execute" in info["next_step"]                               # names next phase
+
+
+# --- the pi-extension arming threshold on the status payload (pi-extension T-04) ---
+# The extension reads the threshold from `status --json` rather than opening
+# .specflo/config.yaml (pi-extension REQ-28), so build_status carries the
+# resolved value and the human render stays untouched.
+
+
+def test_build_status_reports_the_default_arming_threshold(tmp_path):
+    cfg, project, _spec_md = _validating_spec_project(tmp_path)
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["context_threshold_percent"] == config.DEFAULT_CONTEXT_THRESHOLD_PERCENT
+    assert isinstance(info["context_threshold_percent"], int)
+
+
+def test_build_status_reports_a_configured_arming_threshold(tmp_path):
+    cfg, project, _spec_md = _validating_spec_project(tmp_path)
+    cfg.context_threshold_percent = 60
+    config.save_config(tmp_path, cfg)
+    reloaded = config.load_config(tmp_path)
+    info = status.build_status(tmp_path, reloaded, project)
+    assert info["context_threshold_percent"] == 60
+
+
+def test_render_status_ignores_the_arming_threshold(tmp_path):
+    # Machine-only field: the human block is byte-identical whatever it holds.
+    cfg, project, _spec_md = _validating_spec_project(tmp_path)
+    default = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
+    cfg.context_threshold_percent = 42
+    tuned = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
+    assert tuned == default
+    assert "42" not in tuned
