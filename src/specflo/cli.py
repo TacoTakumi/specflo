@@ -528,6 +528,13 @@ def auto_(
         "--on",
         help="Clear the auto-off kill switch, re-enabling normal auto continuation.",
     ),
+    json_output: bool = typer.Option(
+        False,
+        "--json",
+        help="Emit the pass as JSON: its payload text, a boolean stop, and the "
+        "stop reason (kill-switch, pass-cap, stall, project-complete, or "
+        "unavailable; null while the run continues).",
+    ),
 ) -> None:
     """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
 
@@ -544,6 +551,9 @@ def auto_(
     """
     if off and on:
         raise _die("--off and --on are mutually exclusive.")
+    if json_output and (off or on):
+        # The toggles run no pass, so there is no pass result to report.
+        raise _die("--json reports a pass; it cannot be combined with --off/--on.")
     if off or on:
         out = auto_module.set_kill_switch(killed=off)  # --off sets; --on clears
         if out:
@@ -556,9 +566,12 @@ def auto_(
         )
     if max_passes is not None and max_passes < 1:
         raise _die("--max-passes must be a positive integer.")
-    out = auto_module.auto_pass(autonomy=autonomy, max_passes=max_passes)
-    if out:
-        typer.echo(out)
+    result = auto_module.auto_pass_result(autonomy=autonomy, max_passes=max_passes)
+    if json_output:
+        typer.echo(json.dumps(result))
+        return
+    if result["payload"]:
+        typer.echo(result["payload"])
 
 
 @hook_app.command(

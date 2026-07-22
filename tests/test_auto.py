@@ -841,3 +841,103 @@ def test_no_module_duplicates_the_continuation_wording():
         if continuation.CLEAR_POINT_MARKER.lower() in code or "resume with" in code:
             offenders.append(info.name)
     assert not offenders, f"continuation wording duplicated in: {offenders}"
+
+
+# --- pi-extension T-05: machine-readable pass result (REQ-13) -----------------
+# The pi extension reads loop control from the CLI rather than deciding it, so a
+# pass reports whether to stop and which condition applied - it never re-derives
+# the kill switch, the cap, the stall streak or completion for itself.
+
+
+def test_stop_reasons_are_distinct_named_constants():
+    reasons = (auto.STOP_KILL_SWITCH, auto.STOP_PASS_CAP, auto.STOP_STALL,
+               auto.STOP_PROJECT_COMPLETE, auto.STOP_UNAVAILABLE)
+    assert all(isinstance(r, str) and r for r in reasons)
+    assert len(set(reasons)) == len(reasons)
+    assert set(auto.STOP_REASONS) == set(reasons)
+
+
+def test_pass_result_continuable_carries_the_prose_payload_and_no_stop(tmp_path):
+    _active_at(tmp_path, "execute")
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["stop"] is False
+    assert result["reason"] is None
+    assert auto.BOOTSTRAP_MARKER in result["payload"]
+    # byte-identical to what the prose path prints for the same pass
+    assert result["payload"] == auto.auto_pass(tmp_path, max_passes=1000)
+
+
+def test_pass_result_stops_on_the_kill_switch(tmp_path):
+    _active_at(tmp_path, "execute")
+    auto.set_kill_switch(tmp_path, killed=True)
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_KILL_SWITCH
+    assert result["payload"] == auto.KILL_DIRECTIVE
+
+
+def test_pass_result_stops_at_the_pass_cap(tmp_path):
+    _active_at(tmp_path, "execute")
+    result = auto.auto_pass_result(tmp_path, max_passes=1)  # first pass reaches it
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_PASS_CAP
+    assert auto.ESCALATION_MARKER in result["payload"]
+
+
+def test_pass_result_stops_on_a_stall(tmp_path):
+    _active_at(tmp_path, "execute")
+    for _ in range(auto.STALL_THRESHOLD + 1):  # baseline, then the streak trips
+        result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_STALL
+    assert auto.ESCALATION_MARKER in result["payload"]
+
+
+def test_pass_result_stops_on_project_completion(tmp_path):
+    _complete(tmp_path)
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_PROJECT_COMPLETE
+    assert result["payload"] == auto.AUTO_COMPLETE_DIRECTIVE
+
+
+def test_pass_result_stops_when_there_is_nothing_to_emit(tmp_path):
+    # no specflo root at all: the consumer still gets a well-formed stop.
+    result = auto.auto_pass_result(tmp_path)
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_UNAVAILABLE
+    assert result["payload"] == ""
+
+
+def test_cli_auto_json_matches_the_prose_path(tmp_path, monkeypatch):
+    import json as _json
+
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    data = _json.loads(runner.invoke(app, ["auto", "--json"]).stdout)
+    assert data["stop"] is False and data["reason"] is None
+    prose = runner.invoke(app, ["auto"]).stdout
+    assert prose == data["payload"] + "\n"  # typer.echo's newline is the only delta
+
+
+def test_cli_auto_json_reports_a_stop_with_its_reason(tmp_path, monkeypatch):
+    import json as _json
+
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    runner.invoke(app, ["auto", "--off"])
+    data = _json.loads(runner.invoke(app, ["auto", "--json"]).stdout)
+    assert data["stop"] is True
+    assert data["reason"] == auto.STOP_KILL_SWITCH
+    assert auto.KILL_MARKER in data["payload"]
+
+
+def test_cli_auto_json_is_rejected_with_the_kill_switch_toggles(tmp_path, monkeypatch):
+    # --off/--on run no pass, so they have no pass result to report.
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    assert runner.invoke(app, ["auto", "--json", "--off"]).exit_code != 0
+    assert runner.invoke(app, ["auto", "--json", "--on"]).exit_code != 0

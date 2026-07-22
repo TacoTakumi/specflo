@@ -44,6 +44,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   cold start, so the extension never opens `.specflo/config.yaml` itself. Always
   present, always an integer: `75` with no key set, the configured value once
   set. The human `specflo status` block is unchanged.
+- **`specflo auto --json`.** Emits one pass as an object: the `payload` text the
+  prose path prints byte for byte, a boolean `stop`, and the `reason` that
+  stopped it -- `kill-switch`, `pass-cap`, `stall`, `project-complete`, or
+  `unavailable` (no specflo root, no active project, or an unreadable one), and
+  `null` while the run continues. Loop control is therefore read from the CLI
+  rather than re-derived: a machine caller needs no kill-switch check, pass
+  counter or cap of its own. Rejected with `--off`/`--on`, which run no pass.
+  The default `specflo auto` output is unchanged.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes

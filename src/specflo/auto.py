@@ -95,6 +95,35 @@ KILL_CLEARED_MESSAGE = (
 )
 
 
+# The stop conditions a pass can report to a machine consumer (pi-extension
+# REQ-13). Loop control is read from the CLI, so the consumer never re-derives
+# any of these - it stops when told and names the reason it was given. Stable
+# identifiers, not prose: the human-facing wording lives in the directives above.
+STOP_KILL_SWITCH = "kill-switch"
+STOP_PASS_CAP = "pass-cap"
+STOP_STALL = "stall"
+STOP_PROJECT_COMPLETE = "project-complete"
+# Not a run condition but a caller-side one: no specflo root, no active project,
+# or an unreadable project. The payload is empty, so there is nothing to continue.
+STOP_UNAVAILABLE = "unavailable"
+STOP_REASONS = (
+    STOP_KILL_SWITCH,
+    STOP_PASS_CAP,
+    STOP_STALL,
+    STOP_PROJECT_COMPLETE,
+    STOP_UNAVAILABLE,
+)
+
+
+def _pass_result(payload: str, reason: str | None) -> dict:
+    """One pass's result: its ``payload``, whether to stop, and why.
+
+    ``stop`` is derived from ``reason`` rather than passed alongside it, so the
+    two can never disagree - a reason means stop, no reason means continue.
+    """
+    return {"payload": payload, "stop": reason is not None, "reason": reason}
+
+
 def set_kill_switch(cwd: Path | None = None, killed: bool = True) -> str:
     """Set (``killed=True``) or clear (``killed=False``) the durable auto-off flag.
 
@@ -504,16 +533,23 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
         return ""
 
 
-def auto_pass(
+def auto_pass_result(
     cwd: Path | None = None,
     autonomy: str | None = None,
     max_passes: int | None = None,
-) -> str:
-    """Advance the auto run by one pass and return the directive for it.
+) -> dict:
+    """Advance the auto run by one pass and return its machine-readable result.
+
+    ``{"payload": str, "stop": bool, "reason": str | None}`` - the directive text
+    the pass emits, whether the loop must stop, and which stop condition applied
+    (one of :data:`STOP_REASONS`, ``None`` on a continuable pass). Loop control is
+    decided here and read by the caller, never re-derived by it (pi-extension
+    REQ-13): the consumer needs no kill-switch check, pass counter or cap of its
+    own.
 
     The stateful entry `specflo auto` invokes. It increments the durable per-
     project pass counter (a dedicated run-state file, never a config auto-on
-    default), records the phase forward-progress signal, and returns:
+    default), records the phase forward-progress signal, and reports:
 
     - the complete-project stop (:data:`AUTO_COMPLETE_DIRECTIVE`) if the project
       is already finished - without touching the counter;
@@ -523,25 +559,26 @@ def auto_pass(
     - otherwise the self-contained three-part :func:`_reseed_payload` for the
       current phase (bootstrap + verbatim checkpoint + generated next-step).
 
-    Returns ``""`` and never raises when there is nothing to emit (no root, no
-    active project, unreadable project).
+    Never raises: nothing to emit (no root, no active project, unreadable
+    project) is an empty payload stopping on :data:`STOP_UNAVAILABLE`, so a
+    machine consumer always gets the same three keys back.
     """
     try:
         if cwd is None:
             cwd = Path.cwd()
         found = _active_project(cwd)
         if found is None:
-            return ""
+            return _pass_result("", STOP_UNAVAILABLE)
         root, cfg, project = found
         if project.status == COMPLETE_STATUS:
-            return AUTO_COMPLETE_DIRECTIVE
+            return _pass_result(AUTO_COMPLETE_DIRECTIVE, STOP_PROJECT_COMPLETE)
         cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
         state = load_run_state(root, cfg, project.slug)
         # Kill switch (REQ-16): a set auto-off flag halts before this counts as a
         # pass - a killed pass is a brake, not forward progress, so it neither
         # advances the counter nor emits a continue directive.
         if state.get("killed"):
-            return KILL_DIRECTIVE
+            return _pass_result(KILL_DIRECTIVE, STOP_KILL_SWITCH)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # Stall detection (REQ-15): compare this pass's forward-progress signal
@@ -556,15 +593,32 @@ def auto_pass(
         state["stall_count"] = stalled
         save_run_state(root, cfg, project.slug, state)
         if stalled >= STALL_THRESHOLD:
-            return escalation_message(
-                f"no forward progress across {stalled} consecutive passes at the "
-                f"'{project.phase}' phase (stall threshold {STALL_THRESHOLD})."
+            return _pass_result(
+                escalation_message(
+                    f"no forward progress across {stalled} consecutive passes at the "
+                    f"'{project.phase}' phase (stall threshold {STALL_THRESHOLD})."
+                ),
+                STOP_STALL,
             )
         if passes >= cap:
-            return escalation_message(
-                f"reached the auto-run pass cap of {cap} passes."
+            return _pass_result(
+                escalation_message(f"reached the auto-run pass cap of {cap} passes."),
+                STOP_PASS_CAP,
             )
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
-        return _reseed_payload(root, cfg, project, level)
+        return _pass_result(_reseed_payload(root, cfg, project, level), None)
     except Exception:
-        return ""
+        return _pass_result("", STOP_UNAVAILABLE)
+
+
+def auto_pass(
+    cwd: Path | None = None,
+    autonomy: str | None = None,
+    max_passes: int | None = None,
+) -> str:
+    """The prose half of :func:`auto_pass_result`: just the pass's directive text.
+
+    What the default `specflo auto` prints, unchanged - one pass, one payload.
+    ``""`` when there is nothing to emit.
+    """
+    return auto_pass_result(cwd, autonomy=autonomy, max_passes=max_passes)["payload"]
