@@ -1,4 +1,4 @@
-"""The shared clear-point-and-continue continuation emitted at every seam.
+"""The shared continuation prose: every seam's clear-point, every reseed directive.
 
 specflo's boundary outputs have to be thick enough that an agent can clear
 context at a seam and resume without re-deriving state. Two seams emit one:
@@ -45,6 +45,57 @@ PHASE_SKILLS: dict[str, str] = {
 # grepping prose rather than `--json` — key on this substring, so the sentence
 # around it can grow in place without breaking them.
 CLEAR_POINT_MARKER = "You may clear context now"
+
+
+# --- the reseed directives ----------------------------------------------
+# `hook reseed` leads its payload with exactly one of these, chosen by the state
+# of the active project and by whether the caller asked for a direct
+# continuation. All four are continuation prose, so they live here: this module
+# is the single producer (REQ-21 of pi-extension), and `hook.py` only selects.
+
+# Leads the reseed payload so the agent surfaces state and asks rather than
+# auto-running the checkpoint's "Do next" (continue-hook D-04). Source-neutral so
+# it reads naturally for `startup`, `clear`, and `resume` alike. This is the
+# *cold-start* directive: the caller is a session-start hook that cannot know
+# whether the human wants to keep going.
+CONFIRMATION_DIRECTIVE = (
+    "You are resuming a specflo project. Do NOT begin work yet - the user may "
+    "want to do something else, or not continue at all. Present the checkpoint "
+    "below to the user and ask whether they want to continue, do something "
+    "else, or stop, then wait for their answer."
+)
+
+# The counterpart for a caller that *already* decided to continue - it cleared
+# context on purpose and wants the work carried on (pi-extension D-13, REQ-18).
+# Re-asking there would waste the turn the clear just bought, so this directive
+# is imperative and carries none of CONFIRMATION_DIRECTIVE's ask-first text.
+# Selected by `hook reseed --continue`, never by the cold-start hook.
+DIRECT_DIRECTIVE = (
+    "Continue this specflo project now. Carry out the action under 'Do next' "
+    "in the checkpoint below, then keep working the phase from there. Context "
+    "was cleared deliberately and continuing is already decided, so there is "
+    "nothing to confirm first."
+)
+
+# The complete-project directive: there is nothing to resume, so the agent must
+# not "continue" the finished work — it surfaces completion and offers the next
+# piece (`specflo new`) instead. Overrides both directives above.
+COMPLETE_DIRECTIVE = (
+    "The active specflo project is complete - there is nothing to resume. Do "
+    "NOT begin work or pick the finished project back up. Tell the user the "
+    "project is complete and ask whether they'd like to start a new project "
+    "(`specflo new`) or do something else, then wait for their answer."
+)
+
+# The shelved-project directive: the project is paused, so the agent must not
+# pick the work back up on its own — it surfaces the shelved state and offers
+# resume *or* a new project. Overrides both in-flight directives above.
+SHELVED_DIRECTIVE = (
+    "The active specflo project is shelved (paused). Do NOT begin work or pick "
+    "it back up on your own. Tell the user it is shelved and ask whether they'd "
+    "like to resume it (`specflo resume`), start a new project (`specflo new`), "
+    "or do something else, then wait for their answer."
+)
 
 
 def phase_skill(phase: str) -> str:

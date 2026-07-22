@@ -207,6 +207,91 @@ def test_source_scan_helper_handles_undecorated_functions():
     assert "_continue_line" in scanned
 
 
+# --- the reseed directives (pi-extension REQ-18, REQ-21) -----------------
+# `hook reseed` leads its payload with one of four directives. All four are
+# *continuation prose*, so they live here — continuation.py is the single
+# producer (REQ-21) and hook.py only selects between them.
+
+# Distinctive fragments of the ask-first directive. The direct-continuation mode
+# exists precisely to drop the confirmation gate (REQ-18), so none may survive
+# into it. Lower-case: every scan below folds case.
+ASK_FIRST_FRAGMENTS = [
+    "not begin work",
+    "ask whether",
+    "wait for their answer",
+]
+
+# Imperative openers the direct directive may lead with. A set rather than one
+# fixed string, so the sentence can be reworded without a test rewrite — what is
+# asserted is that it *commands* rather than asks.
+IMPERATIVE_OPENERS = ("continue", "carry", "resume", "work", "do")
+
+
+def _specflo_modules():
+    """Every importable module in the ``specflo`` package."""
+    import importlib
+    import pkgutil
+
+    import specflo
+
+    for info in pkgutil.walk_packages(specflo.__path__, "specflo."):
+        yield importlib.import_module(info.name)
+
+
+def test_direct_directive_opens_with_an_imperative_to_act_now():
+    # REQ-18: the flagged payload opens with an imperative instruction to carry
+    # out the next step *now* — a caller that just cleared context on purpose has
+    # already answered "do you want to continue".
+    opening = continuation.DIRECT_DIRECTIVE.split(".")[0].strip().lower()
+    assert opening.startswith(IMPERATIVE_OPENERS), f"not imperative: {opening!r}"
+    assert "now" in opening, f"opening line does not say to act now: {opening!r}"
+
+
+def test_direct_directive_carries_no_ask_first_text():
+    # REQ-18, asserted by required absence: re-asking would waste the turn the
+    # clear-and-continue just bought.
+    lowered = continuation.DIRECT_DIRECTIVE.lower()
+    for fragment in ASK_FIRST_FRAGMENTS:
+        assert fragment not in lowered, f"ask-first text survived: {fragment!r}"
+    assert continuation.CONFIRMATION_DIRECTIVE not in continuation.DIRECT_DIRECTIVE
+
+
+def test_the_four_reseed_directives_are_distinct():
+    # Each addresses a different state (in flight, in flight after a deliberate
+    # clear, complete, shelved); a duplicate would mean one state is unhandled.
+    directives = [
+        continuation.CONFIRMATION_DIRECTIVE,
+        continuation.DIRECT_DIRECTIVE,
+        continuation.COMPLETE_DIRECTIVE,
+        continuation.SHELVED_DIRECTIVE,
+    ]
+    assert len(set(directives)) == len(directives)
+
+
+def test_reseed_directive_prose_is_produced_only_by_continuation():
+    # REQ-21: the payload text is rendered in continuation.py and no other module
+    # emits continuation prose. Modules that *use* a directive import the name;
+    # the AST scan sees the identifier, never a second copy of the string.
+    directives = {
+        "CONFIRMATION_DIRECTIVE": continuation.CONFIRMATION_DIRECTIVE,
+        "DIRECT_DIRECTIVE": continuation.DIRECT_DIRECTIVE,
+        "COMPLETE_DIRECTIVE": continuation.COMPLETE_DIRECTIVE,
+        "SHELVED_DIRECTIVE": continuation.SHELVED_DIRECTIVE,
+    }
+    here = executable_identifiers(continuation)
+    for name, text in directives.items():
+        assert text.lower() in here, f"{name} is not rendered in continuation.py"
+
+    for module in _specflo_modules():
+        if module.__name__ == "specflo.continuation":
+            continue
+        code = executable_identifiers(module)
+        for name, text in directives.items():
+            assert text.lower() not in code, (
+                f"{module.__name__} holds a second copy of {name}"
+            )
+
+
 def test_builder_is_a_pure_function_of_its_arguments():
     # Same inputs -> byte-identical output, with no ambient state consulted. This
     # is what makes the mode-agnosticism of REQ-03 checkable by construction.

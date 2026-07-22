@@ -17,39 +17,27 @@ import json
 from pathlib import Path
 
 from . import checkpoint, config, projects, status
+from .continuation import (
+    COMPLETE_DIRECTIVE,
+    CONFIRMATION_DIRECTIVE,
+    DIRECT_DIRECTIVE,
+    SHELVED_DIRECTIVE,
+)
 from .projects import COMPLETE_STATUS, SHELVED_STATUS
 
-# Leads the reseed payload so the agent surfaces state and asks rather than
-# auto-running the checkpoint's "Do next" (D-04). Source-neutral so it reads
-# naturally for `startup`, `clear`, and `resume` alike.
-CONFIRMATION_DIRECTIVE = (
-    "You are resuming a specflo project. Do NOT begin work yet - the user may "
-    "want to do something else, or not continue at all. Present the checkpoint "
-    "below to the user and ask whether they want to continue, do something "
-    "else, or stop, then wait for their answer."
-)
-
-# The complete-project counterpart: there is nothing to resume, so the agent
-# must not "continue" the finished work — it surfaces completion and offers the
-# next piece (`specflo new`) instead. Used in place of CONFIRMATION_DIRECTIVE
-# when the active project's status is COMPLETE_STATUS.
-COMPLETE_DIRECTIVE = (
-    "The active specflo project is complete - there is nothing to resume. Do "
-    "NOT begin work or pick the finished project back up. Tell the user the "
-    "project is complete and ask whether they'd like to start a new project "
-    "(`specflo new`) or do something else, then wait for their answer."
-)
-
-# The shelved-project counterpart: the project is paused, so the agent must not
-# pick the work back up on its own — it surfaces the shelved state and offers
-# resume *or* a new project. Used in place of CONFIRMATION_DIRECTIVE when the
-# active project's status is SHELVED_STATUS.
-SHELVED_DIRECTIVE = (
-    "The active specflo project is shelved (paused). Do NOT begin work or pick "
-    "it back up on your own. Tell the user it is shelved and ask whether they'd "
-    "like to resume it (`specflo resume`), start a new project (`specflo new`), "
-    "or do something else, then wait for their answer."
-)
+# The four directives are re-exported, not defined here: `continuation.py` is the
+# single producer of payload prose (pi-extension REQ-21), so this module selects
+# a directive and assembles the payload but holds no copy of the wording.
+__all__ = [
+    "COMPLETE_DIRECTIVE",
+    "CONFIRMATION_DIRECTIVE",
+    "DIRECT_DIRECTIVE",
+    "SHELVED_DIRECTIVE",
+    "claude_session_start_output",
+    "install_hook",
+    "reseed_text",
+    "settings_snippet",
+]
 
 
 def _active_project(cwd: Path):
@@ -67,7 +55,7 @@ def _active_project(cwd: Path):
     return root, cfg, projects.load_project(root, cfg, cfg.active_project)
 
 
-def reseed_text(cwd: Path | None = None) -> str:
+def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
     """Return the reseed payload for the active project found from ``cwd``.
 
     The payload is a leading directive followed by the verbatim
@@ -77,6 +65,13 @@ def reseed_text(cwd: Path | None = None) -> str:
     new project instead), or :data:`SHELVED_DIRECTIVE` when it is shelved (paused
     — offer resume or a new project). Resolves the specflo root and active
     project from ``cwd`` (defaulting to the current directory).
+
+    With ``direct=True`` an in-flight project leads with :data:`DIRECT_DIRECTIVE`
+    instead: an imperative "carry out the next step now" with no confirmation
+    gate, for a caller that cleared context on purpose and has already answered
+    "do you want to continue" (REQ-18). The flag changes nothing else — same body,
+    same assembly — and it does **not** override the complete or shelved
+    directives, since neither state has a next step to carry out.
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) — even resolving the
@@ -97,6 +92,8 @@ def reseed_text(cwd: Path | None = None) -> str:
             directive = COMPLETE_DIRECTIVE
         elif project.status == SHELVED_STATUS:
             directive = SHELVED_DIRECTIVE
+        elif direct:
+            directive = DIRECT_DIRECTIVE
         else:
             directive = CONFIRMATION_DIRECTIVE
         return f"{directive}\n\n{body}"

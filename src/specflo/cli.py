@@ -572,20 +572,35 @@ def hook_reseed(
         help="'text' (portable payload) or 'claude' (SessionStart JSON: agent "
         "context + a user-visible nudge).",
     ),
+    direct: bool = typer.Option(
+        False,
+        "--continue",
+        help="Emit the direct-continuation payload: carry out the next step now, "
+        "no confirmation gate. For a caller that cleared context on purpose.",
+    ),
 ) -> None:
     """Emit the clear-and-continue reseed payload for the active project.
 
     Default (`text`) prints the confirmation-gate directive + the verbatim
-    checkpoint - portable across harnesses. `--format claude` emits Claude Code
-    SessionStart JSON: the same payload as `additionalContext` plus a visible
-    `systemMessage` telling the user what to type. Either way, prints nothing
-    when there is no active project. Always exits 0, reads no stdin, makes no
-    network calls - safe to wire into SessionStart unconditionally.
+    checkpoint - portable across harnesses. `--continue` swaps that directive for
+    an imperative "carry out the next step now": the ask-first gate exists because
+    a cold-start hook cannot know whether the human wants to keep going, and a
+    caller that just cleared context on purpose has already answered that.
+    `--format claude` emits Claude Code SessionStart JSON: the same payload as
+    `additionalContext` plus a visible `systemMessage` telling the user what to
+    type. Either way, prints nothing when there is no active project. Always exits
+    0 (bar an invalid flag combination), reads no stdin, makes no network calls -
+    safe to wire into SessionStart unconditionally.
     """
+    if direct and output_format == "claude":
+        # The Claude wrapper is the cold-start surface: its visible nudge asks the
+        # user to type `continue`, which contradicts a payload that just told the
+        # agent to start. Refuse rather than silently drop one of the two flags.
+        raise _die("--continue is not supported with --format claude.")
     out = (
         hook.claude_session_start_output()
         if output_format == "claude"
-        else hook.reseed_text()
+        else hook.reseed_text(direct=direct)
     )
     if out:
         typer.echo(out)

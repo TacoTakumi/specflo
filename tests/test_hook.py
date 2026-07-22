@@ -2,7 +2,7 @@ import json
 
 from typer.testing import CliRunner
 
-from specflo import checkpoint, config, hook, projects
+from specflo import checkpoint, config, continuation, hook, projects
 from specflo.cli import app
 
 runner = CliRunner()
@@ -98,6 +98,86 @@ def test_cli_hook_reseed_does_not_block_on_stdin(tmp_path, monkeypatch):
     result = runner.invoke(app, ["hook", "reseed"], input="")  # closed/empty stdin
     assert result.exit_code == 0
     assert hook.CONFIRMATION_DIRECTIVE in result.output
+
+
+# --- the direct-continuation mode (`hook reseed --continue`, REQ-18) -----
+# The ask-first gate is a workaround for Claude's SessionStart hook being unable
+# to start work (D-13), not a design principle. A caller that cleared context on
+# purpose passes --continue and gets an imperative payload instead.
+
+
+def _checkpoint_body(tmp_path, cfg, slug="my-thing"):
+    """The verbatim `specflo checkpoint` render the reseed payload wraps."""
+    project = projects.load_project(tmp_path, cfg, slug)
+    return checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(tmp_path, project, cfg=cfg)
+    )
+
+
+def test_reseed_text_direct_leads_with_the_direct_directive(tmp_path):
+    cfg = _active(tmp_path)
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert out.startswith(continuation.DIRECT_DIRECTIVE)
+    assert hook.CONFIRMATION_DIRECTIVE not in out
+    # same body as the ask-first mode: only the leading directive differs
+    assert _checkpoint_body(tmp_path, cfg) in out
+
+
+def test_reseed_text_default_payload_is_byte_identical_to_the_ask_first_shape(tmp_path):
+    # REQ-18's second clause: with no flag the command's output is unchanged -
+    # the confirmation directive, a blank line, then the verbatim checkpoint.
+    cfg = _active(tmp_path)
+    expected = f"{hook.CONFIRMATION_DIRECTIVE}\n\n{_checkpoint_body(tmp_path, cfg)}"
+    assert hook.reseed_text(tmp_path) == expected
+    assert hook.reseed_text(tmp_path, direct=False) == expected
+
+
+def test_reseed_text_direct_does_not_override_a_complete_project(tmp_path):
+    # A complete project has nothing to carry out, so the flag cannot turn the
+    # payload into "continue now" - the complete directive still leads.
+    _complete(tmp_path)
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert out.startswith(hook.COMPLETE_DIRECTIVE)
+    assert continuation.DIRECT_DIRECTIVE not in out
+
+
+def test_reseed_text_direct_does_not_override_a_shelved_project(tmp_path):
+    _shelved(tmp_path)
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert out.startswith(hook.SHELVED_DIRECTIVE)
+    assert continuation.DIRECT_DIRECTIVE not in out
+
+
+def test_cli_hook_reseed_continue_prints_the_direct_payload(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed", "--continue"])
+    assert result.exit_code == 0
+    assert result.output.startswith(continuation.DIRECT_DIRECTIVE)
+    assert hook.CONFIRMATION_DIRECTIVE not in result.output
+    assert "## Do next" in result.output  # the checkpoint body still came through
+
+
+def test_cli_hook_reseed_continue_silent_with_no_active_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["hook", "reseed", "--continue"])
+    assert result.exit_code == 0
+    assert result.output.strip() == ""
+
+
+def test_cli_hook_reseed_continue_rejects_format_claude(tmp_path, monkeypatch):
+    # The Claude SessionStart wrapper is the cold-start surface and its visible
+    # nudge asks the user to type `continue`; pairing it with the direct payload
+    # would emit a self-contradicting message. Fail loudly rather than silently
+    # ignoring one of the two flags.
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["hook", "reseed", "--continue", "--format", "claude"])
+    assert result.exit_code != 0
+    assert continuation.DIRECT_DIRECTIVE not in result.output
 
 
 # --- the Claude SessionStart JSON (`hook reseed --format claude`) --------

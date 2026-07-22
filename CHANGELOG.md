@@ -8,6 +8,25 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.4.0]
+
+### Added
+- **`specflo hook reseed --continue`.** Emits a *direct-continuation* payload:
+  an imperative "carry out the next step now" instruction in place of the
+  ask-first confirmation directive, followed by the same verbatim checkpoint.
+  The ask-first gate exists because a cold-start session hook cannot know
+  whether the human wants to keep going; a caller that cleared context on
+  purpose has already answered that, so re-asking wastes the turn the clear
+  just bought. Bare `specflo hook reseed` is unchanged, byte for byte. The flag
+  is rejected with `--format claude`, whose user-visible nudge asks the user to
+  type `continue` and would contradict the payload. A complete or shelved
+  project still gets its own directive -- neither has a next step to carry out.
+
+### Changed
+- **All four reseed directives now live in `continuation.py`**, which becomes
+  the single producer of payload prose; `hook.py` selects between them and
+  re-exports the names. No output changes.
+
 ## [0.3.0]
 
 ### Added
