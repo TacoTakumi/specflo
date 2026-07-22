@@ -48,6 +48,15 @@ _SCOPE_DIRS = {
 #: agentsquire's pi harness markers.
 _PI_MARKER = ".pi"
 
+#: Top-level entries of the source tree that are not part of an install. The
+#: end-to-end harness lives inside the package (it drives the very extension it
+#: sits next to) but pi never loads it -- discovery resolves the package through
+#: package.json's pi.extensions, which points into src/ only. Installing it
+#: would put process-spawning test code in the user's pi directory and, worse,
+#: fold it into the content hash, so editing a test would report every install
+#: as stale.
+_NOT_INSTALLED = frozenset({"test"})
+
 
 class ExtensionInstallError(Exception):
     """The extension could not be installed as asked."""
@@ -71,17 +80,28 @@ def extension_source() -> Path:
     return Path(__file__).resolve().parent / "extension"
 
 
-def extension_content_hash(path: Path) -> str:
-    """Deterministic hash of an extension tree, excluding the stamp sidecar.
+def installable_files(path: Path) -> list[Path]:
+    """The files of an extension tree that an install copies, sorted."""
+    return sorted(
+        p
+        for p in path.rglob("*")
+        if p.is_file()
+        and p.relative_to(path).parts[0] not in _NOT_INSTALLED
+        and p.name != STAMP_FILENAME
+    )
 
-    Sorted by relative path so filesystem ordering never matters, and skipping
-    the stamp so a freshly stamped install hashes back to its own source value.
+
+def extension_content_hash(path: Path) -> str:
+    """Deterministic hash of an extension tree, over what an install copies.
+
+    Sorted by relative path so filesystem ordering never matters. The stamp
+    sidecar is skipped, so a freshly stamped install hashes back to its own
+    source value, and so are the entries an install leaves behind, so the source
+    and the copy it produces hash identically.
     """
     digest = hashlib.sha256()
-    for file in sorted(p for p in path.rglob("*") if p.is_file()):
+    for file in installable_files(path):
         relpath = file.relative_to(path).as_posix()
-        if relpath == STAMP_FILENAME:
-            continue
         digest.update(relpath.encode())
         digest.update(b"\0")
         digest.update(hashlib.sha256(file.read_bytes()).digest())
@@ -179,7 +199,7 @@ def install_extension(
     state = "updated" if target.exists() or target.is_symlink() else "installed"
     _remove(target)
     directory.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source, target)
+    shutil.copytree(source, target, ignore=shutil.ignore_patterns(*_NOT_INSTALLED))
     (target / STAMP_FILENAME).write_text(
         json.dumps(
             {

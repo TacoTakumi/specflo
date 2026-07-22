@@ -125,12 +125,33 @@ _DEPENDENCY_FIELDS = (
 )
 
 
+#: Suffixes scanned as extension source.
+_SOURCE_SUFFIXES = {".ts", ".js", ".mts", ".mjs"}
+
+
+def loadable_files(source: Path) -> list[Path]:
+    """The files pi actually loads: package.json plus everything under ``src/``.
+
+    Scoped to what runs inside pi rather than the whole tree, because the tree
+    also carries ``test/`` -- an end-to-end harness that spawns processes, writes
+    temp files and names specflo paths on purpose. pi never loads it: discovery
+    resolves the package through ``package.json``'s ``pi.extensions``, which
+    points into ``src/`` only. Guarding code pi never runs would say nothing
+    about the extension and would forbid the harness from testing it.
+    """
+    files = [p for p in (source / "src").rglob("*") if p.is_file()]
+    manifest = source / "package.json"
+    if manifest.is_file():
+        files.append(manifest)
+    return sorted(files)
+
+
 def scan_extension(source: Path) -> list[Violation]:
-    """Every structural violation in the extension tree at ``source``."""
+    """Every structural violation in the extension source at ``source``."""
     violations: list[Violation] = []
-    for file in sorted(p for p in source.rglob("*") if p.is_file()):
+    for file in loadable_files(source):
         relpath = file.relative_to(source).as_posix()
-        if file.suffix in {".ts", ".js", ".mts", ".mjs"}:
+        if file.suffix in _SOURCE_SUFFIXES:
             stripped = strip_comments(file.read_text())
             for kind, pattern in _SOURCE_RULES:
                 match = pattern.search(stripped)
@@ -156,14 +177,30 @@ def test_shipped_extension_source_has_no_structural_violations():
     assert scan_extension(extension_install.extension_source()) == []
 
 
-def test_scan_covers_the_extension_entry_point():
-    # A guard that scanned nothing would also report zero violations. Assert the
-    # entry point named by package.json is a file the scan actually reads.
+def test_scan_covers_every_entry_point_package_json_declares():
+    # A guard that scanned nothing would also report zero violations. Assert
+    # every entry point pi loads is a file the scan actually reads.
     source = extension_install.extension_source()
     manifest = json.loads((source / "package.json").read_text())
+    scanned = set(loadable_files(source))
     for entry in manifest["pi"]["extensions"]:
-        assert (source / entry).suffix in {".ts", ".js", ".mts", ".mjs"}
-        assert (source / entry).is_file()
+        target = (source / entry).resolve()
+        assert target.is_file()
+        assert target.suffix in _SOURCE_SUFFIXES
+        assert target in scanned, f"entry point {entry} is outside the scan"
+
+
+def test_scan_skips_the_end_to_end_test_harness(tmp_path):
+    # The harness spawns processes and names specflo paths on purpose; pi never
+    # loads it, so it must not be scanned -- and must not be silently in scope
+    # either, which this pins by putting a violation there and expecting none.
+    source = tmp_path / "extension"
+    shutil.copytree(extension_install.extension_source(), source)
+    (source / "test").mkdir(exist_ok=True)
+    (source / "test" / "harness.ts").write_text(
+        'import { readFileSync } from "node:fs";\nconst p = ".specflo/config.yaml";\n'
+    )
+    assert scan_extension(source) == []
 
 
 # --- each violation kind is caught ------------------------------------------

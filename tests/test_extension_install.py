@@ -108,9 +108,25 @@ def test_installed_tree_is_byte_identical_to_the_source(pi_home, pi_project):
     installed = extension_install.install_extension(home=pi_home, project=pi_project)
     source = extension_install.extension_source()
 
-    for file in sorted(p for p in source.rglob("*") if p.is_file()):
+    installable = extension_install.installable_files(source)
+    assert installable, "the source tree has no installable files"
+    for file in installable:
         copied = installed.path / file.relative_to(source)
         assert copied.read_bytes() == file.read_bytes()
+
+
+def test_install_leaves_the_end_to_end_harness_behind(pi_home, pi_project):
+    # The harness lives inside the package because it drives the extension it
+    # sits next to, but pi never loads it and a user's pi directory has no use
+    # for process-spawning test code. Folding it into the content hash would
+    # also make editing a test report every install as stale.
+    source = extension_install.extension_source()
+    assert (source / "test").is_dir(), "the harness should live inside the package"
+
+    installed = extension_install.install_extension(home=pi_home, project=pi_project)
+
+    assert not (installed.path / "test").exists()
+    assert extension_install.extension_content_hash(installed.path) == installed.content_hash
 
 
 def test_install_records_a_version_stamp_equal_to_specflo_version(pi_home, pi_project):
