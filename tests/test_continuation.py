@@ -292,6 +292,48 @@ def test_reseed_directive_prose_is_produced_only_by_continuation():
             )
 
 
+# --- reseed payload assembly (pi-extension REQ-19, REQ-20) ---------------
+
+BODY = "SENTINEL CHECKPOINT BODY"
+BRIEF = "SENTINEL TASK BRIEF"
+
+
+def test_reseed_assembly_without_a_brief_is_the_bare_directive_and_body():
+    # REQ-18's byte-identity clause reduces to this: with no brief the payload is
+    # exactly the two blocks, joined by one blank line - the shape every existing
+    # caller already emits.
+    assert continuation.build_reseed(continuation.CONFIRMATION_DIRECTIVE, BODY) == (
+        f"{continuation.CONFIRMATION_DIRECTIVE}\n\n{BODY}"
+    )
+    assert continuation.TASK_BRIEF_HEADING not in continuation.build_reseed(
+        continuation.DIRECT_DIRECTIVE, BODY
+    )
+
+
+def test_reseed_assembly_places_the_brief_after_the_checkpoint_body():
+    # The checkpoint orients; the brief is the detail the agent needs once
+    # oriented. Order matters for a fresh session reading top-down.
+    out = continuation.build_reseed(continuation.DIRECT_DIRECTIVE, BODY, task_brief=BRIEF)
+    assert out.startswith(continuation.DIRECT_DIRECTIVE)
+    assert out.index(BODY) < out.index(continuation.TASK_BRIEF_HEADING) < out.index(BRIEF)
+
+
+def test_reseed_assembly_carries_at_most_one_brief():
+    # REQ-20: enrichment is bounded to one task brief. The assembler takes a
+    # single brief argument, so a second one is unrepresentable - asserted here so
+    # the bound stays structural rather than a caller-side convention.
+    out = continuation.build_reseed(continuation.DIRECT_DIRECTIVE, BODY, task_brief=BRIEF)
+    assert out.count(continuation.TASK_BRIEF_HEADING) == 1
+    assert out.count(BRIEF) == 1
+
+
+def test_reseed_assembly_treats_an_empty_brief_as_no_brief():
+    # A phase with nothing to brief must not emit an empty heading.
+    for empty in (None, "", "   "):
+        out = continuation.build_reseed(continuation.DIRECT_DIRECTIVE, BODY, task_brief=empty)
+        assert continuation.TASK_BRIEF_HEADING not in out
+
+
 def test_builder_is_a_pure_function_of_its_arguments():
     # Same inputs -> byte-identical output, with no ambient state consulted. This
     # is what makes the mode-agnosticism of REQ-03 checkable by construction.

@@ -98,6 +98,31 @@ SHELVED_DIRECTIVE = (
 )
 
 
+# Heading the reseed payload files an inlined task brief under. Continuation
+# prose, so it lives here; the brief text itself is rendered by
+# `plan.render_task_brief` — the same renderer `specflo task show` uses, so the
+# two cannot drift (pi-extension REQ-19).
+TASK_BRIEF_HEADING = "## Current task brief"
+
+
+def build_reseed(directive: str, body: str, task_brief: str | None = None) -> str:
+    """Assemble a reseed payload: ``directive``, the checkpoint ``body``, and at
+    most one task brief.
+
+    The brief is optional enrichment and goes last: the checkpoint orients a fresh
+    session, the brief is the detail it needs once oriented. Passing ``None`` (or
+    a blank string) yields exactly the two-block payload every existing caller
+    already emits, byte for byte.
+
+    Bounded by construction (pi-extension REQ-20): one brief argument, so a second
+    task brief is unrepresentable rather than merely discouraged.
+    """
+    parts = [directive, body]
+    if task_brief and task_brief.strip():
+        parts.append(f"{TASK_BRIEF_HEADING}\n\n{task_brief}")
+    return "\n\n".join(parts)
+
+
 def phase_skill(phase: str) -> str:
     """The specflo phase-skill name carrying ``phase`` (the phase name itself)."""
     return PHASE_SKILLS.get(phase, phase)

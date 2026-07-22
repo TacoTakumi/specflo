@@ -1310,31 +1310,12 @@ def task_show(
             + plan.boundary_beat_lines(brief["boundary"])
         ))
         return
-    header = f"{t['id']} - {t['text']}  [{t['progress']}]"
-    if brief.get("working_ahead"):
-        header += "  — working ahead (later milestone than current)"
-    lines = [
-        header,
-        f"  Acceptance: {t['acceptance']}",
-        f"  Verify:     {t['verify']}",
-        f"  Implements: {', '.join(t['implements'])}",
-    ]
-    if t["depends_on"]:
-        lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
-    lines.append("")
-    for req in brief["requirements"]:
-        lines.append(req["section"].rstrip() if req["section"]
-                     else f"### {req['id']} - (not found in spec)")
-        lines.append("")
-    if brief["global_constraints"]:
-        lines.append("## Global constraints")
-        lines.append(brief["global_constraints"])
+    out = plan.render_task_brief(brief)
     # Surface the soft milestone-boundary verify beat (the just-completed
     # milestone's Exit checklist) after the brief, when at a boundary (REQ-14).
     if brief.get("boundary"):
-        lines.append("")
-        lines.extend(plan.boundary_beat_lines(brief["boundary"]))
-    typer.echo("\n".join(lines))
+        out += "\n\n" + "\n".join(plan.boundary_beat_lines(brief["boundary"]))
+    typer.echo(out)
 
 
 @milestone_app.command(

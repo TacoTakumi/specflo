@@ -180,6 +180,124 @@ def test_cli_hook_reseed_continue_rejects_format_claude(tmp_path, monkeypatch):
     assert continuation.DIRECT_DIRECTIVE not in result.output
 
 
+# --- the inlined task brief (REQ-19, REQ-20) -----------------------------
+# A session reseeded mid-execute would otherwise spend its first turn running
+# `specflo task show`. The direct payload inlines that brief instead - bounded to
+# the one task being worked, and carrying no decision text.
+
+ACCEPTANCE = "the parser accepts a task block"
+VERIFY = "uv run pytest tests/test_parser.py"
+CONSTRAINTS = "- Never widen the public API without a superseding requirement."
+
+
+def _execute_with_task(tmp_path, name="My Thing", phase="execute"):
+    """A project at *phase* with a one-task plan, a cited REQ-01, and constraints.
+
+    The task is left ``in_progress``: the state a mid-task reseed lands in.
+    """
+    from specflo import plan, spec
+
+    cfg = _active(tmp_path, name)
+    slug = "my-thing"
+    spec.start_spec(tmp_path, cfg, slug, today="2026-07-22")
+    spec.add_requirement(
+        tmp_path, cfg, slug, "the parser reads a task block",
+        acceptance="round-trips a block", today="2026-07-22",
+    )
+    plan.start_plan(tmp_path, cfg, slug, today="2026-07-22")
+    path = plan.plan_path(tmp_path, cfg, slug)
+    path.write_text(                              # fill the template's empty section
+        path.read_text().replace(
+            "## Global constraints\n", f"## Global constraints\n\n{CONSTRAINTS}\n", 1
+        )
+    )
+    plan.add_task(
+        tmp_path, cfg, slug, "build the parser", acceptance=ACCEPTANCE,
+        verify=VERIFY, implements=["REQ-01"], today="2026-07-22",
+    )
+    plan.start_task(tmp_path, cfg, slug, "T-01", today="2026-07-22")
+    while projects.load_project(tmp_path, cfg, slug).phase != phase:
+        projects.advance_project(tmp_path, cfg, slug)  # brainstorm -> ... -> phase
+    return cfg
+
+
+def test_direct_payload_inlines_the_in_progress_task_brief_in_execute(tmp_path):
+    # REQ-19: acceptance, verify, the cited REQ-NN body, and the plan's global
+    # constraints - everything `specflo task show` would have cost a turn to get.
+    _execute_with_task(tmp_path)
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert continuation.TASK_BRIEF_HEADING in out
+    assert ACCEPTANCE in out
+    assert VERIFY in out
+    assert "the parser reads a task block" in out   # the cited REQ-01 section body
+    assert "round-trips a block" in out             # ...including its acceptance
+    assert CONSTRAINTS in out
+
+
+def test_direct_payload_briefs_the_in_progress_task_not_the_next_pending_one(tmp_path):
+    # A mid-task reseed must resume *that* task. `next_actionable` lists only
+    # pending tasks, so defaulting to it would brief the wrong one.
+    from specflo import plan
+
+    cfg = _execute_with_task(tmp_path)
+    plan.add_task(
+        tmp_path, cfg, "my-thing", "wire the CLI", acceptance="a later task",
+        verify="uv run pytest", implements=["REQ-01"], today="2026-07-22",
+    )
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert ACCEPTANCE in out
+    assert "a later task" not in out
+
+
+def test_no_task_brief_before_the_execute_phase(tmp_path):
+    # REQ-19's second clause: brainstorm, spec and plan have no task to carry out,
+    # so the payload stays the directive plus the checkpoint.
+    for phase in ("brainstorm", "spec", "plan"):
+        root = tmp_path / phase
+        root.mkdir()
+        _execute_with_task(root, phase=phase)
+        out = hook.reseed_text(root, direct=True)
+        assert continuation.TASK_BRIEF_HEADING not in out, f"brief leaked at {phase}"
+        assert ACCEPTANCE not in out, f"brief leaked at {phase}"
+
+
+def test_ask_first_payload_carries_no_task_brief(tmp_path):
+    # The bare command's output is unchanged (REQ-18): enrichment rides the flag.
+    cfg = _execute_with_task(tmp_path)
+    out = hook.reseed_text(tmp_path)
+    assert continuation.TASK_BRIEF_HEADING not in out
+    assert out == f"{hook.CONFIRMATION_DIRECTIVE}\n\n{_checkpoint_body(tmp_path, cfg)}"
+
+
+def test_direct_payload_carries_one_brief_and_no_decision_bodies(tmp_path):
+    # REQ-20: bounded enrichment. One brief, and no D-NN decision body - a cited
+    # requirement may *reference* the decision it derives from, but the decision
+    # text itself is not payload.
+    _execute_with_task(tmp_path)
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert out.count(continuation.TASK_BRIEF_HEADING) == 1
+    assert "### D-" not in out
+
+
+def test_direct_payload_survives_an_unreadable_plan(tmp_path):
+    # The brief is an enrichment, not a precondition: a plan that cannot produce
+    # one must still yield the directive and the checkpoint rather than "".
+    _execute_with_task(tmp_path)
+    (tmp_path / "docs" / "projects" / "my-thing" / "plan.md").unlink()
+    out = hook.reseed_text(tmp_path, direct=True)
+    assert out.startswith(continuation.DIRECT_DIRECTIVE)
+    assert continuation.TASK_BRIEF_HEADING not in out
+
+
+def test_cli_hook_reseed_continue_inlines_the_brief(tmp_path, monkeypatch):
+    _execute_with_task(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["hook", "reseed", "--continue"])
+    assert result.exit_code == 0
+    assert ACCEPTANCE in result.output
+    assert CONSTRAINTS in result.output
+
+
 # --- the Claude SessionStart JSON (`hook reseed --format claude`) --------
 # Claude Code can't make the agent take a turn after startup/clear/resume, so the
 # wiring emits structured JSON: `additionalContext` re-grounds the agent, and a

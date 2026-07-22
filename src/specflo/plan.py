@@ -1039,6 +1039,60 @@ def list_tasks(
     return [t for t in tasks if t.status == "active"]
 
 
+def current_task_id(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
+    """The task the project is *on*: the first in_progress one, else the default.
+
+    ``next_actionable`` lists dependency-ready **pending** tasks, so it steps past
+    a task already under way. Anything resuming mid-execute — a reseed after a
+    context clear, most of all — wants the task being worked, not the one after
+    it. Falls back to :func:`_default_actionable` when nothing is in_progress, and
+    returns ``None`` when there is no plan or no candidate.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return None
+    doc = path.read_text()
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    started = next((t.id for t in active if t.progress == "in_progress"), None)
+    return started or _default_actionable(active, _parse_milestones(doc))
+
+
+def render_task_brief(brief: dict) -> str:
+    """Render a :func:`task_brief` payload as the text block ``task show`` prints.
+
+    Header, acceptance, verify, the cited REQ-NN sections and the plan's Global
+    constraints — everything the brief carries *except* the soft milestone
+    boundary beat, which is a user-facing prompt its callers append themselves.
+    One renderer, so the reseed payload's inlined brief (pi-extension REQ-19) and
+    ``specflo task show`` cannot drift.
+
+    Returns ``""`` when the brief has no task (every task done).
+    """
+    t = brief["task"]
+    if t is None:
+        return ""
+    header = f"{t['id']} - {t['text']}  [{t['progress']}]"
+    if brief.get("working_ahead"):
+        header += "  — working ahead (later milestone than current)"
+    lines = [
+        header,
+        f"  Acceptance: {t['acceptance']}",
+        f"  Verify:     {t['verify']}",
+        f"  Implements: {', '.join(t['implements'])}",
+    ]
+    if t["depends_on"]:
+        lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
+    lines.append("")
+    for req in brief["requirements"]:
+        lines.append(req["section"].rstrip() if req["section"]
+                     else f"### {req['id']} - (not found in spec)")
+        lines.append("")
+    if brief["global_constraints"]:
+        lines.append("## Global constraints")
+        lines.append(brief["global_constraints"])
+    return "\n".join(lines)
+
+
 def task_brief(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str | None = None
 ) -> dict:

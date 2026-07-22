@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from . import checkpoint, config, projects, status
+from . import checkpoint, config, continuation, plan, projects, status
 from .continuation import (
     COMPLETE_DIRECTIVE,
     CONFIRMATION_DIRECTIVE,
@@ -55,6 +55,27 @@ def _active_project(cwd: Path):
     return root, cfg, projects.load_project(root, cfg, cfg.active_project)
 
 
+def _task_brief_text(root: Path, cfg, project) -> str | None:
+    """The current task's brief, rendered — or ``None`` when there is none to give.
+
+    Only the execute phase has a task to carry out, so the earlier phases return
+    ``None`` without touching the plan (REQ-19). Every failure below that is
+    swallowed: the brief is *enrichment*, and a plan that cannot produce one must
+    still yield the directive and the checkpoint rather than a blank payload.
+    """
+    if project.phase != "execute":
+        return None
+    try:
+        task_id = plan.current_task_id(root, cfg, project.slug)
+        if task_id is None:
+            return None
+        return plan.render_task_brief(
+            plan.task_brief(root, cfg, project.slug, task_id)
+        ) or None
+    except Exception:
+        return None
+
+
 def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
     """Return the reseed payload for the active project found from ``cwd``.
 
@@ -88,15 +109,17 @@ def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
         body = checkpoint.render_checkpoint(
             checkpoint.build_checkpoint(root, project, cfg=_cfg)
         )
+        brief = None
         if project.status == COMPLETE_STATUS:
             directive = COMPLETE_DIRECTIVE
         elif project.status == SHELVED_STATUS:
             directive = SHELVED_DIRECTIVE
         elif direct:
             directive = DIRECT_DIRECTIVE
+            brief = _task_brief_text(root, _cfg, project)
         else:
             directive = CONFIRMATION_DIRECTIVE
-        return f"{directive}\n\n{body}"
+        return continuation.build_reseed(directive, body, brief)
     except Exception:
         return ""
 

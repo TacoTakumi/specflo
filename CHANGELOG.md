@@ -21,6 +21,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   is rejected with `--format claude`, whose user-visible nudge asks the user to
   type `continue` and would contradict the payload. A complete or shelved
   project still gets its own directive -- neither has a next step to carry out.
+- **The direct-continuation payload inlines the current task brief.** In the
+  execute phase `hook reseed --continue` appends a `## Current task brief`
+  section carrying the task's acceptance, its verify step, the full text of
+  every REQ-NN it cites, and the plan's global constraints -- the same render
+  `specflo task show` prints, so a reseeded session need not spend its first
+  turn retrieving it. The brief is the task actually being worked (the first
+  `in_progress` one, not the next pending one). Bounded: one brief, no decision
+  bodies, and nothing at all in brainstorm, spec or plan. Enrichment only -- an
+  unreadable plan still yields the directive and the checkpoint.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
