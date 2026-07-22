@@ -17,6 +17,7 @@ from agentsquire.sources import default_source
 from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
+from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
 from .errors import SpecfloError
@@ -124,6 +125,9 @@ app.add_typer(milestone_app, name="milestone")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
+
+extension_app = typer.Typer(help="Install the bundled pi extension.")
+app.add_typer(extension_app, name="extension")
 
 
 def _die(message: str) -> typer.Exit:
@@ -617,6 +621,37 @@ def hook_reseed(
     )
     if out:
         typer.echo(out)
+
+
+@extension_app.command(
+    "install",
+    epilog="Example: specflo extension install --scope user",
+)
+def extension_install_cmd(
+    scope: str = typer.Option(
+        "user",
+        "--scope",
+        help="'user' (~/.pi/agent/extensions) or 'project' (<cwd>/.pi/extensions).",
+    ),
+) -> None:
+    """Copy the bundled pi extension into pi's extension directory.
+
+    pi discovers both directories on its own, so this writes no pi settings and
+    edits no configuration. Purely a local copy plus a provenance stamp naming
+    the specflo version that produced it - no network, no package manager, no
+    registry. Re-running is safe: an identical install is left alone, a differing
+    one is replaced whole.
+    """
+    try:
+        installed = extension_module.install_extension(scope=scope)
+    except extension_module.ExtensionInstallError as exc:
+        raise _die(str(exc))
+    verb = {
+        "installed": "Installed",
+        "updated": "Updated",
+        "current": "Already current:",
+    }[installed.state]
+    typer.echo(f"{verb} specflo extension {installed.version} -> {installed.path}")
 
 
 @hook_app.command(

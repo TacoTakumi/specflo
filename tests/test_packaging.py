@@ -122,6 +122,23 @@ def test_wheel_ships_empty_root_a_marker(dist):
     assert "specflo/skills/.gitkeep" in dist["wheel_names"]
 
 
+# The pi extension ships as ordinary package data under src/specflo/extension/
+# -- no force-include needed, unlike the repo-root skills. Hardcoded like the
+# skill names so a dropped file fails loudly instead of shrinking the set.
+EXTENSION_FILES = ["package.json", "src/index.ts"]
+
+
+@pytest.mark.parametrize("relpath", EXTENSION_FILES)
+def test_wheel_ships_the_pi_extension_as_package_data(dist, relpath):
+    # Built from the sdist, so this proves both artifacts carry the extension.
+    assert f"specflo/extension/{relpath}" in dist["wheel_names"]
+
+
+@pytest.mark.parametrize("relpath", EXTENSION_FILES)
+def test_sdist_carries_the_pi_extension_source(dist, relpath):
+    assert f"{dist['sdist_root']}/src/specflo/extension/{relpath}" in dist["sdist_names"]
+
+
 def test_wheel_requires_agentsquire_floor(dist):
     with zipfile.ZipFile(dist["wheel"]) as zf:
         meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))

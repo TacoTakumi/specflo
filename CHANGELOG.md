@@ -62,6 +62,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   reports false and acquires no run-state file. The human `specflo status` block
   is unchanged.
 
+- **`specflo extension install`.** Installs the bundled pi extension - the thin
+  driver that reseeds a pi session from specflo - into pi's extension directory:
+  `~/.pi/agent/extensions/specflo` by default, or `<cwd>/.pi/extensions/specflo`
+  with `--scope project`. The extension source ships inside the specflo wheel as
+  package data, so the install is a local copy plus a provenance stamp naming
+  the specflo version that produced it - no network, no package manager, and no
+  npm registry at any point. pi discovers both directories on its own, so
+  nothing in `~/.pi/agent/settings.json` is read or written. Re-running is safe:
+  an identical install is reported as already current, and a drifted or
+  out-of-date one is replaced whole. There is no npm publication path - the
+  extension's `package.json` is marked private and carries no publish config.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and
