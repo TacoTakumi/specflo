@@ -24,6 +24,14 @@ DEFAULT_AUTONOMY = "safe"
 # the unattended pass loop. Single source of truth for the config-field default,
 # `resolve_max_passes`, and the CLI help/docs.
 DEFAULT_MAX_PASSES = 50
+# Default percent of the model context window at which the pi extension *arms*
+# its clear-and-continue trigger (pi-extension REQ-28). Arming is not firing: the
+# next specflo seam fires it. A percent, never an absolute token count, so it
+# holds across models with different window sizes.
+DEFAULT_CONTEXT_THRESHOLD_PERCENT = 75
+# The usable percent range. 100 is allowed (arm only at a full window, in effect
+# disabling the trigger); 0 and below would arm every turn from the start.
+CONTEXT_THRESHOLD_RANGE = (1, 100)
 
 
 @dataclass
@@ -37,6 +45,10 @@ class SpecfloConfig:
     # Default iteration/step cap for `specflo auto` when no --max-passes flag is
     # given (REQ-14). Not an auto-*on* toggle - a numeric backstop.
     auto_max_passes: int = DEFAULT_MAX_PASSES
+    # Percent of the model context window at which the pi extension arms its
+    # clear-and-continue trigger (pi-extension REQ-28). Surfaced to the extension
+    # through `specflo status --json`, so it never parses this file itself.
+    context_threshold_percent: int = DEFAULT_CONTEXT_THRESHOLD_PERCENT
 
 
 def config_path(root: Path) -> Path:
@@ -66,6 +78,19 @@ def display_path(path: Path, root: Path, *, posix: bool = False) -> str:
     return rel.as_posix() if posix else str(rel)
 
 
+def _context_threshold(raw) -> int:
+    """``raw`` as a usable arming percent, or the default when it is not one.
+
+    A hand-edited config must not break every command that loads it, so an
+    unusable value degrades rather than raising. ``bool`` is rejected explicitly:
+    it subclasses ``int``, so ``True`` would otherwise read as the percent 1.
+    """
+    low, high = CONTEXT_THRESHOLD_RANGE
+    if isinstance(raw, bool) or not isinstance(raw, int) or not low <= raw <= high:
+        return DEFAULT_CONTEXT_THRESHOLD_PERCENT
+    return raw
+
+
 def load_config(root: Path) -> SpecfloConfig:
     path = config_path(root)
     if not path.is_file():
@@ -78,6 +103,9 @@ def load_config(root: Path) -> SpecfloConfig:
         active_project=data.get("active_project"),
         autonomy=data.get("autonomy", DEFAULT_AUTONOMY),
         auto_max_passes=data.get("auto_max_passes", DEFAULT_MAX_PASSES),
+        context_threshold_percent=_context_threshold(
+            data.get("context_threshold_percent", DEFAULT_CONTEXT_THRESHOLD_PERCENT)
+        ),
     )
 
 
@@ -91,6 +119,8 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
         payload["autonomy"] = cfg.autonomy
     if cfg.auto_max_passes != DEFAULT_MAX_PASSES:
         payload["auto_max_passes"] = cfg.auto_max_passes
+    if cfg.context_threshold_percent != DEFAULT_CONTEXT_THRESHOLD_PERCENT:
+        payload["context_threshold_percent"] = cfg.context_threshold_percent
     path.write_text(yaml.safe_dump(payload, sort_keys=False))
 
 

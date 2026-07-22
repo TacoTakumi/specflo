@@ -31,6 +31,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   bodies, and nothing at all in brainstorm, spec or plan. Enrichment only -- an
   unreadable plan still yields the directive and the checkpoint.
 
+- **`context_threshold_percent` config key.** The percent of the model context
+  window at which the pi extension arms its clear-and-continue trigger, set in
+  `.specflo/config.yaml` alongside `autonomy` and `auto_max_passes`. Defaults to
+  `75` and, like those two, is written out only when it differs from the
+  default, so a plain project's config carries no tuning key. A percent rather
+  than a token count, so it holds across models with different window sizes. An
+  unusable value (non-integer, boolean, or outside 1-100) degrades to `75`
+  rather than raising, so a hand-edited config cannot break every command.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and

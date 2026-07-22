@@ -88,3 +88,55 @@ def test_display_path_outside_root_falls_back_to_absolute(tmp_path):
     outside = (tmp_path / ".." / "elsewhere" / "y").resolve()
     assert config.display_path(outside, tmp_path) == str(outside)
     assert config.display_path(outside, tmp_path, posix=True) == outside.as_posix()
+
+
+# --- the context arming threshold (pi-extension REQ-28) ------------------
+# The pi extension arms its clear-and-continue trigger at a percent of the model
+# context window. The percent is configured here, alongside the existing auto
+# defaults, and read back out through the CLI - never by parsing this file.
+
+
+def test_threshold_defaults_to_75():
+    assert config.DEFAULT_CONTEXT_THRESHOLD_PERCENT == 75
+    assert config.SpecfloConfig().context_threshold_percent == 75
+
+
+def test_threshold_round_trips_a_custom_value(tmp_path):
+    config.init_config(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.context_threshold_percent = 60
+    config.save_config(tmp_path, cfg)
+
+    assert "context_threshold_percent" in config.config_path(tmp_path).read_text()
+    assert config.load_config(tmp_path).context_threshold_percent == 60
+
+
+def test_threshold_key_is_omitted_at_the_default(tmp_path):
+    # Same treatment as autonomy / auto_max_passes: a plain project's config
+    # carries no tuning key at all.
+    config.init_config(tmp_path)
+    assert "context_threshold_percent" not in config.config_path(tmp_path).read_text()
+
+
+@pytest.mark.parametrize(
+    "raw", ["seventy", 0, 101, -5, 12.5, None, True, [75]],
+)
+def test_threshold_falls_back_to_the_default_when_unusable(tmp_path, raw):
+    # A hand-edited config must not break every command that loads it: an
+    # unusable percent degrades to the default rather than raising. `True` is
+    # included deliberately - bool is an int subclass, so a naive isinstance
+    # check would accept it as the percent 1.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(
+        path.read_text() + f"context_threshold_percent: {raw!r}\n"
+    )
+    assert config.load_config(tmp_path).context_threshold_percent == 75
+
+
+@pytest.mark.parametrize("raw", [1, 50, 100])
+def test_threshold_accepts_the_whole_percent_range(tmp_path, raw):
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(path.read_text() + f"context_threshold_percent: {raw}\n")
+    assert config.load_config(tmp_path).context_threshold_percent == raw
