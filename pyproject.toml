@@ -1,6 +1,6 @@
 [project]
 name = "specflo"
-version = "0.4.0"
+version = "0.4.1"
 description = "Spec-driven software engineering for coding agents: a CLI plus skills driving a brainstorm -> spec -> plan -> execute loop with artifacts on disk"
 readme = "README.md"
 license = "GPL-3.0-or-later"
