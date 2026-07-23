@@ -106,12 +106,72 @@ function isArmed(threshold: number | null, usage: ContextUsage | undefined): boo
   return percent >= threshold;
 }
 
+/**
+ * The two fields of a status snapshot seam detection compares: the phase, and
+ * how many tasks are done. Both move only at a safe point - a phase completes,
+ * or a task reaches done - so a change in either is a seam, and a change in
+ * anything else (a task starting, a checkpoint rewritten) is not.
+ */
+export interface StatusSnapshot {
+  phase: string | null;
+  done: number | null;
+}
+
+/**
+ * Extract the seam signature from a status --json snapshot, or null.
+ *
+ * A snapshot that never arrived (a failed poll, no active project) or does not
+ * parse reads as null - an absence, which declares no seam and disturbs no
+ * baseline. A missing or wrong-typed field reads as null for that field alone.
+ */
+export function parseSnapshot(statusJson: string | null): StatusSnapshot | null {
+  if (statusJson === null) return null;
+  try {
+    const obj = JSON.parse(statusJson) as {
+      phase?: unknown;
+      progress?: { done?: unknown };
+    };
+    const done = obj.progress?.done;
+    return {
+      phase: typeof obj.phase === "string" ? obj.phase : null,
+      done: typeof done === "number" && Number.isFinite(done) ? done : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether ``current`` is a seam relative to the last observed snapshot: a safe
+ * point to clear because nothing is in flight.
+ *
+ * A seam is a phase change or a task reaching done (REQ-07). A task merely
+ * moving to in_progress leaves both fields unchanged and so declares nothing,
+ * which is exactly why no in-flight task is ever discarded (REQ-08). Only an
+ * increase in the done count counts - a task un-done or removed is not a task
+ * reaching done.
+ */
+export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
+  if (current.phase !== last.phase) return true;
+  if (
+    typeof current.done === "number" &&
+    typeof last.done === "number" &&
+    current.done > last.done
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export default function specflo(pi: ExtensionAPI): void {
   // All the state this extension holds, and it dies with the process: the
-  // payload fetched at session start waiting for a turn to carry it, and the
-  // arming threshold seeded from the cold-start status snapshot.
+  // payload fetched at session start waiting for a turn to carry it, the arming
+  // threshold, and the last observed status snapshot - the one seam detection
+  // compares each armed poll against. The last two are the only session state
+  // REQ-02 allows, and both seed from the one cold-start status snapshot.
   let pendingReseed: string | null = null;
   let threshold: number | null = null;
+  let lastSnapshot: StatusSnapshot | null = null;
 
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!COLD_START_REASONS.has(event.reason)) return;
@@ -121,11 +181,14 @@ export default function specflo(pi: ExtensionAPI): void {
     // Outside a specflo project, or with no active one, the command prints
     // nothing - and nothing is what the session should be told.
     pendingReseed = payload ? payload : null;
-    // Seed the arming threshold from the same status snapshot seam detection
-    // will read, so the per-turn arming check stays a subprocess-free in-process
-    // read (REQ-26). It persists in this closure across a later on-demand clear's
-    // `new` session, which is why that path fetches nothing of its own.
-    threshold = readThreshold(await runSpecflo(["status", "--json"], ctx.cwd));
+    // One status snapshot seeds both the arming threshold and the seam-detection
+    // baseline, so the per-turn arming check stays a subprocess-free in-process
+    // read (REQ-26) and the first armed poll has something to compare against.
+    // Both persist in this closure across a later on-demand clear's `new`
+    // session, which is why that path fetches nothing of its own.
+    const statusJson = await runSpecflo(["status", "--json"], ctx.cwd);
+    threshold = readThreshold(statusJson);
+    lastSnapshot = parseSnapshot(statusJson);
   });
 
   pi.on("before_agent_start", (): BeforeAgentStartEventResult | undefined => {
@@ -150,8 +213,19 @@ export default function specflo(pi: ExtensionAPI): void {
     // an unknown threshold both leave it unarmed (REQ-05).
     if (!isArmed(threshold, ctx.getContextUsage())) return;
     // Armed: take the seam poll. Reading the snapshot is the only subprocess an
-    // armed turn spawns; declaring a seam from it, and acting on that seam, is
-    // the next task's work.
-    await runSpecflo(["status", "--json"], ctx.cwd);
+    // armed turn spawns.
+    const current = parseSnapshot(await runSpecflo(["status", "--json"], ctx.cwd));
+    // A poll that yielded no parseable snapshot declares nothing and leaves the
+    // baseline intact, so a transient failure never triggers a clear (REQ-08).
+    if (current === null) return;
+    // A seam is declared against the last observed snapshot; the observed one
+    // then becomes the baseline the next armed poll compares against.
+    const seam = lastSnapshot !== null && isSeam(lastSnapshot, current);
+    lastSnapshot = current;
+    if (!seam) return;
+    // A seam: a safe point to clear. Delivering the clear - the attended notice
+    // (T-13) and the unattended fire (T-14) - is the next tasks' work; declaring
+    // the seam is this one's, and it is why no clear is ever initiated elsewhere
+    // (REQ-08).
   });
 }

@@ -94,7 +94,19 @@ latter. Release tags are of the form `vX.Y.Z`.
   behind, both read as unarmed. The threshold is seeded from the same cold-start
   status snapshot the extension already fetches, so no config file is opened and
   no extra process is paid. An armed turn takes the status poll a seam is read
-  from; declaring and acting on that seam is not yet wired.
+  from.
+
+- **The pi extension declares a seam while armed.** Each armed turn polls
+  `specflo status --json` and declares a *seam* - a safe point to clear - when
+  the phase differs from the last observed snapshot, or the done-task count has
+  risen. A task merely moving to `in_progress` changes neither, so it declares
+  nothing: clearing there would discard an in-flight task, which the trigger
+  never does. The compared snapshot is the phase and done count alone, seeded
+  from the same cold-start status the arming threshold rides on, so the seam
+  check adds no state beyond the one snapshot and no process beyond the armed
+  poll. A poll that returns nothing declares no seam and leaves the baseline
+  intact. Acting on a declared seam - the attended notice and the unattended
+  clear-and-reseed - is not yet wired.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
