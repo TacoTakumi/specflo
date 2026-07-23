@@ -2617,3 +2617,71 @@ def test_a_write_path_preserves_comments_order_and_unknown_keys(cwd, command):
     assert "# specs live beside the code, not under docs/" in text
     assert yaml.safe_load(text)["mystery_key"] == 42
     assert live_keys(text) == ["active_project", "mystery_key", "projects_dir"]
+
+
+# --- the config command group: get (REQ-14, REQ-15, REQ-21) --------------
+# Reading a setting is a command, not a file to open. `get` writes the value
+# alone so a shell can capture it: `$(specflo config get autonomy)`.
+
+
+@pytest.mark.parametrize(
+    ("key", "expected"),
+    [("autonomy", "safe\n"), ("auto_max_passes", "50\n")],
+    ids=["str", "int"],
+)
+def test_config_get_prints_the_shipped_default_bare(cwd, key, expected):
+    # REQ-14: an unset key resolves to its default; stdout carries the value
+    # and nothing else, stderr nothing at all.
+    runner.invoke(app, ["init"])
+
+    result = runner.invoke(app, ["config", "get", key])
+
+    assert result.exit_code == 0
+    assert result.stdout == expected
+    assert result.stderr == ""
+
+
+def test_config_get_prints_the_value_the_file_sets(cwd):
+    runner.invoke(app, ["init", "--projects-dir", "specs"])
+
+    result = runner.invoke(app, ["config", "get", "projects_dir"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "specs\n"
+
+
+def test_config_get_reads_the_active_project(cwd):
+    # REQ-21: the pointer `specflo switch` moves is readable here too.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+
+    result = runner.invoke(app, ["config", "get", "active_project"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "my-thing\n"
+
+
+def test_config_get_prints_an_empty_line_for_an_unset_active_project(cwd):
+    # No project yet is not an error: the key resolves to its default, which
+    # has no text. Exit 0 keeps `$(specflo config get active_project)` usable
+    # as an emptiness test.
+    runner.invoke(app, ["init"])
+
+    result = runner.invoke(app, ["config", "get", "active_project"])
+
+    assert result.exit_code == 0
+    assert result.stdout == "\n"
+
+
+def test_config_get_rejects_an_unknown_key(cwd):
+    # REQ-15: non-zero, every valid key named on stderr, the file untouched.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "get", "nosuchkey"])
+
+    assert result.exit_code != 0
+    assert result.stdout == ""
+    assert all(name in result.stderr for name in config.FIELDS_BY_NAME)
+    assert path.read_bytes() == before

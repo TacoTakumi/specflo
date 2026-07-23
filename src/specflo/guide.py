@@ -61,6 +61,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show this overview of specflo and what to do next."},
     {"name": "checkpoint", "group": "setup", "args": "",
      "summary": "Print the resume prompt; refresh checkpoint.md."},
+    {"name": "config get", "group": "setup", "args": "<key>",
+     "summary": "Print one setting's resolved value."},
     {"name": "hook reseed", "group": "setup", "args": "",
      "summary": "Emit the session-start reseed payload (used by the SessionStart hook)."},
     {"name": "hook install", "group": "setup", "args": "",

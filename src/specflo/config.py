@@ -120,6 +120,30 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
 FIELDS_BY_NAME = {f.name: f for f in CONFIG_FIELDS}
 
 
+def field_for(name: str) -> ConfigField:
+    """The registry entry called ``name``.
+
+    Raises with every valid key named, so a typo answers itself (REQ-15). The
+    one place that message is written: `config get`, `set` and `unset` all
+    reject an unknown key through here.
+    """
+    try:
+        return FIELDS_BY_NAME[name]
+    except KeyError:
+        raise SpecfloError(
+            f"Unknown config key {name!r}. Valid keys: {', '.join(FIELDS_BY_NAME)}."
+        ) from None
+
+
+def render_value(value: Any) -> str:
+    """A resolved value as the CLI prints it: bare, one line, empty when unset.
+
+    Shared by `config get` and `config list` so the two never disagree about
+    how a value reads.
+    """
+    return "" if value is None else str(value)
+
+
 def _annotation(spec: ConfigField) -> str:
     """The dataclass annotation for ``spec``: its value type, made optional when
     the key ships unset. ``type`` itself stays a real type so a CLI layer can

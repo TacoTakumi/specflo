@@ -129,6 +129,9 @@ app.add_typer(hook_app, name="hook")
 extension_app = typer.Typer(help="Install the bundled pi extension.")
 app.add_typer(extension_app, name="extension")
 
+config_app = typer.Typer(help="Read and change specflo's own settings.")
+app.add_typer(config_app, name="config")
+
 
 def _die(message: str) -> typer.Exit:
     typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
@@ -1467,6 +1470,26 @@ def milestone_show(
     lines.append("")
     lines.append("Requirements: " + (", ".join(detail["reqs"]) if detail["reqs"] else "(none)"))
     typer.echo("\n".join(lines))
+
+
+@config_app.command("get", epilog="Example: specflo config get autonomy")
+def config_get(
+    key: str = typer.Argument(
+        ..., metavar="<key>", help="A config key; `specflo config list` names them all."
+    ),
+) -> None:
+    """Print one setting's resolved value."""
+    root = _require_root()
+    # The key is checked before the config is loaded so a typo answers with the
+    # valid keys and nothing else -- a warning about some unrelated bad value in
+    # the file would only be noise here.
+    try:
+        spec = config.field_for(key)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    # Bare: the value alone, so `$(specflo config get autonomy)` is the value
+    # and not a label to strip (REQ-14).
+    typer.echo(config.render_value(getattr(config.load_config(root), spec.name)))
 
 
 def build_cli():
