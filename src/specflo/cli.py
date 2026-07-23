@@ -1492,22 +1492,54 @@ def config_get(
     typer.echo(config.render_value(getattr(config.load_config(root), spec.name)))
 
 
+# The two keys `config set` will not simply write. Both stay readable through
+# `config get` and `config list` (REQ-21); it is the write that is a move, not a
+# value change.
+SWITCH_OWNS_IT = (
+    "active_project is set by `specflo switch <name>`, which checks the project"
+    " exists and refreshes its checkpoint. `config set` would do neither."
+)
+
+
+def _guard_set(root: Path, key: str, force: bool) -> None:
+    """Refuse the two writes that are not just a value change (REQ-20, REQ-22)."""
+    if key == "active_project":
+        raise _die(SWITCH_OWNS_IT)
+    if key != "projects_dir" or force:
+        return
+    cfg = config.load_config(root)
+    existing = projects.list_projects(root, cfg)
+    if existing:
+        # Changing the path strands them: specflo would look somewhere else and
+        # report no projects, while the files sit where they always were. It
+        # moves nothing either way (REQ-23), so --force is the whole opt-in.
+        raise _die(
+            f"{len(existing)} project(s) live under {cfg.projects_dir}."
+            " Changing projects_dir moves nothing - specflo would just stop"
+            " seeing them. Move the files yourself, then re-run with --force."
+        )
+
+
 @config_app.command("set", epilog="Example: specflo config set autonomy autonomous")
 def config_set(
     key: str = typer.Argument(
         ..., metavar="<key>", help="A config key; `specflo config list` names them all."
     ),
     value: str = typer.Argument(..., metavar="<value>", help="The value to store."),
+    force: bool = typer.Option(
+        False, "--force", help="Change projects_dir even though projects live under it."
+    ),
 ) -> None:
     """Set one setting, validated before anything is written."""
     root = _require_root()
-    # Both checks happen before the write, so a rejected value leaves the file
+    # Every check happens before the write, so a refusal leaves the file
     # byte-for-byte as it was (REQ-24).
     try:
         spec = config.field_for(key)
         parsed = config.parse_value(spec, value)
     except SpecfloError as exc:
         raise _die(str(exc))
+    _guard_set(root, spec.name, force)
     config.write_value(root, spec, parsed)
     typer.echo(f"Set {spec.name} to {config.render_value(parsed)}.")
 

@@ -2861,3 +2861,64 @@ def test_config_set_rejects_an_unknown_key(cwd):
     assert result.exit_code != 0
     assert all(name in result.stderr for name in config.FIELDS_BY_NAME)
     assert path.read_bytes() == before
+
+
+# --- the two keys config set will not just write (REQ-20, REQ-22, REQ-23) -
+# Both are readable like any other key. Writing them is not a value change but
+# a move: one owns which project is active, the other where every project lives.
+
+
+def test_config_set_refuses_active_project_and_names_switch(cwd):
+    # REQ-20: `specflo switch` owns the pointer - it checks the project exists
+    # and refreshes the checkpoint. A raw write would do neither.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "set", "active_project", "ghost"])
+
+    assert result.exit_code != 0
+    assert "specflo switch" in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_config_set_projects_dir_is_free_while_no_project_exists(cwd):
+    # REQ-22: nothing to strand, nothing to refuse.
+    runner.invoke(app, ["init"])
+
+    result = runner.invoke(app, ["config", "set", "projects_dir", "specs"])
+
+    assert result.exit_code == 0
+    assert runner.invoke(app, ["config", "get", "projects_dir"]).stdout == "specs\n"
+
+
+def test_config_set_projects_dir_refuses_while_projects_live_there(cwd):
+    # REQ-22: changing the path would orphan them, so say so instead.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "set", "projects_dir", "specs"])
+
+    assert result.exit_code != 0
+    assert "--force" in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_config_set_projects_dir_with_force_writes_and_moves_nothing(cwd):
+    # REQ-22/REQ-23: --force changes where specflo looks, and only that. The
+    # old tree is left exactly as it was and the new path is not created.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    old = cwd / "docs" / "projects"
+    before = {p: p.read_bytes() for p in old.rglob("*") if p.is_file()}
+    assert before, "the project should have written some artifacts"
+
+    result = runner.invoke(app, ["config", "set", "projects_dir", "specs", "--force"])
+
+    assert result.exit_code == 0
+    assert runner.invoke(app, ["config", "get", "projects_dir"]).stdout == "specs\n"
+    assert {p: p.read_bytes() for p in old.rglob("*") if p.is_file()} == before
+    assert not (cwd / "specs").exists()
