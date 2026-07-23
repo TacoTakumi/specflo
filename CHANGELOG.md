@@ -66,6 +66,20 @@ latter. Release tags are of the form `vX.Y.Z`.
   shows it next to `hook install`, with both marked as per-harness alternatives
   so nobody runs the wrong one or assumes both are required.
 
+### Fixed
+- **A duplicated key in the config refuses the write cleanly.** A
+  hand-duplicated line used to crash every writing command (`new`, `switch`,
+  `resume`, `config set`, `config unset`) with a raw traceback; it is now a
+  one-line error naming the file and key, exit 1, file untouched. Reads keep
+  tolerating the file (the last copy of the key wins) so `status --json`
+  never stalls on it.
+- **A write no longer swallows another key's invalid value.** Setting one key
+  used to silently rewrite an unrelated key's unusable value to the shipped
+  default, destroying what the user had typed. The bad value now stays in the
+  file exactly as written - degraded in memory and marked
+  `(invalid, using default)` by `config list` - until the user fixes it, sets
+  the key, or unsets it.
+
 ## [0.4.1]
 
 ### Added
