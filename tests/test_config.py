@@ -10,6 +10,15 @@ from specflo import auto, config, projects
 from specflo.errors import SpecfloError
 
 
+def _live_keys(text: str) -> list[str]:
+    """The keys actually set in a config file - commented-out entries excluded."""
+    return [
+        line.split(":", 1)[0]
+        for line in text.splitlines()
+        if ":" in line and not line.startswith("#")
+    ]
+
+
 def test_config_has_no_auto_advance_field():
     """Regression guard: this project adds no auto_advance config key (REQ-11)."""
     names = {f.name for f in dataclasses.fields(config.SpecfloConfig)}
@@ -283,11 +292,16 @@ def test_threshold_round_trips_a_custom_value(tmp_path):
     assert config.load_config(tmp_path).context_threshold_percent == 60
 
 
-def test_threshold_key_is_omitted_at_the_default(tmp_path):
+def test_threshold_key_is_commented_out_at_the_default(tmp_path):
     # Same treatment as autonomy / auto_max_passes: a plain project's config
-    # carries no tuning key at all.
+    # carries no live tuning key. REQ-03/REQ-04 supersede the earlier contract
+    # that left an unset key out of the file entirely - it is now written as a
+    # commented-out line, so the file documents the knob without setting it.
     config.init_config(tmp_path)
-    assert "context_threshold_percent" not in config.config_path(tmp_path).read_text()
+    text = config.config_path(tmp_path).read_text()
+
+    assert "context_threshold_percent" not in _live_keys(text)
+    assert "# context_threshold_percent: 25" in text
 
 
 @pytest.mark.parametrize(
@@ -424,3 +438,78 @@ def test_a_save_leaves_a_long_untouched_value_on_its_own_line(tmp_path):
     config.save_config(tmp_path, cfg)
 
     assert f"mystery_key: {long_value}" in path.read_text()
+
+
+# --- the file documents itself (REQ-03, REQ-04, REQ-05) ------------------
+# Every registry key appears in the file: live once it is set, commented out at
+# its shipped default while it is not, each under its one-line description.
+
+
+def _items(text: str) -> list[str]:
+    """The config entries in file order, live (`key: v`) and commented alike."""
+    entries = []
+    for line in text.splitlines():
+        name = line.lstrip("# ").split(":", 1)[0]
+        if ":" in line and name in config.FIELDS_BY_NAME:
+            entries.append(name)
+    return entries
+
+
+def test_a_fresh_config_carries_an_entry_for_every_registry_key_and_no_other(tmp_path):
+    config.init_config(tmp_path)
+    assert _items(config.config_path(tmp_path).read_text()) == _registry_names()
+
+
+def test_an_unset_key_is_commented_out_at_its_shipped_default(tmp_path):
+    config.init_config(tmp_path)
+    text = config.config_path(tmp_path).read_text()
+
+    assert "# autonomy: safe" in text
+    assert "autonomy" not in _live_keys(text)
+
+
+def test_a_set_key_is_live_with_no_commented_duplicate(tmp_path):
+    config.init_config(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.autonomy = "autonomous"
+    config.save_config(tmp_path, cfg)
+    text = config.config_path(tmp_path).read_text()
+
+    assert "autonomy: autonomous" in text
+    assert "# autonomy:" not in text
+    assert _items(text).count("autonomy") == 1
+
+
+def test_every_item_sits_under_its_description_after_one_blank_line(tmp_path):
+    config.init_config(tmp_path)
+    lines = config.config_path(tmp_path).read_text().splitlines()
+
+    for spec in config.CONFIG_FIELDS:
+        at = next(i for i, line in enumerate(lines) if _items(line) == [spec.name])
+        assert lines[at - 1] == f"# {spec.description}"
+        # exactly one blank line above the description, and none for the first item
+        assert (lines[at - 2] == "") if at >= 2 else (at == 1)
+        assert at < 3 or lines[at - 3] != ""
+
+
+def test_repeated_saves_leave_the_file_byte_identical(tmp_path):
+    # The layout is rebuilt on every write. If a rebuild were not idempotent the
+    # generated lines would pile up, so a no-op save must change nothing.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    before = path.read_text()
+
+    for _ in range(3):
+        config.save_config(tmp_path, config.load_config(tmp_path))
+    assert path.read_text() == before
+
+
+def test_a_user_comment_below_a_null_valued_key_survives(tmp_path):
+    # A dangling `key:` sends every line below it to a slot the loader hangs off
+    # the document rather than the key; the layout pass has to collect it.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text("projects_dir: docs/projects\nactive_project:\n\n# hand written\n")
+    config.save_config(tmp_path, config.load_config(tmp_path))
+
+    assert "# hand written" in path.read_text()

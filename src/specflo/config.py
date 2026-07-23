@@ -17,6 +17,8 @@ from typing import Any
 import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.error import CommentMark
+from ruamel.yaml.tokens import CommentToken
 
 from .errors import SpecfloError
 
@@ -228,6 +230,13 @@ _ROUND_TRIP.preserve_quotes = True
 # The emitter folds a scalar past its line width onto a continuation line, which
 # would rewrite a long value we never touched. Wide enough that it never folds.
 _ROUND_TRIP.width = 4096
+# ruamel writes None as a dangling `active_project:`. Spell it `null`: it reads
+# better, and the loader parks the comments following a dangling value on the
+# document instead of on the key, which the layout pass then has to go and find.
+_ROUND_TRIP.representer.add_representer(
+    type(None),
+    lambda representer, _: representer.represent_scalar("tag:yaml.org,2002:null", "null"),
+)
 
 
 def _load_document(path: Path) -> CommentedMap:
@@ -237,6 +246,134 @@ def _load_document(path: Path) -> CommentedMap:
         return CommentedMap()
     doc = _ROUND_TRIP.load(path.read_text())
     return doc if isinstance(doc, CommentedMap) else CommentedMap()
+
+
+# --- the file layout (REQ-03, REQ-04, REQ-05) ---------------------------
+# Every registry key appears in the file: live as `key: value` once it is set,
+# commented out at its shipped default while it is not, each directly under its
+# one-line registry description and separated from the item above by one blank
+# line. The file therefore documents itself, and `config set` reads as
+# uncommenting a line the user can already see.
+#
+# ruamel attaches every comment in a flat mapping to exactly one slot: the text
+# before the first key, or the text following key N. So the layout is rebuilt
+# slot by slot on each write - the lines this module generates are dropped and
+# re-placed, everything else stays where the user put it.
+
+
+def _render_scalar(value: Any) -> str:
+    """``value`` as the emitter would write it after a `key:` (empty for None)."""
+    buffer = io.StringIO()
+    _ROUND_TRIP.dump({"k": value}, buffer)
+    return buffer.getvalue().split(":", 1)[1].strip()
+
+
+def _description_line(spec: ConfigField) -> str:
+    return f"# {spec.description}"
+
+
+def _commented_line(spec: ConfigField) -> str:
+    """A key in its unset form: the name and shipped default, commented out."""
+    return f"# {spec.name}: {_render_scalar(spec.default)}"
+
+
+def _is_generated(line: str) -> bool:
+    """True for a comment line this module writes - a key's description, or a
+    key commented out at some value.
+
+    Such lines are stripped before the layout is rebuilt, which is what keeps
+    repeated saves byte-stable. A hand-written comment of the form
+    ``# <registry key>: ...`` is indistinguishable from an unset key by design,
+    and is absorbed as one.
+    """
+    if line in {_description_line(spec) for spec in CONFIG_FIELDS}:
+        return True
+    name, separator, _ = line.lstrip("#").partition(":")
+    return bool(separator) and name.strip() in FIELDS_BY_NAME
+
+
+def _read_slot(token: Any) -> tuple[str, list[str]]:
+    """A comment token as ``(end-of-line comment, the lines below it)``."""
+    if token is None:
+        return "", []
+    eol, _, rest = token.value.partition("\n")
+    lines = rest.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return eol, lines
+
+
+def _take_end(doc: CommentedMap) -> list[str]:
+    """The tail comments the loader parked on the document rather than on a key,
+    removed from where they sit so the layout pass can place them itself.
+
+    A dangling `key:` (a null written with nothing after it) sends everything
+    below it here. specflo writes `null` instead, but a hand-edited file may not.
+    """
+    tokens = getattr(doc.ca, "end", None)
+    if not tokens:
+        return []
+    doc.ca.end = []
+    lines = "".join(token.value for token in tokens).split("\n")
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
+def _tidy(lines: list[str]) -> list[str]:
+    """Collapse the blank runs a strip-out leaves behind. One blank line is the
+    item separator, so more than one is always debris."""
+    tidied: list[str] = []
+    for line in lines:
+        if line == "" and (not tidied or tidied[-1] == ""):
+            continue
+        tidied.append(line)
+    while tidied and tidied[-1] == "":
+        tidied.pop()
+    return tidied
+
+
+def _relayout(doc: CommentedMap, live: set[str]) -> None:
+    """Rewrite ``doc``'s comments so every registry key carries its description
+    and every unset key appears commented out at its default."""
+    keys = list(doc)
+    # slots[i] is the text sitting immediately above keys[i]; the last slot is
+    # the tail of the file. eols[i] is the end-of-line comment on keys[i].
+    eols, slots = [], [_read_pre_document(doc)]
+    for key in keys:
+        eol, lines = _read_slot(doc.ca.items.get(key, [None] * 4)[2])
+        eols.append(eol)
+        slots.append(lines)
+    slots[-1].extend(_take_end(doc))
+    slots = [_tidy([ln for ln in lines if not _is_generated(ln)]) for lines in slots]
+
+    pending: list[str] = []
+    for spec in CONFIG_FIELDS:
+        block = ["", _description_line(spec)]
+        if spec.name in live:
+            slots[keys.index(spec.name)].extend(pending + block)
+            pending = []
+        else:
+            pending.extend(block + [_commented_line(spec)])
+    slots[-1].extend(pending)
+
+    while slots[0] and slots[0][0] == "":  # nothing precedes the first item
+        slots[0].pop(0)
+    _set_pre_document(doc, slots[0])
+    for key, eol, lines in zip(keys, eols, slots[1:], strict=True):
+        text = eol + "\n" + ("\n".join(lines) + "\n" if lines else "")
+        slot = doc.ca.items.setdefault(key, [None] * 4)
+        slot[2] = CommentToken(text, CommentMark(0), None) if text.strip() else None
+
+
+def _read_pre_document(doc: CommentedMap) -> list[str]:
+    """The lines above the first key. The loader splits them one token per line."""
+    tokens = (doc.ca.comment or [None, None])[1] or []
+    lines = "".join(token.value for token in tokens).split("\n")
+    return lines[:-1] if lines and lines[-1] == "" else lines
+
+
+def _set_pre_document(doc: CommentedMap, lines: list[str]) -> None:
+    text = "\n".join(lines) + "\n" if lines else ""
+    doc.ca.comment = [None, [CommentToken(text, CommentMark(0), None)]] if lines else None
 
 
 def save_config(root: Path, cfg: SpecfloConfig) -> None:
@@ -250,17 +387,24 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     doc = _load_document(path)
+    live = set()
     for spec in CONFIG_FIELDS:
         value = getattr(cfg, spec.name)
-        # A key stays out of the file while it holds its shipped default and
-        # nothing has claimed it - neither the file itself nor the config asking
-        # for the write. That keeps a plain project's config minimal, carrying
-        # no auto-* key at all (auto-mode REQ-01).
+        # A key stays commented out at its default until something claims it -
+        # the file itself, or the config asking for the write. That keeps a
+        # plain project's config free of live auto-* keys (auto-mode REQ-01).
         if spec.name in doc or spec.name in cfg.present_keys or value != spec.default:
             doc[spec.name] = value
+            live.add(spec.name)
+    _relayout(doc, live)
     buffer = io.StringIO()
     _ROUND_TRIP.dump(doc, buffer)
-    path.write_text(buffer.getvalue())
+    text = buffer.getvalue()
+    if not doc:
+        # A mapping with no live key emits a bare `{}` under the comments; the
+        # comments alone are the file.
+        text = text.replace("{}\n", "")
+    path.write_text(text)
 
 
 def init_config(
