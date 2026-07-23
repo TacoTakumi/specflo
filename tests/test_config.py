@@ -513,3 +513,71 @@ def test_a_user_comment_below_a_null_valued_key_survives(tmp_path):
     config.save_config(tmp_path, config.load_config(tmp_path))
 
     assert "# hand written" in path.read_text()
+
+
+# --- backfilling an older config (REQ-10, REQ-11, REQ-12) ----------------
+# A config written before a key existed is completed in place on the next write,
+# and says so once. Reads never touch the file.
+
+TWO_KEY_CONFIG = """\
+# my own note
+projects_dir: specs
+active_project: alpha
+"""
+
+
+def _older_config(tmp_path):
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(TWO_KEY_CONFIG)
+    return path
+
+
+def test_a_config_missing_keys_is_backfilled_on_the_next_write(tmp_path):
+    path = _older_config(tmp_path)
+    config.save_config(tmp_path, config.load_config(tmp_path))
+    text = path.read_text()
+
+    for spec in config.CONFIG_FIELDS:
+        assert f"# {spec.description}" in text
+    assert "# autonomy: safe" in text
+    assert "# auto_max_passes: 50" in text
+    assert "# context_threshold_percent: 25" in text
+    # the live keys and the user's comment are untouched
+    assert _live_keys(text) == ["projects_dir", "active_project"]
+    assert yaml.safe_load(text) == {"projects_dir": "specs", "active_project": "alpha"}
+    assert "# my own note" in text
+
+
+def test_a_backfill_announces_the_keys_it_added_on_one_line(tmp_path, capsys):
+    _older_config(tmp_path)
+    config.save_config(tmp_path, config.load_config(tmp_path))
+
+    err = capsys.readouterr().err
+    assert err.strip().count("\n") == 0  # exactly one line
+    for name in ("autonomy", "auto_max_passes", "context_threshold_percent"):
+        assert name in err
+    assert "projects_dir" not in err  # it was already there
+
+
+def test_a_write_that_adds_nothing_is_silent(tmp_path, capsys):
+    _older_config(tmp_path)
+    config.save_config(tmp_path, config.load_config(tmp_path))
+    capsys.readouterr()
+
+    config.save_config(tmp_path, config.load_config(tmp_path))
+    assert capsys.readouterr().err == ""
+
+
+def test_creating_a_config_is_not_a_backfill(tmp_path, capsys):
+    # `init` writes the whole file; there is nothing to announce as added.
+    config.init_config(tmp_path)
+    assert capsys.readouterr().err == ""
+
+
+def test_loading_an_incomplete_config_leaves_the_file_bytes_unchanged(tmp_path):
+    path = _older_config(tmp_path)
+    before = path.read_bytes()
+
+    config.load_config(tmp_path)
+    assert path.read_bytes() == before

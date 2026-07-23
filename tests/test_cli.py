@@ -2554,3 +2554,30 @@ def test_version_still_exits_zero_after_skills_mount():
     result = _run_specflo("--version")
     assert result.returncode == 0
     assert result.stdout.strip() == f"specflo {__version__}"
+
+
+def test_status_json_never_writes_to_the_config(cwd):
+    # REQ-12: reads leave the file alone. The pi extension polls `status --json`
+    # every turn; a read that backfilled would rewrite the file on every turn.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = config.config_path(cwd)
+    path.write_text("projects_dir: docs/projects\nactive_project: my-thing\n")
+    before = path.read_bytes()
+
+    assert json.loads(runner.invoke(app, ["status", "--json"]).output)["phase"]
+    assert path.read_bytes() == before
+
+
+def test_a_write_path_backfills_the_config_and_says_so_once(cwd):
+    # REQ-10/REQ-11: `specflo new` completes an older two-key config and names
+    # the keys it added; the next `new` has nothing to add and stays silent.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    path.write_text("projects_dir: docs/projects\nactive_project: null\n")
+
+    first = runner.invoke(app, ["new", "My Thing"])
+    assert "autonomy" in first.stderr and "auto_max_passes" in first.stderr
+    assert "# autonomy: safe" in path.read_text()
+
+    assert "autonomy" not in runner.invoke(app, ["new", "Other Thing"]).stderr

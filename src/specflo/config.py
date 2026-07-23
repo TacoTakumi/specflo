@@ -292,6 +292,32 @@ def _is_generated(line: str) -> bool:
     return bool(separator) and name.strip() in FIELDS_BY_NAME
 
 
+def _represented(text: str) -> set[str]:
+    """The registry keys a config file already carries, live or commented out."""
+    found = set()
+    for line in text.splitlines():
+        name = line.lstrip("# ").split(":", 1)[0]
+        if ":" in line and name in FIELDS_BY_NAME:
+            found.add(name)
+    return found
+
+
+def _announce_backfill(added: set[str]) -> None:
+    """One stderr line naming the keys a write completed the file with (REQ-11).
+
+    A config written before a key existed gains it silently otherwise, and the
+    user would have no idea the file grew. stderr, never stdout: `status --json`
+    is machine-read.
+    """
+    if not added:
+        return
+    names = ", ".join(name for name in FIELDS_BY_NAME if name in added)
+    print(
+        f"note: {CONFIG_FILENAME}: added {names} - commented out at their defaults",
+        file=sys.stderr,
+    )
+
+
 def _read_slot(token: Any) -> tuple[str, list[str]]:
     """A comment token as ``(end-of-line comment, the lines below it)``."""
     if token is None:
@@ -383,9 +409,14 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
     document, only the registry keys are assigned, and that same document is
     dumped - so a hand-written comment, the key order the user chose, and a key
     the registry has never heard of all survive the write (REQ-07, REQ-08).
+
+    A file predating a registry key gains it here, commented out at its default,
+    and the addition is announced once on stderr (REQ-10, REQ-11). Creating the
+    file is not a backfill: there is no older config for the user to reconcile.
     """
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
+    existing = path.read_text() if path.is_file() else None
     doc = _load_document(path)
     live = set()
     for spec in CONFIG_FIELDS:
@@ -405,6 +436,8 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
         # comments alone are the file.
         text = text.replace("{}\n", "")
     path.write_text(text)
+    if existing is not None:
+        _announce_backfill(set(FIELDS_BY_NAME) - live - _represented(existing))
 
 
 def init_config(
