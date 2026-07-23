@@ -127,9 +127,26 @@ latter. Release tags are of the form `vX.Y.Z`.
   and the notice reaches the UI alone, never model context. Once per seam, not
   per turn - the compared snapshot advances with every armed poll, so an
   unchanged snapshot re-notifies nothing. A seam while `status --json` reports
-  an auto run under way stays silent here; its delivery is the unattended
-  fire, still to come. Anything short of an explicit under-way `true` reads as
-  attended - the mode that only ever notifies.
+  an auto run under way is the unattended fire's to deliver, not the notice's.
+  Anything short of an explicit under-way `true` reads as attended - the mode
+  that only ever notifies.
+- **The pi extension fires the unattended clear at an auto-run seam.** While
+  `status --json` reports an auto run under way, an armed seam clears and
+  reseeds with no user input: the extension runs `specflo auto --json`, and a
+  continuable pass opens a fresh session carrying that pass's payload verbatim.
+  Loop control never leaves the CLI - on a stop verdict (kill switch, pass cap,
+  stall, or project completion) nothing clears, no further pass starts, and the
+  CLI's own stop directive reaches the user as a notice; the extension holds no
+  pass counter and no cap. The fire runs through a live anchor - the
+  replacement-session context captured at the previous clear - because pi gives
+  extension event handlers no session control of their own: each clear anchors
+  the next, `/specflo-continue auto` (the new command argument, the same
+  explicit opt-in `specflo auto` is) starts or continues a run and anchors the
+  chain by hand, and an unanchored armed auto seam (pi joined the run cold, or
+  the anchor went stale) degrades to one bootstrap notice naming exactly that
+  command. Arming state now re-seeds on every session start, so the loop
+  re-arms across its own clears; the cold-start payload still injects only on
+  startup and resume.
 
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes

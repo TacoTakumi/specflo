@@ -31,6 +31,8 @@ export interface FakePi {
   commands: Map<string, any>;
   /** Tools registered by name - must stay empty (REQ-15). */
   tools: string[];
+  /** User messages queued via api.sendUserMessage, for followUp assertions. */
+  sent: Array<{ content: unknown; options: unknown }>;
   /** Invoke every handler for ``event.type`` and return the last result. */
   emit(event: { type: string } & Record<string, unknown>, ctx?: any): Promise<unknown>;
 }
@@ -39,6 +41,7 @@ export function createFakePi(): FakePi {
   const handlers = new Map<string, Handler[]>();
   const commands = new Map<string, any>();
   const tools: string[] = [];
+  const sent: Array<{ content: unknown; options: unknown }> = [];
 
   const api = {
     on(event: string, handler: Handler) {
@@ -53,7 +56,9 @@ export function createFakePi(): FakePi {
       tools.push(tool.name);
     },
     registerShortcut() {},
-    sendUserMessage() {},
+    sendUserMessage(content: unknown, options: unknown) {
+      sent.push({ content, options });
+    },
   };
 
   return {
@@ -61,6 +66,7 @@ export function createFakePi(): FakePi {
     handlers,
     commands,
     tools,
+    sent,
     async emit(event, ctx = createFakeCtx()) {
       let last: unknown;
       for (const handler of handlers.get(event.type) ?? []) {

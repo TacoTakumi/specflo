@@ -91,15 +91,17 @@ describe("cold start", () => {
   });
 
   for (const reason of ["new", "fork", "reload"] as const) {
-    it(`fetches nothing on a ${reason} session start`, async () => {
+    it(`fetches no payload on a ${reason} session start`, async () => {
       // Those sessions are opened by something that already knows what it wants
-      // next, or are a resource refresh - not a session coming up cold.
+      // next, or are a resource refresh - not a session coming up cold. Each
+      // still seeds its own arming state: the closure is per-session, so the
+      // `new` session a clear opens would otherwise never re-arm (T-14).
       const { fake, pi, ctx } = await setUp(PAYLOAD);
 
       await pi.emit({ type: "session_start", reason }, ctx);
       const result = await pi.emit({ type: "before_agent_start", prompt: "hi" }, ctx);
 
-      assert.deepEqual(fake.invocations(), []);
+      assert.deepEqual(fake.invocations(), ["status --json"]);
       assert.equal(result, undefined);
     });
   }

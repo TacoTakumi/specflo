@@ -139,14 +139,18 @@ describe("attended notice", () => {
     assert.equal(ctx.ui.calls.length, 0, "no seam, no ui traffic at all");
   });
 
-  it("emits no notice while an auto run is under way", async () => {
+  it("hands an auto-run seam to the fire: unanchored, the bootstrap notice, not this one", async () => {
     // The seam is real, but its delivery belongs to the unattended fire
-    // (T-14); the attended notice stays silent, and this slice clears nothing.
+    // (T-16). Unanchored - as any cold-started process is - the fire degrades
+    // to the bootstrap notice naming /specflo-continue auto (REQ-31), and
+    // nothing clears.
     const { fake, pi } = await coldStart(status({ phase: "execute" }));
 
     const { ctx } = await armedTurn(pi, fake, status({ phase: "complete", autoUnderWay: true }));
 
-    assert.equal(calls(ctx, "notify").length, 0, "an auto-run seam is not the notice's");
+    const notices = calls(ctx, "notify");
+    assert.equal(notices.length, 1, "an unanchored auto seam emits the bootstrap notice");
+    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
     assert.equal(ctx.newSessionCalls.length, 0, "and this slice still clears nothing");
   });
 });
