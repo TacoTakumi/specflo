@@ -1492,6 +1492,26 @@ def config_get(
     typer.echo(config.render_value(getattr(config.load_config(root), spec.name)))
 
 
+@config_app.command("set", epilog="Example: specflo config set autonomy autonomous")
+def config_set(
+    key: str = typer.Argument(
+        ..., metavar="<key>", help="A config key; `specflo config list` names them all."
+    ),
+    value: str = typer.Argument(..., metavar="<value>", help="The value to store."),
+) -> None:
+    """Set one setting, validated before anything is written."""
+    root = _require_root()
+    # Both checks happen before the write, so a rejected value leaves the file
+    # byte-for-byte as it was (REQ-24).
+    try:
+        spec = config.field_for(key)
+        parsed = config.parse_value(spec, value)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    config.write_value(root, spec, parsed)
+    typer.echo(f"Set {spec.name} to {config.render_value(parsed)}.")
+
+
 # How each source reads at the end of a `config list` line. A value the file
 # actually sets carries no marker - the absence is the signal.
 SOURCE_MARKERS = {

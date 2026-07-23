@@ -122,6 +122,15 @@ def test_every_registry_validator_accepts_its_own_default():
         assert field.validate(field.default), field.name
 
 
+def test_every_registry_validator_names_the_domain_it_enforces():
+    # REQ-24's rejection reads the accepted values off the validator itself, so
+    # a domain and the message describing it cannot drift apart. A plain lambda
+    # would print as "<function <lambda> at 0x...>" and fail here.
+    for field in config.CONFIG_FIELDS:
+        described = str(field.validate)
+        assert described.isascii() and "0x" not in described, field.name
+
+
 def test_the_dataclass_fields_are_exactly_the_registry_in_order():
     # The resolved-values dataclass is driven by the registry, so a key can't
     # exist in one and not the other, and the file layout order is the registry's.

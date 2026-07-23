@@ -2778,3 +2778,86 @@ def test_config_list_json_carries_a_value_and_a_source_per_key(cwd):
     assert entries["auto_max_passes"]["value"] == 50  # a number, not "50"
     assert entries["autonomy"] == {"key": "autonomy", "value": "safe", "source": "invalid"}
     assert data["unknown"] == ["mystery_key"]
+
+
+# --- the config command group: set (REQ-24, REQ-06, REQ-04) --------------
+# Set-time validation rejects; load-time validation degrades. The file should
+# never end up holding a value no command would accept.
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "named"),
+    [
+        ("autonomy", "sideways", "yolo"),
+        ("auto_max_passes", "0", "1 or greater"),
+        ("auto_max_passes", "lots", "1 or greater"),
+        ("context_threshold_percent", "101", "1 to 100"),
+    ],
+    ids=["choice", "below-range", "not-a-number", "above-range"],
+)
+def test_config_set_refuses_a_value_outside_the_keys_domain(cwd, key, value, named):
+    # REQ-24: the error names the key and what it accepts, and nothing is written.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "set", key, value])
+
+    assert result.exit_code != 0
+    assert key in result.stderr and named in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_config_set_writes_the_key_live_with_no_commented_duplicate(cwd):
+    # REQ-04: setting a key promotes its commented default line to a live one -
+    # the file gains a value, not a second copy of the key.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+
+    result = runner.invoke(app, ["config", "set", "autonomy", "autonomous"])
+
+    assert result.exit_code == 0
+    text = path.read_text()
+    assert yaml.safe_load(text)["autonomy"] == "autonomous"
+    assert "autonomy" in live_keys(text)
+    assert "# autonomy:" not in text
+    assert config.FIELDS_BY_NAME["autonomy"].description in text  # its comment stays
+
+
+def test_config_set_to_the_shipped_default_still_writes_a_live_key(cwd):
+    # REQ-06: an explicit choice is recorded as one. `config list` stops calling
+    # that key a default even though the value is the shipped one.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+
+    assert runner.invoke(
+        app, ["config", "set", "context_threshold_percent", "25"]
+    ).exit_code == 0
+
+    text = path.read_text()
+    assert yaml.safe_load(text)["context_threshold_percent"] == 25
+    assert "# context_threshold_percent:" not in text
+    listed = runner.invoke(app, ["config", "list"]).stdout.splitlines()
+    assert "context_threshold_percent: 25" in listed
+
+
+def test_config_set_round_trips_an_int_through_get(cwd):
+    # The value arrives as a string and is stored as the registry's type.
+    runner.invoke(app, ["init"])
+
+    assert runner.invoke(app, ["config", "set", "auto_max_passes", "12"]).exit_code == 0
+
+    assert runner.invoke(app, ["config", "get", "auto_max_passes"]).stdout == "12\n"
+
+
+def test_config_set_rejects_an_unknown_key(cwd):
+    # REQ-15: same rejection as `get`, and still nothing written.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "set", "nosuchkey", "1"])
+
+    assert result.exit_code != 0
+    assert all(name in result.stderr for name in config.FIELDS_BY_NAME)
+    assert path.read_bytes() == before

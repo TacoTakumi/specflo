@@ -48,16 +48,61 @@ DEFAULT_CONTEXT_THRESHOLD_PERCENT = 25
 CONTEXT_THRESHOLD_RANGE = (1, 100)
 
 
-def _is_slug(raw: object) -> bool:
-    return isinstance(raw, str) and bool(raw.strip())
+# --- domains ------------------------------------------------------------
+# A key's accepted values, as one object that both enforces them and says what
+# they are. `config set` names the domain when it rejects a value (REQ-24), and
+# reading that text off the validator itself is what stops the two from drifting
+# - there is no prose copy of the rule to keep in step.
 
 
-def _is_count(raw: object, low: int, high: int | None = None) -> bool:
-    """A plain positive int in range. ``bool`` is rejected explicitly: it
-    subclasses ``int``, so ``True`` would otherwise read as the number 1."""
-    if isinstance(raw, bool) or not isinstance(raw, int) or raw < low:
-        return False
-    return high is None or raw <= high
+@dataclass(frozen=True)
+class Choice:
+    """One of a fixed set of values."""
+
+    values: tuple[Any, ...]
+
+    def __call__(self, raw: object) -> bool:
+        return raw in self.values
+
+    def __str__(self) -> str:
+        return "one of " + ", ".join(str(value) for value in self.values)
+
+
+@dataclass(frozen=True)
+class WholeNumber:
+    """A plain int at or above ``low``, and at or below ``high`` when given.
+
+    ``bool`` is rejected explicitly: it subclasses ``int``, so ``True`` would
+    otherwise read as the number 1.
+    """
+
+    low: int
+    high: int | None = None
+
+    def __call__(self, raw: object) -> bool:
+        if isinstance(raw, bool) or not isinstance(raw, int) or raw < self.low:
+            return False
+        return self.high is None or raw <= self.high
+
+    def __str__(self) -> str:
+        if self.high is None:
+            return f"a whole number {self.low} or greater"
+        return f"a whole number from {self.low} to {self.high}"
+
+
+@dataclass(frozen=True)
+class Text:
+    """A string with something in it; ``optional`` also accepts unset."""
+
+    optional: bool = False
+
+    def __call__(self, raw: object) -> bool:
+        if raw is None:
+            return self.optional
+        return isinstance(raw, str) and bool(raw.strip())
+
+    def __str__(self) -> str:
+        return "text" + (", or nothing" if self.optional else "")
 
 
 @dataclass(frozen=True)
@@ -74,6 +119,8 @@ class ConfigField:
     type: Any
     default: Any
     description: str
+    # A domain object (above): call it to validate, print it to name what the
+    # key accepts. Any callable that describes itself will do.
     validate: Callable[[Any], bool]
 
 
@@ -85,35 +132,35 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         str,
         DEFAULT_PROJECTS_DIR,
         "Where project artifacts live, relative to the repo root.",
-        _is_slug,
+        Text(),
     ),
     ConfigField(
         "active_project",
         str,
         None,
         "The project every command acts on; set it with `specflo switch`.",
-        lambda raw: raw is None or _is_slug(raw),
+        Text(optional=True),
     ),
     ConfigField(
         "autonomy",
         str,
         DEFAULT_AUTONOMY,
         "Default autonomy level for `specflo auto`: safe, autonomous or yolo.",
-        lambda raw: raw in AUTONOMY_LEVELS,
+        Choice(AUTONOMY_LEVELS),
     ),
     ConfigField(
         "auto_max_passes",
         int,
         DEFAULT_MAX_PASSES,
         "Runaway backstop: the most passes one `specflo auto` run may take.",
-        lambda raw: _is_count(raw, 1),
+        WholeNumber(1),
     ),
     ConfigField(
         "context_threshold_percent",
         int,
         DEFAULT_CONTEXT_THRESHOLD_PERCENT,
         "Percent of the context window at which the pi extension arms clear-and-continue.",
-        lambda raw: _is_count(raw, *CONTEXT_THRESHOLD_RANGE),
+        WholeNumber(*CONTEXT_THRESHOLD_RANGE),
     ),
 )
 
@@ -133,6 +180,23 @@ def field_for(name: str) -> ConfigField:
         raise SpecfloError(
             f"Unknown config key {name!r}. Valid keys: {', '.join(FIELDS_BY_NAME)}."
         ) from None
+
+
+def parse_value(spec: ConfigField, text: str) -> Any:
+    """``text`` from the command line as ``spec``'s type, validated.
+
+    Rejects before anything is written (REQ-24), naming the key and the domain
+    it asked for - the domain speaks for itself, so the message can never
+    promise values the validator would refuse.
+    """
+    rejected = SpecfloError(f"Invalid {spec.name} {text!r}. Accepts: {spec.validate}.")
+    try:
+        value = spec.type(text)
+    except ValueError:  # `12x` for an int key: the wrong shape, same rejection
+        raise rejected from None
+    if not spec.validate(value):
+        raise rejected
+    return value
 
 
 def render_value(value: Any) -> str:
@@ -508,6 +572,19 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
     path.write_text(text)
     if existing is not None:
         _announce_backfill(set(FIELDS_BY_NAME) - live - _represented(existing))
+
+
+def write_value(root: Path, spec: ConfigField, value: Any) -> None:
+    """Set one key in the file, leaving every other line as the user left it.
+
+    The key is marked present, so it is written live even when the value equals
+    the shipped default (REQ-06): the user asked for this value, so the file
+    says so rather than staying silent and looking unset.
+    """
+    cfg = load_config(root)
+    setattr(cfg, spec.name, value)
+    cfg.present_keys = cfg.present_keys | {spec.name}
+    save_config(root, cfg)
 
 
 def init_config(
