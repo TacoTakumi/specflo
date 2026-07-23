@@ -67,6 +67,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show every setting, its value, and where that value came from."},
     {"name": "config set", "group": "setup", "args": "<key> <value>",
      "summary": "Set one setting, validated before it is written."},
+    {"name": "config unset", "group": "setup", "args": "<key>",
+     "summary": "Drop one setting, returning it to its shipped default."},
     {"name": "hook reseed", "group": "setup", "args": "",
      "summary": "Emit the session-start reseed payload (used by the SessionStart hook)."},
     {"name": "hook install", "group": "setup", "args": "",

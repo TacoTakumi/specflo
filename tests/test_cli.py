@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer.main import get_command
 from typer.testing import CliRunner
 
 import yaml
@@ -2922,3 +2923,80 @@ def test_config_set_projects_dir_with_force_writes_and_moves_nothing(cwd):
     assert runner.invoke(app, ["config", "get", "projects_dir"]).stdout == "specs\n"
     assert {p: p.read_bytes() for p in old.rglob("*") if p.is_file()} == before
     assert not (cwd / "specs").exists()
+
+
+# --- the config command group: unset (REQ-19, REQ-13) --------------------
+# Unsetting is the inverse of setting, in the file as well as in the value: the
+# live line goes back to being the commented default it started as.
+
+
+def test_config_unset_returns_a_key_to_its_commented_default(cwd):
+    # REQ-19
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["config", "set", "autonomy", "autonomous"])
+    path = config.config_path(cwd)
+
+    result = runner.invoke(app, ["config", "unset", "autonomy"])
+
+    assert result.exit_code == 0
+    text = path.read_text()
+    assert "autonomy" not in live_keys(text)
+    description = config.FIELDS_BY_NAME["autonomy"].description
+    assert f"# {description}\n# autonomy: safe" in text
+    assert runner.invoke(app, ["config", "get", "autonomy"]).stdout == "safe\n"
+    assert "autonomy: safe (default)" in runner.invoke(app, ["config", "list"]).stdout
+
+
+def test_config_unset_keeps_a_comment_written_under_the_key(cwd):
+    # REQ-07: the key leaves, the user's own line does not. It has nowhere to
+    # stay attached, so it moves up to the item above rather than vanishing.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["config", "set", "autonomy", "yolo"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text().replace("autonomy: yolo", "autonomy: yolo\n# on purpose"))
+
+    assert runner.invoke(app, ["config", "unset", "autonomy"]).exit_code == 0
+
+    assert "# on purpose" in path.read_text()
+
+
+def test_config_unset_refuses_active_project_and_an_unknown_key(cwd):
+    # REQ-20/REQ-15: the pointer is `specflo switch`'s to move in either
+    # direction, and an unknown key is refused as it is everywhere else.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    pointer = runner.invoke(app, ["config", "unset", "active_project"])
+    unknown = runner.invoke(app, ["config", "unset", "nosuchkey"])
+
+    assert pointer.exit_code != 0 and "specflo switch" in pointer.stderr
+    assert unknown.exit_code != 0
+    assert all(name in unknown.stderr for name in config.FIELDS_BY_NAME)
+    assert path.read_bytes() == before
+
+
+def test_config_unset_projects_dir_is_guarded_like_setting_it(cwd):
+    # Reverting the path strands existing projects exactly as changing it does,
+    # so it asks for the same --force.
+    runner.invoke(app, ["init", "--projects-dir", "specs"])
+    runner.invoke(app, ["new", "My Thing"])
+    path = config.config_path(cwd)
+    before = path.read_bytes()
+
+    assert runner.invoke(app, ["config", "unset", "projects_dir"]).exit_code != 0
+    assert path.read_bytes() == before
+
+    assert runner.invoke(app, ["config", "unset", "projects_dir", "--force"]).exit_code == 0
+    assert runner.invoke(app, ["config", "get", "projects_dir"]).stdout == "docs/projects\n"
+
+
+def test_config_group_offers_exactly_four_subcommands(cwd):
+    # REQ-13: get, set, list, unset - no `show`, no `edit`.
+    group = get_command(app).commands["config"]
+
+    assert sorted(group.commands) == ["get", "list", "set", "unset"]
+    help_text = runner.invoke(app, ["config", "--help"]).stdout
+    assert all(name in help_text for name in group.commands)
+    assert runner.invoke(app, ["config", "show"]).exit_code != 0

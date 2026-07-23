@@ -1544,6 +1544,28 @@ def config_set(
     typer.echo(f"Set {spec.name} to {config.render_value(parsed)}.")
 
 
+@config_app.command("unset", epilog="Example: specflo config unset autonomy")
+def config_unset(
+    key: str = typer.Argument(
+        ..., metavar="<key>", help="A config key; `specflo config list` names them all."
+    ),
+    force: bool = typer.Option(
+        False, "--force", help="Clear projects_dir even though projects live under it."
+    ),
+) -> None:
+    """Drop one setting, returning it to its shipped default."""
+    root = _require_root()
+    try:
+        spec = config.field_for(key)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    # Clearing projects_dir moves it back to the shipped path, which strands
+    # existing projects exactly as setting it elsewhere would - same guard.
+    _guard_set(root, spec.name, force)
+    config.clear_value(root, spec)
+    typer.echo(f"Unset {spec.name}; back to the default {spec.default!r}.")
+
+
 # How each source reads at the end of a `config list` line. A value the file
 # actually sets carries no marker - the absence is the signal.
 SOURCE_MARKERS = {

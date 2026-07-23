@@ -491,9 +491,14 @@ def _tidy(lines: list[str]) -> list[str]:
     return tidied
 
 
-def _relayout(doc: CommentedMap, live: set[str]) -> None:
+def _relayout(doc: CommentedMap, live: set[str], drop: frozenset[str] = frozenset()) -> None:
     """Rewrite ``doc``'s comments so every registry key carries its description
-    and every unset key appears commented out at its default."""
+    and every unset key appears commented out at its default.
+
+    Keys in ``drop`` leave the mapping here rather than before the slots are
+    read: a removed key's comment slot holds whatever the user wrote below it,
+    which is merged into the slot above instead of leaving with the key.
+    """
     keys = list(doc)
     # slots[i] is the text sitting immediately above keys[i]; the last slot is
     # the tail of the file. eols[i] is the end-of-line comment on keys[i].
@@ -504,6 +509,15 @@ def _relayout(doc: CommentedMap, live: set[str]) -> None:
         slots.append(lines)
     slots[-1].extend(_take_end(doc))
     slots = [_tidy([ln for ln in lines if not _is_generated(ln)]) for lines in slots]
+
+    for name in drop:
+        if name not in keys:
+            continue
+        index = keys.index(name)
+        slots[index] = _tidy(slots[index] + slots.pop(index + 1))
+        keys.pop(index)
+        eols.pop(index)
+        del doc[name]
 
     pending: list[str] = []
     for spec in CONFIG_FIELDS:
@@ -536,13 +550,20 @@ def _set_pre_document(doc: CommentedMap, lines: list[str]) -> None:
     doc.ca.comment = [None, [CommentToken(text, CommentMark(0), None)]] if lines else None
 
 
-def save_config(root: Path, cfg: SpecfloConfig) -> None:
+def save_config(
+    root: Path, cfg: SpecfloConfig, drop: frozenset[str] = frozenset()
+) -> None:
     """Write ``cfg`` back, leaving everything specflo does not own untouched.
 
     The file is never regenerated. It is loaded into a ruamel round-trip
     document, only the registry keys are assigned, and that same document is
     dumped - so a hand-written comment, the key order the user chose, and a key
     the registry has never heard of all survive the write (REQ-07, REQ-08).
+
+    ``drop`` names keys to remove from the file; they come back out of the
+    layout as the commented-out default line they were before anyone set them
+    (REQ-19). Without it a key already in the file always stays live, which is
+    what makes every other write additive.
 
     A file predating a registry key gains it here, commented out at its default,
     and the addition is announced once on stderr (REQ-10, REQ-11). Creating the
@@ -558,10 +579,11 @@ def save_config(root: Path, cfg: SpecfloConfig) -> None:
         # A key stays commented out at its default until something claims it -
         # the file itself, or the config asking for the write. That keeps a
         # plain project's config free of live auto-* keys (auto-mode REQ-01).
-        if spec.name in doc or spec.name in cfg.present_keys or value != spec.default:
+        claimed = spec.name in doc or spec.name in cfg.present_keys or value != spec.default
+        if claimed and spec.name not in drop:
             doc[spec.name] = value
             live.add(spec.name)
-    _relayout(doc, live)
+    _relayout(doc, live, drop)
     buffer = io.StringIO()
     _ROUND_TRIP.dump(doc, buffer)
     text = buffer.getvalue()
@@ -585,6 +607,15 @@ def write_value(root: Path, spec: ConfigField, value: Any) -> None:
     setattr(cfg, spec.name, value)
     cfg.present_keys = cfg.present_keys | {spec.name}
     save_config(root, cfg)
+
+
+def clear_value(root: Path, spec: ConfigField) -> None:
+    """Drop one key from the file: it reverts to the commented-out default line
+    under its description, exactly as it looked before anyone set it (REQ-19)."""
+    cfg = load_config(root)
+    setattr(cfg, spec.name, spec.default)
+    cfg.present_keys = cfg.present_keys - {spec.name}
+    save_config(root, cfg, drop=frozenset({spec.name}))
 
 
 def init_config(
