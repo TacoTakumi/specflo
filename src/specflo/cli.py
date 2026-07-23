@@ -207,10 +207,10 @@ def new(
     cfg = config.load_config(root)
     try:
         project = projects.create_project(root, cfg, name)
+        cfg.active_project = project.slug
+        config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
-    cfg.active_project = project.slug
-    config.save_config(root, cfg)
     # Scaffold the first artifact so a new project is immediately ready to work
     # (no separate `brainstorm start`). create_project stays container-only;
     # the scaffold is CLI orchestration over the idempotent helper.
@@ -353,10 +353,10 @@ def resume(
         raise _die(f"Project '{slug}' is not shelved - nothing to resume.")
     try:
         project = projects.resume_project(root, cfg, slug)
+        cfg.active_project = project.slug
+        config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
-    cfg.active_project = project.slug
-    config.save_config(root, cfg)
     _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"slug": project.slug, "status": project.status}))
@@ -1537,10 +1537,10 @@ def config_set(
     try:
         spec = config.field_for(key)
         parsed = config.parse_value(spec, value)
+        _guard_set(root, spec.name, force)
+        config.write_value(root, spec, parsed)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _guard_set(root, spec.name, force)
-    config.write_value(root, spec, parsed)
     typer.echo(f"Set {spec.name} to {config.render_value(parsed)}.")
 
 
@@ -1557,12 +1557,12 @@ def config_unset(
     root = _require_root()
     try:
         spec = config.field_for(key)
+        # Clearing projects_dir moves it back to the shipped path, which strands
+        # existing projects exactly as setting it elsewhere would - same guard.
+        _guard_set(root, spec.name, force)
+        config.clear_value(root, spec)
     except SpecfloError as exc:
         raise _die(str(exc))
-    # Clearing projects_dir moves it back to the shipped path, which strands
-    # existing projects exactly as setting it elsewhere would - same guard.
-    _guard_set(root, spec.name, force)
-    config.clear_value(root, spec)
     typer.echo(f"Unset {spec.name}; back to the default {spec.default!r}.")
 
 

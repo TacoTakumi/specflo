@@ -396,6 +396,22 @@ def test_a_save_writes_the_values_it_owns(tmp_path):
     assert config.load_config(tmp_path).active_project == "beta"
 
 
+def test_a_save_refuses_a_file_with_a_duplicated_key(tmp_path):
+    # A duplicated key forces any rewrite to pick one of the two lines. Refusing
+    # with a clean error beats a ruamel traceback or a silent choice.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text("projects_dir: docs/projects\nprojects_dir: specs\n")
+    before = path.read_bytes()
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+
+    with pytest.raises(SpecfloError, match="projects_dir"):
+        config.save_config(tmp_path, cfg)
+
+    assert path.read_bytes() == before
+
+
 def test_the_config_is_never_emitted_from_a_fresh_mapping(tmp_path):
     # REQ-08 is structural: the module writes the file only by dumping a document
     # it first loaded. A PyYAML dump or an f-string template would be a regression.

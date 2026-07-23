@@ -17,6 +17,7 @@ from typing import Any
 import yaml
 from ruamel.yaml import YAML
 from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.constructor import DuplicateKeyError
 from ruamel.yaml.error import CommentMark
 from ruamel.yaml.tokens import CommentToken
 
@@ -378,7 +379,14 @@ def _load_document(path: Path) -> CommentedMap:
     nothing to preserve (no file yet, or a file holding no mapping)."""
     if not path.is_file():
         return CommentedMap()
-    doc = _ROUND_TRIP.load(path.read_text())
+    try:
+        doc = _ROUND_TRIP.load(path.read_text())
+    except DuplicateKeyError as exc:
+        # Rewriting would have to pick one of the two lines; refuse instead.
+        # Reads stay on PyYAML, which keeps tolerating the file (last key wins).
+        raise SpecfloError(
+            f"Malformed {CONFIG_FILENAME}: {exc.problem}. Fix the file and retry."
+        ) from exc
     return doc if isinstance(doc, CommentedMap) else CommentedMap()
 
 

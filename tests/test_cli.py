@@ -2864,6 +2864,50 @@ def test_config_set_rejects_an_unknown_key(cwd):
     assert path.read_bytes() == before
 
 
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["config", "set", "context_threshold_percent", "50"],
+        ["config", "unset", "autonomy"],
+        ["new", "widget"],
+        ["switch", "gadget"],
+    ],
+    ids=["set", "unset", "new", "switch"],
+)
+def test_a_duplicated_key_refuses_every_write_command_cleanly(cwd, command):
+    # A hand-duplicated line must not turn a write into a traceback: the
+    # command refuses on one line naming the file and key, and changes nothing.
+    # Reads (PyYAML, last key wins) keep working - only rewriting is refused.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "gadget"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text() + "autonomy: safe\nautonomy: yolo\n")
+    before = path.read_bytes()
+
+    result = runner.invoke(app, command)
+
+    assert result.exit_code != 0
+    assert "error:" in result.stderr
+    assert "config.yaml" in result.stderr and "autonomy" in result.stderr
+    assert path.read_bytes() == before
+
+
+def test_a_duplicated_key_refuses_resume_cleanly(cwd):
+    # Same refusal on the one write command that needs a shelved project first.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "gadget"])
+    runner.invoke(app, ["shelve", "gadget"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text() + "autonomy: safe\nautonomy: yolo\n")
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["resume", "gadget"])
+
+    assert result.exit_code != 0
+    assert "error:" in result.stderr and "config.yaml" in result.stderr
+    assert path.read_bytes() == before
+
+
 # --- the two keys config set will not just write (REQ-20, REQ-22, REQ-23) -
 # Both are readable like any other key. Writing them is not a value change but
 # a move: one owns which project is active, the other where every project lives.
