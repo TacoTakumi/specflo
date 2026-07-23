@@ -7,8 +7,10 @@ works from anywhere inside a project tree.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field, make_dataclass
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -19,6 +21,9 @@ CONFIG_FILENAME = "config.yaml"
 DEFAULT_PROJECTS_DIR = "docs/projects"
 
 
+# Autonomy levels for `specflo auto` (REQ-08), defined here rather than in `auto`
+# so the registry's validator and `auto` read the same tuple; `auto` re-exports it.
+AUTONOMY_LEVELS = ("safe", "autonomous", "yolo")
 DEFAULT_AUTONOMY = "safe"
 # Default iteration/step cap for `specflo auto` (REQ-14): a runaway backstop on
 # the unattended pass loop. Single source of truth for the config-field default,
@@ -34,21 +39,97 @@ DEFAULT_CONTEXT_THRESHOLD_PERCENT = 75
 CONTEXT_THRESHOLD_RANGE = (1, 100)
 
 
-@dataclass
-class SpecfloConfig:
-    projects_dir: str = DEFAULT_PROJECTS_DIR
-    active_project: str | None = None
-    # Default autonomy level for `specflo auto` when no --autonomy flag is given
-    # (REQ-08). A level *string*, never an auto-*on* toggle (REQ-01/D-10). Kept as
-    # a literal default here to avoid importing `auto` (which imports `config`).
-    autonomy: str = DEFAULT_AUTONOMY
-    # Default iteration/step cap for `specflo auto` when no --max-passes flag is
-    # given (REQ-14). Not an auto-*on* toggle - a numeric backstop.
-    auto_max_passes: int = DEFAULT_MAX_PASSES
-    # Percent of the model context window at which the pi extension arms its
-    # clear-and-continue trigger (pi-extension REQ-28). Surfaced to the extension
-    # through `specflo status --json`, so it never parses this file itself.
-    context_threshold_percent: int = DEFAULT_CONTEXT_THRESHOLD_PERCENT
+def _is_slug(raw: object) -> bool:
+    return isinstance(raw, str) and bool(raw.strip())
+
+
+def _is_count(raw: object, low: int, high: int | None = None) -> bool:
+    """A plain positive int in range. ``bool`` is rejected explicitly: it
+    subclasses ``int``, so ``True`` would otherwise read as the number 1."""
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw < low:
+        return False
+    return high is None or raw <= high
+
+
+@dataclass(frozen=True)
+class ConfigField:
+    """One config key, described once.
+
+    Every fact about a key lives here - its name, type, shipped default, the
+    one-line description comment written above it in the file, and the validator
+    deciding whether a value found in the file is usable (REQ-28). Defining any
+    of those anywhere else is a defect, even when the two agree.
+    """
+
+    name: str
+    type: Any
+    default: Any
+    description: str
+    validate: Callable[[Any], bool]
+
+
+# The registry (REQ-28). Order is the file layout order and the `config list`
+# order (REQ-29); appending an entry here is the whole cost of adding a key.
+CONFIG_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(
+        "projects_dir",
+        str,
+        DEFAULT_PROJECTS_DIR,
+        "Where project artifacts live, relative to the repo root.",
+        _is_slug,
+    ),
+    ConfigField(
+        "active_project",
+        str,
+        None,
+        "The project every command acts on; set it with `specflo switch`.",
+        lambda raw: raw is None or _is_slug(raw),
+    ),
+    ConfigField(
+        "autonomy",
+        str,
+        DEFAULT_AUTONOMY,
+        "Default autonomy level for `specflo auto`: safe, autonomous or yolo.",
+        lambda raw: raw in AUTONOMY_LEVELS,
+    ),
+    ConfigField(
+        "auto_max_passes",
+        int,
+        DEFAULT_MAX_PASSES,
+        "Runaway backstop: the most passes one `specflo auto` run may take.",
+        lambda raw: _is_count(raw, 1),
+    ),
+    ConfigField(
+        "context_threshold_percent",
+        int,
+        DEFAULT_CONTEXT_THRESHOLD_PERCENT,
+        "Percent of the context window at which the pi extension arms clear-and-continue.",
+        lambda raw: _is_count(raw, *CONTEXT_THRESHOLD_RANGE),
+    ),
+)
+
+FIELDS_BY_NAME = {f.name: f for f in CONFIG_FIELDS}
+
+
+def _annotation(spec: ConfigField) -> str:
+    """The dataclass annotation for ``spec``: its value type, made optional when
+    the key ships unset. ``type`` itself stays a real type so a CLI layer can
+    coerce a string argument with it."""
+    return f"{spec.type.__name__} | None" if spec.default is None else spec.type.__name__
+
+
+# The resolved-values object. Generated from the registry so a key can never
+# exist in one and not the other and no default is restated here (REQ-29), while
+# every key stays readable as a plain attribute for existing callers (REQ-30).
+# `present_keys` is loader metadata, not a config key: which keys the file
+# physically held, so writers and `config list` can tell "set" from "defaulted".
+SpecfloConfig = make_dataclass(
+    "SpecfloConfig",
+    [(f.name, _annotation(f), field(default=f.default)) for f in CONFIG_FIELDS]
+    + [("present_keys", "frozenset[str]", field(default=frozenset(), compare=False))],
+    module=__name__,
+)
+SpecfloConfig.__doc__ = "Resolved config values, one attribute per CONFIG_FIELDS entry."
 
 
 def config_path(root: Path) -> Path:
@@ -78,35 +159,25 @@ def display_path(path: Path, root: Path, *, posix: bool = False) -> str:
     return rel.as_posix() if posix else str(rel)
 
 
-def _context_threshold(raw) -> int:
-    """``raw`` as a usable arming percent, or the default when it is not one.
-
-    A hand-edited config must not break every command that loads it, so an
-    unusable value degrades rather than raising. ``bool`` is rejected explicitly:
-    it subclasses ``int``, so ``True`` would otherwise read as the percent 1.
-    """
-    low, high = CONTEXT_THRESHOLD_RANGE
-    if isinstance(raw, bool) or not isinstance(raw, int) or not low <= raw <= high:
-        return DEFAULT_CONTEXT_THRESHOLD_PERCENT
-    return raw
-
-
 def load_config(root: Path) -> SpecfloConfig:
+    """Resolve every registry key against the file on disk.
+
+    Driven entirely by :data:`CONFIG_FIELDS` - no key is named here. A value the
+    registry's validator rejects degrades to that key's shipped default rather
+    than raising: a hand-edited config must not break every command that loads
+    it (and `status --json` is polled every turn by the pi extension).
+    """
     path = config_path(root)
     if not path.is_file():
         raise SpecfloError(
             f"No specflo project here ({path} not found). Run `specflo init` first."
         )
     data = yaml.safe_load(path.read_text()) or {}
-    return SpecfloConfig(
-        projects_dir=data.get("projects_dir", DEFAULT_PROJECTS_DIR),
-        active_project=data.get("active_project"),
-        autonomy=data.get("autonomy", DEFAULT_AUTONOMY),
-        auto_max_passes=data.get("auto_max_passes", DEFAULT_MAX_PASSES),
-        context_threshold_percent=_context_threshold(
-            data.get("context_threshold_percent", DEFAULT_CONTEXT_THRESHOLD_PERCENT)
-        ),
-    )
+    values = {}
+    for spec in CONFIG_FIELDS:
+        raw = data.get(spec.name, spec.default)
+        values[spec.name] = raw if spec.validate(raw) else spec.default
+    return SpecfloConfig(present_keys=frozenset(data), **values)
 
 
 def save_config(root: Path, cfg: SpecfloConfig) -> None:

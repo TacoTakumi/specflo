@@ -1,8 +1,9 @@
 import dataclasses
+import inspect
 
 import pytest
 
-from specflo import config
+from specflo import auto, config
 from specflo.errors import SpecfloError
 
 
@@ -88,6 +89,98 @@ def test_display_path_outside_root_falls_back_to_absolute(tmp_path):
     outside = (tmp_path / ".." / "elsewhere" / "y").resolve()
     assert config.display_path(outside, tmp_path) == str(outside)
     assert config.display_path(outside, tmp_path, posix=True) == outside.as_posix()
+
+
+# --- the field registry (REQ-28, REQ-29, REQ-30) -------------------------
+# One ordered registry carries every key's name, type, default, description and
+# validator. Nothing outside it may define a key's default or description, and
+# `load_config` builds the resolved-values object by iterating it.
+
+
+def _registry_names():
+    return [f.name for f in config.CONFIG_FIELDS]
+
+
+def test_registry_carries_all_five_attributes_for_every_key():
+    assert config.CONFIG_FIELDS, "the registry is empty"
+    for field in config.CONFIG_FIELDS:
+        assert field.name and isinstance(field.name, str)
+        # A real type, so a CLI layer can coerce a string argument with it.
+        assert isinstance(field.type, type)
+        assert field.default is None or isinstance(field.default, field.type)
+        assert field.description and not field.description.startswith(" ")
+        assert field.description.isascii()
+        assert callable(field.validate)
+
+
+def test_every_registry_validator_accepts_its_own_default():
+    for field in config.CONFIG_FIELDS:
+        assert field.validate(field.default), field.name
+
+
+def test_the_dataclass_fields_are_exactly_the_registry_in_order():
+    # The resolved-values dataclass is driven by the registry, so a key can't
+    # exist in one and not the other, and the file layout order is the registry's.
+    names = [f.name for f in dataclasses.fields(config.SpecfloConfig)]
+    assert names[: len(config.CONFIG_FIELDS)] == _registry_names()
+    # Anything after the registry keys is loader metadata, not a config key.
+    assert names[len(config.CONFIG_FIELDS) :] == ["present_keys"]
+
+
+def test_every_registry_key_is_readable_as_an_attribute(tmp_path):
+    config.init_config(tmp_path)
+    cfg = config.load_config(tmp_path)
+    for field in config.CONFIG_FIELDS:
+        assert getattr(cfg, field.name) == field.default
+
+
+def test_bare_dataclass_defaults_come_from_the_registry():
+    cfg = config.SpecfloConfig()
+    for field in config.CONFIG_FIELDS:
+        assert getattr(cfg, field.name) == field.default
+
+
+def test_the_loader_holds_no_per_key_literal():
+    # REQ-28/REQ-29: load_config iterates the registry. A key named in the
+    # loader's own source would be a second definition site.
+    source = inspect.getsource(config.load_config)
+    for name in _registry_names():
+        assert name not in source, f"{name} is spelled out in load_config"
+
+
+def test_the_autonomy_domain_is_defined_once(tmp_path):
+    # `auto` re-exports the levels rather than restating them: a second literal
+    # would be a different tuple object.
+    assert auto.AUTONOMY_LEVELS is config.AUTONOMY_LEVELS
+    assert auto.DEFAULT_AUTONOMY == config.DEFAULT_AUTONOMY
+
+
+def test_present_keys_reports_only_the_keys_in_the_file(tmp_path):
+    config.init_config(tmp_path)
+    assert config.load_config(tmp_path).present_keys == {
+        "projects_dir",
+        "active_project",
+    }
+
+
+def test_present_keys_includes_keys_the_registry_does_not_know(tmp_path):
+    # `config list` needs to name unrecognized keys, so presence is reported
+    # unfiltered - the caller intersects it with the registry.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(path.read_text() + "autonomy: yolo\nmystery_key: 1\n")
+
+    present = config.load_config(tmp_path).present_keys
+    assert "autonomy" in present
+    assert "mystery_key" in present
+
+
+def test_present_keys_is_not_persisted(tmp_path):
+    # It is loader metadata about the file, never a key in it.
+    config.init_config(tmp_path)
+    cfg = config.load_config(tmp_path)
+    config.save_config(tmp_path, cfg)
+    assert "present_keys" not in config.config_path(tmp_path).read_text()
 
 
 # --- the context arming threshold (pi-extension REQ-28) ------------------

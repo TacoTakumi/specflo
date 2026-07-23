@@ -282,10 +282,11 @@ def resolve_max_passes(flag: int | None, cfg_default: int | None) -> int:
 # Autonomy levels for `specflo auto` (REQ-08). `safe` (default) and `autonomous`
 # stop-and-hand-off on any irreversible/outbound step; `yolo` permits them. The
 # level is a per-invocation choice (the --autonomy flag) with a matching config
-# default - never a persisted auto-*on* toggle (REQ-01). DEFAULT_AUTONOMY mirrors
-# config.DEFAULT_AUTONOMY (kept in sync; not imported to avoid a config->auto cycle).
-AUTONOMY_LEVELS = ("safe", "autonomous", "yolo")
-DEFAULT_AUTONOMY = "safe"
+# default - never a persisted auto-*on* toggle (REQ-01). Both are re-exported
+# from `config`, which owns the field registry: the domain and the default are
+# defined once, there.
+AUTONOMY_LEVELS = config.AUTONOMY_LEVELS
+DEFAULT_AUTONOMY = config.DEFAULT_AUTONOMY
 
 FLOOR_MARKER = "Always-stop floor:"
 
