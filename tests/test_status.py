@@ -6,6 +6,8 @@ a failing one as work-in-progress, recomputed every read and mutating nothing.
 Execute keeps its progress-based hint (REQ-05).
 """
 
+import json
+
 from typer.testing import CliRunner
 
 from specflo import config, projects, spec, status, workflow
@@ -191,6 +193,32 @@ def test_render_status_ignores_the_arming_threshold(tmp_path):
     tuned = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
     assert tuned == default
     assert "42" not in tuned
+
+
+def test_status_json_survives_an_invalid_config(tmp_path, monkeypatch):
+    # The pi extension polls `status --json` every turn (REQ-25): a hand-edited
+    # config that fails validation must not take the poll down. It degrades to
+    # the shipped defaults, warns on stderr, and leaves stdout parseable JSON.
+    _validating_spec_project(tmp_path)
+    path = config.config_path(tmp_path)
+    bad = {"autonomy": "bogus", "auto_max_passes": 0, "context_threshold_percent": 101}
+    path.write_text(path.read_text() + "".join(f"{k}: {v!r}\n" for k, v in bad.items()))
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["status", "--json"])
+
+    assert result.exit_code == 0
+    # `result.stdout`, not `result.output`: the latter interleaves stderr, which
+    # is the whole point here - the warnings must not land in the JSON.
+    data = json.loads(result.stdout)
+    assert data["context_threshold_percent"] == (
+        config.DEFAULT_CONTEXT_THRESHOLD_PERCENT
+    )
+    lines = result.stderr.strip().splitlines()
+    assert len(lines) == len(bad)
+    for key in bad:
+        assert any(key in line for line in lines)
+    assert "bogus" not in result.stdout  # warnings never reach stdout
 
 
 # --- the auto-run block on the status payload (pi-extension T-06) -------------

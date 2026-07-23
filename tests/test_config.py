@@ -183,6 +183,79 @@ def test_present_keys_is_not_persisted(tmp_path):
     assert "present_keys" not in config.config_path(tmp_path).read_text()
 
 
+# --- degrade-and-warn on an invalid value (REQ-25, REQ-26) ---------------
+# A hand-edited config must not break every command that loads it, and the pi
+# extension polls `status --json` every turn - so a bad value falls back to the
+# shipped default and says so on stderr, once per key per process.
+
+BAD_VALUES = {
+    "autonomy": "bogus",
+    "auto_max_passes": 0,
+    "context_threshold_percent": 101,
+}
+
+
+def _write_values(tmp_path, values):
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(
+        path.read_text() + "".join(f"{k}: {v!r}\n" for k, v in values.items())
+    )
+    return path
+
+
+@pytest.mark.parametrize("key,bad", sorted(BAD_VALUES.items()))
+def test_an_invalid_value_degrades_to_the_default_and_warns(tmp_path, capsys, key, bad):
+    _write_values(tmp_path, {key: bad})
+    cfg = config.load_config(tmp_path)
+
+    assert getattr(cfg, key) == config.FIELDS_BY_NAME[key].default
+    err = capsys.readouterr().err
+    assert err.strip().count("\n") == 0  # exactly one line
+    assert key in err
+    assert repr(bad) in err
+
+
+def test_every_invalid_key_gets_its_own_line(tmp_path, capsys):
+    _write_values(tmp_path, BAD_VALUES)
+    cfg = config.load_config(tmp_path)
+
+    for key, bad in BAD_VALUES.items():
+        assert getattr(cfg, key) == config.FIELDS_BY_NAME[key].default
+    lines = capsys.readouterr().err.strip().splitlines()
+    assert len(lines) == len(BAD_VALUES)
+    assert {key for key in BAD_VALUES if any(key in line for line in lines)} == set(
+        BAD_VALUES
+    )
+
+
+def test_a_bad_key_warns_only_once_per_process(tmp_path, capsys):
+    # `specflo auto` calls load_config many times in one invocation; the warning
+    # must not repeat (REQ-26).
+    _write_values(tmp_path, {"autonomy": "bogus"})
+    config.load_config(tmp_path)
+    capsys.readouterr()
+
+    config.load_config(tmp_path)
+    config.load_config(tmp_path)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_valid_config_warns_nothing(tmp_path, capsys):
+    _write_values(tmp_path, {"autonomy": "yolo", "auto_max_passes": 5})
+    cfg = config.load_config(tmp_path)
+
+    assert cfg.autonomy == "yolo"
+    assert cfg.auto_max_passes == 5
+    assert capsys.readouterr().err == ""
+
+
+def test_loading_never_raises_on_a_bad_value(tmp_path, capsys):
+    _write_values(tmp_path, {key: [1, 2] for key in BAD_VALUES})
+    config.load_config(tmp_path)  # must not raise
+    capsys.readouterr()
+
+
 # --- the context arming threshold (pi-extension REQ-28) ------------------
 # The pi extension arms its clear-and-continue trigger at a percent of the model
 # context window. The percent is configured here, alongside the existing auto

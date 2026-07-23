@@ -54,6 +54,21 @@ def executable_identifiers(obj) -> str:
     return "\n".join(found).lower()
 
 
+@pytest.fixture(autouse=True)
+def _fresh_config_warnings():
+    """Clear the once-per-process invalid-value warnings between tests.
+
+    `load_config` warns at most once per bad key per process (REQ-26). The whole
+    suite is one process, so without this a test that expects a warning would
+    pass or fail depending on which test ran before it.
+    """
+    from specflo import config
+
+    config.reset_warnings()
+    yield
+    config.reset_warnings()
+
+
 @pytest.fixture
 def fixture_roots(tmp_path, monkeypatch):
     """Redirect agentsquire's harness roots to throwaway fixture dirs (D-12).

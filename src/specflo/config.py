@@ -7,6 +7,7 @@ works from anywhere inside a project tree.
 
 from __future__ import annotations
 
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, make_dataclass
 from pathlib import Path
@@ -159,13 +160,41 @@ def display_path(path: Path, root: Path, *, posix: bool = False) -> str:
     return rel.as_posix() if posix else str(rel)
 
 
+# Keys already warned about in this process. `specflo auto` loads the config many
+# times per invocation, so the warning is emitted once per bad key, not once per
+# load (REQ-26).
+_warned: set[str] = set()
+
+
+def reset_warnings() -> None:
+    """Forget which keys have been warned about. For tests - one process there
+    stands in for many runs."""
+    _warned.clear()
+
+
+def _warn_invalid(spec: ConfigField, raw: Any) -> None:
+    """One stderr line naming the key and the value found, at most once per key.
+
+    stderr, never stdout: `status --json` is machine-read every turn and its
+    stdout must stay parseable JSON (REQ-26).
+    """
+    if spec.name in _warned:
+        return
+    _warned.add(spec.name)
+    print(
+        f"warning: {CONFIG_FILENAME}: invalid {spec.name} {raw!r}"
+        f" - using the default {spec.default!r}",
+        file=sys.stderr,
+    )
+
+
 def load_config(root: Path) -> SpecfloConfig:
     """Resolve every registry key against the file on disk.
 
     Driven entirely by :data:`CONFIG_FIELDS` - no key is named here. A value the
-    registry's validator rejects degrades to that key's shipped default rather
-    than raising: a hand-edited config must not break every command that loads
-    it (and `status --json` is polled every turn by the pi extension).
+    registry's validator rejects degrades to that key's shipped default and warns
+    rather than raising: a hand-edited config must not break every command that
+    loads it (and `status --json` is polled every turn by the pi extension).
     """
     path = config_path(root)
     if not path.is_file():
@@ -176,7 +205,11 @@ def load_config(root: Path) -> SpecfloConfig:
     values = {}
     for spec in CONFIG_FIELDS:
         raw = data.get(spec.name, spec.default)
-        values[spec.name] = raw if spec.validate(raw) else spec.default
+        if spec.validate(raw):
+            values[spec.name] = raw
+        else:
+            _warn_invalid(spec, raw)
+            values[spec.name] = spec.default
     return SpecfloConfig(present_keys=frozenset(data), **values)
 
 
