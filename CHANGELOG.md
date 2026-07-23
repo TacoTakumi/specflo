@@ -79,6 +79,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   file exactly as written - degraded in memory and marked
   `(invalid, using default)` by `config list` - until the user fixes it, sets
   the key, or unsets it.
+- **A config file that is not a mapping reads as empty.** A bare string in
+  the file made `config list` enumerate the string's characters as unknown
+  keys, and a string containing a key name crashed every read. Reads now
+  treat a non-mapping document as holding no keys, every setting at its
+  default - the same reading the write side already used.
+- **`config unset` keeps a comment written beside the key.** The end-of-line
+  comment on `autonomy: yolo  # tuned for CI` used to vanish with the value;
+  it now lands on a line of its own where the key was, as a comment under the
+  key always did.
 
 ## [0.4.1]
 
