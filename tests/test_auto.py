@@ -12,21 +12,13 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
+from conftest import live_keys
 from specflo import auto, brainstorm, checkpoint, config, hook, projects, spec, workflow
 from specflo.cli import app
 
 runner = CliRunner()
 
 PHASES = ["brainstorm", "spec", "plan", "execute"]
-
-
-def _live_keys(text: str) -> list[str]:
-    """The keys actually set in a config file - commented-out entries excluded."""
-    return [
-        line.split(":", 1)[0]
-        for line in text.splitlines()
-        if ":" in line and not line.startswith("#")
-    ]
 
 
 def _active_at(tmp_path, phase, name="My Thing"):
@@ -184,7 +176,7 @@ def test_config_persists_non_default_autonomy_and_comments_out_the_default(tmp_p
     # REQ-03/REQ-04 write an unset key as a commented-out line instead of
     # leaving it out of the file
     text = config.config_path(tmp_path).read_text()
-    assert "autonomy" not in _live_keys(text)
+    assert "autonomy" not in live_keys(text)
     assert "# autonomy: safe" in text
     cfg = config.load_config(tmp_path)
     cfg.autonomy = "yolo"
@@ -295,7 +287,7 @@ def test_run_state_lives_in_a_dedicated_file_not_config(tmp_path):
     _active_at(tmp_path, "execute")
     auto.auto_pass(tmp_path, max_passes=10)
     # the counter is in a dedicated run-state file, never a config auto-on key
-    live = _live_keys(config.config_path(tmp_path).read_text())
+    live = live_keys(config.config_path(tmp_path).read_text())
     assert not [key for key in live if "pass" in key]
     cfg = config.load_config(tmp_path)
     assert auto.run_state_path(tmp_path, cfg, "my-thing").is_file()
@@ -321,7 +313,7 @@ def test_cli_auto_rejects_nonpositive_max_passes(tmp_path, monkeypatch):
 def test_config_persists_non_default_cap_and_comments_out_the_default(tmp_path):
     config.init_config(tmp_path)
     text = config.config_path(tmp_path).read_text()
-    assert "auto_max_passes" not in _live_keys(text)
+    assert "auto_max_passes" not in live_keys(text)
     assert "# auto_max_passes: 50" in text
     cfg = config.load_config(tmp_path)
     cfg.auto_max_passes = 7

@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+import yaml
+
+from conftest import live_keys
 from specflo import config
 from specflo.cli import app
 
@@ -2581,3 +2584,36 @@ def test_a_write_path_backfills_the_config_and_says_so_once(cwd):
     assert "# autonomy: safe" in path.read_text()
 
     assert "autonomy" not in runner.invoke(app, ["new", "Other Thing"]).stderr
+
+
+# --- user content survives every write path (REQ-07) ---------------------
+# The config is the user's file. A comment they wrote, the order they chose and
+# a key specflo has never heard of all come back out of a write untouched.
+
+HAND_EDITED_CONFIG = """\
+# specs live beside the code, not under docs/
+active_project: alpha
+mystery_key: 42
+projects_dir: docs/projects
+"""
+
+
+@pytest.mark.parametrize(
+    "command",
+    [["new", "Delta"], ["switch", "beta"], ["resume", "gamma"]],
+    ids=["new", "switch", "resume"],
+)
+def test_a_write_path_preserves_comments_order_and_unknown_keys(cwd, command):
+    runner.invoke(app, ["init"])
+    for name in ("Alpha", "Beta", "Gamma"):
+        runner.invoke(app, ["new", name])
+    runner.invoke(app, ["shelve", "gamma"])  # so `resume gamma` has work to do
+    path = config.config_path(cwd)
+    path.write_text(HAND_EDITED_CONFIG)
+
+    assert runner.invoke(app, command).exit_code == 0
+    text = path.read_text()
+
+    assert "# specs live beside the code, not under docs/" in text
+    assert yaml.safe_load(text)["mystery_key"] == 42
+    assert live_keys(text) == ["active_project", "mystery_key", "projects_dir"]

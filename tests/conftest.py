@@ -54,6 +54,17 @@ def executable_identifiers(obj) -> str:
     return "\n".join(found).lower()
 
 
+def live_keys(text: str) -> list[str]:
+    """The keys actually set in a config file - commented-out entries excluded.
+
+    The file carries every registry key, so "is autonomy in the file" no longer
+    answers "is autonomy set"; asking for the live keys does.
+    """
+    return [
+        line.split(":", 1)[0]
+        for line in text.splitlines()
+        if ":" in line and not line.startswith("#")
+    ]
 @pytest.fixture(autouse=True)
 def _fresh_config_warnings():
     """Clear the once-per-process invalid-value warnings between tests.

@@ -6,17 +6,9 @@ from pathlib import Path
 import pytest
 import yaml
 
+from conftest import live_keys
 from specflo import auto, config, projects
 from specflo.errors import SpecfloError
-
-
-def _live_keys(text: str) -> list[str]:
-    """The keys actually set in a config file - commented-out entries excluded."""
-    return [
-        line.split(":", 1)[0]
-        for line in text.splitlines()
-        if ":" in line and not line.startswith("#")
-    ]
 
 
 def test_config_has_no_auto_advance_field():
@@ -300,7 +292,7 @@ def test_threshold_key_is_commented_out_at_the_default(tmp_path):
     config.init_config(tmp_path)
     text = config.config_path(tmp_path).read_text()
 
-    assert "context_threshold_percent" not in _live_keys(text)
+    assert "context_threshold_percent" not in live_keys(text)
     assert "# context_threshold_percent: 25" in text
 
 
@@ -465,7 +457,7 @@ def test_an_unset_key_is_commented_out_at_its_shipped_default(tmp_path):
     text = config.config_path(tmp_path).read_text()
 
     assert "# autonomy: safe" in text
-    assert "autonomy" not in _live_keys(text)
+    assert "autonomy" not in live_keys(text)
 
 
 def test_a_set_key_is_live_with_no_commented_duplicate(tmp_path):
@@ -544,7 +536,7 @@ def test_a_config_missing_keys_is_backfilled_on_the_next_write(tmp_path):
     assert "# auto_max_passes: 50" in text
     assert "# context_threshold_percent: 25" in text
     # the live keys and the user's comment are untouched
-    assert _live_keys(text) == ["projects_dir", "active_project"]
+    assert live_keys(text) == ["projects_dir", "active_project"]
     assert yaml.safe_load(text) == {"projects_dir": "specs", "active_project": "alpha"}
     assert "# my own note" in text
 
