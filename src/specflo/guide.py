@@ -63,6 +63,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Print the resume prompt; refresh checkpoint.md."},
     {"name": "config get", "group": "setup", "args": "<key>",
      "summary": "Print one setting's resolved value."},
+    {"name": "config list", "group": "setup", "args": "",
+     "summary": "Show every setting, its value, and where that value came from."},
     {"name": "hook reseed", "group": "setup", "args": "",
      "summary": "Emit the session-start reseed payload (used by the SessionStart hook)."},
     {"name": "hook install", "group": "setup", "args": "",

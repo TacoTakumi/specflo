@@ -1492,6 +1492,42 @@ def config_get(
     typer.echo(config.render_value(getattr(config.load_config(root), spec.name)))
 
 
+# How each source reads at the end of a `config list` line. A value the file
+# actually sets carries no marker - the absence is the signal.
+SOURCE_MARKERS = {
+    config.SET: "",
+    config.DEFAULTED: "(default)",
+    config.INVALID: "(invalid, using default)",
+}
+
+
+@config_app.command("list", epilog="Example: specflo config list --json")
+def config_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show every setting, its resolved value, and where that value came from."""
+    root = _require_root()
+    report = config.report_config(root)
+
+    if json_output:
+        typer.echo(json.dumps(report))
+        return
+
+    for entry in report["keys"]:
+        parts = (
+            f"{entry['key']}:",
+            config.render_value(entry["value"]),
+            SOURCE_MARKERS[entry["source"]],
+        )
+        typer.echo(" ".join(part for part in parts if part))
+    if report["unknown"]:
+        # Named, never dropped: specflo leaves them in the file untouched, so
+        # saying so is the only way the user learns they are inert.
+        typer.echo("\nNot recognized (left as they are):")
+        for name in report["unknown"]:
+            typer.echo(f"  {name}")
+
+
 def build_cli():
     """The specflo click command with agentsquire's skills group mounted.
 

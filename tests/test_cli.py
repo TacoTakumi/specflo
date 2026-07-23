@@ -2685,3 +2685,96 @@ def test_config_get_rejects_an_unknown_key(cwd):
     assert result.stdout == ""
     assert all(name in result.stderr for name in config.FIELDS_BY_NAME)
     assert path.read_bytes() == before
+
+
+# --- the config command group: list (REQ-16, REQ-17, REQ-18, REQ-27) -----
+# One screen answering "what is specflo actually running on": every knob, its
+# resolved value, and whether that value came from the file or from the ship.
+
+
+def _set_in_file(path: Path, key: str, value: str) -> None:
+    """Uncomment a key in the config file, at ``value``."""
+    text = path.read_text()
+    line = next(ln for ln in text.splitlines() if ln.startswith(f"# {key}: "))
+    path.write_text(text.replace(line, f"{key}: {value}"))
+
+
+def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
+    # REQ-16/REQ-21: registry order, resolved values, `(default)` only where
+    # the file is silent. init writes the first two keys, so only those three
+    # tuning keys are defaulted.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+
+    result = runner.invoke(app, ["config", "list"])
+
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    assert lines[: len(config.FIELDS_BY_NAME)] == [
+        "projects_dir: docs/projects",
+        "active_project: my-thing",
+        "autonomy: safe (default)",
+        "auto_max_passes: 50 (default)",
+        "context_threshold_percent: 25 (default)",
+    ]
+
+
+def test_config_list_does_not_mark_a_key_set_to_its_default_value(cwd):
+    # (default) means "the file does not say", not "the value equals the
+    # shipped one" - otherwise a deliberate setting would read as an accident.
+    runner.invoke(app, ["init"])
+    _set_in_file(config.config_path(cwd), "autonomy", "safe")
+
+    assert "autonomy: safe" in runner.invoke(app, ["config", "list"]).stdout.splitlines()
+
+
+def test_config_list_marks_an_invalid_value_and_shows_the_default(cwd):
+    # REQ-27: the line shows what the command will actually use, and says why.
+    path = config.config_path(cwd)
+    runner.invoke(app, ["init"])
+    _set_in_file(path, "autonomy", "sideways")
+    before = path.read_bytes()
+
+    result = runner.invoke(app, ["config", "list"])
+
+    assert result.exit_code == 0
+    assert "autonomy: safe (invalid, using default)" in result.stdout.splitlines()
+    assert result.stderr == ""  # the marker is the message; no second warning
+    assert path.read_bytes() == before  # listing never repairs the file
+
+
+def test_config_list_reports_unrecognized_keys_separately(cwd):
+    # REQ-17: a key specflo does not know is reported, not silently dropped and
+    # not mixed in with the known-key lines. Still exit 0 - it is the user's file.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text() + "mystery_key: 42\n")
+
+    result = runner.invoke(app, ["config", "list"])
+
+    assert result.exit_code == 0
+    lines = result.stdout.splitlines()
+    known, tail = lines[: len(config.FIELDS_BY_NAME)], lines[len(config.FIELDS_BY_NAME):]
+    assert "mystery_key" not in "\n".join(known)
+    assert "Not recognized" in "\n".join(tail)
+    assert "  mystery_key" in tail
+
+
+def test_config_list_json_carries_a_value_and_a_source_per_key(cwd):
+    # REQ-18: machine-readable, with the three provenances spelled out.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    _set_in_file(path, "autonomy", "sideways")
+    path.write_text(path.read_text() + "mystery_key: 42\n")
+
+    result = runner.invoke(app, ["config", "list", "--json"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    entries = {entry["key"]: entry for entry in data["keys"]}
+    assert list(entries) == list(config.FIELDS_BY_NAME)
+    assert entries["projects_dir"]["source"] == "set"
+    assert entries["auto_max_passes"]["source"] == "default"
+    assert entries["auto_max_passes"]["value"] == 50  # a number, not "50"
+    assert entries["autonomy"] == {"key": "autonomy", "value": "safe", "source": "invalid"}
+    assert data["unknown"] == ["mystery_key"]

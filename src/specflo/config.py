@@ -220,29 +220,75 @@ def _warn_invalid(spec: ConfigField, raw: Any) -> None:
     )
 
 
-def load_config(root: Path) -> SpecfloConfig:
-    """Resolve every registry key against the file on disk.
-
-    Driven entirely by :data:`CONFIG_FIELDS` - no key is named here. A value the
-    registry's validator rejects degrades to that key's shipped default and warns
-    rather than raising: a hand-edited config must not break every command that
-    loads it (and `status --json` is polled every turn by the pi extension).
-    """
+def _read_data(root: Path) -> dict:
+    """The config file parsed as plain data, or the "run init first" error."""
     path = config_path(root)
     if not path.is_file():
         raise SpecfloError(
             f"No specflo project here ({path} not found). Run `specflo init` first."
         )
-    data = yaml.safe_load(path.read_text()) or {}
-    values = {}
+    return yaml.safe_load(path.read_text()) or {}
+
+
+# Where a resolved value came from, reported by `config list` (REQ-18): the file
+# said so, the file was silent, or the file said something the registry rejects.
+SET, DEFAULTED, INVALID = "set", "default", "invalid"
+
+
+def _resolve(data: dict) -> dict[str, tuple[Any, str]]:
+    """Each registry key's resolved value and its source.
+
+    The single resolution rule: `load_config` and `config list` read it the same
+    way, so what a command runs on and what `config list` shows can never drift.
+    A value the registry's validator rejects degrades to that key's shipped
+    default rather than raising - a hand-edited config must not break every
+    command that loads it (and `status --json` is polled every turn by the pi
+    extension).
+    """
+    resolved = {}
     for spec in CONFIG_FIELDS:
-        raw = data.get(spec.name, spec.default)
-        if spec.validate(raw):
-            values[spec.name] = raw
+        if spec.name not in data:
+            resolved[spec.name] = (spec.default, DEFAULTED)
+        elif spec.validate(data[spec.name]):
+            resolved[spec.name] = (data[spec.name], SET)
         else:
-            _warn_invalid(spec, raw)
-            values[spec.name] = spec.default
-    return SpecfloConfig(present_keys=frozenset(data), **values)
+            resolved[spec.name] = (spec.default, INVALID)
+    return resolved
+
+
+def load_config(root: Path) -> SpecfloConfig:
+    """Resolve every registry key against the file on disk.
+
+    Driven entirely by :data:`CONFIG_FIELDS` - no key is named here. An invalid
+    value degrades to the default and warns on stderr; loading never raises over
+    one bad key.
+    """
+    data = _read_data(root)
+    resolved = _resolve(data)
+    for spec in CONFIG_FIELDS:
+        if resolved[spec.name][1] == INVALID:
+            _warn_invalid(spec, data[spec.name])
+    return SpecfloConfig(
+        present_keys=frozenset(data),
+        **{name: value for name, (value, _) in resolved.items()},
+    )
+
+
+def report_config(root: Path) -> dict:
+    """What `config list` shows: every registry key with its resolved value and
+    source, plus the file's keys the registry has never heard of (REQ-17).
+
+    Silent by design - the report already marks an invalid value, so warning
+    about it as well would say the same thing twice.
+    """
+    data = _read_data(root)
+    return {
+        "keys": [
+            {"key": name, "value": value, "source": source}
+            for name, (value, source) in _resolve(data).items()
+        ],
+        "unknown": [name for name in data if name not in FIELDS_BY_NAME],
+    }
 
 
 # The write path's parser. ruamel's round-trip mode carries comments, key order
