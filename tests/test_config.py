@@ -137,7 +137,7 @@ def test_the_dataclass_fields_are_exactly_the_registry_in_order():
     names = [f.name for f in dataclasses.fields(config.SpecfloConfig)]
     assert names[: len(config.CONFIG_FIELDS)] == _registry_names()
     # Anything after the registry keys is loader metadata, not a config key.
-    assert names[len(config.CONFIG_FIELDS) :] == ["present_keys"]
+    assert names[len(config.CONFIG_FIELDS) :] == ["present_keys", "invalid_keys"]
 
 
 def test_every_registry_key_is_readable_as_an_attribute(tmp_path):
@@ -394,6 +394,22 @@ def test_a_save_writes_the_values_it_owns(tmp_path):
 
     assert yaml.safe_load(path.read_text())["active_project"] == "beta"
     assert config.load_config(tmp_path).active_project == "beta"
+
+
+def test_a_save_leaves_another_keys_invalid_value_in_the_file(tmp_path):
+    # A value load degraded is still the user's text. An unrelated write does
+    # not own that key, so it must not silently rewrite it to the shipped
+    # default - it stays put, degraded in memory, until fixed or set.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(path.read_text() + "context_threshold_percent: 101\n")
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    assert yaml.safe_load(path.read_text())["context_threshold_percent"] == 101
+    assert yaml.safe_load(path.read_text())["active_project"] == "beta"
+    assert config.load_config(tmp_path).context_threshold_percent == 25
 
 
 def test_a_save_refuses_a_file_with_a_duplicated_key(tmp_path):

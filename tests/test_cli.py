@@ -2892,6 +2892,37 @@ def test_a_duplicated_key_refuses_every_write_command_cleanly(cwd, command):
     assert path.read_bytes() == before
 
 
+def test_config_set_leaves_another_keys_invalid_value_alone(cwd):
+    # Setting one key must not silently convert another key's invalid value
+    # into a live default - the user's text survives and `config list` keeps
+    # calling it out.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text() + "context_threshold_percent: 101\n")
+
+    result = runner.invoke(app, ["config", "set", "autonomy", "yolo"])
+
+    assert result.exit_code == 0
+    data = yaml.safe_load(path.read_text())
+    assert data["autonomy"] == "yolo"
+    assert data["context_threshold_percent"] == 101
+    listed = runner.invoke(app, ["config", "list"]).stdout
+    assert "context_threshold_percent: 25 (invalid, using default)" in listed.splitlines()
+
+
+def test_config_set_still_overwrites_the_invalid_key_it_names(cwd):
+    # Preservation covers only keys a write does not own: naming the key is
+    # the user replacing the bad value, even with the shipped default.
+    runner.invoke(app, ["init"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text() + "context_threshold_percent: 101\n")
+
+    result = runner.invoke(app, ["config", "set", "context_threshold_percent", "25"])
+
+    assert result.exit_code == 0
+    assert yaml.safe_load(path.read_text())["context_threshold_percent"] == 25
+
+
 def test_a_duplicated_key_refuses_resume_cleanly(cwd):
     # Same refusal on the one write command that needs a shelved project first.
     runner.invoke(app, ["init"])

@@ -219,12 +219,17 @@ def _annotation(spec: ConfigField) -> str:
 # The resolved-values object. Generated from the registry so a key can never
 # exist in one and not the other and no default is restated here (REQ-29), while
 # every key stays readable as a plain attribute for existing callers (REQ-30).
-# `present_keys` is loader metadata, not a config key: which keys the file
-# physically held, so writers and `config list` can tell "set" from "defaulted".
+# `present_keys` and `invalid_keys` are loader metadata, not config keys: which
+# keys the file physically held, so writers and `config list` can tell "set"
+# from "defaulted", and which of those load degraded to the default, so a write
+# knows the file's text is the user's - not a value it owns.
 SpecfloConfig = make_dataclass(
     "SpecfloConfig",
     [(f.name, _annotation(f), field(default=f.default)) for f in CONFIG_FIELDS]
-    + [("present_keys", "frozenset[str]", field(default=frozenset(), compare=False))],
+    + [
+        ("present_keys", "frozenset[str]", field(default=frozenset(), compare=False)),
+        ("invalid_keys", "frozenset[str]", field(default=frozenset(), compare=False)),
+    ],
     module=__name__,
 )
 SpecfloConfig.__doc__ = "Resolved config values, one attribute per CONFIG_FIELDS entry."
@@ -335,6 +340,9 @@ def load_config(root: Path) -> SpecfloConfig:
             _warn_invalid(spec, data[spec.name])
     return SpecfloConfig(
         present_keys=frozenset(data),
+        invalid_keys=frozenset(
+            name for name, (_, source) in resolved.items() if source == INVALID
+        ),
         **{name: value for name, (value, _) in resolved.items()},
     )
 
@@ -584,6 +592,12 @@ def save_config(
     live = set()
     for spec in CONFIG_FIELDS:
         value = getattr(cfg, spec.name)
+        if spec.name in doc and spec.name in cfg.invalid_keys and spec.name not in drop:
+            # The file's value was degraded at load, so `value` is the default,
+            # not the user's text. This write does not own the key: the line
+            # stays exactly as the user wrote it (REQ-07).
+            live.add(spec.name)
+            continue
         # A key stays commented out at its default until something claims it -
         # the file itself, or the config asking for the write. That keeps a
         # plain project's config free of live auto-* keys (auto-mode REQ-01).
@@ -609,11 +623,14 @@ def write_value(root: Path, spec: ConfigField, value: Any) -> None:
 
     The key is marked present, so it is written live even when the value equals
     the shipped default (REQ-06): the user asked for this value, so the file
-    says so rather than staying silent and looking unset.
+    says so rather than staying silent and looking unset. Naming the key also
+    reclaims it from an invalid file value - preservation covers only the keys
+    a write does not own.
     """
     cfg = load_config(root)
     setattr(cfg, spec.name, value)
     cfg.present_keys = cfg.present_keys | {spec.name}
+    cfg.invalid_keys = cfg.invalid_keys - {spec.name}
     save_config(root, cfg)
 
 
