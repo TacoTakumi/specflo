@@ -9,6 +9,7 @@
  *   - cold start: fetch `specflo hook reseed` and inject it on the first turn
  *   - arming:     watch context usage against the threshold `status --json` reports
  *   - seam:       poll `status --json` while armed for a phase or task change
+ *   - on demand:  a /specflo-continue command clears and reseeds now, armed or not
  *   - attended:   one passive notice per seam, via ctx.ui.notify only
  *   - unattended: clear and reseed at a seam while an auto run is under way
  *
@@ -21,6 +22,7 @@ import type {
   BeforeAgentStartEventResult,
   ContextUsage,
   ExtensionAPI,
+  ExtensionCommandContext,
   ExtensionContext,
   SessionStartEvent,
   TurnEndEvent,
@@ -51,6 +53,18 @@ const COLD_START_REASONS: ReadonlySet<SessionStartEvent["reason"]> = new Set([
 /** Marks the injected message in the session log. */
 const RESEED_MESSAGE_TYPE = "specflo-reseed";
 
+/** The slash command that clears the session and reseeds on demand. */
+const CONTINUE_COMMAND = "specflo-continue";
+
+/**
+ * What the user is told when /specflo-continue has nothing to continue.
+ *
+ * The command's own prose, so it reaches ctx.ui and never model context
+ * (REQ-27). Shown when `hook reseed --continue` yields nothing - no active
+ * project, or no specflo here at all - which is also why nothing is cleared.
+ */
+const NOTHING_TO_CONTINUE = "specflo has no active project to continue here.";
+
 /** Generous ceiling for a reseed payload; a checkpoint plus a task brief is small. */
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
@@ -69,6 +83,36 @@ function runSpecflo(args: string[], cwd: string): Promise<string | null> {
       { cwd, encoding: "utf8", maxBuffer: MAX_OUTPUT_BYTES },
       (error, stdout) => resolve(error ? null : stdout),
     );
+  });
+}
+
+/**
+ * Clear the current session and reseed the active project's continuation
+ * payload into the replacement, or say why it did not.
+ *
+ * The payload is `hook reseed --continue`: the direct-continuation form (REQ-22),
+ * because a caller reaching here has already decided to keep going, so the
+ * ask-first gate is moot. It is fetched before any clear, so a run with no
+ * active project - the CLI prints nothing - discards nothing (REQ-11). The clear
+ * is `ctx.newSession`, the extension's own, owing nothing to pi-clearthen
+ * (REQ-14); the payload crosses into the new session as the CLI's stdout
+ * verbatim, one message that runs one turn (REQ-27).
+ */
+async function clearAndContinue(ctx: ExtensionCommandContext): Promise<void> {
+  const payload = await runSpecflo(["hook", "reseed", "--continue"], ctx.cwd);
+  if (!payload) {
+    // Nothing to continue: leave the session untouched and tell the user why.
+    ctx.ui.notify(NOTHING_TO_CONTINUE, "warning");
+    return;
+  }
+  await ctx.newSession({
+    withSession: async (session) => {
+      await session.sendMessage(
+        // Verbatim: the CLI's stdout, unedited and untemplated.
+        { customType: RESEED_MESSAGE_TYPE, content: payload, display: false },
+        { triggerTurn: true },
+      );
+    },
   });
 }
 
@@ -172,6 +216,15 @@ export default function specflo(pi: ExtensionAPI): void {
   let pendingReseed: string | null = null;
   let threshold: number | null = null;
   let lastSnapshot: StatusSnapshot | null = null;
+
+  // The one clear-and-reseed entry point. The user reaches it by typing the
+  // command; the unattended fire (T-14) will reach the same handler by queueing
+  // this command as a followUp from event context (REQ-14). It is no tool - the
+  // model cannot call it - and holds no state of its own.
+  pi.registerCommand(CONTINUE_COMMAND, {
+    description: "Clear the session and reseed the active specflo project to keep going.",
+    handler: (_args: string, ctx: ExtensionCommandContext) => clearAndContinue(ctx),
+  });
 
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!COLD_START_REASONS.has(event.reason)) return;

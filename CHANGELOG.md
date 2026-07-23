@@ -108,6 +108,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   intact. Acting on a declared seam - the attended notice and the unattended
   clear-and-reseed - is not yet wired.
 
+- **The pi extension clears and reseeds on demand.** A `/specflo-continue`
+  command clears the current pi session and reseeds the active project's
+  direct-continuation payload into the replacement -- `specflo hook reseed
+  --continue`'s stdout, byte for byte, run straight away rather than gated
+  behind a confirmation, because invoking the command is that confirmation. The
+  clear is the extension's own `ctx.newSession`, depending on no external
+  clear-context package. Fetched before any clear, so with no active project the
+  command clears nothing and says why through a notice that never reaches model
+  context. Armed or not, the command is always available; acting on an armed
+  seam automatically -- the attended notice and the unattended fire -- is still
+  to come.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and

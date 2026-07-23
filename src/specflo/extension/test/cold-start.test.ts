@@ -118,13 +118,14 @@ describe("cold start", () => {
     assert.equal(result, undefined, "a missing binary must leave the session untouched");
   });
 
-  it("registers no tool and no command on this path", async () => {
+  it("registers the continue command and no tool", async () => {
     // REQ-15 / REQ-03 at the registration level; the guard suite covers the
-    // source. The cold start needs neither, so neither may appear yet.
+    // source. The one command is /specflo-continue (T-12); there is no tool and
+    // no tool_call handler at all, and no event handler beyond the three below.
     const { pi } = await setUp(PAYLOAD);
 
     assert.deepEqual(pi.tools, []);
-    assert.deepEqual([...pi.commands.keys()], []);
+    assert.deepEqual([...pi.commands.keys()], ["specflo-continue"]);
     assert.deepEqual(
       [...pi.handlers.keys()].sort(),
       ["before_agent_start", "session_start", "turn_end"],
