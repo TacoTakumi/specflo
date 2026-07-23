@@ -297,7 +297,11 @@ def _read_data(root: Path) -> dict:
         raise SpecfloError(
             f"No specflo project here ({path} not found). Run `specflo init` first."
         )
-    return yaml.safe_load(path.read_text()) or {}
+    data = yaml.safe_load(path.read_text())
+    # A document that is not a mapping (a bare string, a list) holds no keys.
+    # Same reading as the write side's _load_document: degrade, never raise -
+    # `status --json` is polled every turn and must survive any hand-edit.
+    return data if isinstance(data, dict) else {}
 
 
 # Where a resolved value came from, reported by `config list` (REQ-18): the file

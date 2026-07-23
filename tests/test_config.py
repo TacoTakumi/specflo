@@ -275,6 +275,27 @@ def test_loading_never_raises_on_a_bad_value(tmp_path, capsys):
 # defaults, and read back out through the CLI - never by parsing this file.
 
 
+def test_a_config_that_is_not_a_mapping_degrades_to_all_defaults(tmp_path):
+    # A file holding a bare string is nobody's mapping: reads fall back to the
+    # defaults instead of iterating the string's characters or crashing.
+    config.init_config(tmp_path)
+    config.config_path(tmp_path).write_text("just a note to self\n")
+
+    cfg = config.load_config(tmp_path)
+    for spec in config.CONFIG_FIELDS:
+        assert getattr(cfg, spec.name) == spec.default
+    assert config.report_config(tmp_path)["unknown"] == []
+
+
+def test_a_string_containing_a_key_name_does_not_crash_the_loader(tmp_path):
+    # `"autonomy" in "autonomy is the word"` is True: substring membership must
+    # not be mistaken for a mapping that holds the key.
+    config.init_config(tmp_path)
+    config.config_path(tmp_path).write_text("autonomy is the word\n")
+
+    assert config.load_config(tmp_path).autonomy == config.DEFAULT_AUTONOMY
+
+
 def test_threshold_defaults_to_25():
     # 25, not 75 (REQ-01): the extension *arms* here and the next specflo seam
     # fires it, so arming has to happen with enough window left to finish the
