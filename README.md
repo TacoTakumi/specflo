@@ -54,6 +54,7 @@ from there.
 - `specflo hook reseed [--format text|claude]` -- emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Default `--format text` is portable plain text (any harness); `--format claude` wraps it as Claude Code `SessionStart` JSON -- the payload as `additionalContext` (re-grounds the agent) plus a user-visible `systemMessage` that tells you **what to type** to kick it off (Claude can't make the agent take a turn on its own). Prints nothing for no active project. **Always exits 0, reads no stdin, makes no network calls** -- safe to wire into a session-start hook unconditionally.
 - `specflo hook print [--install]` -- print the `.claude/settings.json` `SessionStart` wiring that calls `specflo hook reseed --format claude` on the `startup`, `clear`, and `resume` sources (`compact` excluded -- its digest is retained). `--install` idempotently merges it into `.claude/settings.json`, preserving existing content; a previously-installed (older) reseed entry is rewired in place rather than duplicated.
 - `specflo auto [--autonomy safe|autonomous|yolo] [--max-passes N]` -- emit the **auto-mode handoff payload** for the active project: the ask-first reseed's opt-in counterpart. An explicit, per-invocation opt-in that starts or continues an *unattended* run from the current phase toward project completion, emitting a bootstrap directive (autonomy policy + guardrail stop-conditions) instead of the confirmation-gate pause. specflo only prints the payload -- it drives no loop, spawns no nested agent, and never clears context; the seamless clear-and-reseed trigger is the outer harness's job. `--autonomy` sets how far it runs unattended: `safe` (the default) and `autonomous` stop and hand off on any irreversible or outbound step, `yolo` permits them; the flag overrides the `.specflo` config default. `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing; the flag overrides the config default. `--json` reports the same pass as an object -- its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, or `unavailable`; `null` while the run continues) -- so a machine caller reads loop control from the CLI instead of deciding it. Strictly additive -- the default `hook reseed` / checkpoint behavior is unchanged.
+- `specflo extension install [--scope user|project]` - install the bundled pi extension into pi's extension directory: `~/.pi/agent/extensions/specflo` by default, `./.pi/extensions/specflo` with `--scope project`. A plain local copy with a version stamp - no npm, no network - and pi discovers the directory on its own, so no pi settings are read or written. Re-run to update. See **[The pi extension](#the-pi-extension)** below.
 - `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` -- install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)** below.
 
 ### Session-start integration (clear-and-continue)
@@ -61,6 +62,61 @@ from there.
 An agent can't clear its own context *or* remember what to do across a `/clear` -- the continuation must come from outside the conversation. `specflo hook reseed` is that bridge: install it once (`specflo hook print --install`), and on a fresh start, after a `/clear`, or when you resume a session, Claude Code reorients from the on-disk checkpoint and **asks before resuming**, so you never re-explain where you were. Because a `SessionStart` hook can re-ground the agent but cannot make it speak first, the wiring also surfaces a short visible `systemMessage` telling you what to type (e.g. `continue`) to start the hand-off.
 
 **Security posture:** the reseed injects only **trusted local state** -- the checkpoint is derived read-only from the project's own artifacts, never from external or network input -- so running it at session start is benign.
+
+## The pi extension
+
+For the [pi] coding agent, specflo goes further than the hook: a bundled pi
+extension performs the clear itself. It is a thin driver by design - every
+piece of state it acts on is the stdout of a `specflo` command, it keeps no
+durable state of its own, registers no model-callable tool, and never blocks a
+tool call. Install it once (pi 0.81+):
+
+```bash
+specflo extension install                  # -> ~/.pi/agent/extensions/specflo
+specflo extension install --scope project  # -> ./.pi/extensions/specflo
+```
+
+pi discovers the directory on its own - nothing else to wire. Re-running is
+safe: an up-to-date install is reported as current, a stale one is replaced
+whole.
+
+In an attended pi session:
+
+- **Cold start.** When pi starts or resumes inside a specflo repo, the first
+  turn is seeded with the `specflo hook reseed` payload, so the agent already
+  knows where the project stands and asks before resuming. With no active
+  project it injects nothing.
+- **Arming.** At each turn's end the extension reads pi's own context-usage
+  percent and arms once it reaches `context_threshold_percent` (default `75`,
+  set in `.specflo/config.yaml`).
+- **The seam.** While armed it watches `specflo status --json` for a safe
+  point to clear: the phase advancing, or a task reaching done. A task merely
+  in progress is never a seam, so in-flight work is never discarded.
+- **The notice.** An armed seam produces one passive notice naming the current
+  usage, the seam that fired, and the command to run. Nothing clears on its
+  own in an attended session.
+- **`/specflo-continue`.** Clears the session and reseeds the
+  direct-continuation payload - the checkpoint plus the current task brief -
+  so the fresh session carries straight on.
+
+In an auto run:
+
+- **`/specflo-continue auto`** starts or continues an unattended run from
+  inside pi - the same explicit opt-in `specflo auto` is, counting a pass in
+  the same run state - and delivers that pass's payload into a fresh session.
+- **The unattended fire.** After one clear has run, every armed seam clears
+  and reseeds by itself: the extension fetches the next `specflo auto` pass
+  and delivers its payload verbatim. No dialog, no confirmation, no input.
+- **Joining a run cold.** If the run was started outside pi (`specflo auto` in
+  a terminal, then pi opened), the first armed seam prints a bootstrap notice
+  asking you to type `/specflo-continue auto` once; every seam after that is
+  unattended.
+- **Stopping.** Loop control lives in the CLI, never the extension: on the
+  kill switch (`specflo auto --off`), the pass cap, a stall, or project
+  completion, nothing clears and the CLI's own stop directive is shown as a
+  notice. `specflo auto --on` clears the kill switch again.
+
+[pi]: https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 
 ## Skills
 
