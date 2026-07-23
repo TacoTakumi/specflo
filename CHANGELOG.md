@@ -120,6 +120,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   seam automatically -- the attended notice and the unattended fire -- is still
   to come.
 
+- **The pi extension notices an armed seam in an attended run.** Outside an
+  auto run, an armed seam now produces exactly one passive notice naming the
+  current context usage, the seam that fired, and the `/specflo-continue`
+  command to run - and nothing else: no dialog opens, no session is cleared,
+  and the notice reaches the UI alone, never model context. Once per seam, not
+  per turn - the compared snapshot advances with every armed poll, so an
+  unchanged snapshot re-notifies nothing. A seam while `status --json` reports
+  an auto run under way stays silent here; its delivery is the unattended
+  fire, still to come. Anything short of an explicit under-way `true` reads as
+  attended - the mode that only ever notifies.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and

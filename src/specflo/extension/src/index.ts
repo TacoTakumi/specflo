@@ -136,18 +136,38 @@ function readThreshold(statusJson: string | null): number | null {
 }
 
 /**
- * Whether context usage has reached the arming threshold.
+ * The context-usage percent when it has reached the arming threshold, or null.
  *
  * The comparison is on the percent of the context window alone (REQ-04): no
  * token count enters here, so no absolute token constant can. Unknown usage -
  * an undefined reading, or a null percent as compaction leaves it - never arms
- * (REQ-05), and neither does an unknown threshold.
+ * (REQ-05), and neither does an unknown threshold. The armed percent is
+ * returned rather than a boolean because the attended notice names it.
  */
-function isArmed(threshold: number | null, usage: ContextUsage | undefined): boolean {
-  if (threshold === null) return false;
+function armedPercent(threshold: number | null, usage: ContextUsage | undefined): number | null {
+  if (threshold === null) return null;
   const percent = usage?.percent;
-  if (typeof percent !== "number" || !Number.isFinite(percent)) return false;
-  return percent >= threshold;
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return null;
+  return percent >= threshold ? percent : null;
+}
+
+/**
+ * Whether ``statusJson`` reports an auto run under way.
+ *
+ * The CLI decides and reports this (REQ-13); the extension only reads the
+ * flag. Anything short of an explicit true - an absent block, a failed poll,
+ * an older CLI without the field - reads as attended, the mode that only ever
+ * notifies and never clears.
+ */
+function readAutoUnderWay(statusJson: string | null): boolean {
+  if (statusJson === null) return false;
+  try {
+    const value = (JSON.parse(statusJson) as { auto_run?: { under_way?: unknown } }).auto_run
+      ?.under_way;
+    return value === true;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -186,8 +206,8 @@ export function parseSnapshot(statusJson: string | null): StatusSnapshot | null 
 }
 
 /**
- * Whether ``current`` is a seam relative to the last observed snapshot: a safe
- * point to clear because nothing is in flight.
+ * What makes ``current`` a seam relative to the last observed snapshot, as a
+ * short human phrase for the attended notice - or null when it is no seam.
  *
  * A seam is a phase change or a task reaching done (REQ-07). A task merely
  * moving to in_progress leaves both fields unchanged and so declares nothing,
@@ -195,16 +215,39 @@ export function parseSnapshot(statusJson: string | null): StatusSnapshot | null 
  * increase in the done count counts - a task un-done or removed is not a task
  * reaching done.
  */
-export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
-  if (current.phase !== last.phase) return true;
+export function describeSeam(last: StatusSnapshot, current: StatusSnapshot): string | null {
+  if (current.phase !== last.phase) {
+    return current.phase === null ? "the phase changed" : `the phase is now ${current.phase}`;
+  }
   if (
     typeof current.done === "number" &&
     typeof last.done === "number" &&
     current.done > last.done
   ) {
-    return true;
+    return `a task reached done (${current.done} done)`;
   }
-  return false;
+  return null;
+}
+
+/**
+ * Whether ``current`` is a seam relative to the last observed snapshot: a safe
+ * point to clear because nothing is in flight.
+ */
+export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
+  return describeSeam(last, current) !== null;
+}
+
+/**
+ * The attended notice for an armed seam (REQ-09): the current context usage,
+ * the seam that fired, and the exact command to run - the one piece of
+ * extension-authored prose, and it reaches ctx.ui.notify alone, never model
+ * context (REQ-27).
+ */
+function noticeText(percent: number, seam: string): string {
+  return (
+    `specflo: context is at ${Math.round(percent)}% and ${seam} - a safe point to clear. ` +
+    `Run /specflo-continue to keep going in a fresh session.`
+  );
 }
 
 export default function specflo(pi: ExtensionAPI): void {
@@ -264,21 +307,26 @@ export default function specflo(pi: ExtensionAPI): void {
     // The arming check is this line alone: an in-process read of context usage
     // against the seeded threshold, spawning nothing (REQ-26). Unknown usage and
     // an unknown threshold both leave it unarmed (REQ-05).
-    if (!isArmed(threshold, ctx.getContextUsage())) return;
+    const percent = armedPercent(threshold, ctx.getContextUsage());
+    if (percent === null) return;
     // Armed: take the seam poll. Reading the snapshot is the only subprocess an
     // armed turn spawns.
-    const current = parseSnapshot(await runSpecflo(["status", "--json"], ctx.cwd));
+    const statusJson = await runSpecflo(["status", "--json"], ctx.cwd);
+    const current = parseSnapshot(statusJson);
     // A poll that yielded no parseable snapshot declares nothing and leaves the
     // baseline intact, so a transient failure never triggers a clear (REQ-08).
     if (current === null) return;
     // A seam is declared against the last observed snapshot; the observed one
-    // then becomes the baseline the next armed poll compares against.
-    const seam = lastSnapshot !== null && isSeam(lastSnapshot, current);
+    // then becomes the baseline the next armed poll compares against - which is
+    // why the notice below fires once per seam, not once per turn (REQ-10).
+    const seam = lastSnapshot === null ? null : describeSeam(lastSnapshot, current);
     lastSnapshot = current;
-    if (!seam) return;
-    // A seam: a safe point to clear. Delivering the clear - the attended notice
-    // (T-13) and the unattended fire (T-14) - is the next tasks' work; declaring
-    // the seam is this one's, and it is why no clear is ever initiated elsewhere
-    // (REQ-08).
+    if (seam === null) return;
+    // A seam: a safe point to clear. Under an auto run its delivery is the
+    // unattended fire (T-14), not the notice's - nothing here yet.
+    if (readAutoUnderWay(statusJson)) return;
+    // Attended: say so once, passively, and clear nothing (REQ-09). The notice
+    // reaches ctx.ui alone - never model context.
+    ctx.ui.notify(noticeText(percent, seam), "info");
   });
 }
