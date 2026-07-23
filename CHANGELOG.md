@@ -85,6 +85,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   untouched. Sessions opened by a clear or a fork are left alone - those already
   know what they want next.
 
+- **The pi extension arms on context usage.** At each turn's end the extension
+  reads pi's own context-usage percent and arms its clear-and-continue trigger
+  once that reaches the `context_threshold_percent` the CLI reports (default
+  `75`). The check is an in-process read alone: it compares a percent of the
+  window, never a raw token count, and spawns no subprocess of its own. Unknown
+  usage never arms - an undefined reading, or the null percent compaction leaves
+  behind, both read as unarmed. The threshold is seeded from the same cold-start
+  status snapshot the extension already fetches, so no config file is opened and
+  no extra process is paid. An armed turn takes the status poll a seam is read
+  from; declaring and acting on that seam is not yet wired.
+
 ### Changed
 - **All four reseed directives now live in `continuation.py`**, which becomes
   the single producer of payload prose; `hook.py` selects between them and

@@ -19,9 +19,11 @@
 import { execFile } from "node:child_process";
 import type {
   BeforeAgentStartEventResult,
+  ContextUsage,
   ExtensionAPI,
   ExtensionContext,
   SessionStartEvent,
+  TurnEndEvent,
 } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -70,10 +72,46 @@ function runSpecflo(args: string[], cwd: string): Promise<string | null> {
   });
 }
 
+/**
+ * The arming threshold read from a `status --json` snapshot, or null.
+ *
+ * The CLI owns the default and the config key (REQ-28); the extension only reads
+ * the resolved percent it reports and never parses the file. An absent field, a
+ * non-number, or a snapshot that never arrived all read as null - an unknown
+ * threshold, which never arms.
+ */
+function readThreshold(statusJson: string | null): number | null {
+  if (statusJson === null) return null;
+  try {
+    const value = (JSON.parse(statusJson) as { context_threshold_percent?: unknown })
+      .context_threshold_percent;
+    return typeof value === "number" && Number.isFinite(value) ? value : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether context usage has reached the arming threshold.
+ *
+ * The comparison is on the percent of the context window alone (REQ-04): no
+ * token count enters here, so no absolute token constant can. Unknown usage -
+ * an undefined reading, or a null percent as compaction leaves it - never arms
+ * (REQ-05), and neither does an unknown threshold.
+ */
+function isArmed(threshold: number | null, usage: ContextUsage | undefined): boolean {
+  if (threshold === null) return false;
+  const percent = usage?.percent;
+  if (typeof percent !== "number" || !Number.isFinite(percent)) return false;
+  return percent >= threshold;
+}
+
 export default function specflo(pi: ExtensionAPI): void {
-  // The only state this extension holds, and it dies with the process: the
-  // payload fetched at session start, waiting for a turn to carry it.
+  // All the state this extension holds, and it dies with the process: the
+  // payload fetched at session start waiting for a turn to carry it, and the
+  // arming threshold seeded from the cold-start status snapshot.
   let pendingReseed: string | null = null;
+  let threshold: number | null = null;
 
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     if (!COLD_START_REASONS.has(event.reason)) return;
@@ -83,6 +121,11 @@ export default function specflo(pi: ExtensionAPI): void {
     // Outside a specflo project, or with no active one, the command prints
     // nothing - and nothing is what the session should be told.
     pendingReseed = payload ? payload : null;
+    // Seed the arming threshold from the same status snapshot seam detection
+    // will read, so the per-turn arming check stays a subprocess-free in-process
+    // read (REQ-26). It persists in this closure across a later on-demand clear's
+    // `new` session, which is why that path fetches nothing of its own.
+    threshold = readThreshold(await runSpecflo(["status", "--json"], ctx.cwd));
   });
 
   pi.on("before_agent_start", (): BeforeAgentStartEventResult | undefined => {
@@ -99,5 +142,16 @@ export default function specflo(pi: ExtensionAPI): void {
         display: false,
       },
     };
+  });
+
+  pi.on("turn_end", async (_event: TurnEndEvent, ctx: ExtensionContext) => {
+    // The arming check is this line alone: an in-process read of context usage
+    // against the seeded threshold, spawning nothing (REQ-26). Unknown usage and
+    // an unknown threshold both leave it unarmed (REQ-05).
+    if (!isArmed(threshold, ctx.getContextUsage())) return;
+    // Armed: take the seam poll. Reading the snapshot is the only subprocess an
+    // armed turn spawns; declaring a seam from it, and acting on that seam, is
+    // the next task's work.
+    await runSpecflo(["status", "--json"], ctx.cwd);
   });
 }

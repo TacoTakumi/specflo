@@ -53,7 +53,8 @@ describe("cold start", () => {
         0,
         "the injected message must be the CLI's stdout byte for byte",
       );
-      assert.equal(fake.invocations().length, 1);
+      // reseed for the payload, then status --json to seed the arming snapshot.
+      assert.equal(fake.invocations().length, 2);
     });
   }
 
@@ -62,7 +63,9 @@ describe("cold start", () => {
 
     await pi.emit({ type: "session_start", reason: "startup" }, ctx);
 
-    assert.deepEqual(fake.invocations(), ["hook reseed"]);
+    // The reseed carries no direct-continuation flag; the status read that
+    // follows it seeds the arming threshold from the cold-start snapshot.
+    assert.deepEqual(fake.invocations(), ["hook reseed", "status --json"]);
   });
 
   it("injects nothing when there is no active project", async () => {
@@ -122,7 +125,10 @@ describe("cold start", () => {
 
     assert.deepEqual(pi.tools, []);
     assert.deepEqual([...pi.commands.keys()], []);
-    assert.deepEqual([...pi.handlers.keys()].sort(), ["before_agent_start", "session_start"]);
+    assert.deepEqual(
+      [...pi.handlers.keys()].sort(),
+      ["before_agent_start", "session_start", "turn_end"],
+    );
   });
 
   it("puts no prose of its own into the message", async () => {
