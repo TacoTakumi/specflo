@@ -534,7 +534,11 @@ def _relayout(doc: CommentedMap, live: set[str], drop: frozenset[str] = frozense
         if name not in keys:
             continue
         index = keys.index(name)
-        slots[index] = _tidy(slots[index] + slots.pop(index + 1))
+        # The value leaves; words the user put beside it do not (REQ-07). With
+        # no line left to sit on, an end-of-line comment becomes a line of its
+        # own, placed where the key was.
+        orphan = [eols[index].strip()] if eols[index].strip() else []
+        slots[index] = _tidy(slots[index] + orphan + slots.pop(index + 1))
         keys.pop(index)
         eols.pop(index)
         del doc[name]

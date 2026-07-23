@@ -3035,6 +3035,22 @@ def test_config_unset_keeps_a_comment_written_under_the_key(cwd):
     assert "# on purpose" in path.read_text()
 
 
+def test_config_unset_keeps_a_comment_on_the_keys_own_line(cwd):
+    # REQ-07 again: `autonomy: yolo  # tuned for CI` - unsetting removes the
+    # value, not the user's words. The comment lands on its own line where the
+    # key was.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["config", "set", "autonomy", "yolo"])
+    path = config.config_path(cwd)
+    path.write_text(path.read_text().replace("autonomy: yolo", "autonomy: yolo  # tuned for CI"))
+
+    assert runner.invoke(app, ["config", "unset", "autonomy"]).exit_code == 0
+
+    text = path.read_text()
+    assert "# tuned for CI" in text
+    assert "autonomy" not in live_keys(text)
+
+
 def test_config_unset_refuses_active_project_and_an_unknown_key(cwd):
     # REQ-20/REQ-15: the pointer is `specflo switch`'s to move in either
     # direction, and an unknown key is refused as it is everywhere else.
