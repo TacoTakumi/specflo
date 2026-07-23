@@ -1,9 +1,20 @@
 [project]
 name = "specflo"
 version = "0.4.0"
-description = "Spec-driven software-engineering workflow CLI"
+description = "Spec-driven software engineering for coding agents: a CLI plus skills driving a brainstorm -> spec -> plan -> execute loop with artifacts on disk"
 readme = "README.md"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
 requires-python = ">=3.12"
+keywords = ["ai-agents", "spec-driven-development", "claude-code", "workflow", "cli"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development",
+]
 dependencies = [
     "typer>=0.12",
     # Imported directly by cli.py to catch click's control-flow exceptions;
@@ -12,6 +23,12 @@ dependencies = [
     "pyyaml>=6.0",
     "agentsquire>=0.5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/TacoTakumi/specflo"
+Repository = "https://github.com/TacoTakumi/specflo"
+Changelog = "https://github.com/TacoTakumi/specflo/blob/main/CHANGELOG.md"
+Issues = "https://github.com/TacoTakumi/specflo/issues"
 
 [project.scripts]
 specflo = "specflo.cli:main"

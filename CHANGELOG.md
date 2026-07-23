@@ -8,6 +8,46 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.4.1]
+
+### Added
+- **`specflo hook install`.** The SessionStart-wiring installer is now a
+  first-class subcommand, visible in `specflo hook --help`. It idempotently
+  merges the reseed entry into Claude Code's `.claude/settings.json`,
+  preserving all existing content (same merge as before -- only the spelling
+  is new). Previously the installer hid behind `hook print --install`, where a
+  mutating action sat on a printing command and the flag was invisible one
+  level up.
+
+- **PyPI project metadata.** `pyproject.toml` now declares the license
+  (`GPL-3.0-or-later` SPDX expression + bundled LICENSE file, whose header
+  now carries the standard or-later grant notice), the project URLs
+  (homepage, repository, changelog, issues), keywords, and trove classifiers,
+  so the PyPI page links back to the repo and states the license instead of
+  rendering bare.
+
+### Changed
+- **README restructured for onboarding.** The front door now reads in
+  newcomer order: a PyPI-first Quick start (install, `init`, `skills install`,
+  `hook install`, and the first thing to say to your agent), a "Using specflo
+  with your agent" section with a copy-paste CLAUDE.md/AGENTS.md blurb and the
+  prompts that map onto the workflow, a pipeline overview with real
+  `specflo status` output, and a command reference grouped by area. Install
+  from source is one blessed command per situation. Previously undocumented
+  commands are now in the reference: `shelve`, `resume`, `reopen`,
+  `milestone add|list|show`, `hook reseed --continue`, and `auto --off|--on`.
+  Links to the changelog and license added; both were previously absent.
+- **`specflo hook print` now says what its output is.** Alongside the JSON
+  fragment (stdout, unchanged and still pipeable) it prints a two-line stderr
+  note: this is Claude Code SessionStart wiring, a fragment to merge into
+  `.claude/settings.json`, with `specflo hook install` as the safe way to do
+  that; other agents/harnesses can adapt the wiring, while pi needs none (the
+  bundled pi extension reseeds on its own). The bare JSON looked like a
+  complete settings file, inviting a clobbering copy-paste. Both commands'
+  help text now names Claude Code as the target harness.
+- **`hook print --install` is deprecated** in favor of `specflo hook install`.
+  It still works (same merge) but is hidden from `--help`.
+
 ## [0.4.0]
 
 ### Added
