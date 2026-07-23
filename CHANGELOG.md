@@ -105,8 +105,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   from the same cold-start status the arming threshold rides on, so the seam
   check adds no state beyond the one snapshot and no process beyond the armed
   poll. A poll that returns nothing declares no seam and leaves the baseline
-  intact. Acting on a declared seam - the attended notice and the unattended
-  clear-and-reseed - is not yet wired.
+  intact. Acting on a declared seam is the notice's and the unattended
+  fire's job, layered on top of the declaration.
 
 - **The pi extension clears and reseeds on demand.** A `/specflo-continue`
   command clears the current pi session and reseeds the active project's
@@ -117,8 +117,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   clear-context package. Fetched before any clear, so with no active project the
   command clears nothing and says why through a notice that never reaches model
   context. Armed or not, the command is always available; acting on an armed
-  seam automatically -- the attended notice and the unattended fire -- is still
-  to come.
+  seam automatically stays the notice's and the unattended fire's job; the
+  `auto` argument continues an auto run instead, anchoring the chain.
 
 - **The pi extension notices an armed seam in an attended run.** Outside an
   auto run, an armed seam now produces exactly one passive notice naming the

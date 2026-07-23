@@ -12,8 +12,9 @@
  * The seam decision is a pure function over two snapshots, tested here directly;
  * the no-clear invariant (REQ-08) is tested through the handler against the fake
  * ctx, by counting newSession calls. Delivery - the attended notice (T-13) and
- * the unattended fire (T-14) - is later work, so an armed seam initiates no
- * clear in this slice; the handler tests pin that boundary.
+ * the unattended fire (T-16) - is layered on top of the declaration, so seam
+ * detection itself still initiates no clear; the handler tests pin that
+ * boundary.
  */
 
 import assert from "node:assert/strict";
@@ -140,7 +141,7 @@ describe("seam detection", () => {
   });
 
   it("declares a seam but initiates no clear in this slice", async () => {
-    // Seam detection declares; the clear is T-13's (notice) and T-14's (fire)
+    // Seam detection declares; the clear is T-13's (notice) and T-16's (fire)
     // work. An armed phase-change seam therefore acts on nothing yet.
     const { fake, pi } = await coldStart(status({ phase: "execute" }));
     const ctx = await armedTurn(pi, fake, status({ phase: "complete" }));

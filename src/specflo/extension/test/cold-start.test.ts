@@ -1,6 +1,6 @@
 /**
  * Cold start: fetch the reseed payload at session_start, inject it verbatim at
- * the next before_agent_start (T-09, REQ-17 / REQ-22 / REQ-27).
+ * the next before_agent_start (T-09, REQ-17 / REQ-32 / REQ-27).
  *
  * These drive the handlers directly against a fake pi and a fake `specflo`
  * executable, so each case pins one input a live run cannot be steered into on
@@ -95,7 +95,7 @@ describe("cold start", () => {
       // Those sessions are opened by something that already knows what it wants
       // next, or are a resource refresh - not a session coming up cold. Each
       // still seeds its own arming state: the closure is per-session, so the
-      // `new` session a clear opens would otherwise never re-arm (T-14).
+      // `new` session a clear opens would otherwise never re-arm (T-16).
       const { fake, pi, ctx } = await setUp(PAYLOAD);
 
       await pi.emit({ type: "session_start", reason }, ctx);

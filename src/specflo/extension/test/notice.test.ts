@@ -11,8 +11,8 @@
  * declares no seam and says nothing (REQ-10).
  *
  * While an auto run is under way the seam is not the notice's to deliver -
- * that is the unattended fire (T-14) - so status reporting under_way true
- * emits nothing here.
+ * that is the unattended fire (T-16) - so status reporting under_way true
+ * yields the fire's behaviour instead: unanchored, its bootstrap notice.
  */
 
 import assert from "node:assert/strict";
