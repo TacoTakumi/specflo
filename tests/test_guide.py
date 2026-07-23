@@ -1,4 +1,6 @@
 import json
+import re
+from pathlib import Path
 
 import pytest
 from typer.main import get_command
@@ -109,6 +111,20 @@ def test_guide_offers_paste_ready_memory_snippet(cwd):
     assert "CLAUDE.md" in result.output
     assert "specflo guide" in guide.MEMORY_SNIPPET
     assert "v0." not in guide.MEMORY_SNIPPET  # version-less by design
+
+
+def test_memory_snippet_matches_the_readme_block():
+    # README.md is the authority for this blurb - it is the copy users read while
+    # onboarding - and MEMORY_SNIPPET mirrors it so the CLI can print it without
+    # shipping the README. Editing one alone would put two different blurbs into
+    # users' memory files, so drift fails here rather than going unnoticed.
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    blocks = re.findall(r"^```markdown\n(.*?)^```$", readme, re.DOTALL | re.MULTILINE)
+    assert len(blocks) == 1, "expected exactly one ```markdown block in README.md"
+    assert blocks[0].rstrip("\n") == guide.MEMORY_SNIPPET, (
+        "README.md and guide.MEMORY_SNIPPET have drifted. README.md is the "
+        "authority: copy its ```markdown block into MEMORY_SNIPPET verbatim."
+    )
 
 
 def test_guide_json_carries_memory_snippet_in_every_state(cwd):

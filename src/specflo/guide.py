@@ -19,19 +19,25 @@ from . import projects, workflow
 from .config import SpecfloConfig
 from .errors import SpecfloError
 
-# A thin, version-less pointer users paste once into their agent memory file
-# (CLAUDE.md / AGENTS.md / GEMINI.md / ...). Deliberately static: no version and
-# no fence, so it never goes stale and never needs re-committing when specflo is
+# A thin, version-less section users paste once near the top of their agent
+# memory file (CLAUDE.md / AGENTS.md / GEMINI.md / ...). Deliberately static: no
+# version, so it never goes stale and never needs re-committing when specflo is
 # upgraded. Its only job is to make specflo *discoverable* to a cold agent — the
 # live detail (command surface, next action) lives behind `specflo guide`, which
 # the snippet points at, so it never has to be duplicated here.
+#
+# README.md is the authority for this text: it is the copy users actually read
+# while onboarding, and this constant mirrors it. `tests/test_guide.py` extracts
+# the README block and asserts the two are byte-identical, so editing README
+# alone fails the suite instead of silently drifting.
 MEMORY_SNIPPET = (
-    "This repo uses **specflo**, a spec-driven workflow "
-    "(brainstorm -> spec -> plan -> execute) run via the `specflo` CLI.\n"
-    "- Run `specflo status` to see the active project and what's next.\n"
-    "- Run `specflo guide` for the full command surface and orientation.\n"
-    "In a skill-capable harness, the `brainstorm`/`spec`/`plan`/`execute` skills "
-    "drive each phase over these commands."
+    "## Development workflow\n"
+    "\n"
+    "This repo uses specflo for feature development. Run `specflo guide` at the\n"
+    "start of a session to orient yourself; `specflo status` shows the active\n"
+    "project and phase. Features move through brainstorm -> spec -> plan -> execute\n"
+    "using the specflo skills, recording decisions, requirements, and tasks through\n"
+    "the specflo CLI rather than editing its artifacts by hand."
 )
 
 # Curated command table. ``name`` is the canonical command path (matched against

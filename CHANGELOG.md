@@ -8,6 +8,23 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.4.2]
+
+### Changed
+- **The `specflo guide` memory snippet is now the README's onboarding blurb.**
+  `guide` prints the README "Development workflow" section verbatim, heading
+  included, so it drops into `CLAUDE.md` / `AGENTS.md` as a section and carries
+  the norm the old wording left out: record decisions, requirements, and tasks
+  through the CLI rather than editing the artifacts by hand. The surrounding
+  instruction now says to paste it near the top of the memory file, where a
+  fresh agent is most likely to act on it. README.md is the authority for that
+  text and a test asserts the CLI copy stays byte-identical to it, so editing
+  one alone fails the suite instead of shipping two different blurbs.
+- **README Quick start lists `specflo extension install`.** pi users had to
+  reach the pi extension section to learn their setup step; the setup block now
+  shows it next to `hook install`, with both marked as per-harness alternatives
+  so nobody runs the wrong one or assumes both are required.
+
 ## [0.4.1]
 
 ### Added

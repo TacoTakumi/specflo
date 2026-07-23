@@ -41,10 +41,14 @@ uv tool install specflo    # or: pipx install specflo / pip install specflo
 Then set up the repo you want to work in:
 
 ```bash
-specflo init             # scaffold .specflo/ config + the projects dir
-specflo skills install   # install the workflow skills into your agent harness(es)
-specflo hook install     # Claude Code: session-resume wiring (recommended)
+specflo init                # scaffold .specflo/ config + the projects dir
+specflo skills install      # install the workflow skills into your agent harness(es)
+specflo hook install        # Claude Code: session-resume wiring (recommended)
+specflo extension install   # pi: same session-resume wiring, as a pi extension
 ```
+
+The last two lines are per-harness alternatives - run the one that matches your
+agent, or neither if it is some other harness.
 
 That is the whole setup. Start your coding agent and say:
 
@@ -58,7 +62,8 @@ step also works without an agent; see the
 ## Using specflo with your agent
 
 The installed skills make your agent *able* to drive specflo; a note in the
-project memory file (`CLAUDE.md`, `AGENTS.md`, ...) makes it *routine*. Paste:
+project memory file (`CLAUDE.md`, `AGENTS.md`, ...) makes it *routine*. Paste
+this near the top of that file:
 
 ```markdown
 ## Development workflow
