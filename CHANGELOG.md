@@ -8,9 +8,50 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
-## [0.4.2]
+## [0.5.0]
+
+### Added
+- **`specflo config` - `get`, `set`, `list`, `unset`.** Every setting is now
+  readable and changeable from the CLI instead of by opening the file. `config
+  get <key>` prints the resolved value bare on stdout, so `$(specflo config get
+  autonomy)` is the value itself. `config list [--json]` shows every setting
+  with its value, marking `(default)` where the file is silent and `(invalid,
+  using default)` where its value is not one the key accepts; keys specflo does
+  not recognize are listed separately and left alone. `config set` coerces and
+  validates before writing, so a rejected value leaves the file untouched and
+  the error names what the key accepts. `config unset` returns a key to its
+  commented-out default. `active_project` stays readable but is not writable
+  here (`specflo switch` owns it), and `projects_dir` needs `--force` while
+  projects live under the current path: changing it moves nothing, it only
+  changes where specflo looks.
+- **The config file documents itself.** A fresh `specflo init` writes a
+  `.specflo/config.yaml` carrying every setting specflo has - live as
+  `key: value` once set, commented out at its shipped default while it is not,
+  each under a one-line description. The file lists what you can change without
+  a trip to the docs, and `config set` reads as uncommenting a line you can
+  already see. A config written before a setting existed gains it on the next
+  write, announced by one stderr note naming what was added.
 
 ### Changed
+- **`context_threshold_percent` now defaults to 25, not 75.** The pi
+  extension's arming threshold is a percent of the context window, and arming
+  is not firing: the next specflo seam fires it, so the effective clear point
+  is the threshold plus one task's worth of context. pi auto-compacts near 92
+  percent and compaction disarms the extension, so arming at 75 could miss the
+  window entirely; arming early costs one bounded reseed. Existing configs that
+  set the key are unaffected.
+- **A config write preserves everything specflo does not own.** Saves now
+  round-trip the file rather than regenerating it, so a comment you wrote, the
+  key order you chose, and a key specflo has never heard of all survive
+  `specflo new`, `switch`, `resume`, and the `config` commands. Reading still
+  never writes: `specflo status --json`, which the pi extension polls every
+  turn, leaves the bytes identical.
+- **An unusable value in the config no longer breaks the commands that load
+  it.** A value the file sets but the setting cannot accept degrades to the
+  shipped default with one stderr warning per key, instead of raising - a
+  hand-edited config must not take down `status --json` and with it the
+  clear-and-continue trigger. Set-time validation still rejects outright, so
+  the bad value has to arrive by hand-editing.
 - **The `specflo guide` memory snippet is now the README's onboarding blurb.**
   `guide` prints the README "Development workflow" section verbatim, heading
   included, so it drops into `CLAUDE.md` / `AGENTS.md` as a section and carries

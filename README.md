@@ -121,6 +121,15 @@ fresh session back to work.
 - `specflo guide [--json]` - orientation in one shot: what specflo is, the pipeline, the full command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo.
 - `specflo init` - scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 
+### Configuration
+
+- `specflo config get <key>` - print one setting's resolved value, bare on stdout, so `$(specflo config get autonomy)` is the value itself. An unset key prints its shipped default.
+- `specflo config list [--json]` - every setting with its resolved value, in registry order. A line ends with `(default)` when the file is silent about that key, or `(invalid, using default)` when the file's value is not one the key accepts. Keys specflo does not recognize are listed separately and left alone. `--json` reports each key's `value` and a `source` of `set`, `default`, or `invalid`.
+- `specflo config set <key> <value> [--force]` - set one setting. The value is coerced to the key's type and validated **before** the write, so a rejected value leaves the file untouched and the error names what the key accepts. `active_project` is refused (use `specflo switch`), and `projects_dir` needs `--force` while projects live under the current path - changing it moves nothing, it only changes where specflo looks.
+- `specflo config unset <key> [--force]` - drop one setting; it returns to the commented-out default line under its description, and reads as its shipped default again.
+
+See **[The config file](#the-config-file)** for the file itself.
+
 ### Projects
 
 - `specflo new <name>` - create a project and make it active.
@@ -170,6 +179,47 @@ fresh session back to work.
 - `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` - install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)**.
 - `specflo extension install [--scope user|project]` - install the bundled pi extension into pi's extension directory: `~/.pi/agent/extensions/specflo` by default, `./.pi/extensions/specflo` with `--scope project`. A plain local copy with a version stamp - no npm, no network - and pi discovers the directory on its own, so no pi settings are read or written. Re-run to update. See **[The pi extension](#the-pi-extension)**.
 
+## The config file
+
+`.specflo/config.yaml` is written by `specflo init` and documents itself. Every
+setting specflo has appears in it: live as `key: value` once set, commented out
+at its shipped default while it is not, each under a one-line description. So
+the file lists what you can change without a trip to the docs, and `config set`
+is literally uncommenting a line you can already see.
+
+```yaml
+# Where project artifacts live, relative to the repo root.
+projects_dir: docs/projects
+
+# The project every command acts on; set it with `specflo switch`.
+active_project: my-thing
+
+# Default autonomy level for `specflo auto`: safe, autonomous or yolo.
+# autonomy: safe
+
+# Runaway backstop: the most passes one `specflo auto` run may take.
+# auto_max_passes: 50
+
+# Percent of the context window at which the pi extension arms clear-and-continue.
+# context_threshold_percent: 25
+```
+
+It is your file, so specflo writes it conservatively:
+
+- A comment you wrote, the key order you chose, and a key specflo has never
+  heard of all survive every write.
+- Reading never writes. `specflo status --json`, which the pi extension polls
+  every turn, leaves the bytes identical.
+- A config written before a setting existed gains it on the next write,
+  commented out at its default, announced by one note on stderr naming what was
+  added.
+- A value the file sets but specflo cannot accept degrades to the shipped
+  default with a warning, rather than breaking every command that loads it.
+  `specflo config list` marks that key `(invalid, using default)`.
+
+Edit the file by hand or go through `specflo config` - the commands validate
+before writing, which the editor cannot.
+
 ## Session-start integration (clear-and-continue)
 
 An agent can't clear its own context *or* remember what to do across a `/clear` -
@@ -216,8 +266,10 @@ In an attended pi session:
   knows where the project stands and asks before resuming. With no active
   project it injects nothing.
 - **Arming.** At each turn's end the extension reads pi's own context-usage
-  percent and arms once it reaches `context_threshold_percent` (default `75`,
-  set in `.specflo/config.yaml`).
+  percent and arms once it reaches `context_threshold_percent` (default `25`,
+  set in `.specflo/config.yaml`). Arming is not firing: the next specflo seam
+  fires it, so the effective clear point is that percent plus one task's worth
+  of context.
 - **The seam.** While armed it watches `specflo status --json` for a safe
   point to clear: the phase advancing, or a task reaching done. A task merely
   in progress is never a seam, so in-flight work is never discarded.
