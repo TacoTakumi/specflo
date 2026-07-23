@@ -21,6 +21,10 @@ dependencies = [
     # declared explicitly rather than leaning on typer/agentsquire to pull it in.
     "click>=8.1",
     "pyyaml>=6.0",
+    # Round-trip YAML, used only by config.py so a write to .specflo/config.yaml
+    # preserves the user's comments, key order and unrecognized keys. Artifact
+    # front matter stays on PyYAML, which is faster and needs no round trip.
+    "ruamel.yaml>=0.18",
     "agentsquire>=0.5.0",
 ]
 

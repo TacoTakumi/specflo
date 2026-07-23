@@ -7,6 +7,7 @@ works from anywhere inside a project tree.
 
 from __future__ import annotations
 
+import io
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field, make_dataclass
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from ruamel.yaml import YAML
+from ruamel.yaml.comments import CommentedMap
 
 from .errors import SpecfloError
 
@@ -216,19 +219,48 @@ def load_config(root: Path) -> SpecfloConfig:
     return SpecfloConfig(present_keys=frozenset(data), **values)
 
 
+# The write path's parser. ruamel's round-trip mode carries comments, key order
+# and unknown keys through a load/dump cycle, which PyYAML cannot do; reads stay
+# on PyYAML's faster `safe_load` (`status --json` is polled every turn), and
+# artifact front matter stays on PyYAML entirely (D-13).
+_ROUND_TRIP = YAML()
+_ROUND_TRIP.preserve_quotes = True
+# The emitter folds a scalar past its line width onto a continuation line, which
+# would rewrite a long value we never touched. Wide enough that it never folds.
+_ROUND_TRIP.width = 4096
+
+
+def _load_document(path: Path) -> CommentedMap:
+    """The config file as a round-trip document, or an empty one when there is
+    nothing to preserve (no file yet, or a file holding no mapping)."""
+    if not path.is_file():
+        return CommentedMap()
+    doc = _ROUND_TRIP.load(path.read_text())
+    return doc if isinstance(doc, CommentedMap) else CommentedMap()
+
+
 def save_config(root: Path, cfg: SpecfloConfig) -> None:
+    """Write ``cfg`` back, leaving everything specflo does not own untouched.
+
+    The file is never regenerated. It is loaded into a ruamel round-trip
+    document, only the registry keys are assigned, and that same document is
+    dumped - so a hand-written comment, the key order the user chose, and a key
+    the registry has never heard of all survive the write (REQ-07, REQ-08).
+    """
     path = config_path(root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"projects_dir": cfg.projects_dir, "active_project": cfg.active_project}
-    # Persist the auto-mode defaults only when non-default, so a plain project's
-    # config stays minimal and carries no auto-* key at all (REQ-01).
-    if cfg.autonomy != DEFAULT_AUTONOMY:
-        payload["autonomy"] = cfg.autonomy
-    if cfg.auto_max_passes != DEFAULT_MAX_PASSES:
-        payload["auto_max_passes"] = cfg.auto_max_passes
-    if cfg.context_threshold_percent != DEFAULT_CONTEXT_THRESHOLD_PERCENT:
-        payload["context_threshold_percent"] = cfg.context_threshold_percent
-    path.write_text(yaml.safe_dump(payload, sort_keys=False))
+    doc = _load_document(path)
+    for spec in CONFIG_FIELDS:
+        value = getattr(cfg, spec.name)
+        # A key stays out of the file while it holds its shipped default and
+        # nothing has claimed it - neither the file itself nor the config asking
+        # for the write. That keeps a plain project's config minimal, carrying
+        # no auto-* key at all (auto-mode REQ-01).
+        if spec.name in doc or spec.name in cfg.present_keys or value != spec.default:
+            doc[spec.name] = value
+    buffer = io.StringIO()
+    _ROUND_TRIP.dump(doc, buffer)
+    path.write_text(buffer.getvalue())
 
 
 def init_config(
@@ -239,7 +271,13 @@ def init_config(
         raise SpecfloError(
             f"Already initialized ({path} exists). Use --force to re-initialize."
         )
-    cfg = SpecfloConfig(projects_dir=projects_dir, active_project=None)
+    # The keys a new config carries even at their defaults; the rest arrive in
+    # the file only once they are set.
+    cfg = SpecfloConfig(
+        projects_dir=projects_dir,
+        active_project=None,
+        present_keys=frozenset({"projects_dir", "active_project"}),
+    )
     save_config(root, cfg)
     (root / projects_dir).mkdir(parents=True, exist_ok=True)
     return cfg

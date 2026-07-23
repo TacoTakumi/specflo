@@ -1,9 +1,12 @@
 import dataclasses
 import inspect
+import tomllib
+from pathlib import Path
 
 import pytest
+import yaml
 
-from specflo import auto, config
+from specflo import auto, config, projects
 from specflo.errors import SpecfloError
 
 
@@ -312,3 +315,112 @@ def test_threshold_accepts_the_whole_percent_range(tmp_path, raw):
     path = config.config_path(tmp_path)
     path.write_text(path.read_text() + f"context_threshold_percent: {raw}\n")
     assert config.load_config(tmp_path).context_threshold_percent == raw
+
+
+# --- writes round-trip the file (REQ-07, REQ-08, REQ-09) -----------------
+# `save_config` mutates the document it loaded from disk instead of emitting a
+# fresh one, so everything specflo does not own - the user's comments, the key
+# order they chose, keys the registry has never heard of - survives a write.
+
+HAND_WRITTEN = """\
+# why this repo keeps its specs out of docs/
+projects_dir: specs
+mystery_key: 42
+active_project: alpha
+"""
+
+
+def _hand_written(tmp_path):
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    path.write_text(HAND_WRITTEN)
+    return path
+
+
+def test_a_save_preserves_a_hand_written_comment(tmp_path):
+    path = _hand_written(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    assert "# why this repo keeps its specs out of docs/" in path.read_text()
+
+
+def test_a_save_preserves_the_existing_key_order(tmp_path):
+    # The file's order wins over the registry's - it is the user's file.
+    path = _hand_written(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    keys = [line.split(":")[0] for line in path.read_text().splitlines() if ":" in line]
+    assert [k for k in keys if not k.startswith("#")] == [
+        "projects_dir",
+        "mystery_key",
+        "active_project",
+    ]
+
+
+def test_a_save_preserves_an_unrecognized_key_and_its_value(tmp_path):
+    path = _hand_written(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    assert yaml.safe_load(path.read_text())["mystery_key"] == 42
+
+
+def test_a_save_writes_the_values_it_owns(tmp_path):
+    # Preservation is not inertia: the keys specflo owns still take the new value.
+    path = _hand_written(tmp_path)
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    assert yaml.safe_load(path.read_text())["active_project"] == "beta"
+    assert config.load_config(tmp_path).active_project == "beta"
+
+
+def test_the_config_is_never_emitted_from_a_fresh_mapping(tmp_path):
+    # REQ-08 is structural: the module writes the file only by dumping a document
+    # it first loaded. A PyYAML dump or an f-string template would be a regression.
+    source = inspect.getsource(config)
+    assert "safe_dump" not in source
+    assert "yaml.dump" not in source
+
+
+def _src_files():
+    root = Path(config.__file__).parent
+    return sorted(p for p in root.rglob("*.py"))
+
+
+def test_ruamel_is_imported_only_by_the_config_module():
+    users = [p.name for p in _src_files() if "ruamel" in p.read_text()]
+    assert users == ["config.py"]
+
+
+def test_front_matter_is_still_read_and_written_with_pyyaml():
+    source = inspect.getsource(projects)
+    assert "yaml.safe_dump" in inspect.getsource(projects._render)
+    assert "yaml.safe_load" in inspect.getsource(projects._parse_frontmatter)
+    assert "ruamel" not in source
+
+
+def test_ruamel_is_a_declared_runtime_dependency():
+    pyproject = Path(config.__file__).parents[2] / "pyproject.toml"
+    deps = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
+    assert any(d.startswith("ruamel.yaml") for d in deps)
+
+
+def test_a_save_leaves_a_long_untouched_value_on_its_own_line(tmp_path):
+    # The emitter would otherwise fold a long scalar onto a continuation line,
+    # rewriting a value specflo never touched.
+    config.init_config(tmp_path)
+    path = config.config_path(tmp_path)
+    long_value = "x" * 200
+    path.write_text(path.read_text() + f"mystery_key: {long_value}\n")
+    cfg = config.load_config(tmp_path)
+    cfg.active_project = "beta"
+    config.save_config(tmp_path, cfg)
+
+    assert f"mystery_key: {long_value}" in path.read_text()
