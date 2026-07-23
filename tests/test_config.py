@@ -262,9 +262,12 @@ def test_loading_never_raises_on_a_bad_value(tmp_path, capsys):
 # defaults, and read back out through the CLI - never by parsing this file.
 
 
-def test_threshold_defaults_to_75():
-    assert config.DEFAULT_CONTEXT_THRESHOLD_PERCENT == 75
-    assert config.SpecfloConfig().context_threshold_percent == 75
+def test_threshold_defaults_to_25():
+    # 25, not 75 (REQ-01): the extension *arms* here and the next specflo seam
+    # fires it, so arming has to happen with enough window left to finish the
+    # step in flight.
+    assert config.DEFAULT_CONTEXT_THRESHOLD_PERCENT == 25
+    assert config.SpecfloConfig().context_threshold_percent == 25
 
 
 def test_threshold_round_trips_a_custom_value(tmp_path):
@@ -285,7 +288,7 @@ def test_threshold_key_is_omitted_at_the_default(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "raw", ["seventy", 0, 101, -5, 12.5, None, True, [75]],
+    "raw", ["seventy", 0, 101, -5, 12.5, None, True, [25]],
 )
 def test_threshold_falls_back_to_the_default_when_unusable(tmp_path, raw):
     # A hand-edited config must not break every command that loads it: an
@@ -297,7 +300,10 @@ def test_threshold_falls_back_to_the_default_when_unusable(tmp_path, raw):
     path.write_text(
         path.read_text() + f"context_threshold_percent: {raw!r}\n"
     )
-    assert config.load_config(tmp_path).context_threshold_percent == 75
+    assert (
+        config.load_config(tmp_path).context_threshold_percent
+        == config.DEFAULT_CONTEXT_THRESHOLD_PERCENT
+    )
 
 
 @pytest.mark.parametrize("raw", [1, 50, 100])

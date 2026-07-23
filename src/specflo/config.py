@@ -32,9 +32,12 @@ DEFAULT_AUTONOMY = "safe"
 DEFAULT_MAX_PASSES = 50
 # Default percent of the model context window at which the pi extension *arms*
 # its clear-and-continue trigger (pi-extension REQ-28). Arming is not firing: the
-# next specflo seam fires it. A percent, never an absolute token count, so it
-# holds across models with different window sizes.
-DEFAULT_CONTEXT_THRESHOLD_PERCENT = 75
+# next specflo seam fires it, so the effective clear point is this percent plus
+# one task's worth of context. pi auto-compacts near 92 percent of the window and
+# compaction disarms the extension, so arming late defeats the mechanism
+# entirely; arming early costs one bounded reseed. Hence 25 (D-01). A percent,
+# never an absolute token count, so it holds across window sizes.
+DEFAULT_CONTEXT_THRESHOLD_PERCENT = 25
 # The usable percent range. 100 is allowed (arm only at a full window, in effect
 # disabling the trigger); 0 and below would arm every turn from the start.
 CONTEXT_THRESHOLD_RANGE = (1, 100)

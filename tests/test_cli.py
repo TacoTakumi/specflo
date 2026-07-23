@@ -412,7 +412,7 @@ def test_status_json_reports_the_arming_threshold(cwd):
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
-    assert data["context_threshold_percent"] == 75
+    assert data["context_threshold_percent"] == 25
 
     cfg = config.load_config(Path.cwd())
     cfg.context_threshold_percent = 60
