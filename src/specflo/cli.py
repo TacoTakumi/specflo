@@ -580,7 +580,7 @@ def auto_(
 
 @hook_app.command(
     "reseed",
-    epilog="Wired into a SessionStart hook by `specflo hook print`.",
+    epilog="Wired into a SessionStart hook by `specflo hook install`.",
 )
 def hook_reseed(
     output_format: str = typer.Option(
@@ -655,21 +655,41 @@ def extension_install_cmd(
 
 
 @hook_app.command(
+    "install",
+    epilog="Example: specflo hook install",
+)
+def hook_install() -> None:
+    """Wire `hook reseed` into Claude Code's .claude/settings.json (idempotent merge)."""
+    root = _require_root()
+    path = hook.install_hook(root)
+    typer.echo(f"Installed SessionStart hook -> {config.display_path(path, root)}")
+
+
+@hook_app.command(
     "print",
-    epilog="Example: specflo hook print --install",
+    epilog="Example: specflo hook print",
 )
 def hook_print(
     install: bool = typer.Option(
-        False, "--install", help="Merge the wiring into .claude/settings.json (idempotent)."
+        False,
+        "--install",
+        hidden=True,
+        help="Deprecated alias for `specflo hook install`.",
     ),
 ) -> None:
-    """Print the SessionStart wiring for `hook reseed` (or --install it)."""
+    """Print the Claude Code SessionStart wiring for `hook reseed` (a fragment to merge)."""
     if install:
-        root = _require_root()
-        path = hook.install_hook(root)
-        typer.echo(f"Installed SessionStart hook -> {config.display_path(path, root)}")
-    else:
-        typer.echo(json.dumps(hook.settings_snippet(), indent=2))
+        hook_install()
+        return
+    typer.echo(json.dumps(hook.settings_snippet(), indent=2))
+    typer.echo(
+        "Claude Code SessionStart wiring - a fragment to merge into "
+        ".claude/settings.json; run `specflo hook install` to merge it safely "
+        "(idempotent, preserves existing content).\n"
+        "Other agents/harnesses can adapt this wiring; pi needs none - the "
+        "specflo pi extension reseeds on its own.",
+        err=True,
+    )
 
 
 @brainstorm_app.command("start", epilog="Example: specflo brainstorm start")

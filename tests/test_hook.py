@@ -1,4 +1,5 @@
 import json
+import re
 
 from typer.testing import CliRunner
 
@@ -395,7 +396,7 @@ def test_hook_print_cli_emits_parseable_wiring(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     result = runner.invoke(app, ["hook", "print"])
     assert result.exit_code == 0
-    entry = json.loads(result.output)["hooks"]["SessionStart"][0]
+    entry = json.loads(result.stdout)["hooks"]["SessionStart"][0]
     assert entry["matcher"] == "startup|clear|resume"
     assert entry["hooks"][0]["command"] == "specflo hook reseed --format claude"
 
@@ -465,6 +466,61 @@ def test_hook_install_cli_writes_file(tmp_path, monkeypatch):
     assert result.exit_code == 0
     data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
     assert len(_reseed_entries(data)) == 1
+
+
+def test_hook_install_command_writes_file(tmp_path, monkeypatch):
+    # `hook install` is the first-class installer (the discoverable spelling).
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["hook", "install"])
+    assert result.exit_code == 0
+    assert "settings.json" in result.output
+    data = json.loads((tmp_path / ".claude" / "settings.json").read_text())
+    assert len(_reseed_entries(data)) == 1
+
+
+def test_hook_install_listed_in_hook_group_help():
+    result = runner.invoke(app, ["hook", "--help"])
+    assert result.exit_code == 0
+    # a command row of its own, not a mention inside another command's summary
+    assert re.search(r"^\s*\S?\s*install\b", result.output, re.MULTILINE)
+
+
+def test_hook_print_stdout_is_pure_json(tmp_path, monkeypatch):
+    # the guidance note must not leak into stdout, so piping stays clean
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["hook", "print"])
+    assert result.exit_code == 0
+    json.loads(result.stdout)  # raises if anything but the fragment is on stdout
+
+
+def test_hook_print_notes_merge_guidance_on_stderr(tmp_path, monkeypatch):
+    # the stderr note: names the harness, the fragment, and the safe installer,
+    # and points other harnesses at adapting it (pi excepted - the extension
+    # reseeds on its own). Two lines, no more.
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["hook", "print"])
+    assert "Claude Code" in result.stderr
+    assert "specflo hook install" in result.stderr
+    assert "merge" in result.stderr.lower()
+    assert "adapt" in result.stderr.lower()
+    assert "pi extension" in result.stderr
+    assert result.stderr.strip().count("\n") == 1  # exactly two lines
+
+
+def test_hook_install_and_print_help_name_claude_code():
+    # the wiring is Claude Code's; both commands must say so up front
+    for cmd in (["hook", "install", "--help"], ["hook", "print", "--help"]):
+        result = runner.invoke(app, cmd)
+        assert result.exit_code == 0
+        assert "Claude Code" in result.output, f"{cmd} help omits the harness"
+
+
+def test_hook_print_install_flag_hidden_from_help(tmp_path):
+    # `--install` survives as a deprecated alias but no longer advertises itself
+    result = runner.invoke(app, ["hook", "print", "--help"])
+    assert result.exit_code == 0
+    assert "--install" not in result.output
 
 
 def test_hook_install_tolerates_wrong_shaped_settings(tmp_path):
