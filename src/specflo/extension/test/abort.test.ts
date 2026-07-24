@@ -12,12 +12,15 @@
  */
 
 import assert from "node:assert/strict";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
   anchorChain,
   armedTurn,
   autoReport,
+  calls,
   createFakeReplacement,
   coldStart,
   resetAfterEach,
@@ -129,5 +132,70 @@ describe("the abort at the armed auto anchored seam", () => {
     fake.setStdout(autoReport());
     next.releaseIdle();
     await until(() => next.ctx.newSessionCalls.length === 1);
+  });
+});
+
+describe("the notify-only branches stay notify-only", () => {
+  it("an unanchored armed auto seam: one notice, zero aborts, zero sessions (REQ-04)", async () => {
+    // pi joined the run cold - nothing may end the run or clear the session;
+    // the one bootstrap notice names the command that anchors the chain.
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+
+    const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+
+    const notices = calls(ctx, "notify");
+    assert.equal(notices.length, 1, "exactly one bootstrap notice");
+    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+    assert.equal(ctx.abortCalls.length, 0, "an unanchored seam must not end the run");
+    assert.equal(ctx.newSessionCalls.length, 0, "an unanchored seam must not clear");
+  });
+
+  it("an attended armed seam: one notice, zero aborts, zero sessions (REQ-04)", async () => {
+    // Attended even with a live anchor from an earlier auto pass: the seam
+    // says so once, passively, and the run keeps going.
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    const { replacement } = await anchorChain(pi, fake);
+
+    const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: false }));
+
+    const notices = calls(ctx, "notify");
+    assert.equal(notices.length, 1, "exactly one attended notice");
+    assert.doesNotMatch(
+      notices[0].args[0] as string,
+      /\/specflo-continue auto/,
+      "the attended notice names the attended command, not the auto opt-in",
+    );
+    assert.equal(ctx.abortCalls.length, 0, "an attended seam must not end the run");
+    assert.equal(ctx.newSessionCalls.length, 0, "an attended seam must not clear");
+    assert.equal(replacement.ctx.newSessionCalls.length, 0, "the anchor must not fire attended");
+  });
+});
+
+describe("the armed path stays phase-blind and injection-free", () => {
+  // REQ-03 / REQ-05 structural acceptance, in the style of auto-fire's
+  // no-pass-counter scan: read the source and pin what must not appear.
+  const source = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "index.ts"), "utf8");
+
+  it("the armed turn_end path holds no phase conditional", () => {
+    // Everything from the turn_end registration on is the armed path; seam
+    // detection (describeSeam, defined above it) is where phases may appear.
+    const armedPath = source.slice(source.indexOf('pi.on("turn_end"'));
+    assert.ok(armedPath.length > 0, "the turn_end registration must exist");
+    assert.ok(
+      !/phase/i.test(armedPath),
+      "the armed turn_end path must not mention phases at all (D-03)",
+    );
+  });
+
+  it("the extension injects nothing: no sendCustomMessage, no steer, no tool_result edits", () => {
+    assert.ok(
+      !/sendCustomMessage/.test(source),
+      "the extension must never inject into the current session's context",
+    );
+    assert.ok(!/steer/i.test(source), "the extension must never steer a running turn");
+    assert.ok(
+      !/tool_?results?/i.test(source),
+      "the extension must never touch tool results",
+    );
   });
 });
