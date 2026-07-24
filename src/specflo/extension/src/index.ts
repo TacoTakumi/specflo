@@ -11,9 +11,10 @@
  *   - seam:       poll `status --json` while armed for a phase or task change
  *   - on demand:  a /specflo-continue command clears and reseeds now, armed or not
  *   - attended:   one passive notice per seam, via ctx.ui.notify only
- *   - unattended: at a seam while an auto run is under way, clear and reseed
- *     through the live anchor - the replacement context the previous clear
- *     captured - or, unanchored, notice the command that starts the chain
+ *   - unattended: at a seam while an auto run is under way, end the running
+ *     agent and clear and reseed through the live anchor - the replacement
+ *     context the previous clear captured - or, unanchored, notice the
+ *     command that starts the chain
  *
  * This file is the single extension entry point named by package.json's
  * `pi.extensions`.
@@ -456,6 +457,13 @@ export default function specflo(pi: ExtensionAPI): void {
           fireInFlight = false;
         }
       })();
+      // End the running agent: waitForIdle resolves only when the run stops,
+      // so without this the parked fire lands at the run's natural end -
+      // tasks later, the sail-on. Abort comes last (latch, park, abort): the
+      // fire above is already holding at waitForIdle when the run settles,
+      // and a second seam during a parked fire latched out above, so nothing
+      // double-aborts or double-fires (REQ-01, REQ-06).
+      ctx.abort();
       return;
     }
     // Attended: say so once, passively, and clear nothing (REQ-09). The notice

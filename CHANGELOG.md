@@ -67,6 +67,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   so nobody runs the wrong one or assumes both are required.
 
 ### Fixed
+- **An unattended auto seam now ends the running agent.** The pi extension's
+  armed, anchored seam during an auto run used to park the clear behind
+  waitForIdle and let the run keep going, so the agent sailed past the
+  threshold from task to task and the clear only landed at the run's natural
+  end. The seam now calls ctx.abort() after parking the fire: the run stops
+  at the seam, the parked continuation lands, and the fresh session opens on
+  the auto payload. The attended and unanchored branches are unchanged - they
+  still only notify.
 - **A duplicated key in the config refuses the write cleanly.** A
   hand-duplicated line used to crash every writing command (`new`, `switch`,
   `resume`, `config set`, `config unset`) with a raw traceback; it is now a
