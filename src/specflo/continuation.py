@@ -33,12 +33,13 @@ from __future__ import annotations
 # the skill that carries the current phase, so a fresh session knows which one to
 # invoke (REQ-06). It is a *pointer, not a dependency*: the continuation already
 # names the concrete next action, so the run proceeds even if the skill is
-# unavailable. The four phase skills happen to share their phase's name.
+# unavailable. The four phase skills carry their phase's name under the
+# collision-avoiding ``specflo-`` prefix.
 PHASE_SKILLS: dict[str, str] = {
-    "brainstorm": "brainstorm",
-    "spec": "spec",
-    "plan": "plan",
-    "execute": "execute",
+    "brainstorm": "specflo-brainstorm",
+    "spec": "specflo-spec",
+    "plan": "specflo-plan",
+    "execute": "specflo-execute",
 }
 
 # Fixed marker opening the clear-point sentence. Tests — and any outer harness
@@ -124,8 +125,8 @@ def build_reseed(directive: str, body: str, task_brief: str | None = None) -> st
 
 
 def phase_skill(phase: str) -> str:
-    """The specflo phase-skill name carrying ``phase`` (the phase name itself)."""
-    return PHASE_SKILLS.get(phase, phase)
+    """The specflo phase-skill name carrying ``phase`` (``specflo-`` + phase)."""
+    return PHASE_SKILLS.get(phase, f"specflo-{phase}")
 
 
 def _action_line(phase: str, do_next: str) -> str:

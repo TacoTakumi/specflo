@@ -1,5 +1,5 @@
 ---
-name: shelve
+name: specflo-shelve
 description: Use when the user signals they want to set the active specflo project aside ("we're done with this", "drop this", "not worth it", "shelve it", "park this for now") — map that to `specflo shelve` — or to pick a paused project back up ("let's pick that back up", "resume that", "un-shelve it") — map that to `specflo resume`. The user need not name the command. Do NOT use to complete a finished project (that's `specflo advance`), or for a momentary in-session pause that needs no state change.
 ---
 

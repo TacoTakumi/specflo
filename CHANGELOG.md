@@ -33,6 +33,16 @@ latter. Release tags are of the form `vX.Y.Z`.
   write, announced by one stderr note naming what was added.
 
 ### Changed
+- **BREAKING: every bundled skill is renamed with a `specflo-` prefix.** The
+  seven skills are now `specflo-brainstorm`, `specflo-spec`, `specflo-plan`,
+  `specflo-execute`, `specflo-research`, `specflo-shelve`, and `specflo-auto`
+  (previously the bare phase names), so generic names like `plan` or `auto` no
+  longer collide with other installed skills or a harness's built-ins. The
+  phase names inside specflo are unchanged; only the skill/command names moved.
+  After updating, run `specflo skills update` and remove any old-name installs
+  (symlinked dev setups: re-link, e.g. `~/.claude/skills/specflo-plan ->
+  skills/specflo-plan`). Checkpoint and auto payloads now point at the new
+  names.
 - **`context_threshold_percent` now defaults to 25, not 75.** The pi
   extension's arming threshold is a percent of the context window, and arming
   is not firing: the next specflo seam fires it, so the effective clear point

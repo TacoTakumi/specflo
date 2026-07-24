@@ -16,7 +16,15 @@ from agentsquire import verify_skill_roots
 from agentsquire.sources import default_source
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SKILL_NAMES = ["auto", "brainstorm", "execute", "plan", "research", "shelve", "spec"]
+SKILL_NAMES = [
+    "specflo-auto",
+    "specflo-brainstorm",
+    "specflo-execute",
+    "specflo-plan",
+    "specflo-research",
+    "specflo-shelve",
+    "specflo-spec",
+]
 
 
 def test_skill_roots_are_disjoint():

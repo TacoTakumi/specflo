@@ -1,6 +1,6 @@
 from pathlib import Path
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "research" / "SKILL.md"
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "specflo-research" / "SKILL.md"
 
 
 def test_research_skill_exists():

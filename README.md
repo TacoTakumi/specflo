@@ -54,7 +54,7 @@ That is the whole setup. Start your coding agent and say:
 
 > We use specflo here. Start a new specflo project for <the thing to build>.
 
-The brainstorm skill takes over - one question at a time, decisions recorded on
+The specflo-brainstorm skill takes over - one question at a time, decisions recorded on
 disk - and hands off through spec and plan to task-by-task execution. Every
 step also works without an agent; see the
 [command reference](#command-reference).
@@ -329,13 +329,13 @@ setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
 The seven skills:
 
-- **`brainstorm`** (`skills/brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
-- **`spec`** (`skills/spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
-- **`plan`** (`skills/plan/SKILL.md`) - drives the plan phase (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase).
-- **`execute`** (`skills/execute/SKILL.md`) - drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`).
-- **`research`** (`skills/research/SKILL.md`) - a research subagent the `brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
-- **`shelve`** (`skills/shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
-- **`auto`** (`skills/auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
+- **`specflo-brainstorm`** (`skills/specflo-brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
+- **`specflo-spec`** (`skills/specflo-spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
+- **`specflo-plan`** (`skills/specflo-plan/SKILL.md`) - drives the plan phase (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase).
+- **`specflo-execute`** (`skills/specflo-execute/SKILL.md`) - drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`).
+- **`specflo-research`** (`skills/specflo-research/SKILL.md`) - a research subagent the `specflo-brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
+- **`specflo-shelve`** (`skills/specflo-shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
+- **`specflo-auto`** (`skills/specflo-auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
 
 ### Working on the skills themselves
 
@@ -344,7 +344,7 @@ your edits take effect immediately. specflo recognizes a symlinked live-edit
 install and stays quiet about updates for it:
 
 ```bash
-ln -s "$PWD/skills/brainstorm" ~/.claude/skills/brainstorm
+ln -s "$PWD/skills/specflo-brainstorm" ~/.claude/skills/specflo-brainstorm
 ```
 
 ## Install from source

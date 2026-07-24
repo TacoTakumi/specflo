@@ -1,5 +1,5 @@
 ---
-name: spec
+name: specflo-spec
 description: Use at a specflo project's spec phase, when turning a validated brainstorm into a structured, testable spec before any plan or code. Triggers include "write the spec", "let's spec this out", or `specflo status` showing the spec phase. Do NOT use for trivial fixes or before a brainstorm has been validated.
 ---
 

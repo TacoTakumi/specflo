@@ -1,5 +1,5 @@
 ---
-name: execute
+name: specflo-execute
 description: Use at a specflo project's execute phase, when turning a validated plan.md into committed, verified code one task at a time. Triggers include "execute the plan", "start building", "work the next task", or `specflo status` showing the execute phase. Do NOT use before a plan has been validated, or for trivial fixes outside the pipeline.
 ---
 

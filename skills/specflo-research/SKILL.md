@@ -1,6 +1,6 @@
 ---
-name: research
-description: Use when a specflo brainstorm needs grounding in current facts — an upfront landscape scan of what already exists (tools, SDKs, libraries, competitors, reference implementations, framework state), or a targeted check of a fact-dependent assumption before it becomes a decision. Dispatched as a subagent by the brainstorm skill; can also run standalone. Do NOT use to write code or make product decisions — it only gathers and synthesizes facts.
+name: specflo-research
+description: Use when a specflo brainstorm needs grounding in current facts — an upfront landscape scan of what already exists (tools, SDKs, libraries, competitors, reference implementations, framework state), or a targeted check of a fact-dependent assumption before it becomes a decision. Dispatched as a subagent by the specflo-brainstorm skill; can also run standalone. Do NOT use to write code or make product decisions — it only gathers and synthesizes facts.
 allowed-tools: Read, Bash(tvly *), Skill
 ---
 

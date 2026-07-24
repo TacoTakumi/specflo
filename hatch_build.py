@@ -16,7 +16,15 @@ from pathlib import Path
 # The workflow skills that MUST be present in the build. A dropped skill fails
 # the build; extra skills are allowed (this is a floor, not a ceiling).
 EXPECTED_SKILLS = frozenset(
-    {"auto", "brainstorm", "execute", "plan", "research", "shelve", "spec"}
+    {
+        "specflo-auto",
+        "specflo-brainstorm",
+        "specflo-execute",
+        "specflo-plan",
+        "specflo-research",
+        "specflo-shelve",
+        "specflo-spec",
+    }
 )
 
 

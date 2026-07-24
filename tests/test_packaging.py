@@ -24,7 +24,15 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # The 7 workflow skills, hardcoded so a dropped skill fails the build test.
-SKILL_NAMES = ["auto", "brainstorm", "execute", "plan", "research", "shelve", "spec"]
+SKILL_NAMES = [
+    "specflo-auto",
+    "specflo-brainstorm",
+    "specflo-execute",
+    "specflo-plan",
+    "specflo-research",
+    "specflo-shelve",
+    "specflo-spec",
+]
 
 
 def _load_hatch_build():
@@ -170,10 +178,10 @@ def test_hook_check_raises_when_a_skill_is_removed(tmp_path, dropped):
 
 def test_hook_check_raises_when_a_skill_lacks_skill_md(tmp_path):
     _make_skills(tmp_path, SKILL_NAMES)
-    (tmp_path / "plan" / "SKILL.md").unlink()  # dir stays, marker gone
+    (tmp_path / "specflo-plan" / "SKILL.md").unlink()  # dir stays, marker gone
     with pytest.raises(ValueError) as exc:
         hatch_build.check_skills_complete(tmp_path)
-    assert "plan" in str(exc.value)
+    assert "specflo-plan" in str(exc.value)
 
 
 def test_hook_check_raises_when_skills_dir_missing(tmp_path):

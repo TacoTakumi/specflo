@@ -29,7 +29,7 @@ SPECFLO_BIN = str(Path(sys.executable).parent / "specflo")
 
 
 def _seed_stale_plan(root):
-    """Install a modified 'plan' skill (specflo-stamped) into a fixture home so
+    """Install a modified 'specflo-plan' skill (specflo-stamped) into a fixture home so
     it reads as update-available against specflo's real repo-root source."""
     home = root / "home"
     project = root / "project"
@@ -37,8 +37,8 @@ def _seed_stale_plan(root):
     (home / ".claude").mkdir(parents=True)
     (project / ".claude").mkdir(parents=True)
     bundle.mkdir()
-    shutil.copytree(REPO_ROOT / "skills" / "plan", bundle / "plan")
-    skill_md = bundle / "plan" / "SKILL.md"
+    shutil.copytree(REPO_ROOT / "skills" / "specflo-plan", bundle / "specflo-plan")
+    skill_md = bundle / "specflo-plan" / "SKILL.md"
     skill_md.write_text(skill_md.read_text() + "\n<!-- older bundled version -->\n")
     install(
         DirectorySource(bundle),
@@ -69,7 +69,7 @@ def test_stale_install_prints_one_line_notice_naming_the_update_command(tmp_path
     home, project = _seed_stale_plan(tmp_path)
     result = _run_specflo(home, project, "--version")
     assert result.returncode == 0
-    assert "plan" in result.stderr
+    assert "specflo-plan" in result.stderr
     assert "specflo skills update" in result.stderr
     assert result.stderr.strip().count("\n") == 0  # exactly one line
     assert result.stdout.strip() == f"specflo {specflo.__version__}"  # command ran
@@ -102,7 +102,9 @@ def test_symlinked_dev_install_prints_no_notice(tmp_path):
     project = tmp_path / "project"
     (home / ".claude" / "skills").mkdir(parents=True)
     (project / ".claude").mkdir(parents=True)
-    (home / ".claude" / "skills" / "plan").symlink_to(REPO_ROOT / "skills" / "plan")
+    (home / ".claude" / "skills" / "specflo-plan").symlink_to(
+        REPO_ROOT / "skills" / "specflo-plan"
+    )
     result = _run_specflo(home, project, "--version")
     assert result.returncode == 0
     assert result.stderr.strip() == ""

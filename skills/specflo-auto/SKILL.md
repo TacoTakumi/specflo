@@ -1,6 +1,6 @@
 ---
-name: auto
-description: Use when the user wants an unattended specflo run — "auto mode", "autopilot", "run it on its own", "keep going without me", "don't stop to ask" — map that to `specflo auto`. It is an explicit, per-invocation opt-in that drives the pipeline across phase boundaries without the ask-first pause. Do NOT use for the normal attended pipeline (use the brainstorm/spec/plan/execute skills), or when the user wants to approve each boundary.
+name: specflo-auto
+description: Use when the user wants an unattended specflo run — "auto mode", "autopilot", "run it on its own", "keep going without me", "don't stop to ask" — map that to `specflo auto`. It is an explicit, per-invocation opt-in that drives the pipeline across phase boundaries without the ask-first pause. Do NOT use for the normal attended pipeline (use the specflo-brainstorm/spec/plan/execute skills), or when the user wants to approve each boundary.
 ---
 
 # auto
@@ -24,7 +24,7 @@ the emitted bootstrap is the source of truth, not this file.
 ## When NOT to use
 
 - The normal **attended** pipeline, where the user approves each phase boundary —
-  use the `brainstorm` / `spec` / `plan` / `execute` skills, which pause and wait.
+  use the `specflo-brainstorm` / `specflo-spec` / `specflo-plan` / `specflo-execute` skills, which pause and wait.
 - The user wants to review or approve before crossing a boundary — that is the
   default; do not switch to auto for them.
 
@@ -41,7 +41,7 @@ the emitted bootstrap is the source of truth, not this file.
    and its immediate next action. Obey the bootstrap's directives as written — do
    not paraphrase, second-guess, or relax them.
 3. **Do the phase work under the bootstrap.** The next-step block points at the
-   phase skill (`brainstorm` / `spec` / `plan` / `execute`) for the current phase —
+   phase skill (`specflo-brainstorm` / `specflo-spec` / `specflo-plan` / `specflo-execute`) for the current phase —
    carry the phase work with it, but under the bootstrap's **boundary override**:
    once a phase validates, advance and keep going instead of pausing.
 4. **The outer harness owns the loop, not specflo.** The seamless

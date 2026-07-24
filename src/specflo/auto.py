@@ -306,15 +306,15 @@ ALWAYS_STOP_FLOOR = (
 def _boundary_override_clause() -> str:
     """The clause superseding the phase skills' boundary-pause HARD-GATE (REQ-06).
 
-    In auto mode the brainstorm/spec/plan/execute skills' phase-boundary pause and
-    wait-for-ready gate are overridden so the run flows across the pipeline on its
-    own. The override lives only in this bootstrap; the manual reseed/checkpoint
+    In auto mode the specflo-brainstorm/spec/plan/execute skills' phase-boundary
+    pause and wait-for-ready gate are overridden so the run flows across the
+    pipeline on its own. The override lives only in this bootstrap; the manual reseed/checkpoint
     pause beat is untouched (REQ-02).
     """
     return (
         f"- {BOUNDARY_OVERRIDE_MARKER} in auto mode the phase-boundary pause and "
-        "the wait-for-ready HARD-GATE of the brainstorm/spec/plan/execute skills "
-        "are SUPERSEDED. Do not stop to ask at a phase boundary; once a phase "
+        "the wait-for-ready HARD-GATE of the specflo-brainstorm/spec/plan/execute "
+        "skills are SUPERSEDED. Do not stop to ask at a phase boundary; once a phase "
         "validates, advance and keep going across "
         "brainstorm -> spec -> plan -> execute on your own. This override applies "
         "only under this auto bootstrap - the manual pipeline's pause is unchanged."

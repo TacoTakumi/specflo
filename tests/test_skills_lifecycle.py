@@ -19,7 +19,14 @@ from agentsquire import read_stamp
 from specflo import __version__
 from specflo.cli import build_cli
 
-SKILL_NAMES = ["brainstorm", "execute", "plan", "research", "shelve", "spec"]
+SKILL_NAMES = [
+    "specflo-brainstorm",
+    "specflo-execute",
+    "specflo-plan",
+    "specflo-research",
+    "specflo-shelve",
+    "specflo-spec",
+]
 
 
 def _run(*args):
@@ -55,20 +62,20 @@ def test_mutated_install_is_detected_then_force_update_restores(fixture_roots):
     home, _ = fixture_roots
     assert _run("skills", "install").exit_code == 0
 
-    plan_md = _user_skill(home, "plan")
+    plan_md = _user_skill(home, "specflo-plan")
     plan_md.write_text(plan_md.read_text() + "\n<!-- tampered -->\n")
 
     # Drift is detected as locally-modified.
-    assert "locally-modified plan" in _run("skills", "status").output
+    assert "locally-modified specflo-plan" in _run("skills", "status").output
 
     # A plain update deliberately does NOT clobber the user's edit.
     assert _run("skills", "update").exit_code == 0
-    assert "locally-modified plan" in _run("skills", "status").output
+    assert "locally-modified specflo-plan" in _run("skills", "status").output
     assert "<!-- tampered -->" in plan_md.read_text()
 
     # --force restores it to the bundled copy.
     assert _run("skills", "update", "--force").exit_code == 0
-    assert "up-to-date plan" in _run("skills", "status").output
+    assert "up-to-date specflo-plan" in _run("skills", "status").output
     assert "<!-- tampered -->" not in plan_md.read_text()
 
 
@@ -76,7 +83,7 @@ def test_default_scope_installs_into_the_user_root(fixture_roots):
     home, project = fixture_roots
     result = _run("skills", "install")
     assert result.exit_code == 0, result.output
-    assert _user_skill(home, "plan").is_file()
+    assert _user_skill(home, "specflo-plan").is_file()
     assert not (project / ".claude" / "skills").exists()
 
 
@@ -84,7 +91,7 @@ def test_scope_project_flag_routes_to_the_project_root(fixture_roots):
     home, project = fixture_roots
     result = _run("skills", "install", "--scope", "project")
     assert result.exit_code == 0, result.output
-    assert (project / ".claude" / "skills" / "plan" / "SKILL.md").is_file()
+    assert (project / ".claude" / "skills" / "specflo-plan" / "SKILL.md").is_file()
     assert not (home / ".claude" / "skills").exists()
 
 

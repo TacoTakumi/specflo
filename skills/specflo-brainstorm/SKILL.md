@@ -1,5 +1,5 @@
 ---
-name: brainstorm
+name: specflo-brainstorm
 description: Use at the start of a specflo project's brainstorm phase, when turning a fuzzy idea into a captured, validated understanding before any spec or code. Triggers include "let's figure out what we're building", "brainstorm X", or `specflo status` showing the brainstorm phase. Do NOT use for trivial fixes or when a sufficient written brief already exists.
 ---
 
@@ -94,7 +94,7 @@ explicitly approved. This applies regardless of how simple the work looks.
 
 Research is done by a **research subagent**, not by you inline — that keeps raw
 search noise out of this conversation. Dispatch a **general-purpose** subagent and
-instruct it to follow the `skills/research` skill (it runs with least-privilege,
+instruct it to follow the `skills/specflo-research` skill (it runs with least-privilege,
 read/research-only tools and owns wiki search + save-back) — do **not** pass
 `subagent_type: research`; research is a *skill*, not an agent type, and that call
 fails. Hand it one research question and fold the **digest** it returns into the
@@ -111,7 +111,7 @@ Two triggers:
   inline-fast and report the result; no per-check permission prompt.
 
 **Portability / degraded mode:** the dispatch is the only harness-specific part.
-Where subagents aren't available, run the `skills/research` process inline instead
+Where subagents aren't available, run the `skills/specflo-research` process inline instead
 (accept the added noise). Where the wiki is absent, research proceeds web-only.
 
 ## Anti-sycophancy

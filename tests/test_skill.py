@@ -1,6 +1,6 @@
 from pathlib import Path
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "brainstorm" / "SKILL.md"
+SKILL = Path(__file__).resolve().parents[1] / "skills" / "specflo-brainstorm" / "SKILL.md"
 
 
 def test_skill_file_exists():
@@ -43,7 +43,7 @@ def test_brainstorm_skill_preflight_reflects_new_scaffolds():
 def test_brainstorm_skill_weaves_in_research():
     text = SKILL.read_text()
     lower = text.lower()
-    assert "skills/research" in text, "brainstorm skill must reference the research skill path"
+    assert "skills/specflo-research" in text, "brainstorm skill must reference the research skill path"
     for phrase in ["landscape scan", "opportunistic", "research subagent"]:
         assert phrase in lower, f"missing research seam phrase: {phrase}"
 

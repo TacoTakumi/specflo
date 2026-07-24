@@ -1,5 +1,5 @@
 ---
-name: plan
+name: specflo-plan
 description: Use at a specflo project's plan phase, when turning a validated spec into a dependency-ordered, testable task plan before any code. Triggers include "write the plan", "break this into tasks", or `specflo status` showing the plan phase. Do NOT use for trivial fixes or before a spec has been validated.
 ---
 
