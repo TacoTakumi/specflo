@@ -105,6 +105,13 @@ describe("the abort at the armed auto anchored seam", () => {
     // the fire and aborts; seam two, declared while the fire still holds at
     // waitForIdle, does neither; and once the fire lands and re-anchors, the
     // next seam aborts and fires again.
+    //
+    // This is also the third state pi-fixes-2 REQ-06 holds unchanged, and the
+    // one the dispatch fix must not have swallowed: the latch still exists and
+    // still latches, for a fire that is *genuinely* in flight. What moved is
+    // only its release point - here the fire is parked at waitForIdle, which
+    // the test controls, so it is held for real and seam two must record
+    // nothing.
     const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
     const { replacement } = await anchorChain(pi, fake);
 
@@ -216,6 +223,10 @@ describe("the abort at the armed auto anchored seam", () => {
   });
 });
 
+// Two of the three states pi-fixes-2 REQ-06 holds unchanged (the third is the
+// parked-fire case above). Neither touches the reseed, so neither should have
+// moved when it started dispatching - which is exactly why they are re-run
+// against the reshaped fake rather than taken on trust.
 describe("the notify-only branches stay notify-only", () => {
   it("an unanchored armed auto seam: one notice, zero aborts, zero sessions (REQ-04)", async () => {
     // pi joined the run cold - nothing may end the run or clear the session;
@@ -278,5 +289,45 @@ describe("the armed path stays phase-blind and injection-free", () => {
       !/tool_?results?/i.test(source),
       "the extension must never touch tool results",
     );
+  });
+});
+
+describe("the reseed is dispatched, not awaited", () => {
+  // REQ-05 structural acceptance, alongside the scans above. The behavioural
+  // half is the never-settling case at the top of this file; this one catches
+  // the shape being quietly restored. Reinstating the await is a one-word edit
+  // that turns the chain back into a single fire and breaks nothing else -
+  // every unit case that does not park a fire keeps passing - so the shape is
+  // worth pinning in the source directly.
+  const source = fs.readFileSync(path.join(import.meta.dirname, "..", "src", "index.ts"), "utf8");
+
+  /** reseedInto's body: its signature through the first column-zero brace. */
+  const reseedBody = (): string => {
+    const start = source.indexOf("async function reseedInto");
+    assert.notEqual(start, -1, "reseedInto must exist in src/index.ts");
+    const end = source.indexOf("\n}", start);
+    assert.notEqual(end, -1, "reseedInto must close at column zero");
+    // The doc comment sits above the signature and is deliberately excluded:
+    // it discusses awaiting at length, and prose must not answer this.
+    return source.slice(start, end + 2);
+  };
+
+  it("awaits the clear and nothing else - never the reseed send", () => {
+    const body = reseedBody();
+    // Whitespace-tolerant: the call is formatted across lines.
+    assert.match(body, /session\s*\.\s*sendMessage\(/, "the scan must be reading the reseed send");
+    const awaits = body.match(/\bawait\b/g) ?? [];
+    assert.deepEqual(
+      awaits,
+      ["await"],
+      `reseedInto must hold exactly one await, the clear's; found ${awaits.length}:\n${body}`,
+    );
+    assert.match(body, /await ctx\.newSession\(/, "and that one await is ctx.newSession");
+  });
+
+  it("hands the dispatched send its own catch", () => {
+    // A dispatched promise nobody awaits takes pi's process down when it
+    // rejects. The behaviour that catch buys is pinned above (REQ-04).
+    assert.match(reseedBody(), /\.catch\(/, "the dispatched send must handle its own rejection");
   });
 });
