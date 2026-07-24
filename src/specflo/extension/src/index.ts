@@ -136,16 +136,34 @@ function runSpecflo(args: string[], cwd: string): Promise<string | null> {
  * text verbatim, one message that runs one turn (REQ-27). Every clear anchors
  * the chain: the replacement context is the only command-capable handle the
  * next armed seam can fire through (REQ-29, REQ-31).
+ *
+ * The reseed is *dispatched, not awaited*, and that is load-bearing.
+ * `sendMessage(..., {triggerTurn: true})` settles only when the run that
+ * message starts ends - minutes, in a real auto pass. Awaiting it held
+ * `ctx.newSession` open for that whole run, so the fire's `finally` never
+ * cleared `fireInFlight` in time and every seam the reseeded run declared was
+ * latched out: the chain fired exactly once (pi-fixes-2 REQ-01, REQ-02).
+ * Returning at delivery keeps the latch to milliseconds and holds no
+ * `newSession` frame for the child run's life (REQ-05). A failed dispatch
+ * drops the anchor, so the next armed auto seam degrades to the bootstrap
+ * notice instead of firing through a session that never received anything
+ * (REQ-04).
  */
 async function reseedInto(ctx: ExtensionCommandContext, payload: string): Promise<void> {
   await ctx.newSession({
     withSession: async (session) => {
       liveAnchor = session;
-      await session.sendMessage(
-        // Verbatim: the CLI's text, unedited and untemplated.
-        { customType: RESEED_MESSAGE_TYPE, content: payload, display: false },
-        { triggerTurn: true },
-      );
+      void session
+        .sendMessage(
+          // Verbatim: the CLI's text, unedited and untemplated.
+          { customType: RESEED_MESSAGE_TYPE, content: payload, display: false },
+          { triggerTurn: true },
+        )
+        .catch(() => {
+          // Only this callback's own anchor: a later clear may already have
+          // re-anchored the chain, and that one is live.
+          if (liveAnchor === session) liveAnchor = null;
+        });
     },
   });
 }

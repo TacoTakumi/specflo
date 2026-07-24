@@ -77,6 +77,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   so nobody runs the wrong one or assumes both are required.
 
 ### Fixed
+- **The unattended auto chain now fires at every seam, not just the first.**
+  The pi extension's reseed waited for the whole agent run its payload
+  started before releasing the in-flight latch, and that run is a full auto
+  pass - minutes. Every seam declared during it was latched out, so an auto
+  run cleared once and then sailed on with the context filling up and nothing
+  to show why. The reseed is now dispatched rather than awaited: the latch
+  releases as soon as the replacement session has the payload, so the next
+  seam fires normally. A reseed that fails to send drops the anchor, and the
+  next armed seam falls back to the notice naming `/specflo-continue auto`.
+  Nothing else moves - arming, the threshold, seam detection and the attended
+  and unanchored branches are unchanged.
 - **An unattended auto seam now ends the running agent.** The pi extension's
   armed, anchored seam during an auto run used to park the clear behind
   waitForIdle and let the run keep going, so the agent sailed past the
