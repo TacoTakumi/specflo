@@ -35,7 +35,7 @@ import {
   cleanups,
   coldStart,
   continueHandler,
-  createFakeReplacement,
+  replacementFactory,
   resetAfterEach,
   status,
   until,
@@ -78,8 +78,10 @@ describe("the unattended fire", () => {
       ["auto --json"],
       "one pass report between the seam and the clear, and nothing else",
     );
-    const second = createFakeReplacement(fake.root);
-    await (replacement.ctx.newSessionCalls[0] as any).withSession(second.ctx);
+    // The fire's clear built the next session and ran withSession against it,
+    // the way pi does; what it delivered there is what the fake recorded.
+    const second = replacement.ctx.replacements[0];
+    assert.ok(second, "the fire's clear must have handed withSession a replacement");
     assert.equal(second.delivered.length, 1, "one message into the new session");
     assert.equal(
       Buffer.compare(Buffer.from(second.delivered[0].message.content), Buffer.from(AUTO_PAYLOAD)),
@@ -118,11 +120,7 @@ describe("the unattended fire", () => {
     // replaces the session; the fire fails, and the chain degrades to the
     // bootstrap notice instead of erroring forever.
     const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
-    fake.setStdout(autoReport());
-    const commandCtx = createFakeCtx({ cwd: fake.root });
-    await continueHandler(pi)("auto", commandCtx);
-    const stale = createFakeReplacement(fake.root, { idleRejects: true });
-    await (commandCtx.newSessionCalls[0] as any).withSession(stale.ctx);
+    const { replacement: stale } = await anchorChain(pi, fake, { idleRejects: true });
 
     const first = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
     // Let the detached fire hit the rejection and drop the anchor.
@@ -140,15 +138,15 @@ describe("the unattended fire", () => {
     // The user-typed `/specflo-continue auto`: the anchoring opt-in.
     const { fake, pi } = await coldStart(status({ autoUnderWay: true }));
     fake.setStdout(autoReport());
-    const ctx = createFakeCtx({ cwd: fake.root });
+    const ctx = createFakeCtx({ cwd: fake.root, replacement: replacementFactory() });
 
     await continueHandler(pi)("auto", ctx);
 
     assert.equal(ctx.newSessionCalls.length, 1, "a continuable pass clears exactly once");
     const sinceColdStart = fake.invocations().slice(2);
     assert.deepEqual(sinceColdStart, ["auto --json"], "one pass report, and nothing else");
-    const replacement = createFakeReplacement(fake.root);
-    await (ctx.newSessionCalls[0] as any).withSession(replacement.ctx);
+    const replacement = ctx.replacements[0];
+    assert.ok(replacement, "the clear must have handed withSession a replacement");
     assert.equal(replacement.delivered.length, 1, "one message into the new session");
     assert.equal(
       Buffer.compare(

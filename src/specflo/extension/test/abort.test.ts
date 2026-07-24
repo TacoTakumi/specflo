@@ -21,7 +21,6 @@ import {
   armedTurn,
   autoReport,
   calls,
-  createFakeReplacement,
   coldStart,
   resetAfterEach,
   status,
@@ -122,10 +121,11 @@ describe("the abort at the armed auto anchored seam", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
     assert.equal(replacement.ctx.newSessionCalls.length, 1, "one abort, one continuation");
 
-    // The fire's clear re-anchors, as production's withSession does; the
-    // latch is released, so a later seam ends the next run too.
-    const next = createFakeReplacement(fake.root);
-    await (replacement.ctx.newSessionCalls[0] as any).withSession(next.ctx);
+    // The fire's own clear re-anchored the chain on the way through - the fake
+    // ran withSession against the replacement it built, as pi does - so the
+    // latch is released and a later seam ends the next run too.
+    const next = replacement.ctx.replacements[0];
+    assert.ok(next, "the fire's clear must have handed withSession a replacement");
     const later = await armedTurn(pi, fake, status({ done: 14, autoUnderWay: true }));
 
     assert.equal(later.abortCalls.length, 1, "a post-release seam aborts again");

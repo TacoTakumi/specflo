@@ -106,28 +106,54 @@ export function continueHandler(pi: Awaited<ReturnType<typeof coldStart>>["pi"])
   return command.handler as (args: string, ctx: any) => Promise<void>;
 }
 
+/** Options a replacement carries down the chain it builds. */
+export interface ReplacementOptions {
+  idleRejects?: boolean;
+}
+
 /**
  * A fake ReplacedSessionContext: everything a clear's withSession receives and
  * a later fire uses - ui, cwd, waitForIdle, newSession, sendMessage. The test
  * controls when waitForIdle releases, so it can swap the fake specflo's stdout
  * between the seam poll and the fire's pass report.
+ *
+ * This is the replacement factory `createFakeCtx` takes: a context built here
+ * builds the *next* one the same way, so a fire's own clear re-anchors the
+ * chain without a test calling `withSession` by hand (REQ-07).
  */
-export function createFakeReplacement(cwd: string, options: { idleRejects?: boolean } = {}) {
+export function createFakeReplacement(cwd: string, options: ReplacementOptions = {}) {
   let releaseIdle: () => void = () => {};
   const idle = options.idleRejects
     ? Promise.reject(new Error("stale context"))
     : new Promise<void>((resolve) => (releaseIdle = resolve));
   if (options.idleRejects) idle.catch(() => {}); // observed via waitForIdle only
   const delivered: Array<{ message: any; options: any }> = [];
-  const ctx = createFakeCtx({ cwd }) as FakeCtx & {
+  const ctx = createFakeCtx({
+    cwd,
+    replacement: (next: string) => createFakeReplacement(next, options),
+  }) as FakeCtx & {
     waitForIdle(): Promise<void>;
     sendMessage(message: any, opts: any): Promise<void>;
+    sendUserMessage(content: any, opts: any): Promise<void>;
   };
   ctx.waitForIdle = () => idle;
   ctx.sendMessage = async (message: any, opts: any) => {
     delivered.push({ message, options: opts });
   };
+  // Recorded alongside sendMessage so "one message into the new session" still
+  // catches a delivery that went out the user-message door instead.
+  ctx.sendUserMessage = async (content: any, opts: any) => {
+    delivered.push({ message: { content }, options: opts });
+  };
   return { ctx, releaseIdle, delivered };
+}
+
+/** What :func:`createFakeReplacement` returns; the chain's link type. */
+export type FakeReplacement = ReturnType<typeof createFakeReplacement>;
+
+/** The replacement factory to hand `createFakeCtx`, carrying ``options``. */
+export function replacementFactory(options: ReplacementOptions = {}) {
+  return (cwd: string) => createFakeReplacement(cwd, options);
 }
 
 /** Poll until ``predicate`` holds or ~2s pass. */
@@ -140,16 +166,20 @@ export async function until(predicate: () => boolean): Promise<void> {
 
 /**
  * Anchor the chain the way a real clear does: run the auto handler against a
- * recording ctx, then run the recorded withSession against a fake replacement
- * context - which the extension stashes as the live anchor.
+ * recording ctx whose newSession replaces the session itself, the way pi's
+ * does - so the extension stashes the replacement it was handed as the live
+ * anchor, with nothing invoked by hand afterwards (REQ-07).
  */
-export async function anchorChain(pi: Awaited<ReturnType<typeof coldStart>>["pi"], fake: any) {
+export async function anchorChain(
+  pi: Awaited<ReturnType<typeof coldStart>>["pi"],
+  fake: any,
+  options: ReplacementOptions = {},
+) {
   fake.setStdout(autoReport());
-  const commandCtx = createFakeCtx({ cwd: fake.root });
+  const commandCtx = createFakeCtx({ cwd: fake.root, replacement: replacementFactory(options) });
   await continueHandler(pi)("auto", commandCtx);
   assert.equal(commandCtx.newSessionCalls.length, 1, "the anchoring clear must open a session");
-  const replacement = createFakeReplacement(fake.root);
-  await (commandCtx.newSessionCalls[0] as any).withSession(replacement.ctx);
+  const replacement = commandCtx.replacements[0] as FakeReplacement;
   return { commandCtx, replacement };
 }
 

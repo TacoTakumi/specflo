@@ -79,9 +79,29 @@ export function createFakePi(): FakePi {
 
 // --- fake extension context -------------------------------------------------
 
+/**
+ * What a replacement factory returns: at minimum the context pi hands to the
+ * ``withSession`` callback. Typed loosely on purpose - the rich factory
+ * (`createFakeReplacement`) lives in auto-helpers.ts, which imports this
+ * module, so naming its type here would close a cycle.
+ */
+export interface FakeReplacementLike {
+  ctx: any;
+}
+
+/** Builds the replacement session ``newSession`` hands to ``withSession``. */
+export type ReplacementFactory = (cwd: string) => FakeReplacementLike;
+
 export interface FakeCtxOptions {
   cwd?: string;
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
+  /**
+   * Makes ``newSession`` behave the way pi does: build a replacement session
+   * and run the caller's ``withSession`` against it before resolving. Left
+   * unset, ``newSession`` only records - which is all a context that is never
+   * expected to clear needs.
+   */
+  replacement?: ReplacementFactory;
 }
 
 export interface FakeCtx {
@@ -100,7 +120,9 @@ export interface FakeCtx {
   isIdle(): boolean;
   /** Sessions started via the command-context action, for REQ-05/REQ-13 counting. */
   newSessionCalls: unknown[];
-  newSession(options?: unknown): Promise<void>;
+  /** The replacement each newSession built, in order - empty without a factory. */
+  replacements: any[];
+  newSession(options?: any): Promise<void>;
   /** ctx.abort() invocations, for REQ-01/REQ-06 counting. */
   abortCalls: unknown[];
   abort(): void;
@@ -109,9 +131,11 @@ export interface FakeCtx {
 export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const newSessionCalls: unknown[] = [];
+  const replacements: any[] = [];
   const abortCalls: unknown[] = [];
+  const cwd = options.cwd ?? process.cwd();
   return {
-    cwd: options.cwd ?? process.cwd(),
+    cwd,
     mode: "rpc",
     hasUI: true,
     ui: {
@@ -135,8 +159,17 @@ export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
     getContextUsage: () => options.contextUsage,
     isIdle: () => true,
     newSessionCalls,
-    async newSession(sessionOptions?: unknown) {
+    replacements,
+    async newSession(sessionOptions?: any) {
       newSessionCalls.push(sessionOptions);
+      // pi's own ordering: the replacement session exists and the caller's
+      // withSession callback has run against it before newSession resolves.
+      // Whatever that callback leaves pending - a dispatched, un-awaited send -
+      // is still pending when the caller continues, exactly as on real pi.
+      if (options.replacement === undefined) return;
+      const replacement = options.replacement(cwd);
+      replacements.push(replacement);
+      if (sessionOptions?.withSession) await sessionOptions.withSession(replacement.ctx);
     },
     abortCalls,
     abort() {

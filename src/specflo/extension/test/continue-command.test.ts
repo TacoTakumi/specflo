@@ -14,6 +14,7 @@
 import assert from "node:assert/strict";
 import { afterEach, describe, it } from "node:test";
 
+import { replacementFactory } from "./auto-helpers.ts";
 import {
   clearSpecfloBin,
   createFakeCtx,
@@ -41,7 +42,11 @@ async function setUp(stdout: string) {
   const factory = await loadExtension(fake.bin);
   const pi = createFakePi();
   factory(pi.api);
-  return { fake, pi, ctx: createFakeCtx({ cwd: fake.root }) };
+  return {
+    fake,
+    pi,
+    ctx: createFakeCtx({ cwd: fake.root, replacement: replacementFactory() }),
+  };
 }
 
 /** The handler pi registered under `specflo-continue`. */
@@ -52,24 +57,18 @@ function continueHandler(pi: FakePi): (args: string, ctx: any) => Promise<void> 
 }
 
 /**
- * Everything the handler delivers into the session it opened, in order.
+ * Everything the handler delivered into the session it opened, in order.
  *
- * The fake ctx records the options handed to ``newSession`` but does not run
- * the ``withSession`` callback; this drives it against a recorder, so what the
- * command means to put into the replacement session is what gets asserted.
+ * The fake ctx replaces the session the way pi does - it builds the
+ * replacement and runs the handler's ``withSession`` against it - so this
+ * reads back what the command actually put there, with nothing invoked by
+ * hand afterwards (REQ-07). Both delivery doors are recorded, so a message
+ * that went out as a user message would still be counted here.
  */
-async function deliveredInto(options: any): Promise<Array<{ message: any; options: any }>> {
-  const delivered: Array<{ message: any; options: any }> = [];
-  const session = {
-    async sendMessage(message: any, opts: any) {
-      delivered.push({ message, options: opts });
-    },
-    async sendUserMessage(content: any, opts: any) {
-      delivered.push({ message: { content }, options: opts });
-    },
-  };
-  if (options?.withSession) await options.withSession(session);
-  return delivered;
+function deliveredInto(ctx: any): Array<{ message: any; options: any }> {
+  const replacement = ctx.replacements[0];
+  assert.ok(replacement, "the clear must have handed withSession a replacement session");
+  return replacement.delivered;
 }
 
 describe("the /specflo-continue command", () => {
@@ -90,7 +89,7 @@ describe("the /specflo-continue command", () => {
     // ...fed by `hook reseed --continue` and nothing else (REQ-22).
     assert.deepEqual(fake.invocations(), ["hook reseed --continue"]);
 
-    const delivered = await deliveredInto(ctx.newSessionCalls[0]);
+    const delivered = deliveredInto(ctx);
     assert.equal(delivered.length, 1, "one message into the new session");
     assert.equal(delivered[0].message.content, PAYLOAD);
     assert.equal(
@@ -106,7 +105,7 @@ describe("the /specflo-continue command", () => {
     const { pi, ctx } = await setUp(PAYLOAD);
 
     await continueHandler(pi)("", ctx);
-    const delivered = await deliveredInto(ctx.newSessionCalls[0]);
+    const delivered = deliveredInto(ctx);
 
     assert.equal(delivered[0].message.content.length, PAYLOAD.length);
     assert.equal(delivered[0].message.display, false);
