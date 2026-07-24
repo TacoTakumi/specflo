@@ -133,6 +133,46 @@ describe("the abort at the armed auto anchored seam", () => {
     next.releaseIdle();
     await until(() => next.ctx.newSessionCalls.length === 1);
   });
+
+  it("releases the latch at delivery, not at the end of the turn the reseed starts", async () => {
+    // REQ-02 / REQ-05: the fire holds fireInFlight only until the replacement
+    // is anchored and the payload handed over. A replacement whose sendMessage
+    // records its message and then never settles stands in for the child turn
+    // that reseed starts - which on a real pi runs for minutes. If the fire
+    // waits on it, the latch is held for that whole run and every later seam
+    // is swallowed: the first-fire-only bug.
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    const { replacement } = await anchorChain(pi, fake);
+    // The anchoring clear's own send has already settled; the flag is read at
+    // send time, so from here every reseed the chain delivers stays pending.
+    replacement.options.sendNeverSettles = true;
+
+    const first = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    assert.equal(first.abortCalls.length, 1, "the first seam aborts the run");
+
+    fake.setStdout(autoReport());
+    replacement.releaseIdle();
+    await until(() => replacement.ctx.newSessionCalls.length === 1);
+
+    // The fire opened the replacement and delivered into it; its send is still
+    // pending, so everything below runs while the child turn is "in progress".
+    const next = replacement.ctx.replacements[0];
+    assert.ok(next, "the fire's clear must have handed withSession a replacement");
+    assert.equal(next.delivered.length, 1, "the payload reached the new session");
+
+    // The claim: the continuation completed, the latch released, and the next
+    // armed anchored seam fires through the anchor this fire installed.
+    const second = await armedTurn(pi, fake, status({ done: 13, autoUnderWay: true }));
+    assert.equal(
+      second.abortCalls.length,
+      1,
+      "the latch must release at delivery: the next seam aborts",
+    );
+    fake.setStdout(autoReport());
+    next.releaseIdle();
+    await until(() => next.ctx.newSessionCalls.length === 1);
+    assert.equal(next.ctx.newSessionCalls.length, 1, "and fires a second continuation");
+  });
 });
 
 describe("the notify-only branches stay notify-only", () => {

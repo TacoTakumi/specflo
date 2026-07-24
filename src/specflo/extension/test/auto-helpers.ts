@@ -106,9 +106,20 @@ export function continueHandler(pi: Awaited<ReturnType<typeof coldStart>>["pi"])
   return command.handler as (args: string, ctx: any) => Promise<void>;
 }
 
-/** Options a replacement carries down the chain it builds. */
+/**
+ * Options a replacement carries down the chain it builds.
+ *
+ * The object is shared by every link and read at call time, so a case can
+ * anchor first and then flip a flag to change what the *next* clear does.
+ */
 export interface ReplacementOptions {
   idleRejects?: boolean;
+  /**
+   * Make `sendMessage` record its message and then never settle - a payload
+   * delivered into a session whose turn is still running. What a fire does
+   * next while this hangs is REQ-02's whole question.
+   */
+  sendNeverSettles?: boolean;
 }
 
 /**
@@ -138,14 +149,17 @@ export function createFakeReplacement(cwd: string, options: ReplacementOptions =
   };
   ctx.waitForIdle = () => idle;
   ctx.sendMessage = async (message: any, opts: any) => {
+    // Recorded before the hang: the payload has been handed over either way,
+    // and only the turn it starts is still outstanding.
     delivered.push({ message, options: opts });
+    if (options.sendNeverSettles) await new Promise<void>(() => {});
   };
   // Recorded alongside sendMessage so "one message into the new session" still
   // catches a delivery that went out the user-message door instead.
   ctx.sendUserMessage = async (content: any, opts: any) => {
     delivered.push({ message: { content }, options: opts });
   };
-  return { ctx, releaseIdle, delivered };
+  return { ctx, releaseIdle, delivered, options };
 }
 
 /** What :func:`createFakeReplacement` returns; the chain's link type. */
