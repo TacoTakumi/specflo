@@ -410,6 +410,11 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 Initial public release.
 
+The **Added** list below names the headline surface. Several features that also
+shipped in 0.1.0 - shelve/resume, milestones, task supersede with dependency
+rewiring, derived doneness - are not called out there; the full pre-release
+record is under "Pre-0.1.0 development history" at the end of this file.
+
 ### Added
 - **Spec-driven pipeline CLI.** `specflo` drives a linear
   **brainstorm -> spec -> plan -> execute** loop over markdown artifacts on disk,
@@ -428,3 +433,130 @@ Initial public release.
   re-grounding an agent from on-disk state after `/clear` or resume.
 - **Skills.** `brainstorm`, `spec`, `plan`, `execute`, and a `research` subagent
   that drive each phase over the CLI.
+
+## Pre-0.1.0 development history
+
+193 commits between 2026-06-15 and 2026-07-09, reconstructed from the git log
+and the project's own artifacts. None of these points were tagged or published;
+everything below is contained in 0.1.0. It is recorded here because the
+changelog is the development history and the first three and a half weeks of it
+were otherwise missing.
+
+specflo was bootstrapped by hand-running the loop it was about to encode - a
+brainstorm, a design, and an implementation plan per slice, built test-first.
+From the session-start hook slice (2026-06-24) onward it was built with itself,
+each feature tracked as a real specflo project under `docs/projects/`.
+
+### 2026-06-15 - the CLI skeleton
+- **`init`, `new`, `status`.** The first slice: a Python/Typer CLI over a YAML
+  config and markdown artifacts, with a configurable projects dir (default
+  `docs/projects/`) and active-project tracking. The workflow was fixed as a
+  hardcoded linear phase model in `workflow.py` rather than a pluggable schema.
+- **`list` and `switch`.** Several projects can exist side by side with one
+  active, and switching is allowed at any time - what makes a monorepo workable.
+
+### 2026-06-16 - the brainstorm phase
+- **The brainstorm artifact and its CLI seam.** `brainstorm start` scaffolds
+  `brainstorm.md`; `decision add` appends decisions with stable `D-NN` ids and
+  records a supersede as an event rather than an edit, so the reasoning trail
+  survives; `validate brainstorm` is a read-only presence lint.
+- **The first skill.** The `brainstorm` skill is thin over those commands: it
+  carries the conversation and the judgment, the CLI carries the artifact I/O.
+  This set the skill-thin / CLI-heavy split the rest of the tool follows.
+- **`advance`.** Validate-then-move phase transition, first wired for
+  brainstorm -> spec.
+
+### 2026-06-17 - research woven into the brainstorm
+- **A `research` subagent.** specflo's first subagent: a portable research skill
+  that runs a landscape scan at the start of a brainstorm and opportunistic fact
+  checks during it, writing into an ungated `## Research` section of
+  `brainstorm.md`.
+
+### 2026-06-18 - the spec phase
+- **The spec artifact and CLI seam.** `spec start`, `requirement add` with
+  `REQ-NN` ids and `--from D-NN` traceability back to the decision that
+  motivated a requirement, and `validate spec` dispatched through a validator
+  registry so later phases could plug into the same seam. The `advance` gate was
+  generalized at the same time.
+- **The `spec` skill**, plus shared markdown artifact helpers factored out of
+  the brainstorm code.
+- **`guide`.** A zero-state orientation command that runs cold, before `init`,
+  so an agent that has never seen specflo can find its way in.
+
+### 2026-06-21 - checkpoints
+- **`checkpoint`.** A resume prompt derived from on-disk state, written to
+  `checkpoint.md`, refreshed after every state-mutating command, and surfaced by
+  `status` and `advance`. The refresh is best-effort by contract: it never fails
+  the command that triggered it.
+
+### 2026-06-22 - the plan phase
+- **The plan artifact.** `plan start` and `task add` with `T-NN` ids, a required
+  `Implements` field, dependencies, and supersede.
+- **`validate plan`.** Bidirectional REQ <-> task coverage (no requirement
+  without a task, no task without a requirement) and an acyclic dependency
+  check, plus a non-blocking lint for silent scope reduction.
+- **The progress state machine.** `task start`/`done`/`block`/`reopen`, a
+  deps-aware next action, and `task list`, with progress surfaced in `status`
+  and the checkpoint. The `plan` skill followed.
+
+### 2026-06-24 - the execute phase, and the pipeline closes
+- **`task show` as a progressive-disclosure brief.** One task's context
+  assembled on demand - the task, the text of the requirement it implements, its
+  dependencies - so an agent reads what it needs and not the whole plan.
+- **Execution gates.** `task done` requires the task to be in progress, a
+  reconcile check gates completion of the execute phase, and `advance` at
+  execute completes the project. The `execute` skill drove the per-task loop.
+  With this the brainstorm -> spec -> plan -> execute pipeline was closed end to
+  end.
+- **The clear-and-continue hook.** `hook reseed` emits a confirmation directive
+  plus the verbatim checkpoint; `hook print [--install]` merges the wiring into
+  Claude Code's `SessionStart` settings idempotently. A phase-end "you may clear
+  context now" affordance tells the user when it is safe. The reseed path is
+  total by contract - it never errors, and stays silent when there is nothing to
+  say.
+
+### 2026-06-27 - session start
+- **Status at session start.** The hook shows `specflo status` on a fresh
+  session and offers a new project when the active one is complete. The skills
+  gained a phase-end beat that reports the checkpoint was saved and leaves the
+  decision to advance with the user.
+
+### 2026-06-29 - shelving, scaffolding, superseding
+- **`shelve` and `resume`.** A project can be set aside with an optional reason
+  and picked back up later. Shelved state is refused by `advance`, survives a
+  `switch`, and is surfaced in `status`, `list`, the checkpoint, and the
+  session-start hook. A `shelve` skill maps stop/resume intent onto the
+  commands.
+- **`new` scaffolds `brainstorm.md`.** The first artifact now exists the moment
+  the project does, removing a startup-friction step. Terminal output was made
+  ASCII-only across the CLI in the same pass.
+- **Task supersede with dependency rewiring.** A superseded task is recognized
+  through a new `Superseded by` field, and `task rewire` repoints its dependents
+  onto the replacement, refusing duplicates and cycles. Superseding a task
+  offers the rewire command, and `task show`, `status`, and the checkpoint
+  explain a block caused by a superseded dependency.
+
+### 2026-07-02 - milestones
+- **Milestones inside a plan.** `milestone add`, `milestone list`, and
+  `milestone show`, with task membership via `task add --milestone` and `task
+  set-milestone`. Rollup, completion, and the current milestone are derived from
+  task state rather than stored.
+- **Milestone-aware validation and steering.** `validate plan` checks
+  membership, non-empty milestones, exit criteria, backward-only dependencies,
+  and union REQ coverage. `task show` defaults to the current milestone and
+  labels working ahead; `status` and the checkpoint name it; a soft boundary
+  beat suggests verifying at the end of one. Plans with no milestones stay
+  entirely dormant, guarded by a backward-compatibility test.
+
+### 2026-07-06 - honest doneness and reopen
+- **Derived doneness.** The phase -> validator map moved to a neutral module,
+  and `status`, the checkpoint, and the next-step logic now derive whether a
+  phase is done from its validator instead of trusting a stored flag. `advance`
+  is offered exactly when the current phase validates.
+- **`reopen`.** Strict-backward phase movement that also un-completes a finished
+  project, with a non-blocking heads-up about artifacts that may now be stale.
+  It refuses a shelved project, and a regression test locks that `advance`
+  gained no automatic behavior alongside it.
+
+### 2026-07-09 - release
+- **Release machinery, LICENSE, and this changelog**, cut as 0.1.0.
