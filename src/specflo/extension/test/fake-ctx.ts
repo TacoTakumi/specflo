@@ -101,11 +101,15 @@ export interface FakeCtx {
   /** Sessions started via the command-context action, for REQ-05/REQ-13 counting. */
   newSessionCalls: unknown[];
   newSession(options?: unknown): Promise<void>;
+  /** ctx.abort() invocations, for REQ-01/REQ-06 counting. */
+  abortCalls: unknown[];
+  abort(): void;
 }
 
 export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const newSessionCalls: unknown[] = [];
+  const abortCalls: unknown[] = [];
   return {
     cwd: options.cwd ?? process.cwd(),
     mode: "rpc",
@@ -133,6 +137,10 @@ export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
     newSessionCalls,
     async newSession(sessionOptions?: unknown) {
       newSessionCalls.push(sessionOptions);
+    },
+    abortCalls,
+    abort() {
+      abortCalls.push(true);
     },
   };
 }
