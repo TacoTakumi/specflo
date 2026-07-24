@@ -120,6 +120,11 @@ export interface ReplacementOptions {
    * next while this hangs is REQ-02's whole question.
    */
   sendNeverSettles?: boolean;
+  /**
+   * Make `sendMessage` reject - the dispatch that never lands. A session that
+   * received nothing is no anchor, so REQ-04 asks what the chain does next.
+   */
+  sendRejects?: boolean;
 }
 
 /**
@@ -153,6 +158,7 @@ export function createFakeReplacement(cwd: string, options: ReplacementOptions =
     // and only the turn it starts is still outstanding.
     delivered.push({ message, options: opts });
     if (options.sendNeverSettles) await new Promise<void>(() => {});
+    if (options.sendRejects) throw new Error("the reseed never landed");
   };
   // Recorded alongside sendMessage so "one message into the new session" still
   // catches a delivery that went out the user-message door instead.

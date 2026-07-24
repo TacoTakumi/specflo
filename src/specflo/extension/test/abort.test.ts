@@ -173,6 +173,47 @@ describe("the abort at the armed auto anchored seam", () => {
     await until(() => next.ctx.newSessionCalls.length === 1);
     assert.equal(next.ctx.newSessionCalls.length, 1, "and fires a second continuation");
   });
+
+  it("degrades to the bootstrap notice when the reseed dispatch fails", async () => {
+    // REQ-04: dispatching rather than awaiting means a failed send is nobody's
+    // return value, so it has to be caught where it is thrown. A session that
+    // received nothing is no anchor: the .catch drops it, and the next armed
+    // auto seam falls back to the branch pi joining a run cold already takes -
+    // one notice naming the command that re-anchors, nothing ended, nothing
+    // cleared. The rejection must also stay inside the extension: an escaped
+    // one takes pi's whole process down.
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown) => rejections.push(reason);
+    process.on("unhandledRejection", onRejection);
+    try {
+      const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+      const { replacement } = await anchorChain(pi, fake);
+      // The anchoring clear's own send already landed; from here every reseed
+      // the chain dispatches rejects.
+      replacement.options.sendRejects = true;
+
+      await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+      fake.setStdout(autoReport());
+      replacement.releaseIdle();
+      await until(() => replacement.ctx.newSessionCalls.length === 1);
+      // Let the rejection reach the .catch and drop the anchor.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+
+      const later = await armedTurn(pi, fake, status({ done: 13, autoUnderWay: true }));
+
+      assert.equal(later.abortCalls.length, 0, "a dropped anchor must not end the run");
+      assert.equal(later.newSessionCalls.length, 0, "and must not clear");
+      const notices = calls(later, "notify");
+      assert.equal(notices.length, 1, "exactly one bootstrap notice");
+      assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+
+      // Node reports an unhandled rejection a tick or two late; give it room.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      assert.deepEqual(rejections, [], "the failed dispatch must not escape the extension");
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
 });
 
 describe("the notify-only branches stay notify-only", () => {
