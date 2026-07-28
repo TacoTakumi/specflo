@@ -8,6 +8,14 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.5.1]
+
+### Changed
+- **`specflo guide` drops the parenthetical about the memory snippet being
+  static.** The line telling you to paste the snippet into your agent memory
+  file no longer trails "(static - no version to keep in sync)", which read as
+  an aside about specflo's internals rather than instruction.
+
 ## [0.5.0]
 
 ### Added

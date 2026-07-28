@@ -468,8 +468,7 @@ def guide_(
         "specflo - a spec-driven software-engineering workflow.",
         "",
         "Paste this near the top of your agent memory file (CLAUDE.md / AGENTS.md)\n"
-        "once, so a fresh agent always knows specflo is here (static - no version to\n"
-        "keep in sync):",
+        "once, so a fresh agent always knows specflo is here:",
         rule,
         data["memory_snippet"],
         rule,
