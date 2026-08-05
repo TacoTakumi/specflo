@@ -210,6 +210,58 @@ def test_validate_ignores_superseded_tasks(root, cfg, project):
     assert plan.validate_plan(root, cfg, project) == []
 
 
+def test_validate_resolves_superseded_citation_one_hop(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)                                      # REQ-01
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                       # T-01
+    plan.start_task(root, cfg, project, "T-01")
+    plan.done_task(root, cfg, project, "T-01")
+    spec.add_requirement(root, cfg, project, "better", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-23")                  # REQ-02 (active)
+    assert plan.validate_plan(root, cfg, project) == []      # no citation issue, REQ-02 covered
+    assert plan.reconcile_issues(root, cfg, project) == []   # the `validate execute` path
+
+
+def test_validate_resolves_superseded_citation_multi_hop(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)                                      # REQ-01
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                       # T-01
+    spec.add_requirement(root, cfg, project, "v2", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-23")                  # REQ-02
+    spec.add_requirement(root, cfg, project, "v3", acceptance="c",
+                         supersedes="REQ-02", today="2026-06-23")                  # REQ-03 (active)
+    assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_validate_flags_unknown_citation_with_existing_text(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Implements: REQ-01", "- Implements: REQ-99"))
+    issues = plan.validate_plan(root, cfg, project)
+    assert "T-01 implements REQ-99, which is not an active requirement." in issues
+    assert any("REQ-01" in i and "not implemented" in i for i in issues)
+
+
+def test_validate_flags_citation_into_supersession_cycle(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=2)                                      # REQ-01, REQ-02
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    # hand-craft a REQ-01 <-> REQ-02 supersession cycle in the spec
+    sp = spec.spec_path(root, cfg, project)
+    doc = sp.read_text()
+    doc = doc.replace("- Status: active", "- Status: superseded by REQ-02", 1)
+    doc = doc.replace("- Status: active", "- Status: superseded by REQ-01", 1)
+    sp.write_text(doc)
+    issues = plan.validate_plan(root, cfg, project)  # completing proves termination
+    assert "T-01 implements REQ-01, which is not an active requirement." in issues
+
+
 def test_plan_warnings_flags_scope_reduction_vocab(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=1)
     plan.start_plan(root, cfg, project, today="2026-06-22")

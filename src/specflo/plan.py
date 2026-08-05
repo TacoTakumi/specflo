@@ -246,16 +246,19 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if not sp.is_file():
         issues.append("spec.md not found — coverage cannot be checked.")
     else:
-        active_reqs = spec_mod.active_requirement_ids(sp.read_text())
+        spec_doc = sp.read_text()
+        active_reqs = spec_mod.active_requirement_ids(spec_doc)
+        smap = spec_mod.supersession_map(spec_doc)
         covered: set[str] = set()
         for t in active:
             if not t.implements:
                 issues.append(f"{t.id} implements no requirement (needs Implements: REQ-NN).")
             for req in t.implements:
-                if req not in active_reqs:
+                resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
+                if resolved is None:
                     issues.append(f"{t.id} implements {req}, which is not an active requirement.")
                 else:
-                    covered.add(req)
+                    covered.add(resolved)
         for req in active_reqs:
             if req not in covered:
                 issues.append(f"{req} is not implemented by any task.")
