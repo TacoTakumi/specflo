@@ -280,6 +280,43 @@ def test_validate_flags_citation_into_supersession_cycle(root, cfg, project):
     assert "T-01 implements REQ-01, which is not an active requirement." in issues
 
 
+def test_task_brief_resolves_superseded_citation(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)                                      # REQ-01
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                       # T-01
+    spec.add_requirement(root, cfg, project, "better", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-23")                  # REQ-02 (active)
+    brief = plan.task_brief(root, cfg, project)
+    req = brief["requirements"][0]
+    assert req["id"] == "REQ-01"
+    assert req["resolved"] == "REQ-02"
+    assert "### REQ-02 — better" in req["section"]     # the live section
+    rendered = plan.render_task_brief(brief)
+    assert "Implements: REQ-01 -> superseded by REQ-02" in rendered
+    assert "### REQ-02 — better" in rendered
+    assert "### REQ-01 — req 0" not in rendered        # stale section not presented as live
+
+
+def test_task_brief_all_active_carries_no_chain_annotation(root, cfg, project):
+    _good_plan(root, cfg, project)
+    brief = plan.task_brief(root, cfg, project, "T-01")
+    assert "resolved" not in brief["requirements"][0]
+    assert "superseded by" not in plan.render_task_brief(brief)
+
+
+def test_task_brief_dead_end_citation_keeps_fallback(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Implements: REQ-01", "- Implements: REQ-99"))
+    rendered = plan.render_task_brief(plan.task_brief(root, cfg, project))
+    assert "### REQ-99 - (not found in spec)" in rendered
+    assert "superseded by" not in rendered
+
+
 def test_resolution_notes_lists_resolved_citations(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=1)                                      # REQ-01
     plan.start_plan(root, cfg, project, today="2026-06-22")

@@ -1111,11 +1111,18 @@ def render_task_brief(brief: dict) -> str:
     header = f"{t['id']} - {t['text']}  [{t['progress']}]"
     if brief.get("working_ahead"):
         header += "  — working ahead (later milestone than current)"
+    resolutions = {
+        r["id"]: r["resolved"] for r in brief["requirements"] if r.get("resolved")
+    }
+    implements = [
+        f"{req} -> superseded by {resolutions[req]}" if req in resolutions else req
+        for req in t["implements"]
+    ]
     lines = [
         header,
         f"  Acceptance: {t['acceptance']}",
         f"  Verify:     {t['verify']}",
-        f"  Implements: {', '.join(t['implements'])}",
+        f"  Implements: {', '.join(implements)}",
     ]
     if t["depends_on"]:
         lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
@@ -1178,10 +1185,22 @@ def task_brief(
 
     sp = spec_mod.spec_path(root, cfg, slug)
     spec_doc = sp.read_text() if sp.is_file() else ""
-    requirements = [
-        {"id": req, "section": spec_mod.requirement_section(spec_doc, req)}
-        for req in task.implements
-    ]
+    active_reqs = spec_mod.active_requirement_ids(spec_doc)
+    smap = spec_mod.supersession_map(spec_doc)
+    requirements = []
+    for req in task.implements:
+        resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
+        if resolved is not None and resolved != req:
+            # superseded citation: present the ultimate active superseder's
+            # section as the live requirement, never the stale one
+            requirements.append({
+                "id": req, "resolved": resolved,
+                "section": spec_mod.requirement_section(spec_doc, resolved),
+            })
+        else:
+            requirements.append(
+                {"id": req, "section": spec_mod.requirement_section(spec_doc, req)}
+            )
     return {
         "task": {
             "id": task.id, "text": task.text, "acceptance": task.acceptance,
