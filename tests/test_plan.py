@@ -964,6 +964,18 @@ def test_validate_flags_req_not_covered_by_any_milestone(root, cfg, project):
     assert any("REQ-02" in i and "milestone" in i.lower() for i in issues)
 
 
+def test_validate_milestone_coverage_resolves_superseded_citation(root, cfg, project):
+    # Member task cites REQ-01, later superseded by active REQ-02: the citation
+    # covers REQ-02 in the milestone union too (REQ-03) — no coverage issue.
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])],
+        [_raw_task_entry("T-01", milestone="M-01", implements="REQ-01")],
+        n_reqs=1)
+    spec.add_requirement(root, cfg, project, "better", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-23")   # REQ-02 (active)
+    assert plan.validate_plan(root, cfg, project) == []
+
+
 def test_validate_milestone_union_equals_active_reqs_when_valid(root, cfg, project):
     # A fully valid milestoned plan: union of milestone REQ sets == active REQ set,
     # so no coverage issue is raised (REQ-12, positive case).

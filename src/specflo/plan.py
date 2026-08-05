@@ -328,7 +328,12 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
         # that belongs to a milestone. (sp/active_reqs come from the coverage block
         # above; active_reqs is bound iff the spec file exists.)
         if sp.is_file():
-            milestone_reqs = {r for t in active if t.milestone in order for r in t.implements}
+            milestone_reqs = {
+                resolved
+                for t in active if t.milestone in order
+                for r in t.implements
+                if (resolved := spec_mod.resolve_requirement(r, active_reqs, smap)) is not None
+            }
             for req in active_reqs:
                 if req not in milestone_reqs:
                     issues.append(f"{req} is not covered by any milestone's tasks.")
