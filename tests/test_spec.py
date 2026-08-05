@@ -299,3 +299,55 @@ def test_requirement_section_returns_block_or_none():
     assert "REQ-02" not in block        # stops at the next entry
     assert "Boundaries" not in block    # stops at the next H2
     assert spec.requirement_section(doc, "REQ-99") is None
+
+
+def test_supersession_map_parses_pointers_fence_aware():
+    doc = (
+        "## Requirements\n"
+        "### REQ-01 — old\n- Acceptance: a\n- Status: superseded by REQ-02\n\n"
+        "### REQ-02 — new\n- Acceptance: b\n- Status: active\n\n"
+        "```\n### REQ-03 — fenced\n- Status: superseded by REQ-04\n```\n"
+    )
+    assert spec.supersession_map(doc) == {"REQ-01": "REQ-02"}
+
+
+def test_supersession_map_and_resolution_from_real_doc(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-18")
+    spec.add_requirement(root, cfg, project, "a", acceptance="a", today="2026-06-18")                        # REQ-01
+    spec.add_requirement(root, cfg, project, "b", acceptance="b", supersedes="REQ-01", today="2026-06-18")  # REQ-02
+    spec.add_requirement(root, cfg, project, "c", acceptance="c", supersedes="REQ-02", today="2026-06-18")  # REQ-03
+    doc = _spath(root, cfg, project).read_text()
+    smap = spec.supersession_map(doc)
+    assert smap == {"REQ-01": "REQ-02", "REQ-02": "REQ-03"}
+    active = spec.active_requirement_ids(doc)
+    assert spec.resolve_requirement("REQ-01", active, smap) == "REQ-03"  # multi-hop
+
+
+def test_resolve_requirement_active_passthrough():
+    assert spec.resolve_requirement("REQ-01", ["REQ-01"], {}) == "REQ-01"
+
+
+def test_resolve_requirement_one_hop():
+    smap = {"REQ-01": "REQ-02"}
+    assert spec.resolve_requirement("REQ-01", ["REQ-02"], smap) == "REQ-02"
+
+
+def test_resolve_requirement_multi_hop():
+    smap = {"REQ-01": "REQ-02", "REQ-02": "REQ-03"}
+    assert spec.resolve_requirement("REQ-01", ["REQ-03"], smap) == "REQ-03"
+
+
+def test_resolve_requirement_unknown_id_returns_none():
+    assert spec.resolve_requirement("REQ-99", ["REQ-01"], {}) is None
+
+
+def test_resolve_requirement_cycle_returns_none():
+    # hand-crafted cycle (the CLI never writes one); must terminate, not hang
+    smap = {"REQ-01": "REQ-02", "REQ-02": "REQ-01"}
+    assert spec.resolve_requirement("REQ-01", [], smap) is None
+
+
+def test_resolve_requirement_missing_target_returns_none():
+    # pointer to an entry that does not exist (never lands on an active id)
+    smap = {"REQ-01": "REQ-02"}
+    assert spec.resolve_requirement("REQ-01", [], smap) is None

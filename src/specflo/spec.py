@@ -262,6 +262,51 @@ def active_requirement_ids(doc: str) -> list[str]:
     return active
 
 
+def supersession_map(doc: str) -> dict[str, str]:
+    """Map each superseded requirement id to its superseder, from the entries'
+    ``- Status: superseded by REQ-NN`` pointers. The Status direction is the
+    single source — ``Supersedes`` back-links are never consulted."""
+    lines = doc.splitlines(keepends=True)
+    heads: list[tuple[int, str]] = []
+    for i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if in_fence:
+            continue
+        m = _REQ_ID_RE.match(line)
+        if m:
+            heads.append((i, m.group(1)))
+    smap: dict[str, str] = {}
+    for n, (start, req_id) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        for i in range(start + 1, end):
+            if lines[i].startswith("## "):
+                end = i
+                break
+        block = lines[start:end]
+        status = next((ln for ln in block if ln.startswith("- Status:")), "")
+        m = re.search(r"superseded by (REQ-\d+)", status)
+        if m:
+            smap[req_id] = m.group(1)
+    return smap
+
+
+def resolve_requirement(
+    req_id: str, active_ids: list[str], smap: dict[str, str]
+) -> str | None:
+    """Follow the supersession chain from ``req_id`` to the ultimate ACTIVE id.
+
+    Returns the id itself when already active, the end of the chain when it
+    lands on an active requirement, and None on any dead end — an unknown id,
+    a pointer to a missing entry, or a cycle (visited-set guard)."""
+    visited = {req_id}
+    current = req_id
+    while current not in active_ids:
+        current = smap.get(current)
+        if current is None or current in visited:
+            return None
+        visited.add(current)
+    return current
+
+
 def requirement_section(doc: str, req_id: str) -> str | None:
     """Return the ``### {req_id} —`` entry block (header + its ``- `` field
     lines), or None if absent. Fence-aware; stops at the next ``###``/``## ``."""
