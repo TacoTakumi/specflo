@@ -1158,6 +1158,41 @@ def test_validate_execute_prints_resolution_notes(tmp_path, monkeypatch):
     assert data["notes"] == ["T-01 covers REQ-02 via superseded REQ-01"]
 
 
+def test_supersession_mid_execute_unsticks_validate_and_advance(tmp_path, monkeypatch):
+    # the specflo-feedback-3.md scenario: approved supersessions recorded
+    # mid-execute left done tasks citing superseded requirements, and validate
+    # stayed red with no CLI path out (REQ-09)
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["requirement", "add", "--text", "second thing",
+                        "--acceptance", "works"])                                  # REQ-02
+    for i, reqs in enumerate(
+            [["REQ-01"], ["REQ-02"], ["REQ-02"], ["REQ-02"], ["REQ-01", "REQ-02"]], 1):
+        args = ["task", "add", "--text", f"task {i}", "--acceptance", "ok",
+                "--verify", "true"]
+        for req in reqs:
+            args += ["--from", req]
+        runner.invoke(app, args)                                                   # T-01..T-05
+    r = runner.invoke(app, ["advance"])                                            # plan -> execute
+    assert r.exit_code == 0
+    for i in range(1, 6):
+        runner.invoke(app, ["task", "start", f"T-0{i}"])
+        runner.invoke(app, ["task", "done", f"T-0{i}"])
+    # the approved supersessions, recorded through the CLI after the work shipped
+    runner.invoke(app, ["requirement", "add", "--text", "first, as shipped",
+                        "--acceptance", "matches reality", "--supersedes", "REQ-01"])  # REQ-03
+    runner.invoke(app, ["requirement", "add", "--text", "second, as shipped",
+                        "--acceptance", "matches reality", "--supersedes", "REQ-02"])  # REQ-04
+    r = runner.invoke(app, ["validate", "execute"])
+    assert r.exit_code == 0                          # unstuck: residue is notes, not issues
+    assert "T-01 covers REQ-03 via superseded REQ-01" in r.output
+    assert "T-05 covers REQ-04 via superseded REQ-02" in r.output
+    r = runner.invoke(app, ["advance", "--json"])    # execute completes the project
+    data = _json.loads(r.output)
+    assert data["advanced"] is True and data["complete"] is True
+
+
 def test_advance_plan_to_execute(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

@@ -8,9 +8,37 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
-## [0.5.1]
+## [0.6.0]
+
+### Added
+- **Validation resolves requirement supersession chains.** When a task's
+  Implements citation names a requirement later superseded via `requirement
+  add --supersedes`, `validate plan` and `validate execute` now follow the
+  recorded chain (the `Status: superseded by REQ-NN` pointers, multi-hop) to
+  the ultimate ACTIVE superseder and count the citation as covering it - in
+  both the task-coverage and the milestone-coverage checks. No more "not an
+  active requirement" / "not implemented by any task" residue after an
+  approved mid-execute supersession: a project with every task done validates
+  clean and can complete via `advance`. Citations that dead-end (an unknown
+  id, or a hand-edited chain with a cycle or a pointer to a missing entry)
+  remain blocking issues with the existing wording, and resolution always
+  terminates. Plans citing only active requirements behave byte-identically
+  to before.
+- **Resolution notes in `validate`.** Each resolved citation is surfaced as a
+  non-blocking informational line - "T-NN covers REQ-B via superseded REQ-A" -
+  in `validate plan` / `validate execute` output, and `--json` gains a `notes`
+  key on those artifacts. Notes never affect the exit code; all-active plans
+  emit none.
+- **Chain-aware `task show`.** A resolved citation renders its chain on the
+  Implements line ("REQ-A -> superseded by REQ-B") and the brief includes the
+  live superseder's section text in place of the stale superseded one, so a
+  fresh context reads the requirement as it now stands. Checkpoint and reseed
+  payloads share the renderer and inherit the annotation.
 
 ### Changed
+- **`task add` names the active superseder when rejecting a citation.** Citing
+  a superseded requirement now fails with "Cannot implement REQ-A: superseded
+  by REQ-B; cite REQ-B instead."; unknown ids keep the existing message.
 - **`specflo guide` drops the parenthetical about the memory snippet being
   static.** The line telling you to paste the snippet into your agent memory
   file no longer trails "(static - no version to keep in sync)", which read as
