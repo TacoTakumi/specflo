@@ -262,6 +262,34 @@ def test_validate_flags_citation_into_supersession_cycle(root, cfg, project):
     assert "T-01 implements REQ-01, which is not an active requirement." in issues
 
 
+def test_resolution_notes_lists_resolved_citations(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)                                      # REQ-01
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                       # T-01
+    spec.add_requirement(root, cfg, project, "better", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-23")                  # REQ-02 (active)
+    assert plan.resolution_notes(root, cfg, project) == [
+        "T-01 covers REQ-02 via superseded REQ-01"
+    ]
+
+
+def test_resolution_notes_empty_for_all_active(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.resolution_notes(root, cfg, project) == []
+
+
+def test_resolution_notes_skip_dead_end_citations(root, cfg, project):
+    # a dead-end citation is a blocking issue, not a note
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "task a", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Implements: REQ-01", "- Implements: REQ-99"))
+    assert plan.resolution_notes(root, cfg, project) == []
+
+
 def test_plan_warnings_flags_scope_reduction_vocab(root, cfg, project):
     _spec_with_reqs(root, cfg, project, n=1)
     plan.start_plan(root, cfg, project, today="2026-06-22")

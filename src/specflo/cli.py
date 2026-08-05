@@ -171,6 +171,7 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
 # so `validate`, `advance`, and the read-path doneness derivation all agree;
 # GATES pairs each shared validator with its completer for `advance`.
 WARNERS = {"plan": plan.plan_warnings}
+NOTES = {"plan": plan.resolution_notes, "execute": plan.resolution_notes}
 GATES = {
     "brainstorm": (VALIDATORS["brainstorm"], brainstorm.complete_brainstorm),
     "spec": (VALIDATORS["spec"], spec.complete_spec),
@@ -767,16 +768,24 @@ def validate(
     issues = validator(root, cfg, slug)
     warner = WARNERS.get(artifact)
     warnings = warner(root, cfg, slug) if warner is not None else []
+    noter = NOTES.get(artifact)
+    notes = noter(root, cfg, slug) if noter is not None else []
     if json_output:
         payload = {"ready": not issues, "issues": issues}
         if warner is not None:
             payload["warnings"] = warnings
+        if noter is not None:
+            payload["notes"] = notes
         typer.echo(json.dumps(payload))
         raise typer.Exit(code=0 if not issues else 1)
     if warnings:
         typer.secho(f"{artifact} warnings:", fg=typer.colors.YELLOW, err=True)
         for w in warnings:
             typer.echo(f"  - {w}", err=True)
+    if notes:
+        typer.secho(f"{artifact} notes:", fg=typer.colors.CYAN, err=True)
+        for n in notes:
+            typer.echo(f"  - {n}", err=True)
     if not issues:
         typer.echo(f"ok - {artifact} is ready.")
         return

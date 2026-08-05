@@ -381,6 +381,30 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     return warnings
 
 
+def resolution_notes(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """One non-blocking line per citation resolved through the supersession
+    chain ('T-NN covers REQ-B via superseded REQ-A'). Read-only; empty when
+    every citation is active (dead ends are blocking issues, not notes)."""
+    path = plan_path(root, cfg, slug)
+    sp = spec_mod.spec_path(root, cfg, slug)
+    if not path.is_file() or not sp.is_file():
+        return []
+    spec_doc = sp.read_text()
+    active_reqs = spec_mod.active_requirement_ids(spec_doc)
+    smap = spec_mod.supersession_map(spec_doc)
+    notes: list[str] = []
+    for t in _parse_tasks(path.read_text()):
+        if t.status != "active":
+            continue
+        for req in t.implements:
+            if req in active_reqs:
+                continue
+            resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
+            if resolved is not None:
+                notes.append(f"{t.id} covers {resolved} via superseded {req}")
+    return notes
+
+
 def start_plan(
     root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
 ) -> tuple[Path, bool]:

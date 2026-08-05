@@ -1111,6 +1111,53 @@ def test_validate_plan_warnings_do_not_fail(tmp_path, monkeypatch):
     assert r.exit_code == 0
 
 
+def test_validate_plan_prints_resolution_notes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])                                       # T-01
+    runner.invoke(app, ["requirement", "add", "--text", "better",
+                        "--acceptance", "b", "--supersedes", "REQ-01"])            # REQ-02
+    r = runner.invoke(app, ["validate", "plan"])
+    assert r.exit_code == 0                          # notes never block
+    assert "T-01 covers REQ-02 via superseded REQ-01" in r.output
+    rj = runner.invoke(app, ["validate", "plan", "--json"])
+    data = _json.loads(rj.output)
+    assert data["ready"] is True
+    assert data["notes"] == ["T-01 covers REQ-02 via superseded REQ-01"]
+
+
+def test_validate_plan_all_active_has_no_notes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "build it",
+                        "--acceptance", "it works", "--verify", "uv run pytest",
+                        "--from", "REQ-01"])
+    r = runner.invoke(app, ["validate", "plan"])
+    assert "via superseded" not in r.output
+    data = _json.loads(runner.invoke(app, ["validate", "plan", "--json"]).output)
+    assert data["notes"] == []
+
+
+def test_validate_execute_prints_resolution_notes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    runner.invoke(app, ["requirement", "add", "--text", "better",
+                        "--acceptance", "b", "--supersedes", "REQ-01"])            # REQ-02
+    r = runner.invoke(app, ["validate", "execute"])
+    assert r.exit_code == 0
+    assert "T-01 covers REQ-02 via superseded REQ-01" in r.output
+    data = _json.loads(runner.invoke(app, ["validate", "execute", "--json"]).output)
+    assert data["ready"] is True
+    assert data["notes"] == ["T-01 covers REQ-02 via superseded REQ-01"]
+
+
 def test_advance_plan_to_execute(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app
