@@ -418,13 +418,6 @@ def start_plan(
     return path, True
 
 
-def _active_requirement_ids(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
-    sp = spec_mod.spec_path(root, cfg, slug)
-    if not sp.is_file():
-        raise SpecfloError("Cannot link requirements: no spec.md for this project.")
-    return spec_mod.active_requirement_ids(sp.read_text())
-
-
 def complete_plan(
     root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
 ) -> None:
@@ -472,12 +465,24 @@ def add_task(
     if not implements:
         raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
 
-    active_reqs = _active_requirement_ids(root, cfg, slug)
+    sp = spec_mod.spec_path(root, cfg, slug)
+    if not sp.is_file():
+        raise SpecfloError("Cannot link requirements: no spec.md for this project.")
+    spec_doc = sp.read_text()
+    active_reqs = spec_mod.active_requirement_ids(spec_doc)
+    smap = spec_mod.supersession_map(spec_doc)
     for req_id in implements:
-        if req_id not in active_reqs:
+        if req_id in active_reqs:
+            continue
+        resolved = spec_mod.resolve_requirement(req_id, active_reqs, smap)
+        if resolved is not None:
             raise SpecfloError(
-                f"Cannot implement {req_id}: not an active requirement in spec.md."
+                f"Cannot implement {req_id}: superseded by {resolved}; "
+                f"cite {resolved} instead."
             )
+        raise SpecfloError(
+            f"Cannot implement {req_id}: not an active requirement in spec.md."
+        )
 
     for dep in depends_on:
         if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):

@@ -99,6 +99,24 @@ def test_add_task_rejects_unknown_or_superseded_requirement(root, cfg, project):
         plan.add_task(root, cfg, project, "x", acceptance="a", verify="v", implements=["REQ-01"])
 
 
+def test_add_task_rejection_names_active_superseder(root, cfg, project):
+    spec.start_spec(root, cfg, project, today="2026-06-22")
+    spec.add_requirement(root, cfg, project, "old", acceptance="a", today="2026-06-22")   # REQ-01
+    spec.add_requirement(root, cfg, project, "new", acceptance="b",
+                         supersedes="REQ-01", today="2026-06-22")                          # REQ-02
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    with pytest.raises(
+        SpecfloError,
+        match=r"Cannot implement REQ-01: superseded by REQ-02; cite REQ-02 instead\.",
+    ):
+        plan.add_task(root, cfg, project, "x", acceptance="a", verify="v", implements=["REQ-01"])
+    with pytest.raises(  # unknown id keeps the existing message, names no superseder
+        SpecfloError,
+        match=r"Cannot implement REQ-99: not an active requirement in spec\.md\.",
+    ):
+        plan.add_task(root, cfg, project, "x", acceptance="a", verify="v", implements=["REQ-99"])
+
+
 def test_add_task_validates_dependency_and_supersede_targets(root, cfg, project):
     _spec_with_reqs(root, cfg, project)
     plan.start_plan(root, cfg, project, today="2026-06-22")
