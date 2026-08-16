@@ -284,9 +284,16 @@ describe("two consecutive extension-driven fires in one real pi run", () => {
         throw new Error("the second fire's auto payload never reached model context");
       });
 
-    // Unattended means unattended, across both fires: zero extension_ui_request
-    // frames of any method - no notify, no confirm, no select, no input.
-    assert.deepEqual(pi.uiRequests(), []);
+    // Unattended means unattended, across both fires: zero interactive
+    // extension_ui_request frames - no notify, no confirm, no select, no
+    // input. The passive status segment (REQ-05/REQ-06) is exempt: its
+    // setStatus frames are fire-and-forget status writes, not interaction.
+    assert.deepEqual(
+      pi.events.filter(
+        (event) => event.type === "extension_ui_request" && event.method !== "setStatus",
+      ),
+      [],
+    );
 
     assert.deepEqual(
       pi.events.filter((event) => event.type === "extension_error"),

@@ -8,6 +8,21 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.7.0]
+
+### Added
+- **specflo status segment in the pi extension.** The extension now renders a
+  footer status segment naming the active specflo project with its phase and
+  task progress, parsed straight from the artifacts (config.yaml, project.md
+  frontmatter, plan.md task blocks) with the same rules as the Claude Code
+  statusline: `slug:phase`, a `T-NN d/total` tally in plan/execute (an
+  executing project drops the phase label), and dim `slug done` /
+  `slug shelved` for complete or shelved projects. The segment re-applies on
+  every session start, refreshes on turn end only when the artifacts changed,
+  uses the active pi theme's accent and dim tokens, coexists with the built-in
+  footer via the keyed `ctx.ui.setStatus`, and clears itself outside a specflo
+  repo (pi-statusline).
+
 ## [0.6.0]
 
 ### Added

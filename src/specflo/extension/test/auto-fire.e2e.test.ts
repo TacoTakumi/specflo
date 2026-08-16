@@ -174,10 +174,18 @@ describe("the unattended fire in a real pi session", () => {
         throw new Error("the spec-phase auto payload never reached model context");
       });
 
-    // Unattended means unattended: zero extension_ui_request frames of any
-    // method across the whole run - no notify, no confirm, no select, no
-    // input - for the anchoring clear and the fire alike.
-    assert.deepEqual(pi.uiRequests(), []);
+    // Unattended means unattended: zero interactive extension_ui_request
+    // frames across the whole run - no notify, no confirm, no select, no
+    // input - for the anchoring clear and the fire alike. The one exception
+    // is the passive status segment (REQ-05/REQ-06): its setStatus frames
+    // are fire-and-forget status writes, not interaction, and they inform
+    // RPC clients as-is (D-03).
+    assert.deepEqual(
+      pi.events.filter(
+        (event) => event.type === "extension_ui_request" && event.method !== "setStatus",
+      ),
+      [],
+    );
 
     assert.deepEqual(
       pi.events.filter((event) => event.type === "extension_error"),

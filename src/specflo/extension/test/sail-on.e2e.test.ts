@@ -229,10 +229,17 @@ describe("the task-done seam mid-run ends the run and fires the continuation", (
         throw new Error("the post-seam auto payload never reached model context");
       });
 
-    // Unattended means unattended: zero extension_ui_request frames of any
-    // method across the whole run - the anchor, the seam and the fire alike
+    // Unattended means unattended: zero interactive extension_ui_request
+    // frames across the whole run - the anchor, the seam and the fire alike
     // (REQ-05: nothing of the extension's reaches the model or the UI here).
-    assert.deepEqual(pi.uiRequests(), []);
+    // The one exception is the passive status segment (REQ-05/REQ-06): its
+    // setStatus frames are fire-and-forget status writes, not interaction.
+    assert.deepEqual(
+      pi.events.filter(
+        (event) => event.type === "extension_ui_request" && event.method !== "setStatus",
+      ),
+      [],
+    );
 
     assert.deepEqual(
       pi.events.filter((event) => event.type === "extension_error"),

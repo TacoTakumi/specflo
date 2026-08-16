@@ -361,7 +361,7 @@ export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
  */
 export interface SegmentText {
   text: string;
-  style: "magenta" | "dim";
+  style: "accent" | "dim";
 }
 
 /**
@@ -455,7 +455,7 @@ export function computeSegment(cwd: string): SegmentText | null {
         seg = phase === "execute" ? label + tail : seg + tail;
       }
     }
-    return { text: seg, style: "magenta" };
+    return { text: seg, style: "accent" };
   } catch {
     return null;
   }
@@ -487,6 +487,54 @@ export default function specflo(pi: ExtensionAPI): void {
   let pendingReseed: string | null = null;
   let threshold: number | null = null;
   let lastSnapshot: StatusSnapshot | null = null;
+
+  // The status segment's session-local memory: the last rendered value the
+  // segment was applied with, so a turn_end refresh can gate on change. It
+  // dies with the session like the other closure state, which is fine -
+  // session_start re-applies unconditionally, and that re-application is what
+  // restores the segment after pi wipes extension status on session
+  // invalidation or /reload (REQ-05). null means never applied this session;
+  // undefined means applied as a clear.
+  let lastStatusText: string | undefined | null = null;
+
+  /**
+   * Apply the specflo status segment to the footer.
+   *
+   * Computes the segment from the session cwd and renders it through the
+   * theme tokens - magenta for the active segment, dim for complete/shelved -
+   * with no escape byte of its own (REQ-07), then calls ctx.ui.setStatus with
+   * the key 'specflo': the segment's single setStatus call site (REQ-04).
+   * ``force`` is true on session_start, where pi may have wiped the status
+   * and the segment must be re-applied whatever it held before (REQ-05); on
+   * turn_end it is false and the set is gated on the rendered text actually
+   * changing (REQ-06). The colors are theme tokens - accent for the active
+   * segment (pi's highlight token; the theme set has no magenta, D-07), dim
+   * for complete/shelved - with no escape byte of its own (REQ-07). The
+   * theme is present in TUI mode and absent on the
+   * RPC-mode ui context, so it is reached through optional chaining: color
+   * comes from ctx.ui.theme when theming exists, else the text is sent as-is
+   * for the RPC host to render (the same setStatus call informs RPC clients,
+   * D-03). Nothing to show - no specflo repo on the cwd walk, no
+   * active project, unparseable artifacts, or a throwing compute - renders
+   * undefined, which clears the status (REQ-02); a throw inside the compute
+   * degrades to that clear, so no exception escapes this function.
+   */
+  function applySegment(ctx: ExtensionContext, force: boolean): void {
+    let computed: SegmentText | null;
+    try {
+      computed = computeSegment(ctx.cwd);
+    } catch {
+      computed = null;
+    }
+    const rendered =
+      computed === null
+        ? undefined
+        : (ctx.ui.theme?.fg(computed.style, computed.text) ?? computed.text);
+    if (force || rendered !== lastStatusText) {
+      ctx.ui.setStatus("specflo", rendered);
+      lastStatusText = rendered;
+    }
+  }
 
   // The user-reachable clear-and-reseed entry point: plain for the on-demand
   // continue, `auto` for continuing an auto run - which also anchors the chain
@@ -599,5 +647,16 @@ export default function specflo(pi: ExtensionAPI): void {
     // Attended: say so once, passively, and clear nothing (REQ-09). The notice
     // reaches ctx.ui alone - never model context.
     ctx.ui.notify(noticeText(percent, seam, `/${CONTINUE_COMMAND}`), "info");
+  });
+
+  // The status segment, wired through its own listeners so the armed-seam
+  // path above stays untouched: re-applied on every session start whatever
+  // the reason (startup, resume, new, fork, reload - REQ-05), refreshed on
+  // turn_end only when the rendered text changed (REQ-06).
+  pi.on("session_start", (_event, ctx) => {
+    applySegment(ctx, true);
+  });
+  pi.on("turn_end", (_event, ctx) => {
+    applySegment(ctx, false);
   });
 }

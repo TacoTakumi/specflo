@@ -36,13 +36,13 @@ describe("computeSegment - repo discovery (REQ-01)", () => {
     const nested = path.join(root, "src", "deep", "dir");
     fs.mkdirSync(nested, { recursive: true });
     assert.deepEqual(computeSegment(nested), computeSegment(root));
-    assert.deepEqual(computeSegment(root), { text: "demo:execute", style: "magenta" });
+    assert.deepEqual(computeSegment(root), { text: "demo:execute", style: "accent" });
   });
 
   it("honours a custom projects_dir from config.yaml", () => {
     const root = createFixtureRepo({ projectsDir: "artifacts" });
     cleanups.push(root);
-    assert.deepEqual(computeSegment(root), { text: "demo:execute", style: "magenta" });
+    assert.deepEqual(computeSegment(root), { text: "demo:execute", style: "accent" });
   });
 });
 
@@ -81,32 +81,32 @@ describe("computeSegment - format table (REQ-03)", () => {
     {
       name: "brainstorm renders slug:phase",
       opts: { phase: "brainstorm" },
-      expected: { text: "demo:brainstorm", style: "magenta" },
+      expected: { text: "demo:brainstorm", style: "accent" },
     },
     {
       name: "spec renders slug:phase",
       opts: { phase: "spec" },
-      expected: { text: "demo:spec", style: "magenta" },
+      expected: { text: "demo:spec", style: "accent" },
     },
     {
       name: "plan with an in-progress task shows its id and the tally",
       opts: { phase: "plan", plan: THREE_TASKS },
-      expected: { text: "demo:plan T-02 1/3", style: "magenta" },
+      expected: { text: "demo:plan T-02 1/3", style: "accent" },
     },
     {
       name: "plan without an in-progress task shows the tally only",
       opts: { phase: "plan", plan: THREE_TASKS.replace("- Progress: in_progress", "- Progress: pending") },
-      expected: { text: "demo:plan 1/3", style: "magenta" },
+      expected: { text: "demo:plan 1/3", style: "accent" },
     },
     {
       name: "execute drops the phase label and shows the tally",
       opts: { phase: "execute", plan: THREE_TASKS },
-      expected: { text: "demo T-02 1/3", style: "magenta" },
+      expected: { text: "demo T-02 1/3", style: "accent" },
     },
     {
       name: "execute without an in-progress task shows the tally only",
       opts: { phase: "execute", plan: THREE_TASKS.replace("- Progress: in_progress", "- Progress: pending") },
-      expected: { text: "demo 1/3", style: "magenta" },
+      expected: { text: "demo 1/3", style: "accent" },
     },
     {
       name: "complete renders 'slug done' dim",
@@ -121,7 +121,7 @@ describe("computeSegment - format table (REQ-03)", () => {
     {
       name: "a slug longer than 17 characters is truncated to 16 plus an ellipsis",
       opts: { slug: "dsv4-rs-rollback-rebase-20260804", phase: "execute" },
-      expected: { text: "dsv4-rs-rollback\u2026:execute", style: "magenta" },
+      expected: { text: "dsv4-rs-rollback\u2026:execute", style: "accent" },
     },
     {
       name: "a superseded task is excluded from both counts (explicit field)",
@@ -143,7 +143,7 @@ describe("computeSegment - format table (REQ-03)", () => {
           "",
         ].join("\n"),
       },
-      expected: { text: "demo:plan T-03 1/2", style: "magenta" },
+      expected: { text: "demo:plan T-03 1/2", style: "accent" },
     },
     {
       name: "the legacy 'Status: superseded by' phrase marks a task superseded",
@@ -160,7 +160,7 @@ describe("computeSegment - format table (REQ-03)", () => {
           "",
         ].join("\n"),
       },
-      expected: { text: "demo:plan 1/1", style: "magenta" },
+      expected: { text: "demo:plan 1/1", style: "accent" },
     },
     {
       name: "a plan whose tasks are all superseded shows no tally",
@@ -174,12 +174,12 @@ describe("computeSegment - format table (REQ-03)", () => {
           "",
         ].join("\n"),
       },
-      expected: { text: "demo:plan", style: "magenta" },
+      expected: { text: "demo:plan", style: "accent" },
     },
     {
       name: "a plan phase with no plan.md shows no tally",
       opts: { phase: "plan", plan: null },
-      expected: { text: "demo:plan", style: "magenta" },
+      expected: { text: "demo:plan", style: "accent" },
     },
   ];
 
