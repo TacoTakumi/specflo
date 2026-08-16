@@ -11,6 +11,17 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.7.0]
 
 ### Added
+- **Advisory file locking makes concurrent CLI invocations safe (id-minting-safety).**
+  Every read-modify-write of artifact and state files now runs inside a
+  stdlib-only advisory lock over a sibling `<artifact>.lock` file
+  (`fcntl.flock` on POSIX, `msvcrt.locking` on Windows): the four ID-minting
+  adds (decision/requirement/task/milestone), all status-transition writers
+  (task start/done/block/reopen/rewire/set-milestone, brainstorm completion),
+  and auto-run state. Parallel `add` calls from any harness now mint distinct
+  sequential IDs with no lost writes. Contention polls a non-blocking lock at
+  ~50ms for up to ~10s, then fails loudly with a `SpecfloError` naming the
+  lock path. The spec and plan skills now instruct agents to emit add calls
+  sequentially, never batched, so minted IDs follow authoring order.
 - **specflo status segment in the pi extension.** The extension now renders a
   footer status segment naming the active specflo project with its phase and
   task progress, parsed straight from the artifacts (config.yaml, project.md
