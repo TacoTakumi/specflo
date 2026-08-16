@@ -113,6 +113,10 @@ export interface FakeCtx {
     confirm(...args: unknown[]): Promise<boolean>;
     select(...args: unknown[]): Promise<string | undefined>;
     input(...args: unknown[]): Promise<string | undefined>;
+    /** Footer status: ``setStatus(key, value)`` with undefined clearing. */
+    setStatus(key: string, value: string | undefined): void;
+    /** Theme token application: deterministic, records the call. */
+    theme: { fg(name: string, text: string): string };
     /** Every ui call, in order, as `{ method, args }`. */
     calls: Array<{ method: string; args: unknown[] }>;
   };
@@ -142,6 +146,17 @@ export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
       calls,
       notify(message: string, type?: string) {
         calls.push({ method: "notify", args: [message, type] });
+      },
+      setStatus(key: string, value: string | undefined) {
+        calls.push({ method: "setStatus", args: [key, value] });
+      },
+      // Deterministic so the wiring's own rendered-value comparison works:
+      // the same (name, text) pair always yields the same string.
+      theme: {
+        fg(name: string, text: string) {
+          calls.push({ method: "theme.fg", args: [name, text] });
+          return text;
+        },
       },
       async confirm(...args: unknown[]) {
         calls.push({ method: "confirm", args });

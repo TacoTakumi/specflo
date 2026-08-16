@@ -22,57 +22,7 @@ import * as path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { computeSegment } from "../src/index.ts";
-
-interface FixtureOpts {
-  slug?: string;
-  projectsDir?: string;
-  phase?: string;
-  status?: string;
-  /** plan.md body; null (the default) writes no plan.md at all. */
-  plan?: string | null;
-  /** Extra config.yaml lines, e.g. to drop active_project for a REQ-02 case. */
-  configExtra?: string[];
-}
-
-/** Builds a fixture specflo repo in a fresh temp dir and returns its root. */
-function createFixtureRepo(opts: FixtureOpts = {}): string {
-  const slug = opts.slug ?? "demo";
-  const projectsDir = opts.projectsDir ?? "docs/projects";
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-status-"));
-  fs.mkdirSync(path.join(root, ".specflo"), { recursive: true });
-  const cfg = [
-    "projects_dir: " + projectsDir,
-    "active_project: " + slug,
-    ...(opts.configExtra ?? []),
-  ].join("\n");
-  fs.writeFileSync(path.join(root, ".specflo", "config.yaml"), cfg + "\n");
-  const pdir = path.join(root, projectsDir, slug);
-  fs.mkdirSync(pdir, { recursive: true });
-  fs.writeFileSync(
-    path.join(pdir, "project.md"),
-    `---\nname: ${slug}\nslug: ${slug}\nphase: ${opts.phase ?? "execute"}\nstatus: ${opts.status ?? "active"}\n---\n\n# ${slug}\n`,
-  );
-  if (opts.plan !== undefined && opts.plan !== null) {
-    fs.writeFileSync(path.join(pdir, "plan.md"), opts.plan);
-  }
-  return root;
-}
-
-/** A plan.md body: three active tasks, one done and one in_progress. */
-const THREE_TASKS = [
-  "### T-01 - first",
-  "- Progress: done",
-  "- Status: active",
-  "",
-  "### T-02 - second",
-  "- Progress: in_progress",
-  "- Status: active",
-  "",
-  "### T-03 - third",
-  "- Progress: pending",
-  "- Status: active",
-  "",
-].join("\n");
+import { createFixtureRepo, type FixtureRepoOpts, THREE_TASKS } from "./status-fixtures.ts";
 
 const cleanups: string[] = [];
 afterEach(() => {
@@ -127,7 +77,7 @@ describe("computeSegment - nothing to show clears (REQ-02)", () => {
 });
 
 describe("computeSegment - format table (REQ-03)", () => {
-  const cases: Array<{ name: string; opts: FixtureOpts; expected: { text: string; style: string } | null }> = [
+  const cases: Array<{ name: string; opts: FixtureRepoOpts; expected: { text: string; style: string } | null }> = [
     {
       name: "brainstorm renders slug:phase",
       opts: { phase: "brainstorm" },
