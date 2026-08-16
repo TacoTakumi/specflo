@@ -163,6 +163,70 @@ def test_degrades_to_unlocked_with_warning_when_no_lock_api(tmp_path, monkeypatc
     assert not (tmp_path / "artifact.md.lock").exists()
 
 
+def test_concurrent_add_and_transition_lose_no_entries(tmp_path):
+    """A `task add` racing a `task start` on the same plan.md loses nothing:
+    the appended T-02 entry survives and T-01's progress flips (REQ-06
+    behavioral). Without the lock the transition's write would clobber the
+    just-appended entry (lost write)."""
+    specflo_bin = str(Path(sys.executable).parent / "specflo")
+
+    def run(*args):
+        r = subprocess.run(
+            [specflo_bin, *args], capture_output=True, text=True, cwd=tmp_path
+        )
+        assert r.returncode == 0, r.stderr
+
+    run("init")
+    run("new", "Race")
+    run("brainstorm", "start")
+    run("decision", "add", "--text", "d1")
+    b_md = tmp_path / "docs" / "projects" / "race" / "brainstorm.md"
+    b_text = b_md.read_text()
+    b_md.write_text(
+        b_text.replace(
+            "## Out of scope / Deferred\n<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\n- nothing here",
+        )
+        if "## Out of scope / Deferred" in b_text
+        else b_text + "\n## Out of scope / Deferred\n- nothing here\n"
+    )
+    run("advance")
+    run("spec", "start")
+    run("requirement", "add", "--text", "r1", "--acceptance", "a1", "--from", "D-01")
+    spec_md = tmp_path / "docs" / "projects" / "race" / "spec.md"
+    text = spec_md.read_text()
+    spec_md.write_text(
+        text.replace("### In scope\n<!-- required, non-empty -->", "### In scope\n- x")
+        .replace(
+            "### Out of scope\n"
+            "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+            "### Out of scope\n- y",
+        )
+    )
+    run("advance")
+    run("plan", "start")
+    run("task", "add", "--text", "t1", "--acceptance", "a1", "--verify", "v1", "--from", "REQ-01")
+
+    procs = [
+        subprocess.Popen(
+            [specflo_bin, "task", "add", "--text", "t2", "--acceptance", "a2",
+             "--verify", "v2", "--from", "REQ-01"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tmp_path,
+        ),
+        subprocess.Popen(
+            [specflo_bin, "task", "start", "T-01"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, cwd=tmp_path,
+        ),
+    ]
+    for p in procs:
+        out, err = p.communicate(timeout=30)
+        assert p.returncode == 0, err
+
+    doc = (tmp_path / "docs" / "projects" / "race" / "plan.md").read_text()
+    assert "### T-02 — t2" in doc, "the concurrent add's entry was lost"
+    assert "- Progress: in_progress" in doc, "the transition's update was lost"
+
+
 def test_posix_prefers_fcntl_over_msvcrt():
     if sys.platform == "win32":
         assert locking._msvcrt is not None

@@ -673,53 +673,54 @@ def rewire_dependency(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    doc = path.read_text()
-    tasks = _parse_tasks(doc)
-    by_id = {t.id: t for t in tasks}
-    # Validate before any write so a rejected redirect leaves plan.md untouched.
-    if from_id not in by_id:
-        raise SpecfloError(f"No task {from_id} to rewire from.")
-    if to_id == from_id:
-        raise SpecfloError(f"Cannot rewire {from_id} to itself (--to must differ from --from).")
-    to_task = by_id.get(to_id)
-    if to_task is None:
-        raise SpecfloError(f"No task {to_id} to rewire to.")
-    if to_task.status != "active":
-        raise SpecfloError(f"Cannot rewire to {to_id}: it is superseded (--to must be active).")
+    with locked(path):
+        doc = path.read_text()
+        tasks = _parse_tasks(doc)
+        by_id = {t.id: t for t in tasks}
+        # Validate before any write so a rejected redirect leaves plan.md untouched.
+        if from_id not in by_id:
+            raise SpecfloError(f"No task {from_id} to rewire from.")
+        if to_id == from_id:
+            raise SpecfloError(f"Cannot rewire {from_id} to itself (--to must differ from --from).")
+        to_task = by_id.get(to_id)
+        if to_task is None:
+            raise SpecfloError(f"No task {to_id} to rewire to.")
+        if to_task.status != "active":
+            raise SpecfloError(f"Cannot rewire to {to_id}: it is superseded (--to must be active).")
 
-    # Compute each dependent's post-rewire deps (order-preserving dedupe so a
-    # dependent already listing --to ends with a single entry, not a duplicate).
-    new_deps_by_id: dict[str, list[str]] = {}
-    changed: list[str] = []
-    for t in tasks:
-        if t.status != "active" or from_id not in t.depends_on:
-            continue
-        rewired: list[str] = []
-        for d in t.depends_on:
-            nd = to_id if d == from_id else d
-            if nd not in rewired:
-                rewired.append(nd)
-        new_deps_by_id[t.id] = rewired
-        changed.append(t.id)
-    if not changed:
-        return []
+        # Compute each dependent's post-rewire deps (order-preserving dedupe so a
+        # dependent already listing --to ends with a single entry, not a duplicate).
+        new_deps_by_id: dict[str, list[str]] = {}
+        changed: list[str] = []
+        for t in tasks:
+            if t.status != "active" or from_id not in t.depends_on:
+                continue
+            rewired: list[str] = []
+            for d in t.depends_on:
+                nd = to_id if d == from_id else d
+                if nd not in rewired:
+                    rewired.append(nd)
+            new_deps_by_id[t.id] = rewired
+            changed.append(t.id)
+        if not changed:
+            return []
 
-    # Refuse a redirect that would introduce a cycle (validate before write).
-    proposed = [
-        replace(t, depends_on=new_deps_by_id.get(t.id, t.depends_on))
-        for t in tasks if t.status == "active"
-    ]
-    cycle = _find_cycle(proposed)
-    if cycle:
-        raise SpecfloError(
-            f"Rewiring {from_id} to {to_id} would create a dependency cycle: "
-            + " -> ".join(cycle) + "."
-        )
+        # Refuse a redirect that would introduce a cycle (validate before write).
+        proposed = [
+            replace(t, depends_on=new_deps_by_id.get(t.id, t.depends_on))
+            for t in tasks if t.status == "active"
+        ]
+        cycle = _find_cycle(proposed)
+        if cycle:
+            raise SpecfloError(
+                f"Rewiring {from_id} to {to_id} would create a dependency cycle: "
+                + " -> ".join(cycle) + "."
+            )
 
-    for tid in changed:
-        doc = markdown.set_entry_field(doc, tid, "Depends on", ", ".join(new_deps_by_id[tid]))
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+        for tid in changed:
+            doc = markdown.set_entry_field(doc, tid, "Depends on", ", ".join(new_deps_by_id[tid]))
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     return changed
 
 
@@ -732,24 +733,25 @@ def _set_progress(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    doc = path.read_text()
-    task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
-    if task is None:
-        raise SpecfloError(f"No task {task_id}.")
-    if task.status != "active":
-        raise SpecfloError(f"Task {task_id} is superseded; its progress is frozen.")
-    if progress == "done" and task.progress != "in_progress":
-        raise SpecfloError(
-            f"{task_id} must be in_progress before it can be done "
-            f"(run `specflo task start {task_id}` first)."
-        )
-    doc = markdown.set_entry_field(doc, task_id, "Progress", progress)
-    if progress == "blocked" and reason:
-        doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
-    else:
-        doc = markdown.clear_entry_field(doc, task_id, "Blocked")
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+    with locked(path):
+        doc = path.read_text()
+        task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+        if task is None:
+            raise SpecfloError(f"No task {task_id}.")
+        if task.status != "active":
+            raise SpecfloError(f"Task {task_id} is superseded; its progress is frozen.")
+        if progress == "done" and task.progress != "in_progress":
+            raise SpecfloError(
+                f"{task_id} must be in_progress before it can be done "
+                f"(run `specflo task start {task_id}` first)."
+            )
+        doc = markdown.set_entry_field(doc, task_id, "Progress", progress)
+        if progress == "blocked" and reason:
+            doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
+        else:
+            doc = markdown.clear_entry_field(doc, task_id, "Blocked")
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     task.progress = progress
     task.blocked = reason if progress == "blocked" else None
     return task
@@ -781,19 +783,20 @@ def set_milestone(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    doc = path.read_text()
-    task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
-    if task is None:
-        raise SpecfloError(f"No task {task_id}.")
-    if task.status != "active":
-        raise SpecfloError(f"Task {task_id} is superseded; its milestone is frozen.")
-    if milestone_id not in {m.id for m in _parse_milestones(doc)}:
-        raise SpecfloError(
-            f"No milestone {milestone_id} in this plan (add it with `specflo milestone add`)."
-        )
-    doc = markdown.set_entry_field(doc, task_id, "Milestone", milestone_id)
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+    with locked(path):
+        doc = path.read_text()
+        task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+        if task is None:
+            raise SpecfloError(f"No task {task_id}.")
+        if task.status != "active":
+            raise SpecfloError(f"Task {task_id} is superseded; its milestone is frozen.")
+        if milestone_id not in {m.id for m in _parse_milestones(doc)}:
+            raise SpecfloError(
+                f"No milestone {milestone_id} in this plan (add it with `specflo milestone add`)."
+            )
+        doc = markdown.set_entry_field(doc, task_id, "Milestone", milestone_id)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     task.milestone = milestone_id
     return task
 
