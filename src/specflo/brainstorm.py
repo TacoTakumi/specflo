@@ -17,6 +17,7 @@ from pathlib import Path
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from . import markdown
+from .locking import locked
 from .projects import load_project, project_dir
 
 BRAINSTORM_FILENAME = "brainstorm.md"
@@ -103,30 +104,31 @@ def add_decision(
     path = brainstorm_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
-    doc = path.read_text()
-    if "## Decisions" not in doc:
-        raise SpecfloError("Malformed brainstorm.md: no '## Decisions' section.")
+    with locked(path):
+        doc = path.read_text()
+        if "## Decisions" not in doc:
+            raise SpecfloError("Malformed brainstorm.md: no '## Decisions' section.")
 
-    if supersedes is not None and not re.search(
-        rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
-    ):
-        raise SpecfloError(f"No decision {supersedes} to supersede.")
+        if supersedes is not None and not re.search(
+            rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
+        ):
+            raise SpecfloError(f"No decision {supersedes} to supersede.")
 
-    new_id = markdown.next_id(doc, "D-")
-    rationale_text = rationale if rationale else "—"
+        new_id = markdown.next_id(doc, "D-")
+        rationale_text = rationale if rationale else "—"
 
-    if supersedes is not None:
-        doc = markdown.mark_superseded(doc, supersedes, new_id)
+        if supersedes is not None:
+            doc = markdown.mark_superseded(doc, supersedes, new_id)
 
-    entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
-    if supersedes is not None:
-        entry_lines.append(f"- Supersedes: {supersedes}")
-    entry_lines.append("- Status: active")
-    entry = "\n".join(entry_lines) + "\n"
+        entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
+        if supersedes is not None:
+            entry_lines.append(f"- Supersedes: {supersedes}")
+        entry_lines.append("- Status: active")
+        entry = "\n".join(entry_lines) + "\n"
 
-    doc = markdown.append_to_section(doc, "## Decisions", entry)
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+        doc = markdown.append_to_section(doc, "## Decisions", entry)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     return Decision(
         id=new_id,
         text=text,

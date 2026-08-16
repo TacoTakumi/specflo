@@ -18,6 +18,7 @@ from pathlib import Path
 from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
 from .errors import SpecfloError
+from .locking import locked
 from .projects import load_project, project_dir
 
 PLAN_FILENAME = "plan.md"
@@ -457,79 +458,80 @@ def add_task(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    doc = path.read_text()
-    if "## Tasks" not in doc:
-        raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
+    with locked(path):
+        doc = path.read_text()
+        if "## Tasks" not in doc:
+            raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
 
-    depends_on = depends_on or []
-    if not implements:
-        raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
+        depends_on = depends_on or []
+        if not implements:
+            raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
 
-    sp = spec_mod.spec_path(root, cfg, slug)
-    if not sp.is_file():
-        raise SpecfloError("Cannot link requirements: no spec.md for this project.")
-    spec_doc = sp.read_text()
-    active_reqs = spec_mod.active_requirement_ids(spec_doc)
-    smap = spec_mod.supersession_map(spec_doc)
-    for req_id in implements:
-        if req_id in active_reqs:
-            continue
-        resolved = spec_mod.resolve_requirement(req_id, active_reqs, smap)
-        if resolved is not None:
+        sp = spec_mod.spec_path(root, cfg, slug)
+        if not sp.is_file():
+            raise SpecfloError("Cannot link requirements: no spec.md for this project.")
+        spec_doc = sp.read_text()
+        active_reqs = spec_mod.active_requirement_ids(spec_doc)
+        smap = spec_mod.supersession_map(spec_doc)
+        for req_id in implements:
+            if req_id in active_reqs:
+                continue
+            resolved = spec_mod.resolve_requirement(req_id, active_reqs, smap)
+            if resolved is not None:
+                raise SpecfloError(
+                    f"Cannot implement {req_id}: superseded by {resolved}; "
+                    f"cite {resolved} instead."
+                )
             raise SpecfloError(
-                f"Cannot implement {req_id}: superseded by {resolved}; "
-                f"cite {resolved} instead."
+                f"Cannot implement {req_id}: not an active requirement in spec.md."
             )
-        raise SpecfloError(
-            f"Cannot implement {req_id}: not an active requirement in spec.md."
-        )
 
-    for dep in depends_on:
-        if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
-            raise SpecfloError(f"No task {dep} to depend on.")
+        for dep in depends_on:
+            if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
+                raise SpecfloError(f"No task {dep} to depend on.")
 
-    if supersedes is not None and not re.search(
-        rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
-    ):
-        raise SpecfloError(f"No task {supersedes} to supersede.")
+        if supersedes is not None and not re.search(
+            rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
+        ):
+            raise SpecfloError(f"No task {supersedes} to supersede.")
 
-    if milestone is not None and milestone not in {m.id for m in _parse_milestones(doc)}:
-        raise SpecfloError(
-            f"No milestone {milestone} in this plan (add it with `specflo milestone add`)."
-        )
+        if milestone is not None and milestone not in {m.id for m in _parse_milestones(doc)}:
+            raise SpecfloError(
+                f"No milestone {milestone} in this plan (add it with `specflo milestone add`)."
+            )
 
-    new_id = markdown.next_id(doc, "T-")
-    if supersedes is not None:
-        # Tidy the superseded task: legacy Status marker (back-compat) plus the
-        # canonical bidirectional `Superseded by:` field, and reset its Progress
-        # so a half-done task does not linger as in_progress.
-        doc = markdown.mark_superseded(doc, supersedes, new_id)
-        doc = markdown.set_entry_field(doc, supersedes, "Superseded by", new_id)
-        doc = markdown.set_entry_field(doc, supersedes, "Progress", "pending")
+        new_id = markdown.next_id(doc, "T-")
+        if supersedes is not None:
+            # Tidy the superseded task: legacy Status marker (back-compat) plus the
+            # canonical bidirectional `Superseded by:` field, and reset its Progress
+            # so a half-done task does not linger as in_progress.
+            doc = markdown.mark_superseded(doc, supersedes, new_id)
+            doc = markdown.set_entry_field(doc, supersedes, "Superseded by", new_id)
+            doc = markdown.set_entry_field(doc, supersedes, "Progress", "pending")
 
-    entry_lines = [
-        f"### {new_id} — {text}",
-        f"- Acceptance: {acceptance}",
-        f"- Verify: {verify}",
-        f"- Implements: {', '.join(implements)}",
-    ]
-    if depends_on:
-        entry_lines.append(f"- Depends on: {', '.join(depends_on)}")
-    if files:
-        entry_lines.append(f"- Files: {files}")
-    if scope:
-        entry_lines.append(f"- Scope: {scope}")
-    if supersedes is not None:
-        entry_lines.append(f"- Supersedes: {supersedes}")
-    if milestone is not None:
-        entry_lines.append(f"- Milestone: {milestone}")
-    entry_lines.append("- Progress: pending")
-    entry_lines.append("- Status: active")
-    entry = "\n".join(entry_lines) + "\n"
+        entry_lines = [
+            f"### {new_id} — {text}",
+            f"- Acceptance: {acceptance}",
+            f"- Verify: {verify}",
+            f"- Implements: {', '.join(implements)}",
+        ]
+        if depends_on:
+            entry_lines.append(f"- Depends on: {', '.join(depends_on)}")
+        if files:
+            entry_lines.append(f"- Files: {files}")
+        if scope:
+            entry_lines.append(f"- Scope: {scope}")
+        if supersedes is not None:
+            entry_lines.append(f"- Supersedes: {supersedes}")
+        if milestone is not None:
+            entry_lines.append(f"- Milestone: {milestone}")
+        entry_lines.append("- Progress: pending")
+        entry_lines.append("- Status: active")
+        entry = "\n".join(entry_lines) + "\n"
 
-    doc = markdown.append_to_section(doc, "## Tasks", entry)
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+        doc = markdown.append_to_section(doc, "## Tasks", entry)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     return Task(
         id=new_id, text=text, acceptance=acceptance, verify=verify,
         implements=implements, depends_on=depends_on, files=files, scope=scope,
@@ -556,23 +558,24 @@ def add_milestone(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    doc = path.read_text()
-    if "## Tasks" not in doc:
-        raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
+    with locked(path):
+        doc = path.read_text()
+        if "## Tasks" not in doc:
+            raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
 
-    exit_items = [item.strip() for item in (exit_items or []) if item.strip()]
-    if not exit_items:
-        raise SpecfloError("A milestone needs at least one --exit checklist item.")
+        exit_items = [item.strip() for item in (exit_items or []) if item.strip()]
+        if not exit_items:
+            raise SpecfloError("A milestone needs at least one --exit checklist item.")
 
-    doc = markdown.ensure_section_before(doc, "## Milestones", "## Tasks")
-    new_id = markdown.next_id(doc, "M-")
-    entry_lines = [f"### {new_id} — {text}", "- Exit:"]
-    entry_lines += [f"  - {item}" for item in exit_items]
-    entry = "\n".join(entry_lines) + "\n"
+        doc = markdown.ensure_section_before(doc, "## Milestones", "## Tasks")
+        new_id = markdown.next_id(doc, "M-")
+        entry_lines = [f"### {new_id} — {text}", "- Exit:"]
+        entry_lines += [f"  - {item}" for item in exit_items]
+        entry = "\n".join(entry_lines) + "\n"
 
-    doc = markdown.append_to_section(doc, "## Milestones", entry)
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+        doc = markdown.append_to_section(doc, "## Milestones", entry)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     return Milestone(id=new_id, title=text, exit_items=exit_items)
 
 

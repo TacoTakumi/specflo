@@ -18,6 +18,7 @@ from . import markdown
 from .brainstorm import brainstorm_path
 from .config import SpecfloConfig
 from .errors import SpecfloError
+from .locking import locked
 from .projects import load_project, project_dir
 
 SPEC_FILENAME = "spec.md"
@@ -109,34 +110,35 @@ def add_requirement(
     path = spec_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No spec yet. Run `specflo spec start` first.")
-    doc = path.read_text()
-    if "## Requirements" not in doc:
-        raise SpecfloError("Malformed spec.md: no '## Requirements' section.")
+    with locked(path):
+        doc = path.read_text()
+        if "## Requirements" not in doc:
+            raise SpecfloError("Malformed spec.md: no '## Requirements' section.")
 
-    if supersedes is not None and not re.search(
-        rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
-    ):
-        raise SpecfloError(f"No requirement {supersedes} to supersede.")
+        if supersedes is not None and not re.search(
+            rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
+        ):
+            raise SpecfloError(f"No requirement {supersedes} to supersede.")
 
-    if derives_from is not None:
-        _require_decision_exists(root, cfg, slug, derives_from)
+        if derives_from is not None:
+            _require_decision_exists(root, cfg, slug, derives_from)
 
-    new_id = markdown.next_id(doc, "REQ-")
+        new_id = markdown.next_id(doc, "REQ-")
 
-    if supersedes is not None:
-        doc = markdown.mark_superseded(doc, supersedes, new_id)
+        if supersedes is not None:
+            doc = markdown.mark_superseded(doc, supersedes, new_id)
 
-    entry_lines = [f"### {new_id} — {text}", f"- Acceptance: {acceptance}"]
-    if derives_from is not None:
-        entry_lines.append(f"- Derives from: {derives_from}")
-    if supersedes is not None:
-        entry_lines.append(f"- Supersedes: {supersedes}")
-    entry_lines.append("- Status: active")
-    entry = "\n".join(entry_lines) + "\n"
+        entry_lines = [f"### {new_id} — {text}", f"- Acceptance: {acceptance}"]
+        if derives_from is not None:
+            entry_lines.append(f"- Derives from: {derives_from}")
+        if supersedes is not None:
+            entry_lines.append(f"- Supersedes: {supersedes}")
+        entry_lines.append("- Status: active")
+        entry = "\n".join(entry_lines) + "\n"
 
-    doc = markdown.append_to_section(doc, "## Requirements", entry)
-    doc = markdown.bump_updated(doc, today)
-    path.write_text(doc)
+        doc = markdown.append_to_section(doc, "## Requirements", entry)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
     return Requirement(
         id=new_id,
         text=text,

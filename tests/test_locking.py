@@ -8,8 +8,11 @@ with a loud SpecfloError on timeout.
 import ast
 import inspect
 import multiprocessing
+import re
+import subprocess
 import sys
 import time
+from pathlib import Path
 
 import pytest
 
@@ -167,3 +170,45 @@ def test_posix_prefers_fcntl_over_msvcrt():
     else:
         assert locking._fcntl is not None
         assert locking._msvcrt is None
+
+
+def test_concurrent_cli_adds_mint_distinct_sequential_ids(tmp_path):
+    """Eight concurrent `specflo decision add` processes on one artifact mint
+    D-01..D-08 with no duplicates and no lost entries (REQ-05 behavioral).
+    Drives the real installed console script, one OS process per add, so this
+    exercises the exact read-modify-write hazard the lock exists to fix."""
+    specflo_bin = str(Path(sys.executable).parent / "specflo")
+
+    def run(*args):
+        r = subprocess.run(
+            [specflo_bin, *args], capture_output=True, text=True, cwd=tmp_path
+        )
+        assert r.returncode == 0, r.stderr
+
+    run("init")
+    run("new", "Concurrency")
+    run("brainstorm", "start")
+
+    procs = [
+        subprocess.Popen(
+            [specflo_bin, "decision", "add", "--text", f"decision {i}"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            cwd=tmp_path,
+        )
+        for i in range(8)
+    ]
+    for p in procs:
+        out, err = p.communicate(timeout=30)
+        assert p.returncode == 0, err
+
+    doc = (tmp_path / "docs" / "projects" / "concurrency" / "brainstorm.md").read_text()
+    ids = re.findall(r"^### (D-\d+) —", doc, re.MULTILINE)
+    # no duplicates, complete, sequential - the lock's guarantee. The ID-to-text
+    # assignment is by lock-acquisition (execution) order, not launch order
+    # (D-04), so each authored text must be present, but under any ID.
+    assert ids == [f"D-{i:02d}" for i in range(1, 9)]
+    titles = re.findall(r"^### D-\d+ — (.*)$", doc, re.MULTILINE)
+    assert set(titles) == {f"decision {i}" for i in range(8)}
+    assert doc.count("### D-") == 8
