@@ -26,6 +26,7 @@ from . import (
     projects,
     spec as spec_module,
 )
+from .locking import locked
 from .projects import COMPLETE_STATUS
 
 # Fixed marker opening the auto-mode bootstrap section of the payload. Tests key
@@ -175,7 +176,9 @@ def load_run_state(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
 
 
 def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict) -> None:
-    run_state_path(root, cfg, slug).write_text(json.dumps(state, indent=2) + "\n")
+    path = run_state_path(root, cfg, slug)
+    with locked(path):
+        path.write_text(json.dumps(state, indent=2) + "\n")
 
 
 def _mark_run_ended(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
