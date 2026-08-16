@@ -21,6 +21,8 @@
  */
 
 import { execFile } from "node:child_process";
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type {
   BeforeAgentStartEventResult,
   ContextUsage,
@@ -347,6 +349,116 @@ export function describeSeam(last: StatusSnapshot, current: StatusSnapshot): str
  */
 export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
   return describeSeam(last, current) !== null;
+}
+
+/**
+ * One rendered status segment: the uncolored text and the theme-token style
+ * the wiring applies it with.
+ *
+ * Mirrors statusline.sh's specflo_seg output minus the ANSI: the wiring owns
+ * colour, via ctx.ui.theme, so the segment follows the active pi theme and no
+ * escape byte lives in this source (REQ-07).
+ */
+export interface SegmentText {
+  text: string;
+  style: "magenta" | "dim";
+}
+
+/**
+ * The specflo status segment for the session cwd, or null when there is
+ * nothing to show.
+ *
+ * Parses the specflo artifacts directly - .specflo/config.yaml walked up from
+ * ``cwd``, the active project's project.md frontmatter, and its plan.md task
+ * blocks - with exactly the rules of ~/.claude/statusline.sh's specflo_seg
+ * (D-02). A slug longer than 17 characters is truncated to its first 16 plus
+ * an ellipsis; complete/shelved render dim 'slug done'/'slug shelved'; plan
+ * and execute append a task tally ' T-NN d/total' counting non-superseded
+ * tasks only (an explicit `Superseded by:` field or the legacy `Status:
+ * superseded by` phrase marks a task superseded), and execute drops the phase
+ * label to buy back width. Anything missing or unparseable - no config.yaml
+ * on the walk, no active_project, a broken frontmatter, an unreadable
+ * plan.md - yields null, so the caller clears the status. Never throws: the
+ * whole walk is guarded and a throwing read degrades to null (REQ-02).
+ */
+export function computeSegment(cwd: string): SegmentText | null {
+  try {
+    // Walk up from the cwd to the first .specflo/config.yaml, exactly the
+    // statusline's loop (realpath first, so a symlinked cwd resolves the
+    // same repo a shell would resolve it to).
+    let root = fs.realpathSync(cwd);
+    for (;;) {
+      if (fs.existsSync(path.join(root, ".specflo", "config.yaml"))) break;
+      const parent = path.dirname(root);
+      if (parent === root) return null;
+      root = parent;
+    }
+    // config.yaml: only the two keys the segment needs, comment lines and
+    // anything else ignored, values unquoted.
+    const cfg: Record<string, string> = {};
+    for (const line of fs.readFileSync(path.join(root, ".specflo", "config.yaml"), "utf8").split("\n")) {
+      const m = /^(projects_dir|active_project):\s*(.+?)\s*$/.exec(line);
+      if (m !== null) cfg[m[1]] = m[2].trim().replace(/^['"]+|['"]+$/g, "");
+    }
+    const slug = cfg["active_project"];
+    if (!slug) return null;
+    // Code-point length, as Python's len; ASCII slugs are identical either way.
+    const label = [...slug].length <= 17 ? slug : [...slug].slice(0, 16).join("") + "\u2026";
+    const pdir = path.join(root, cfg["projects_dir"] ?? "docs/projects", slug);
+    // project.md: the frontmatter block alone, first 2048 characters, with
+    // the last phase/status match winning (dict semantics in the statusline).
+    let head: string;
+    try {
+      head = fs.readFileSync(path.join(pdir, "project.md"), "utf8").slice(0, 2048);
+    } catch {
+      return null;
+    }
+    const fm = /^---\r?\n([\s\S]*?)\r?\n---/.exec(head);
+    if (fm === null) return null;
+    const meta: Record<string, string> = {};
+    for (const m of fm[1].matchAll(/^(phase|status):\s*['"]?([\w-]+)/gm)) meta[m[1]] = m[2];
+    const phase = meta["phase"];
+    if (phase === undefined) return null;
+    if (meta["status"] === "complete") return { text: `${label} done`, style: "dim" };
+    if (meta["status"] === "shelved") return { text: `${label} shelved`, style: "dim" };
+    let seg = `${label}:${phase}`;
+    // Task tally for plan/execute: `### T-NN` blocks carrying machine-managed
+    // `- Progress:` / `- Status:` / `- Superseded by:` fields.
+    if (phase === "plan" || phase === "execute") {
+      const tasks: Array<{ id: string; progress: string; sup: boolean }> = [];
+      let cur: (typeof tasks)[number] | null = null;
+      try {
+        for (const line of fs.readFileSync(path.join(pdir, "plan.md"), "utf8").split("\n")) {
+          const t = /^### (T-\d+)/.exec(line);
+          if (t !== null) {
+            cur = { id: t[1], progress: "pending", sup: false };
+            tasks.push(cur);
+          } else if (line.startsWith("### ")) {
+            cur = null;
+          } else if (cur !== null) {
+            const f = /^- (Progress|Status|Superseded by):\s*(.+?)\s*$/.exec(line);
+            if (f !== null) {
+              if (f[1] === "Progress") cur.progress = f[2];
+              else if (f[1] === "Superseded by" || f[2].includes("superseded by")) cur.sup = true;
+            }
+          }
+        }
+      } catch {
+        // An unreadable plan.md leaves the tally off, as in the statusline.
+      }
+      const active = tasks.filter((t) => !t.sup);
+      if (active.length > 0) {
+        const wip = active.find((t) => t.progress === "in_progress");
+        const done = active.filter((t) => t.progress === "done").length;
+        const tail = `${wip !== undefined ? ` ${wip.id}` : ""} ${done}/${active.length}`;
+        // In execute the tally already implies the phase; keep the label only.
+        seg = phase === "execute" ? label + tail : seg + tail;
+      }
+    }
+    return { text: seg, style: "magenta" };
+  } catch {
+    return null;
+  }
 }
 
 /**
