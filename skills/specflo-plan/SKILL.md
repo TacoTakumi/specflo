@@ -42,7 +42,11 @@ not planning.
    behavior-adding tasks as RED→GREEN (write the failing test first). Declare
    `Depends on` for ordering.
 4. **Capture inline** — run `specflo task add` with `--text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …]` the moment each task
-   lands (un-batched). Keep Approach / Global constraints / Open questions /
+   lands (un-batched). **Emit artifact-writing add calls sequentially: one at a
+   time, never batched in parallel.** The CLI's advisory lock (D-01) makes
+   concurrent adds safe but cannot fix ordering — minted `T-NN`/`M-NN` IDs follow
+   execution order, so parallel emission can record IDs out of authoring order.
+   Keep Approach / Global constraints / Open questions /
    Canonical refs updated as prose.
 5. **Scope-reduction guard** — the plan delivers what each `REQ-NN`/`D-NN`
    requires; never silently degrade to "v1 / simplified / for now / a stub." On

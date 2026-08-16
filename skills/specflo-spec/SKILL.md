@@ -60,7 +60,11 @@ requirements with pass/fail acceptance — not merely "don't code yet".
 4. **Capture inline.** The moment a requirement is settled, record it:
    `specflo requirement add --text "…" --acceptance "…" [--from D-NN]`
    (add `--supersedes REQ-NN` when it replaces an earlier one). Don't batch —
-   capture as they happen. Keep the prose sections (Objective, Boundaries In/Out,
+   capture as they happen. **Emit artifact-writing add calls sequentially: one
+   at a time, never batched in parallel.** The CLI's advisory lock (D-01) makes
+   concurrent adds safe but cannot fix ordering — minted `REQ-NN` IDs follow
+   execution order, so parallel emission can record IDs out of authoring order.
+   Keep the prose sections (Objective, Boundaries In/Out,
    Open questions, Canonical refs) current by editing `spec.md` directly.
 5. **Hold the scope boundary.** Fill **Boundaries** — In scope and Out of scope —
    carrying the brainstorm's Out of scope / Deferred forward. Both lists must be
