@@ -801,6 +801,16 @@ def set_milestone(
     return task
 
 
+def first_in_progress(active: list[Task]) -> str | None:
+    """The first ``in_progress`` task id in *active*, or None.
+
+    There is normally at most one task under way at a time; this is the task the
+    project is *on* (:func:`current_task_id`). Shared so the reseed path and the
+    progress-derived "next" view agree on which task that is.
+    """
+    return next((t.id for t in active if t.progress == "in_progress"), None)
+
+
 def _progress_from_tasks(active: list[Task]) -> dict:
     by_state = {s: 0 for s in PROGRESS_STATES}
     for t in active:
@@ -810,6 +820,18 @@ def _progress_from_tasks(active: list[Task]) -> dict:
         t.id for t in active
         if t.progress == "pending" and all(d in done_ids for d in t.depends_on)
     ]
+    # When no unstarted task is dependency-ready but a task on the plan is already
+    # under way (the mid-task state a context clear lands in, or a half-started
+    # auto pass), that task *is* the work to continue — surface it rather than read
+    # the project as stuck. This keeps the "steps past a task already under way"
+    # behaviour for as long as other pending work is ready; only once the
+    # in-progress task is the sole remaining work does it become the "next" task,
+    # so status / `task show` / checkpoint agree with `current_task_id` instead of
+    # declaring nothing actionable.
+    if not next_actionable:
+        cont = first_in_progress(active)
+        if cont is not None:
+            next_actionable = [cont]
     total = len(active)
     return {
         "total": total,
@@ -1096,7 +1118,7 @@ def current_task_id(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
         return None
     doc = path.read_text()
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    started = next((t.id for t in active if t.progress == "in_progress"), None)
+    started = first_in_progress(active)
     return started or _default_actionable(active, _parse_milestones(doc))
 
 
@@ -1140,7 +1162,11 @@ def render_task_brief(brief: dict) -> str:
     if brief["global_constraints"]:
         lines.append("## Global constraints")
         lines.append(brief["global_constraints"])
-    return "\n".join(lines)
+    # Keep the rendered brief ASCII for terminal/hook output (the em-dash -> ASCII
+    # cleanup the CLI output guard locks): em-dashes in authored section headings
+    # become hyphens. The structured `brief` dict still carries the verbatim
+    # sections for `-json` consumers / `task show <id> --json`.
+    return "\n".join(lines).replace("—", "-")
 
 
 def task_brief(

@@ -8,6 +8,24 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.7.2]
+
+### Fixed
+- **A task the project is mid-way through reads as the next task, not as stuck.**
+  When the only remaining work on a plan is a task already marked `in_progress`
+  (the state a context clear lands in, or a half-started auto pass), `specflo
+  status`, `specflo checkpoint` and the execute "next" hint now name that task
+  as the one to continue instead of reporting "no actionable task".
+  `specflo task show` with no id resolves to it rather than erroring, so all the
+  progress-derived surfaces agree with the mid-task resume the session-start
+  reseed already used (`current_task_id`) (plan.py). While any other pending
+  work is dependency-ready the in-progress task is still stepped past, unchanged;
+  the task-list "next" marker and milestone steering are unaffected.
+- **`specflo task show` renders its brief ASCII-clean.** The rendered brief now
+  normalizes em-dashes in authored section headings to hyphens (the em-dash ->
+  ASCII cleanup the CLI output guard locks), while `task show --json` keeps
+  the verbatim sections.
+
 ## [0.7.0]
 
 ### Added

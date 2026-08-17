@@ -294,8 +294,11 @@ def test_task_brief_resolves_superseded_citation(root, cfg, project):
     assert "### REQ-02 — better" in req["section"]     # the live section
     rendered = plan.render_task_brief(brief)
     assert "Implements: REQ-01 -> superseded by REQ-02" in rendered
-    assert "### REQ-02 — better" in rendered
-    assert "### REQ-01 — req 0" not in rendered        # stale section not presented as live
+    # The rendered brief is ASCII-normalized (em-dash -> hyphen); the structured
+    # `brief` dict keeps the verbatim section for -json consumers.
+    assert "### REQ-02 - better" in rendered
+    assert "### REQ-02 — better" in req["section"]
+    assert "### REQ-01 - req 0" not in rendered        # stale section not presented as live
 
 
 def test_task_brief_all_active_carries_no_chain_annotation(root, cfg, project):
@@ -636,6 +639,35 @@ def test_task_brief_unknown_task_raises(root, cfg, project):
     _good_plan(root, cfg, project)
     with pytest.raises(SpecfloError):
         plan.task_brief(root, cfg, project, "T-99")
+
+
+def test_in_progress_sole_remaining_task_is_next_not_stuck(root, cfg, project):
+    # A mid-task state (the sole remaining task in_progress — the landing of a
+    # context clear) must read as "continue T-01", not as "nothing actionable":
+    # status / task show / checkpoint all agree via next_actionable.
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01", progress="in_progress"),
+    ])
+    prog = plan.plan_progress(root, cfg, project)
+    assert prog["next_actionable"] == ["T-01"]
+    assert prog["all_done"] is False
+    # task show (no id) resolves to the in-progress task instead of erroring.
+    brief = plan.task_brief(root, cfg, project)
+    assert brief["task"]["id"] == "T-01"
+    assert brief["task"]["progress"] == "in_progress"
+
+
+def test_in_progress_fallback_keeps_other_pending_work_first(root, cfg, project):
+    # While other pending work is ready, the in-progress task is *not* surfaced as
+    # next (it is already claimed) — next_actionable keeps listing the ready
+    # pending task only, preserving the "steps past a task under way" behaviour.
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01", progress="in_progress"),
+        _raw_task_entry("T-02"),
+    ])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-02"]
 
 
 def test_reconcile_requires_all_tasks_done(root, cfg, project):
