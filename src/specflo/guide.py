@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import projects, workflow
+from . import index, projects, workflow
 from .config import SpecfloConfig
 from .errors import SpecfloError
 
@@ -144,6 +144,9 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
         return payload
 
     payload["initialized"] = True
+    # The prior-projects rule (project-index REQ-06): present only while a
+    # completed project exists, worded by the configured mode.
+    payload["rule"] = index.rule_line(root, cfg)
 
     if cfg.active_project is None:
         payload["active_project"] = None

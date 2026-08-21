@@ -354,6 +354,10 @@ def list_(
         else:
             suffix = ""
         typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
+    rule = index_module.rule_line(root, cfg)
+    if rule:
+        typer.echo("")
+        typer.echo(rule)
 
 
 @app.command(epilog="Example: specflo switch my-project")
@@ -567,6 +571,7 @@ def guide_(
         "",
         "You are here:",
         *(f"  {line}" for line in _render_you_are_here(data)),
+        *(["", data["rule"]] if data.get("rule") else []),
         "",
         "Commands:",
         *_render_commands(data),

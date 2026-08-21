@@ -149,3 +149,28 @@ def test_guide_shows_you_are_here_for_active_project(cwd):
     data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
     assert data["active_project"] == "my-thing"
     assert data["next_action"] == "brainstorm"
+
+
+# --- the prior-projects rule line (project-index REQ-06) -----------------
+
+
+def test_guide_shows_the_rule_line_with_completed_projects(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    cfg = config.load_config(cwd)
+    projects.complete_project(cwd, cfg, "my-thing")
+
+    out = runner.invoke(app, ["guide"]).output
+    assert config.rule_text("historical") in out
+
+    runner.invoke(app, ["config", "set", "prior_projects", "binding"])
+    out = runner.invoke(app, ["guide"]).output
+    assert config.rule_text("binding") in out
+    assert config.rule_text("historical") not in out
+
+
+def test_guide_omits_the_rule_line_without_completed_projects(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    out = runner.invoke(app, ["guide"]).output
+    assert config.rule_text("historical") not in out

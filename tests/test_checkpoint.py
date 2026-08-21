@@ -369,3 +369,27 @@ def test_checkpoint_plan_that_validates_offers_advance_and_drops_task_suffix(tmp
     bare = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-06")
     assert "specflo advance" not in bare["do_next"]
     assert "T-01" in bare["do_next"]
+
+
+# --- the prior-projects rule line (project-index REQ-06) -----------------
+
+
+def test_checkpoint_carries_the_rule_line_with_completed_projects(tmp_path):
+    cfg, project = _project(tmp_path)
+    projects.complete_project(tmp_path, cfg, "my-thing")
+    project = projects.load_project(tmp_path, cfg, "my-thing")
+
+    path = checkpoint.write_checkpoint(tmp_path, project, cfg=cfg)
+    assert config.rule_text("historical") in path.read_text()
+
+    cfg.prior_projects = "binding"
+    path = checkpoint.write_checkpoint(tmp_path, project, cfg=cfg)
+    text = path.read_text()
+    assert config.rule_text("binding") in text
+    assert config.rule_text("historical") not in text
+
+
+def test_checkpoint_omits_the_rule_line_without_completed_projects(tmp_path):
+    cfg, project = _project(tmp_path)
+    path = checkpoint.write_checkpoint(tmp_path, project, cfg=cfg)
+    assert config.rule_text("historical") not in path.read_text()

@@ -57,6 +57,15 @@ def index_path(root: Path, cfg: SpecfloConfig) -> Path:
     return root / cfg.projects_dir / INDEX_FILENAME
 
 
+def rule_line(root: Path, cfg: SpecfloConfig) -> str | None:
+    """The prior-projects rule line for command output (REQ-06), or None while
+    no completed project exists - with nothing historical to read, the rule
+    would be noise."""
+    if any(p.status == COMPLETE_STATUS for p in list_projects(root, cfg)):
+        return rule_text(cfg.prior_projects)
+    return None
+
+
 def banner_text(cfg: SpecfloConfig, project: Project) -> str:
     """The pinned one-line blockquote banner for ``project``."""
     index_ref = (Path(cfg.projects_dir) / INDEX_FILENAME).as_posix()

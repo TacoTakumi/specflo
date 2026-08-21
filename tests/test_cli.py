@@ -3336,3 +3336,33 @@ def test_summary_verb_rejects_empty_text(tmp_path, monkeypatch):
 
     result = runner.invoke(app, ["summary", "   "])
     assert result.exit_code != 0
+
+
+# --- the prior-projects rule line in list (project-index REQ-06) ---------
+
+
+def test_list_shows_the_rule_line_with_completed_projects(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo import projects as projects_mod
+
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--summary", "S."])
+    cfg = config.load_config(tmp_path)
+    projects_mod.complete_project(tmp_path, cfg, "thing")
+
+    out = runner.invoke(app, ["list"]).output
+    assert config.rule_text("historical") in out
+
+    runner.invoke(app, ["config", "set", "prior_projects", "binding"])
+    out = runner.invoke(app, ["list"]).output
+    assert config.rule_text("binding") in out
+    assert config.rule_text("historical") not in out
+
+
+def test_list_omits_the_rule_line_without_completed_projects(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--summary", "S."])
+
+    out = runner.invoke(app, ["list"]).output
+    assert config.rule_text("historical") not in out

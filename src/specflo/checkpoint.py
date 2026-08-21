@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from . import plan as plan_module, validators, workflow
+from . import index as index_module, plan as plan_module, validators, workflow
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
 from .projects import (
@@ -113,6 +113,10 @@ def build_checkpoint(
         "phase": project.phase,
         "status": project.status,
         "shelved_reason": project.shelved_reason,
+        # The prior-projects rule (project-index REQ-06): the checkpoint is what
+        # carries it into the session-start hook payload. None without cfg, or
+        # while no completed project exists.
+        "rule": index_module.rule_line(root, cfg) if cfg is not None else None,
         "generated": today or datetime.date.today().isoformat(),
         "read_first": read_first,
         "do_next": do_next,
@@ -136,6 +140,8 @@ def render_checkpoint(payload: dict) -> str:
     ]
     if shelved and payload.get("shelved_reason"):
         lines += [f"**Shelved:** {payload['shelved_reason']}", ""]
+    if payload.get("rule"):
+        lines += [payload["rule"], ""]
     lines += [
         "## Read first",
         *(f"- {path}" for path in payload["read_first"]),
