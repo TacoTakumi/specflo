@@ -173,6 +173,29 @@ def test_degrades_to_unlocked_with_warning_when_no_lock_api(tmp_path, monkeypatc
     assert not lock_path.exists()
 
 
+def test_lock_path_for_maps_artifact_into_config_locks_tree(tmp_path):
+    artifact = tmp_path / "docs" / "projects" / "myproj" / "brainstorm.md"
+    p = locking.lock_path_for(tmp_path, "myproj", artifact)
+    assert p == tmp_path / ".specflo" / "locks" / "myproj" / "brainstorm.md.lock"
+
+
+def test_lock_path_for_creates_dir_tree_and_self_ignoring_gitignore(tmp_path):
+    artifact = tmp_path / "docs" / "projects" / "myproj" / "spec.md"
+    locking.lock_path_for(tmp_path, "myproj", artifact)
+    assert (tmp_path / ".specflo" / "locks" / "myproj").is_dir()
+    gitignore = tmp_path / ".specflo" / "locks" / ".gitignore"
+    assert gitignore.read_text().strip() == "*"
+
+
+def test_lock_path_for_restores_a_deleted_gitignore(tmp_path):
+    artifact = tmp_path / "docs" / "projects" / "myproj" / "plan.md"
+    locking.lock_path_for(tmp_path, "myproj", artifact)
+    gitignore = tmp_path / ".specflo" / "locks" / ".gitignore"
+    gitignore.unlink()
+    locking.lock_path_for(tmp_path, "myproj", artifact)
+    assert gitignore.read_text().strip() == "*"
+
+
 def test_concurrent_add_and_transition_lose_no_entries(tmp_path):
     """A `task add` racing a `task start` on the same plan.md loses nothing:
     the appended T-02 entry survives and T-01's progress flips (REQ-06

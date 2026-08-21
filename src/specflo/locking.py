@@ -33,7 +33,9 @@ import contextlib
 import os
 import time
 import warnings
+from pathlib import Path
 
+from specflo.config import CONFIG_DIRNAME
 from specflo.errors import SpecfloError
 
 try:
@@ -48,6 +50,27 @@ except ImportError:  # pragma: no cover - non-Windows
 
 POLL_INTERVAL = 0.05  # seconds between non-blocking acquisition attempts
 LOCK_TIMEOUT = 10.0  # default seconds before giving up and raising
+
+LOCKS_DIRNAME = "locks"
+_GITIGNORE_CONTENT = "*\n"
+
+
+def lock_path_for(root, project: str, artifact) -> Path:
+    """Map *artifact* to its lock file under ``<root>/.specflo/locks/``.
+
+    Returns ``<root>/.specflo/locks/<project>/<artifact-filename>.lock``,
+    creating the directory tree on the way. The locks dir carries a
+    self-ignoring ``.gitignore`` (content ``*``) so nothing under it ever
+    shows up in ``git status``; it is written on first use and restored on
+    a later call if it has been deleted.
+    """
+    locks_dir = Path(root) / CONFIG_DIRNAME / LOCKS_DIRNAME
+    project_dir = locks_dir / project
+    project_dir.mkdir(parents=True, exist_ok=True)
+    gitignore = locks_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text(_GITIGNORE_CONTENT, encoding="utf-8")
+    return project_dir / f"{Path(artifact).name}.lock"
 
 _warned_degrade = False
 
