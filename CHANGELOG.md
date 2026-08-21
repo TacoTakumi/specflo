@@ -8,6 +8,21 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.8.0]
+
+### Changed
+- **Lock files moved out of the projects dir into `.specflo/locks/` (lockfile-relocation).**
+  A locked artifact operation now creates its lock at
+  `.specflo/locks/<project>/<artifact-filename>.lock` instead of a sibling
+  `<artifact>.lock` beside the artifact, so locked writes no longer clutter
+  `git status` in the projects tree. The locks dir writes a self-ignoring
+  `.gitignore` (content `*`) on first use and restores it if deleted. Locking
+  semantics are unchanged: same flock/msvcrt backends, poll interval, timeout,
+  and the never-unlink rule. Cutover note: specflo never touches lock files
+  left beside artifacts by earlier releases - after upgrading, delete any
+  leftover `*.lock` files in your projects dir once by hand, e.g.
+  `find docs/projects -name '*.lock' -delete`.
+
 ## [0.7.2]
 
 ### Fixed
