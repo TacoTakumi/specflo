@@ -250,6 +250,65 @@ def test_locks_live_under_config_dir_never_beside_artifacts(tmp_path):
         assert (locks / name).exists(), f"missing {name} under .specflo/locks/loc/"
 
 
+def test_stale_sibling_lock_from_an_earlier_release_stays_untouched(tmp_path):
+    """A pre-existing <artifact>.md.lock beside the artifact (left by an older
+    specflo) is never read, locked, or deleted: a locked write succeeds using
+    the new location and leaves the stale file byte-identical (REQ-06)."""
+    specflo_bin = str(Path(sys.executable).parent / "specflo")
+
+    def run(*args):
+        r = subprocess.run(
+            [specflo_bin, *args], capture_output=True, text=True, cwd=tmp_path
+        )
+        assert r.returncode == 0, r.stderr
+
+    run("init")
+    run("new", "Guard")
+    run("brainstorm", "start")
+    stale = tmp_path / "docs" / "projects" / "guard" / "brainstorm.md.lock"
+    stale.write_bytes(b"stale sentinel from an earlier release\n")
+    run("decision", "add", "--text", "d1")
+    assert stale.read_bytes() == b"stale sentinel from an earlier release\n"
+    assert (tmp_path / ".specflo" / "locks" / "guard" / "brainstorm.md.lock").exists()
+
+
+def test_git_status_reports_nothing_under_the_locks_dir(tmp_path):
+    """In a git repo, .specflo/locks/ is self-ignoring: git status --porcelain
+    -uall never mentions it, even after the .gitignore is deleted and a later
+    locked write restores it (REQ-05)."""
+    specflo_bin = str(Path(sys.executable).parent / "specflo")
+
+    def run(*args):
+        r = subprocess.run(
+            [specflo_bin, *args], capture_output=True, text=True, cwd=tmp_path
+        )
+        assert r.returncode == 0, r.stderr
+
+    def git_status_lines():
+        r = subprocess.run(
+            ["git", "status", "--porcelain", "-uall"],
+            capture_output=True, text=True, cwd=tmp_path,
+        )
+        assert r.returncode == 0, r.stderr
+        return r.stdout.splitlines()
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    run("init")
+    run("new", "Guard")
+    run("brainstorm", "start")
+    run("decision", "add", "--text", "d1")
+
+    locks_dir = tmp_path / ".specflo" / "locks"
+    assert any(locks_dir.rglob("*.lock")), "no lock was created; the guard proves nothing"
+    assert not any(".specflo/locks" in line for line in git_status_lines())
+
+    gitignore = locks_dir / ".gitignore"
+    gitignore.unlink()
+    run("decision", "add", "--text", "d2")
+    assert gitignore.read_text().strip() == "*"
+    assert not any(".specflo/locks" in line for line in git_status_lines())
+
+
 def test_concurrent_add_and_transition_lose_no_entries(tmp_path):
     """A `task add` racing a `task start` on the same plan.md loses nothing:
     the appended T-02 entry survives and T-01's progress flips (REQ-06
