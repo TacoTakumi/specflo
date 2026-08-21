@@ -1,8 +1,8 @@
 """Tests for the locked() advisory-lock context manager (src/specflo/locking.py).
 
-Covers REQ-01..REQ-04: stdlib-only cross-platform sibling-lock file, full
-read-compute-write span, never unlink the lock file, bounded-wait contention
-with a loud SpecfloError on timeout.
+Covers REQ-01..REQ-04: stdlib-only cross-platform lock file at an explicitly
+given path, full read-compute-write span, never unlink the lock file,
+bounded-wait contention with a loud SpecfloError on timeout.
 """
 
 import ast
@@ -22,15 +22,24 @@ from specflo.errors import SpecfloError
 from conftest import executable_identifiers
 
 
-def test_lock_file_is_sibling_and_target_untouched(tmp_path):
+def test_lock_file_is_exactly_the_given_path_and_target_untouched(tmp_path):
     target = tmp_path / "artifact.md"
+    lock_path = tmp_path / "artifact.md.lock"
     assert not target.exists()
-    with locking.locked(target):
-        assert (tmp_path / "artifact.md.lock").exists()
-    # locking never creates or writes the target itself, and never unlinks
+    with locking.locked(lock_path):
+        assert lock_path.exists()
+    # locking never creates or writes the artifact itself, and never unlinks
     # the lock file (it persists after release, by design).
     assert not target.exists()
-    assert (tmp_path / "artifact.md.lock").exists()
+    assert lock_path.exists()
+
+
+def test_locked_creates_missing_parent_dirs(tmp_path):
+    lock_path = tmp_path / "locks" / "proj" / "artifact.md.lock"
+    assert not lock_path.parent.exists()
+    with locking.locked(lock_path):
+        assert lock_path.exists()
+    assert lock_path.exists()
 
 
 def test_second_process_blocked_until_release_then_sees_full_write(tmp_path):
@@ -38,6 +47,7 @@ def test_second_process_blocked_until_release_then_sees_full_write(tmp_path):
     runs its read-compute-write; once the holder releases, the waiter enters
     and reads the fully-written artifact (REQ-02: lock spans the write)."""
     target = tmp_path / "artifact.md"
+    lock_path = tmp_path / "artifact.md.lock"
     target.write_text("")
 
     held = multiprocessing.Event()
@@ -46,7 +56,7 @@ def test_second_process_blocked_until_release_then_sees_full_write(tmp_path):
     out = multiprocessing.Queue()
 
     def holder():
-        with locking.locked(target):
+        with locking.locked(lock_path):
             held.set()
             release.wait(10)
             # read-compute-write inside the critical section
@@ -57,7 +67,7 @@ def test_second_process_blocked_until_release_then_sees_full_write(tmp_path):
     def waiter():
         held.wait(10)
         t0 = time.monotonic()
-        with locking.locked(target):
+        with locking.locked(lock_path):
             waited = time.monotonic() - t0
             content = target.read_text()
             entered.set()
@@ -90,20 +100,20 @@ def test_second_process_blocked_until_release_then_sees_full_write(tmp_path):
 
 
 def test_lock_released_on_body_exception(tmp_path):
-    target = tmp_path / "artifact.md"
+    lock_path = tmp_path / "artifact.md.lock"
     with pytest.raises(RuntimeError):
-        with locking.locked(target):
+        with locking.locked(lock_path):
             raise RuntimeError("boom")
     # a subsequent acquisition must succeed: the lock was released
-    with locking.locked(target, timeout=1.0):
+    with locking.locked(lock_path, timeout=1.0):
         pass
 
 
 def test_timeout_raises_specflo_error_naming_lock_path(tmp_path):
-    target = tmp_path / "artifact.md"
-    with locking.locked(target):
+    lock_path = tmp_path / "artifact.md.lock"
+    with locking.locked(lock_path):
         with pytest.raises(SpecfloError) as ei:
-            with locking.locked(target, timeout=0.2):
+            with locking.locked(lock_path, timeout=0.2):
                 pass
         assert "artifact.md.lock" in str(ei.value)
         assert "specflo" in str(ei.value).lower()
@@ -115,18 +125,18 @@ def test_held_lock_blocks_a_second_handle_in_same_process(tmp_path):
     excludes a second locked() acquisition, which times out loudly; once the
     first handle is released, a fresh acquisition succeeds."""
     fcntl = pytest.importorskip("fcntl")
-    target = tmp_path / "artifact.md"
-    fd = open(f"{target}.lock", "a+b")
+    lock_path = tmp_path / "artifact.md.lock"
+    fd = open(lock_path, "a+b")
     fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         with pytest.raises(SpecfloError):
-            with locking.locked(target, timeout=0.2):
+            with locking.locked(lock_path, timeout=0.2):
                 pass
     finally:
         fcntl.flock(fd, fcntl.LOCK_UN)
         fd.close()
     # the lock is not wedged: a fresh acquisition succeeds
-    with locking.locked(target, timeout=1.0):
+    with locking.locked(lock_path, timeout=1.0):
         pass
 
 
@@ -155,12 +165,12 @@ def test_module_imports_only_stdlib_and_specflo():
 def test_degrades_to_unlocked_with_warning_when_no_lock_api(tmp_path, monkeypatch):
     monkeypatch.setattr(locking, "_fcntl", None)
     monkeypatch.setattr(locking, "_msvcrt", None)
-    target = tmp_path / "artifact.md"
+    lock_path = tmp_path / "artifact.md.lock"
     with pytest.warns(RuntimeWarning):
-        with locking.locked(target):
+        with locking.locked(lock_path):
             pass
     # no lock file is even created on the degrade path
-    assert not (tmp_path / "artifact.md.lock").exists()
+    assert not lock_path.exists()
 
 
 def test_concurrent_add_and_transition_lose_no_entries(tmp_path):

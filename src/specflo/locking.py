@@ -1,15 +1,17 @@
 """Cross-platform advisory file locking for specflo's on-disk artifacts.
 
 A single :func:`locked` context manager serializes concurrent CLI processes
-over a **sibling** ``<target>.lock`` file. Stdlib-only: ``fcntl.flock`` on
-POSIX, ``msvcrt.locking`` on Windows, both with platform-gated imports. On a
-platform with neither API it degrades to an unlocked no-op with a warning —
-there is no way to lock there, and failing silently would reintroduce the
-duplicate-ID/lost-write hazard this module exists to prevent.
+over a lock file at an **explicitly given path** (the caller derives where the
+lock lives; missing parent directories are created on demand). Stdlib-only:
+``fcntl.flock`` on POSIX, ``msvcrt.locking`` on Windows, both with
+platform-gated imports. On a platform with neither API it degrades to an
+unlocked no-op with a warning — there is no way to lock there, and failing
+silently would reintroduce the duplicate-ID/lost-write hazard this module
+exists to prevent.
 
 Locking rules (research-grounded, see the project brainstorm):
 
-- Lock the sibling ``.lock`` file, never the target artifact: locks bind to
+- Lock a dedicated lock file, never the target artifact: locks bind to
   open files/inodes, and specflo rewrites the target on every write, so a
   lock on the target would be left behind when its inode is swapped.
 - Never unlink, rename, or replace the lock file: unlinking splits waiters
@@ -51,22 +53,23 @@ _warned_degrade = False
 
 
 @contextlib.contextmanager
-def locked(path, timeout: float | None = None):
-    """Serialize a critical section over the sibling ``<path>.lock`` file.
+def locked(lock_path, timeout: float | None = None):
+    """Serialize a critical section over the lock file at exactly *lock_path*.
 
-    Yields while holding an advisory lock; the lock is held for the entire
-    ``with`` block, so the caller's whole read-compute-write runs inside it.
-    On contended acquisition the call polls the non-blocking lock at
-    ~50ms intervals for at most *timeout* seconds (default :data:`LOCK_TIMEOUT`)
+    Missing parent directories of *lock_path* are created on demand. Yields
+    while holding an advisory lock; the lock is held for the entire ``with``
+    block, so the caller's whole read-compute-write runs inside it. On
+    contended acquisition the call polls the non-blocking lock at ~50ms
+    intervals for at most *timeout* seconds (default :data:`LOCK_TIMEOUT`)
     and then raises :class:`SpecfloError` naming the lock path.
     """
     deadline = time.monotonic() + (LOCK_TIMEOUT if timeout is None else timeout)
     timeout_value = LOCK_TIMEOUT if timeout is None else timeout
     if _fcntl is not None:
-        with _locked_flock(path, deadline, timeout_value):
+        with _locked_flock(lock_path, deadline, timeout_value):
             yield
     elif _msvcrt is not None:
-        with _locked_msvcrt(path, deadline, timeout_value):
+        with _locked_msvcrt(lock_path, deadline, timeout_value):
             yield
     else:  # pragma: no cover - platforms with neither fcntl nor msvcrt
         global _warned_degrade
@@ -82,11 +85,15 @@ def locked(path, timeout: float | None = None):
         yield
 
 
-def _lock_path(path) -> str:
-    return f"{path}.lock"
+def _open_lock(lock_path):
+    """Open (creating on demand) the lock file, and any missing parent dirs."""
+    parent = os.path.dirname(os.fspath(lock_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    return open(lock_path, "a+b")
 
 
-def _timeout_error(lock_path: str, timeout: float) -> SpecfloError:
+def _timeout_error(lock_path, timeout: float) -> SpecfloError:
     return SpecfloError(
         f"Could not lock {lock_path} within {timeout:.1f}s - another specflo "
         "process appears to be writing this artifact. Wait for it to finish "
@@ -94,7 +101,7 @@ def _timeout_error(lock_path: str, timeout: float) -> SpecfloError:
     )
 
 
-def _acquire_poll(attempt, lock_path: str, deadline: float, timeout: float):
+def _acquire_poll(attempt, lock_path, deadline: float, timeout: float):
     """Poll *attempt* (a zero-arg callable raising OSError while contended)
     until it succeeds or *deadline* passes. *timeout* is the configured value,
     used only for the error message."""
@@ -109,9 +116,8 @@ def _acquire_poll(attempt, lock_path: str, deadline: float, timeout: float):
 
 
 @contextlib.contextmanager
-def _locked_flock(path, deadline: float, timeout: float):
-    lock_path = _lock_path(path)
-    fd = open(lock_path, "a+b")
+def _locked_flock(lock_path, deadline: float, timeout: float):
+    fd = _open_lock(lock_path)
     try:
         _acquire_poll(
             lambda: _fcntl.flock(fd, _fcntl.LOCK_EX | _fcntl.LOCK_NB),
@@ -128,9 +134,8 @@ def _locked_flock(path, deadline: float, timeout: float):
 
 
 @contextlib.contextmanager
-def _locked_msvcrt(path, deadline: float, timeout: float):
-    lock_path = _lock_path(path)
-    fd = open(lock_path, "a+b")
+def _locked_msvcrt(lock_path, deadline: float, timeout: float):
+    fd = _open_lock(lock_path)
     try:
         def attempt():
             os.lseek(fd.fileno(), 0, os.SEEK_SET)
