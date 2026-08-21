@@ -47,6 +47,29 @@ DEFAULT_CONTEXT_THRESHOLD_PERCENT = 25
 # The usable percent range. 100 is allowed (arm only at a full window, in effect
 # disabling the trigger); 0 and below would arm every turn from the start.
 CONTEXT_THRESHOLD_RANGE = (1, 100)
+# How completed projects read to new work (project-index REQ-01): as history
+# that does not constrain, or as decisions that stay binding until superseded.
+PRIOR_PROJECTS_MODES = ("historical", "binding")
+DEFAULT_PRIOR_PROJECTS = "historical"
+
+# The pinned rule lines (project-index REQ-05), one per mode. Defined once so
+# the index header, list, guide, and checkpoint all render the same words.
+_RULE_TEXT = {
+    "historical": (
+        "Completed projects listed here are history: their decisions and"
+        " requirements described that work and do not constrain new work"
+        " unless restated."
+    ),
+    "binding": (
+        "Prior projects' decisions remain binding on new work unless"
+        " explicitly superseded."
+    ),
+}
+
+
+def rule_text(mode: str) -> str:
+    """The pinned prior-projects rule line for ``mode``."""
+    return _RULE_TEXT[mode]
 
 
 # --- domains ------------------------------------------------------------
@@ -155,6 +178,13 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         DEFAULT_MAX_PASSES,
         "Runaway backstop: the most passes one `specflo auto` run may take.",
         WholeNumber(1),
+    ),
+    ConfigField(
+        "prior_projects",
+        str,
+        DEFAULT_PRIOR_PROJECTS,
+        "How completed projects bind new work: historical or binding.",
+        Choice(PRIOR_PROJECTS_MODES),
     ),
     ConfigField(
         "context_threshold_percent",

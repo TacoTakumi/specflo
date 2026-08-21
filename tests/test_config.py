@@ -635,3 +635,42 @@ def test_loading_an_incomplete_config_leaves_the_file_bytes_unchanged(tmp_path):
 
     config.load_config(tmp_path)
     assert path.read_bytes() == before
+
+
+# --- prior_projects and the shared rule text (project-index REQ-01) ------
+# One Choice key decides how completed projects read to new work, and one
+# helper owns the two pinned rule lines so every surface (index header, list,
+# guide, checkpoint) renders the same words.
+
+
+def test_prior_projects_defaults_to_historical(tmp_path):
+    config.init_config(tmp_path)
+    assert config.load_config(tmp_path).prior_projects == "historical"
+    assert config.SpecfloConfig().prior_projects == "historical"
+
+
+def test_prior_projects_round_trips_binding(tmp_path):
+    config.init_config(tmp_path)
+    spec = config.field_for("prior_projects")
+    config.write_value(tmp_path, spec, config.parse_value(spec, "binding"))
+    assert config.load_config(tmp_path).prior_projects == "binding"
+
+
+def test_prior_projects_rejects_other_values_naming_both(tmp_path):
+    spec = config.field_for("prior_projects")
+    with pytest.raises(SpecfloError) as excinfo:
+        config.parse_value(spec, "nonsense")
+    assert "historical" in str(excinfo.value)
+    assert "binding" in str(excinfo.value)
+
+
+def test_rule_text_returns_the_pinned_lines():
+    assert config.rule_text("historical") == (
+        "Completed projects listed here are history: their decisions and"
+        " requirements described that work and do not constrain new work"
+        " unless restated."
+    )
+    assert config.rule_text("binding") == (
+        "Prior projects' decisions remain binding on new work unless"
+        " explicitly superseded."
+    )

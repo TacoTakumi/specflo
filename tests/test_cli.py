@@ -2798,6 +2798,7 @@ def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
         "active_project: my-thing",
         "autonomy: safe (default)",
         "auto_max_passes: 50 (default)",
+        "prior_projects: historical (default)",
         "context_threshold_percent: 25 (default)",
     ]
 
