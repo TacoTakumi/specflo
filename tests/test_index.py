@@ -396,3 +396,41 @@ def test_backfill_runs_only_on_the_first_index(root, cfg):
     text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
     assert "summary:" not in text             # no backfill write happened
     assert "completed:" not in text
+
+
+# --- the backfill handoff prompt (REQ-11) --------------------------------
+
+
+def test_backfill_prompt_offers_a_distillation_pass(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "First"])
+    runner.invoke(app, ["new", "Second"])
+    _age_project(tmp_path, "first", complete=False)
+    _age_project(tmp_path, "second", complete=False)
+
+    out = runner.invoke(app, ["index"]).output
+    assert "Offer the user" in out
+    assert "specflo summary" in out
+    assert "yes" in out
+
+
+def test_backfill_prompt_absent_without_placeholders(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "First", "--summary", "Has one."])
+
+    out = runner.invoke(app, ["index"]).output
+    assert "Offer the user" not in out
+    assert "specflo summary" not in out
+
+
+def test_backfill_prompt_absent_on_a_rerun(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "First"])
+    _age_project(tmp_path, "first", complete=False)
+    runner.invoke(app, ["index"])             # the backfill run
+
+    out = runner.invoke(app, ["index"]).output
+    assert "Offer the user" not in out

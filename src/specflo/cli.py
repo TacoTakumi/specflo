@@ -281,7 +281,15 @@ def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""
     root = _require_root()
     cfg = config.load_config(root)
+    # Placeholders are only ever written by the first-run backfill, so what it
+    # will write is exactly the summary-less projects found before that run.
+    first_run = not index_module.index_path(root, cfg).is_file()
     try:
+        placeholdered = (
+            [p.slug for p in projects.list_projects(root, cfg) if not p.summary]
+            if first_run
+            else []
+        )
         path = index_module.write_index(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -290,6 +298,16 @@ def index() -> None:
         f"Wrote {config.display_path(path, root)}"
         f" ({count} project{'' if count == 1 else 's'})."
     )
+    if placeholdered:
+        # REQ-11: a handoff instruction to the driving agent, not an action.
+        typer.echo(
+            f"Backfill wrote placeholder summaries for: {', '.join(placeholdered)}."
+        )
+        typer.echo(
+            "Offer the user a one-time distillation pass: fill each placeholder"
+            ' from that project\'s docs via `specflo summary <name> "<one line>"`.'
+            " Proceed only on the user's yes."
+        )
 
 
 @app.command(name="list", epilog="Example: specflo list --json")
