@@ -126,3 +126,74 @@ def test_index_command_writes_the_file(tmp_path, monkeypatch):
     path = tmp_path / "docs" / "projects" / INDEX_FILENAME
     assert path.is_file()
     assert "Thing" in path.read_text()
+
+
+# --- the preserved Notes section (REQ-04) --------------------------------
+# Explicit markers delimit the one human-owned area; regeneration carries it
+# byte-for-byte and rewrites everything else.
+
+
+def _reindex_with_notes(root, cfg, notes_body):
+    """Regenerate, plant ``notes_body`` inside the markers, return the path."""
+    from specflo.index import NOTES_BEGIN, NOTES_END
+
+    path = write_index(root, cfg)
+    text = path.read_text()
+    begin = text.index(NOTES_BEGIN) + len(NOTES_BEGIN)
+    end = text.index(NOTES_END)
+    path.write_text(text[:begin] + notes_body + text[end:])
+    return path
+
+
+def test_a_fresh_index_has_an_empty_notes_section(root, cfg):
+    from specflo.index import NOTES_BEGIN, NOTES_END
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    text = write_index(root, cfg).read_text()
+    assert "## Notes" in text
+    assert text.index(NOTES_BEGIN) < text.index(NOTES_END)
+
+
+def test_notes_survive_regeneration_byte_for_byte(root, cfg):
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    body = "\nkeep me exactly:  two spaces,\n\n  indentation, all of it.\n"
+    _reindex_with_notes(root, cfg, body)
+
+    from specflo.index import NOTES_BEGIN, NOTES_END
+
+    text = write_index(root, cfg).read_text()
+    begin = text.index(NOTES_BEGIN) + len(NOTES_BEGIN)
+    assert text[begin : text.index(NOTES_END)] == body
+
+
+def test_edits_outside_the_notes_markers_are_replaced(root, cfg):
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    path = write_index(root, cfg)
+    path.write_text("GRAFFITI\n" + path.read_text())
+
+    text = write_index(root, cfg).read_text()
+    assert "GRAFFITI" not in text
+
+
+def test_notes_with_a_lost_end_marker_recover_the_tail(root, cfg):
+    from specflo.index import NOTES_BEGIN, NOTES_END
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    path = _reindex_with_notes(root, cfg, "\nprecious note\n")
+    path.write_text(path.read_text().replace(NOTES_END, ""))
+
+    text = write_index(root, cfg).read_text()
+    assert "precious note" in text
+    assert text.index(NOTES_BEGIN) < text.index(NOTES_END)  # pair recreated
+
+
+def test_notes_with_a_lost_begin_marker_recover_the_content(root, cfg):
+    from specflo.index import NOTES_BEGIN, NOTES_END
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    path = _reindex_with_notes(root, cfg, "\nprecious note\n")
+    path.write_text(path.read_text().replace(NOTES_BEGIN, ""))
+
+    text = write_index(root, cfg).read_text()
+    assert "precious note" in text
+    assert text.index(NOTES_BEGIN) < text.index(NOTES_END)

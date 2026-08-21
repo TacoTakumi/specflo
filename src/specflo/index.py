@@ -24,6 +24,12 @@ _LOCK_SCOPE = "_index"
 _HEADER = "| Project | Created | Completed | State | Summary |"
 _SEPARATOR = "| --- | --- | --- | --- | --- |"
 
+# The one human-owned area (REQ-04). Everything between the markers is carried
+# byte-for-byte across regenerations; everything outside them is CLI-owned.
+NOTES_BEGIN = "<!-- notes:begin -->"
+NOTES_END = "<!-- notes:end -->"
+_EMPTY_NOTES = "\n"
+
 
 def index_path(root: Path, cfg: SpecfloConfig) -> Path:
     return root / cfg.projects_dir / INDEX_FILENAME
@@ -42,7 +48,30 @@ def _row(project: Project, active: bool) -> str:
     return "| " + " | ".join(_cell(cell) for cell in cells) + " |"
 
 
-def render_index(cfg: SpecfloConfig, items: list[Project]) -> str:
+def _extract_notes(existing: str | None) -> str:
+    """The notes content carried into the next regeneration.
+
+    Intact markers: the text between them, verbatim - this is the REQ-04
+    byte-for-byte contract. A damaged pair is best-effort recovery: with the
+    end marker lost the notes are the tail after the begin marker; with the
+    begin marker lost they are what sits between the Notes heading and the end
+    marker. No file, or no trace of the section, starts empty.
+    """
+    if existing is None:
+        return _EMPTY_NOTES
+    begin = existing.find(NOTES_BEGIN)
+    end = existing.rfind(NOTES_END)
+    if begin != -1:
+        start = begin + len(NOTES_BEGIN)
+        return existing[start:end] if end >= start else existing[start:]
+    if end != -1:
+        heading = existing.rfind("## Notes", 0, end)
+        start = heading + len("## Notes") if heading != -1 else 0
+        return existing[start:end]
+    return _EMPTY_NOTES
+
+
+def render_index(cfg: SpecfloConfig, items: list[Project], notes: str = _EMPTY_NOTES) -> str:
     """The whole index document for ``items``, in created-date order."""
     ordered = sorted(items, key=lambda p: (p.created, p.slug))
     lines = [
@@ -54,13 +83,27 @@ def render_index(cfg: SpecfloConfig, items: list[Project]) -> str:
         _SEPARATOR,
         *(_row(p, p.slug == cfg.active_project) for p in ordered),
         "",
+        "## Notes",
+        NOTES_BEGIN,
     ]
-    return "\n".join(lines)
+    if not notes:
+        notes = _EMPTY_NOTES
+    elif not notes.endswith("\n"):
+        # Only reachable through damage recovery; an intact section always ends
+        # with the newline before its end-marker line.
+        notes += "\n"
+    return "\n".join(lines) + notes + NOTES_END + "\n"
 
 
 def write_index(root: Path, cfg: SpecfloConfig) -> Path:
-    """(Re)generate the index from the projects on disk. Returns its path."""
+    """(Re)generate the index from the projects on disk. Returns its path.
+
+    The read-extract-write of the preserved Notes section runs as one critical
+    section inside the locking seam.
+    """
     path = index_path(root, cfg)
     with locked(lock_path_for(root, _LOCK_SCOPE, path)):
-        path.write_text(render_index(cfg, list_projects(root, cfg)))
+        existing = path.read_text() if path.is_file() else None
+        notes = _extract_notes(existing)
+        path.write_text(render_index(cfg, list_projects(root, cfg), notes))
     return path
