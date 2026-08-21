@@ -3219,3 +3219,75 @@ def test_final_advance_stamps_completed_and_prompts_revision(tmp_path, monkeypat
 
     text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
     assert f"completed: '{_dt.date.today().isoformat()}'" in text
+
+
+# --- lifecycle commands regenerate the index (project-index REQ-03) ------
+# Once an index exists, new/advance/shelve/resume keep it current themselves;
+# before a first `specflo index`, none of them conjure one up.
+
+
+def _index_text(tmp_path):
+    return (tmp_path / "docs" / "projects" / "specflo-index.md").read_text()
+
+
+def test_regen_new_adds_a_row_without_a_manual_index_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "First", "--summary", "1."])
+    runner.invoke(app, ["index"])
+
+    runner.invoke(app, ["new", "Second", "--summary", "2."])
+    assert "Second" in _index_text(tmp_path)
+
+
+def test_regen_advance_updates_the_phase_cell(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["index"])
+    assert "active/execute" in _index_text(tmp_path)
+
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    runner.invoke(app, ["advance"])          # terminal: completes the project
+
+    text = _index_text(tmp_path)
+    assert "complete/execute" in text
+    import datetime as _dt
+    assert _dt.date.today().isoformat() in text  # the completed date landed
+
+
+def test_regen_shelve_and_resume_update_the_status_cell(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--summary", "S."])
+    runner.invoke(app, ["index"])
+
+    runner.invoke(app, ["shelve"])
+    assert "shelved/brainstorm" in _index_text(tmp_path)
+
+    runner.invoke(app, ["resume", "thing"])
+    assert "active/brainstorm" in _index_text(tmp_path)
+
+
+def test_regen_does_not_create_an_index_before_the_first_index_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--summary", "S."])
+    assert not (tmp_path / "docs" / "projects" / "specflo-index.md").exists()
+
+
+def test_regen_nonterminal_advance_updates_the_phase(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _new_project_with_spec(runner, app)
+    bs_md = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs_md.write_text(bs_md.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\nNo auth in v0.1.",
+    ))
+    runner.invoke(app, ["index"])
+    assert "active/brainstorm" in _index_text(tmp_path)
+
+    runner.invoke(app, ["advance"])          # brainstorm -> spec
+    assert "active/spec" in _index_text(tmp_path)

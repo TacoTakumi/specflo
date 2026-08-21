@@ -168,6 +168,21 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
         pass
 
 
+def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
+    """Best-effort: regenerate specflo-index.md after a state change (REQ-03).
+
+    A no-op until a first `specflo index` has created the file - adopting the
+    ledger is the user's call, not a side effect. Same failure posture as
+    ``_refresh_checkpoint``: the triggering mutation already succeeded, so a
+    refresh error must never fail the command.
+    """
+    try:
+        if index_module.index_path(root, cfg).is_file():
+            index_module.write_index(root, cfg)
+    except Exception:
+        pass
+
+
 # Phase/artifact registries. The phase->validator map is shared (`validators`)
 # so `validate`, `advance`, and the read-path doneness derivation all agree;
 # GATES pairs each shared validator with its completer for `advance`.
@@ -223,6 +238,7 @@ def new(
     # the scaffold is CLI orchestration over the idempotent helper.
     brainstorm_path, _ = brainstorm.start_brainstorm(root, cfg, project.slug)
     _refresh_checkpoint(root, cfg, project.slug)
+    _refresh_index(root, cfg)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
@@ -344,6 +360,7 @@ def shelve(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    _refresh_index(root, cfg)
     if json_output:
         typer.echo(json.dumps(
             {"slug": project.slug, "status": project.status,
@@ -385,6 +402,7 @@ def resume(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    _refresh_index(root, cfg)
     if json_output:
         typer.echo(json.dumps({"slug": project.slug, "status": project.status}))
     else:
@@ -866,6 +884,7 @@ def advance(
                 typer.echo("Fix these, then run `specflo advance` again.", err=True)
                 raise typer.Exit(code=1)
         updated = projects.complete_project(root, cfg, slug)
+        _refresh_index(root, cfg)
         cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
@@ -912,6 +931,7 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
+    _refresh_index(root, cfg)
     cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
