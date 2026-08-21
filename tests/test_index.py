@@ -211,3 +211,114 @@ def test_summary_verb_regenerates_the_index_row_in_one_run(tmp_path, monkeypatch
     text = (tmp_path / "docs" / "projects" / INDEX_FILENAME).read_text()
     assert "Now summarized." in text
     assert "(needs summary)" not in text
+
+
+# --- completion banners (REQ-09) -----------------------------------------
+# The final advance stamps a one-line blockquote under the frontmatter of
+# brainstorm.md and spec.md - never plan.md - worded for the configured mode.
+
+
+def _seed_artifacts(root, cfg, slug):
+    pdir = root / "docs" / "projects" / slug
+    for name in ("brainstorm.md", "spec.md", "plan.md"):
+        (pdir / name).write_text(
+            f"---\ntitle: {name}\nstatus: complete\n---\n\n# {name}\n\nBody.\n"
+        )
+    return pdir
+
+
+def test_banner_lands_under_frontmatter_of_brainstorm_and_spec(root, cfg):
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    pdir = _seed_artifacts(root, cfg, "thing")
+    project = projects.complete_project(root, cfg, "thing")
+
+    index_mod.stamp_banners(root, cfg, project)
+    for name in ("brainstorm.md", "spec.md"):
+        text = (pdir / name).read_text()
+        body = text.split("---", 2)[2].lstrip("\n")
+        assert body.startswith("> Complete (")
+        assert project.completed in body.splitlines()[0]
+        assert "specflo-index.md" in body.splitlines()[0]
+        assert "do not bind new work unless restated" in body.splitlines()[0]
+
+
+def test_banner_never_touches_plan_md(root, cfg):
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    pdir = _seed_artifacts(root, cfg, "thing")
+    before = (pdir / "plan.md").read_bytes()
+    project = projects.complete_project(root, cfg, "thing")
+
+    index_mod.stamp_banners(root, cfg, project)
+    assert (pdir / "plan.md").read_bytes() == before
+
+
+def test_banner_stamping_twice_leaves_exactly_one(root, cfg):
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    pdir = _seed_artifacts(root, cfg, "thing")
+    project = projects.complete_project(root, cfg, "thing")
+
+    index_mod.stamp_banners(root, cfg, project)
+    index_mod.stamp_banners(root, cfg, project)
+    assert (pdir / "spec.md").read_text().count("> Complete (") == 1
+
+
+def test_banner_binding_mode_swaps_the_last_sentence(root, cfg):
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    pdir = _seed_artifacts(root, cfg, "thing")
+    project = projects.complete_project(root, cfg, "thing")
+    cfg.prior_projects = "binding"
+
+    index_mod.stamp_banners(root, cfg, project)
+    line = (pdir / "spec.md").read_text().split("---", 2)[2].lstrip("\n").splitlines()[0]
+    assert "remain binding on new work unless explicitly superseded" in line
+    assert "do not bind" not in line
+
+
+def test_banner_is_one_ascii_line_and_frontmatter_still_parses(root, cfg):
+    import yaml as _yaml
+
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    pdir = _seed_artifacts(root, cfg, "thing")
+    project = projects.complete_project(root, cfg, "thing")
+
+    index_mod.stamp_banners(root, cfg, project)
+    text = (pdir / "brainstorm.md").read_text()
+    text.encode("ascii")
+    assert _yaml.safe_load(text.split("---", 2)[1]) == {
+        "title": "brainstorm.md",
+        "status": "complete",
+    }
+
+
+def test_banner_skips_a_missing_artifact(root, cfg):
+    from specflo import index as index_mod
+
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    project = projects.complete_project(root, cfg, "thing")
+    index_mod.stamp_banners(root, cfg, project)  # no brainstorm/spec: no crash
+
+
+def test_banner_stamped_by_the_final_cli_advance(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    from test_cli import _project_at_execute
+
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    runner.invoke(app, ["advance"])
+
+    pdir = tmp_path / "docs" / "projects" / "thing"
+    for name in ("brainstorm.md", "spec.md"):
+        body = (pdir / name).read_text().split("---", 2)[2].lstrip("\n")
+        assert body.startswith("> Complete (")
+    assert "> Complete (" not in (pdir / "plan.md").read_text()

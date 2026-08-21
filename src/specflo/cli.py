@@ -911,6 +911,7 @@ def advance(
                 typer.echo("Fix these, then run `specflo advance` again.", err=True)
                 raise typer.Exit(code=1)
         updated = projects.complete_project(root, cfg, slug)
+        index_module.stamp_banners(root, cfg, updated)
         _refresh_index(root, cfg)
         cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
         # Terminal continuation: a clear-point with no continue-instruction and

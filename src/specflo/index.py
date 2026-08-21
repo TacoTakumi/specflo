@@ -31,8 +31,72 @@ NOTES_END = "<!-- notes:end -->"
 _EMPTY_NOTES = "\n"
 
 
+# Completion banners (REQ-09): stamped below the frontmatter of a completed
+# project's brainstorm.md and spec.md - never plan.md, which stays the frozen
+# record of how the work was actually run.
+BANNER_PREFIX = "> Complete ("
+_BANNER_ARTIFACTS = ("brainstorm.md", "spec.md")
+_BANNER_TAILS = {
+    "historical": "Decisions and requirements here do not bind new work unless restated.",
+    "binding": (
+        "Decisions and requirements here remain binding on new work"
+        " unless explicitly superseded."
+    ),
+}
+
+
 def index_path(root: Path, cfg: SpecfloConfig) -> Path:
     return root / cfg.projects_dir / INDEX_FILENAME
+
+
+def banner_text(cfg: SpecfloConfig, project: Project) -> str:
+    """The pinned one-line blockquote banner for ``project``."""
+    index_ref = (Path(cfg.projects_dir) / INDEX_FILENAME).as_posix()
+    return (
+        f"{BANNER_PREFIX}{project.completed or 'unknown'})."
+        f" Historical record - see {index_ref}."
+        f" {_BANNER_TAILS[cfg.prior_projects]}"
+    )
+
+
+def _with_banner(text: str, banner: str) -> str:
+    """``text`` with ``banner`` as the first body line below the frontmatter.
+
+    An existing banner (any line starting with :data:`BANNER_PREFIX` in that
+    position) is replaced, which is what makes stamping idempotent and lets a
+    mode flip re-word it. A file with no frontmatter is stamped at the top.
+    """
+    parts = text.split("---", 2)
+    if len(parts) < 3 or parts[0].strip():
+        head, body = "", text
+    else:
+        head, body = f"---{parts[1]}---\n\n", parts[2]
+    lines = body.lstrip("\n").split("\n")
+    if lines and lines[0].startswith(BANNER_PREFIX):
+        lines[0] = banner
+    else:
+        lines = [banner, ""] + lines
+    return head + "\n".join(lines)
+
+
+def stamp_banners(root: Path, cfg: SpecfloConfig, project: Project) -> list[Path]:
+    """Stamp the completion banner into the project's brainstorm.md and spec.md.
+
+    Idempotent; a missing artifact is skipped. Returns the stamped paths.
+    """
+    banner = banner_text(cfg, project)
+    stamped = []
+    for name in _BANNER_ARTIFACTS:
+        path = project.path / name
+        if not path.is_file():
+            continue
+        with locked(lock_path_for(root, project.slug, path)):
+            text = path.read_text()
+            updated = _with_banner(text, banner)
+            if updated != text:
+                path.write_text(updated)
+        stamped.append(path)
+    return stamped
 
 
 def _cell(text: str) -> str:
