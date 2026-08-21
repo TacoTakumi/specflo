@@ -249,6 +249,33 @@ def new(
         )
 
 
+@app.command(epilog='Example: specflo summary "One line on what this project does"')
+def summary(
+    first: str = typer.Argument(
+        ...,
+        metavar="[<name>] <text>",
+        help="The summary text; or a project name when a second argument follows.",
+    ),
+    second: str = typer.Argument(None, hidden=True),
+) -> None:
+    """Set or update a project's one-line summary (active project by default)."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    if second is None:
+        slug, text = _require_active(cfg), first
+    else:
+        try:
+            slug, text = projects.slugify(first), second
+        except SpecfloError as exc:
+            raise _die(str(exc))
+    try:
+        project = projects.set_summary(root, cfg, slug, text)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_index(root, cfg)
+    typer.echo(f"Summary for '{project.slug}': {project.summary}")
+
+
 @app.command(epilog="Example: specflo index")
 def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""

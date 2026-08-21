@@ -16,6 +16,7 @@ import yaml
 
 from .config import SpecfloConfig, save_config
 from .errors import SpecfloError
+from .locking import lock_path_for, locked
 from .workflow import next_phase, resolve_reopen_target
 
 PROJECT_FILENAME = "project.md"
@@ -199,6 +200,23 @@ def shelve_project(
     project.status = SHELVED_STATUS
     project.shelved_reason = reason or ""
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
+def set_summary(root: Path, cfg: SpecfloConfig, slug: str, text: str) -> Project:
+    """Set the project's one-line summary (project-index REQ-08). Persists.
+
+    The read-modify-write runs inside the locking seam so a concurrent
+    lifecycle command cannot lose the update.
+    """
+    text = " ".join(text.split())
+    if not text:
+        raise SpecfloError("Summary text must be non-empty.")
+    path = project_dir(root, cfg, slug) / PROJECT_FILENAME
+    with locked(lock_path_for(root, slug, path)):
+        project = load_project(root, cfg, slug)
+        project.summary = text
+        path.write_text(_render(project))
     return project
 
 

@@ -3291,3 +3291,48 @@ def test_regen_nonterminal_advance_updates_the_phase(tmp_path, monkeypatch):
 
     runner.invoke(app, ["advance"])          # brainstorm -> spec
     assert "active/spec" in _index_text(tmp_path)
+
+
+# --- the summary verb (project-index REQ-08) -----------------------------
+
+
+def test_summary_verb_updates_the_active_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+
+    result = runner.invoke(app, ["summary", "Now it does X."])
+    assert result.exit_code == 0
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "summary: Now it does X." in text
+    assert "(needs summary)" not in text
+
+
+def test_summary_verb_named_form_updates_a_non_active_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "First"])
+    runner.invoke(app, ["new", "Second"])   # now active
+
+    result = runner.invoke(app, ["summary", "first", "The first one."])
+    assert result.exit_code == 0
+    text = (tmp_path / "docs" / "projects" / "first" / "project.md").read_text()
+    assert "summary: The first one." in text
+
+
+def test_summary_verb_unknown_name_exits_nonzero(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+
+    result = runner.invoke(app, ["summary", "nope", "Text."])
+    assert result.exit_code != 0
+
+
+def test_summary_verb_rejects_empty_text(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+
+    result = runner.invoke(app, ["summary", "   "])
+    assert result.exit_code != 0

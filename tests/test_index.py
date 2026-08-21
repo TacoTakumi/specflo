@@ -197,3 +197,17 @@ def test_notes_with_a_lost_begin_marker_recover_the_content(root, cfg):
     text = write_index(root, cfg).read_text()
     assert "precious note" in text
     assert text.index(NOTES_BEGIN) < text.index(NOTES_END)
+
+
+def test_summary_verb_regenerates_the_index_row_in_one_run(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+    runner.invoke(app, ["index"])
+    assert "(needs summary)" in (tmp_path / "docs" / "projects" / INDEX_FILENAME).read_text()
+
+    result = runner.invoke(app, ["summary", "Now summarized."])
+    assert result.exit_code == 0
+    text = (tmp_path / "docs" / "projects" / INDEX_FILENAME).read_text()
+    assert "Now summarized." in text
+    assert "(needs summary)" not in text
