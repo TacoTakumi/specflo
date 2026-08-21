@@ -17,7 +17,7 @@ from pathlib import Path
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from . import markdown
-from .locking import locked
+from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
 BRAINSTORM_FILENAME = "brainstorm.md"
@@ -104,7 +104,7 @@ def add_decision(
     path = brainstorm_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Decisions" not in doc:
             raise SpecfloError("Malformed brainstorm.md: no '## Decisions' section.")
@@ -149,7 +149,7 @@ def complete_brainstorm(
     path = brainstorm_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         # Frontmatter `status:` only — the leading-`-` decision `- Status:` lines and
         # the count=1 (frontmatter comes first) keep this from touching entries.

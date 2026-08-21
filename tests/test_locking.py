@@ -196,6 +196,60 @@ def test_lock_path_for_restores_a_deleted_gitignore(tmp_path):
     assert gitignore.read_text().strip() == "*"
 
 
+def test_locks_live_under_config_dir_never_beside_artifacts(tmp_path):
+    """A locked write on every target kind (brainstorm, spec, plan, auto-run
+    state) puts its lock under .specflo/locks/<project>/ and leaves zero *.lock
+    files anywhere in the projects dir (REQ-01, REQ-02, REQ-04)."""
+    specflo_bin = str(Path(sys.executable).parent / "specflo")
+
+    def run(*args):
+        r = subprocess.run(
+            [specflo_bin, *args], capture_output=True, text=True, cwd=tmp_path
+        )
+        assert r.returncode == 0, r.stderr
+
+    run("init")
+    run("new", "Loc")
+    run("brainstorm", "start")
+    run("decision", "add", "--text", "d1")
+    b_md = tmp_path / "docs" / "projects" / "loc" / "brainstorm.md"
+    b_md.write_text(
+        b_md.read_text().replace(
+            "## Out of scope / Deferred\n<!-- required, must be non-empty before validate passes -->",
+            "## Out of scope / Deferred\n- nothing here",
+        )
+    )
+    run("advance")
+    run("spec", "start")
+    run("requirement", "add", "--text", "r1", "--acceptance", "a1", "--from", "D-01")
+    spec_md = tmp_path / "docs" / "projects" / "loc" / "spec.md"
+    spec_md.write_text(
+        spec_md.read_text()
+        .replace("### In scope\n<!-- required, non-empty -->", "### In scope\n- x")
+        .replace(
+            "### Out of scope\n"
+            "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+            "### Out of scope\n- y",
+        )
+    )
+    run("advance")
+    run("plan", "start")
+    run("task", "add", "--text", "t1", "--acceptance", "a1", "--verify", "v1", "--from", "REQ-01")
+
+    # auto-run state is the fourth locked target kind; save it in-process
+    from specflo import auto, config
+
+    cfg = config.load_config(tmp_path)
+    auto.save_run_state(tmp_path, cfg, "loc", {"passes": 1})
+
+    project_dir = tmp_path / "docs" / "projects" / "loc"
+    assert (project_dir / "auto-run.json").exists()
+    assert list((tmp_path / "docs" / "projects").rglob("*.lock")) == []
+    locks = tmp_path / ".specflo" / "locks" / "loc"
+    for name in ("brainstorm.md.lock", "spec.md.lock", "plan.md.lock", "auto-run.json.lock"):
+        assert (locks / name).exists(), f"missing {name} under .specflo/locks/loc/"
+
+
 def test_concurrent_add_and_transition_lose_no_entries(tmp_path):
     """A `task add` racing a `task start` on the same plan.md loses nothing:
     the appended T-02 entry survives and T-01's progress flips (REQ-06

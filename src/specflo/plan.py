@@ -18,7 +18,7 @@ from pathlib import Path
 from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
 from .errors import SpecfloError
-from .locking import locked
+from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
 PLAN_FILENAME = "plan.md"
@@ -458,7 +458,7 @@ def add_task(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Tasks" not in doc:
             raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
@@ -558,7 +558,7 @@ def add_milestone(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Tasks" not in doc:
             raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
@@ -673,7 +673,7 @@ def rewire_dependency(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         tasks = _parse_tasks(doc)
         by_id = {t.id: t for t in tasks}
@@ -733,7 +733,7 @@ def _set_progress(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
         if task is None:
@@ -783,7 +783,7 @@ def set_milestone(
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
         if task is None:

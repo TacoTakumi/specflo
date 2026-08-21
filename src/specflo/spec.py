@@ -18,7 +18,7 @@ from . import markdown
 from .brainstorm import brainstorm_path
 from .config import SpecfloConfig
 from .errors import SpecfloError
-from .locking import locked
+from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
 SPEC_FILENAME = "spec.md"
@@ -110,7 +110,7 @@ def add_requirement(
     path = spec_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No spec yet. Run `specflo spec start` first.")
-    with locked(path):
+    with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Requirements" not in doc:
             raise SpecfloError("Malformed spec.md: no '## Requirements' section.")
