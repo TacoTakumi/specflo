@@ -8,7 +8,12 @@ module scans the shipped tree instead and fails on any of:
 - ``on("tool_call")``       - not a gatekeeper, blocks nothing (REQ-03)
 - ``appendEntry``           - no durable state (REQ-02)
 - ``clearthen``             - the clear is ours, not pi-clearthen's (REQ-14)
-- filesystem access         - all specflo state comes from the CLI (REQ-01)
+- filesystem writes         - the extension observes, never mutates
+
+Read access to the filesystem (and naming specflo paths) became sanctioned
+with pi-statusline, whose status segment parses the specflo artifacts
+directly rather than shelling out to the CLI; that supersedes the original
+no-fs-at-all rule (REQ-01). Writes stay banned.
 
 The scan runs over comment-stripped source. A raw substring scan cannot express
 "the code must not *do* this": it also flags the comments and docstrings that
@@ -96,21 +101,13 @@ _SOURCE_RULES = (
     ("append-entry", re.compile(r"\bappendEntry\s*\(")),
     # REQ-14: the clear is performed by us, never delegated to pi-clearthen.
     ("clearthen", re.compile(r"clearthen", re.IGNORECASE)),
-    # REQ-01/REQ-02: no filesystem capability at all -- neither read nor write.
+    # Reads are sanctioned (pi-statusline parses artifacts directly); the
+    # extension still never mutates the filesystem.
     (
-        "fs-access",
+        "fs-write",
         re.compile(
-            r"""from\s*["'`](?:node:)?fs(?:/promises)?["'`]"""
-            r"""|require\s*\(\s*["'`](?:node:)?fs(?:/promises)?["'`]"""
-            r"""|\b(?:readFile|writeFile|appendFile|openSync|readdir|mkdir|rmdir|unlink|existsSync|statSync)\w*\s*\("""
-        ),
-    ),
-    # REQ-01: no specflo state path is named, let alone opened.
-    (
-        "specflo-state-path",
-        re.compile(
-            r"""\.specflo|auto-run\.json|config\.yaml"""
-            r"""|(?:brainstorm|spec|plan|project|checkpoint)\.md"""
+            r"""\b(?:writeFile|appendFile|mkdir|rmdir|unlink|rename|truncate"""
+            r"""|copyFile|createWriteStream|openSync)\w*\s*\("""
         ),
     ),
 )
@@ -198,7 +195,7 @@ def test_scan_skips_the_end_to_end_test_harness(tmp_path):
     shutil.copytree(extension_install.extension_source(), source)
     (source / "test").mkdir(exist_ok=True)
     (source / "test" / "harness.ts").write_text(
-        'import { readFileSync } from "node:fs";\nconst p = ".specflo/config.yaml";\n'
+        'import { writeFileSync } from "node:fs";\nwriteFileSync("x", "y");\n'
     )
     assert scan_extension(source) == []
 
@@ -236,14 +233,8 @@ VIOLATIONS = [
         lambda s: _append_to_index(s, '\npi.sendUserMessage("/clearthen go");\n'),
     ),
     (
-        "fs-access",
-        lambda s: _append_to_index(
-            s, '\nimport { readFileSync } from "node:fs";\nreadFileSync("x");\n'
-        ),
-    ),
-    (
-        "specflo-state-path",
-        lambda s: _append_to_index(s, '\nconst p = ".specflo/config.yaml";\n'),
+        "fs-write",
+        lambda s: _append_to_index(s, '\nfs.writeFileSync("x", "y");\n'),
     ),
     ("clearthen-dependency", lambda s: _add_dependency(s, "pi-clearthen")),
 ]
