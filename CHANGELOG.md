@@ -8,6 +8,36 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.9.0]
+
+### Added
+- **A generated project index ledger (project-index).** `specflo index`
+  (re)generates `specflo-index.md` at the projects dir root: one table row per
+  project (name, created, completed-or-blank, status/phase, one-line summary)
+  in created-date order with the active project marked, under a rule header
+  that states how completed projects bind new work. A marked Notes section is
+  preserved byte-for-byte across regenerations; everything else is CLI-owned.
+  The state-changing lifecycle commands (`new`, `advance`, `shelve`, `resume`)
+  refresh an existing index automatically.
+- **`prior_projects` config key** (`historical` (default) or `binding`)
+  deciding how completed projects read to new work. The mode-correct rule line
+  renders in the index header and in the output of `specflo list`, `guide`,
+  and `checkpoint` (and so in the session-start hook payload) once a completed
+  project exists.
+- **Project summaries in frontmatter.** `specflo new --summary` writes a
+  one-line `summary`; without it a visible `(needs summary)` placeholder lands
+  and the output says how to set one. The new `specflo summary [<name>] <text>`
+  verb sets or updates it and refreshes the index in one run.
+- **Completion stamping.** The final `specflo advance` stamps `completed:
+  <date>` into frontmatter and a one-line mode-correct banner directly under
+  the frontmatter of the project's `brainstorm.md` and `spec.md` (never
+  `plan.md`), idempotently, and prompts for a summary revision.
+- **First-run backfill.** The first `specflo index` in a repo with
+  pre-existing projects builds all rows, stamps banners into completed
+  projects, fills missing completed dates from git history (`unknown` outside
+  git), writes `(needs summary)` placeholders, and ends by telling the driving
+  agent to offer the user a one-time summary distillation pass.
+
 ## [0.8.0]
 
 ### Changed
