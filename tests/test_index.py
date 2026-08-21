@@ -322,3 +322,77 @@ def test_banner_stamped_by_the_final_cli_advance(tmp_path, monkeypatch):
         body = (pdir / name).read_text().split("---", 2)[2].lstrip("\n")
         assert body.startswith("> Complete (")
     assert "> Complete (" not in (pdir / "plan.md").read_text()
+
+
+# --- first-run backfill (REQ-10) -----------------------------------------
+# The first `specflo index` in a repo with pre-existing projects adopts them:
+# rows for everyone, banners and completed dates for the finished, and the
+# needs-summary placeholder wherever frontmatter is silent.
+
+
+def _age_project(root, slug, complete=True):
+    """Make a project look pre-index: no summary field, optionally completed."""
+    path = root / "docs" / "projects" / slug / "project.md"
+    lines = [
+        ln for ln in path.read_text().splitlines() if not ln.startswith("summary:")
+    ]
+    if complete:
+        lines = [ln.replace("status: active", "status: complete") for ln in lines]
+    path.write_text("\n".join(lines) + "\n")
+
+
+def test_backfill_outside_git_stamps_banners_placeholders_and_unknown(root, cfg):
+    projects.create_project(root, cfg, "Old One", created="2025-01-01")
+    projects.create_project(root, cfg, "Old Two", created="2025-02-01")
+    _seed_artifacts(root, cfg, "old-one")
+    _seed_artifacts(root, cfg, "old-two")
+    _age_project(root, "old-one")
+    _age_project(root, "old-two", complete=False)
+
+    text = write_index(root, cfg).read_text()
+    rows = _rows(text)
+    assert len(rows) == 2
+    assert "unknown" in rows[0]              # completed, no git history
+    assert "unknown" not in rows[1]          # unfinished: completed stays blank
+    assert "(needs summary)" in rows[0] and "(needs summary)" in rows[1]
+
+    # The completed project's artifacts carry the banner; the active one's don't.
+    pdir = root / "docs" / "projects" / "old-one"
+    for name in ("brainstorm.md", "spec.md"):
+        assert "> Complete (" in (pdir / name).read_text()
+    assert "> Complete (" not in (root / "docs" / "projects" / "old-two" / "spec.md").read_text()
+
+    # The backfill persisted the fields, not just the rows.
+    aged = projects.load_project(root, cfg, "old-one")
+    assert aged.summary == "(needs summary)"
+    assert aged.completed == "unknown"
+
+
+def test_backfill_derives_the_completed_date_from_git(root, cfg):
+    import subprocess
+
+    projects.create_project(root, cfg, "Old", created="2025-01-01")
+    _seed_artifacts(root, cfg, "old")
+    _age_project(root, "old")
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": __import__("os").environ["PATH"]}
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "history"], cwd=root, check=True, env=env)
+
+    import datetime
+
+    (row,) = _rows(write_index(root, cfg).read_text())
+    assert datetime.date.today().isoformat() in row
+    assert "unknown" not in row
+
+
+def test_backfill_runs_only_on_the_first_index(root, cfg):
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    write_index(root, cfg)                    # the index now exists
+
+    _age_project(root, "thing")               # damage arrives afterwards
+    write_index(root, cfg)
+    text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "summary:" not in text             # no backfill write happened
+    assert "completed:" not in text

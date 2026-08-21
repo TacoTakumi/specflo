@@ -10,11 +10,19 @@ contract - every literal here must stay that way.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from .config import SpecfloConfig, rule_text
 from .locking import lock_path_for, locked
-from .projects import NEEDS_SUMMARY, Project, list_projects
+from .projects import (
+    COMPLETE_STATUS,
+    NEEDS_SUMMARY,
+    PROJECT_FILENAME,
+    Project,
+    _render,
+    list_projects,
+)
 
 INDEX_FILENAME = "specflo-index.md"
 # The lock-file namespace for the index. Not a project: slugs cannot start
@@ -159,15 +167,60 @@ def render_index(cfg: SpecfloConfig, items: list[Project], notes: str = _EMPTY_N
     return "\n".join(lines) + notes + NOTES_END + "\n"
 
 
+def _git_completed_date(root: Path, project_dir: Path) -> str | None:
+    """The date of the last commit touching ``project_dir``, or None outside
+    git (or for a directory git has never seen)."""
+    try:
+        result = subprocess.run(
+            ["git", "log", "-1", "--format=%cs", "--", str(project_dir)],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    date = result.stdout.strip()
+    return date if result.returncode == 0 and date else None
+
+
+def _backfill(root: Path, cfg: SpecfloConfig, items: list[Project]) -> list[Project]:
+    """Adopt pre-index projects on the first run (REQ-10).
+
+    Every project missing a summary gains the placeholder; every completed
+    project missing a completed date gains one from git history (or the pinned
+    'unknown'), and gets its banners stamped. Returns the updated projects.
+    """
+    for project in items:
+        changed = False
+        if not project.summary:
+            project.summary = NEEDS_SUMMARY
+            changed = True
+        if project.status == COMPLETE_STATUS and not project.completed:
+            project.completed = _git_completed_date(root, project.path) or "unknown"
+            changed = True
+        if changed:
+            path = project.path / PROJECT_FILENAME
+            with locked(lock_path_for(root, project.slug, path)):
+                path.write_text(_render(project))
+        if project.status == COMPLETE_STATUS:
+            stamp_banners(root, cfg, project)
+    return items
+
+
 def write_index(root: Path, cfg: SpecfloConfig) -> Path:
     """(Re)generate the index from the projects on disk. Returns its path.
 
     The read-extract-write of the preserved Notes section runs as one critical
-    section inside the locking seam.
+    section inside the locking seam. The very first run against pre-existing
+    projects backfills them (REQ-10) before rendering.
     """
     path = index_path(root, cfg)
     with locked(lock_path_for(root, _LOCK_SCOPE, path)):
         existing = path.read_text() if path.is_file() else None
         notes = _extract_notes(existing)
-        path.write_text(render_index(cfg, list_projects(root, cfg), notes))
+        items = list_projects(root, cfg)
+        if existing is None and items:
+            items = _backfill(root, cfg, items)
+        path.write_text(render_index(cfg, items, notes))
     return path
