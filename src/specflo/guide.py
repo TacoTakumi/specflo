@@ -49,6 +49,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Create a project and make it active."},
     {"name": "list", "group": "setup", "args": "",
      "summary": "List all projects, marking the active one."},
+    {"name": "index", "group": "setup", "args": "",
+     "summary": "(Re)generate specflo-index.md, the ledger of every project."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "shelve", "group": "setup", "args": "[<name>]",

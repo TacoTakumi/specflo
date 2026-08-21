@@ -17,6 +17,7 @@ from agentsquire.sources import default_source
 from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
+from . import index as index_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
@@ -230,6 +231,22 @@ def new(
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
         )
+
+
+@app.command(epilog="Example: specflo index")
+def index() -> None:
+    """(Re)generate specflo-index.md, the ledger of every project."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    try:
+        path = index_module.write_index(root, cfg)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    count = len(projects.list_projects(root, cfg))
+    typer.echo(
+        f"Wrote {config.display_path(path, root)}"
+        f" ({count} project{'' if count == 1 else 's'})."
+    )
 
 
 @app.command(name="list", epilog="Example: specflo list --json")
