@@ -202,12 +202,17 @@ def new(
         metavar="<name>",
         help="Project name; slugified into the project directory name.",
     ),
+    summary: str = typer.Option(
+        None,
+        "--summary",
+        help="One-line summary written to project.md; a visible placeholder otherwise.",
+    ),
 ) -> None:
     """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
     try:
-        project = projects.create_project(root, cfg, name)
+        project = projects.create_project(root, cfg, name, summary=summary)
         cfg.active_project = project.slug
         config.save_config(root, cfg)
     except SpecfloError as exc:
@@ -221,6 +226,10 @@ def new(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
     typer.echo(f"Scaffolded {brainstorm_path} (ready to work).")
+    if summary is None:
+        typer.echo(
+            'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
+        )
 
 
 @app.command(name="list", epilog="Example: specflo list --json")
@@ -855,6 +864,10 @@ def advance(
                  "complete": True, "checkpoint": cp_display, "continuation": cont}))
         else:
             typer.echo(f"Completed project '{slug}'.")
+            typer.echo(
+                'Revise the summary to describe what shipped:'
+                ' `specflo summary "<one line>"`.'
+            )
             typer.echo(f"Checkpoint saved: {cp_display}")
             typer.echo(cont)
         return

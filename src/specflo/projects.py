@@ -23,6 +23,10 @@ INITIAL_PHASE = "brainstorm"
 INITIAL_STATUS = "active"
 COMPLETE_STATUS = "complete"
 SHELVED_STATUS = "shelved"
+# The visible stand-in written when `new` gets no --summary (project-index
+# REQ-07). The index renders it as-is, so an unset summary is impossible to
+# mistake for a written one.
+NEEDS_SUMMARY = "(needs summary)"
 
 
 @dataclass
@@ -34,6 +38,8 @@ class Project:
     status: str
     path: Path
     shelved_reason: str = ""
+    summary: str = ""
+    completed: str = ""
 
 
 def slugify(name: str) -> str:
@@ -48,7 +54,11 @@ def project_dir(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
 
 
 def create_project(
-    root: Path, cfg: SpecfloConfig, name: str, created: str | None = None
+    root: Path,
+    cfg: SpecfloConfig,
+    name: str,
+    created: str | None = None,
+    summary: str | None = None,
 ) -> Project:
     slug = slugify(name)
     directory = project_dir(root, cfg, slug)
@@ -62,6 +72,7 @@ def create_project(
         phase=INITIAL_PHASE,
         status=INITIAL_STATUS,
         path=directory,
+        summary=summary or NEEDS_SUMMARY,
     )
     directory.mkdir(parents=True)
     (directory / PROJECT_FILENAME).write_text(_render(project))
@@ -81,6 +92,8 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         status=fields["status"],
         path=path.parent,
         shelved_reason=str(fields.get("shelved_reason", "") or ""),
+        summary=str(fields.get("summary", "") or ""),
+        completed=str(fields.get("completed", "") or ""),
     )
 
 
@@ -160,9 +173,15 @@ def reopen_project(
 
 
 def complete_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
-    """Mark the project complete (terminal). Persists and returns it. Idempotent."""
+    """Mark the project complete (terminal). Persists and returns it. Idempotent.
+
+    Stamps ``completed`` with today's date (project-index REQ-07); a date
+    already present is history and stays put on re-completion.
+    """
     project = load_project(root, cfg, slug)
     project.status = COMPLETE_STATUS
+    if not project.completed:
+        project.completed = datetime.date.today().isoformat()
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 
@@ -205,6 +224,12 @@ def _render(project: Project) -> str:
         "phase": project.phase,
         "status": project.status,
     }
+    # Optional fields appear only once they hold something, so a project file
+    # written before they existed does not sprout empty keys on rewrite.
+    if project.summary:
+        fields["summary"] = project.summary
+    if project.completed:
+        fields["completed"] = project.completed
     if project.shelved_reason:
         fields["shelved_reason"] = project.shelved_reason
     frontmatter = yaml.safe_dump(fields, sort_keys=False).strip()

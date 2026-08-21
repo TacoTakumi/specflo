@@ -3174,3 +3174,48 @@ def test_config_group_offers_exactly_four_subcommands(cwd):
     help_text = runner.invoke(app, ["config", "--help"]).stdout
     assert all(name in help_text for name in group.commands)
     assert runner.invoke(app, ["config", "show"]).exit_code != 0
+
+
+# --- summary/completed frontmatter via the CLI (project-index REQ-07) ----
+
+
+def test_new_with_summary_lands_in_project_md(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--summary", "Does the thing."])
+
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "summary: Does the thing." in text
+
+
+def test_new_without_summary_writes_placeholder_and_instructs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    out = runner.invoke(app, ["new", "Thing"]).output
+
+    assert "specflo summary" in out  # the set-a-summary instruction
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "(needs summary)" in text
+
+
+def test_new_with_summary_prints_no_instruction(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    out = runner.invoke(app, ["new", "Thing", "--summary", "Does it."]).output
+    assert "specflo summary" not in out
+
+
+def test_final_advance_stamps_completed_and_prompts_revision(tmp_path, monkeypatch):
+    import datetime as _dt
+
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+
+    out = runner.invoke(app, ["advance"]).output
+    assert "Completed project" in out
+    assert "specflo summary" in out  # the revise-summary prompt
+
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert f"completed: '{_dt.date.today().isoformat()}'" in text

@@ -268,3 +268,57 @@ def test_reopen_project_invalid_target_does_not_change_project_md(root, cfg):
 
     after = (projects.project_dir(root, cfg, "my-thing") / "project.md").read_bytes()
     assert after == before
+
+
+# --- summary and completed frontmatter (project-index REQ-07) ------------
+
+
+def test_create_project_with_summary_writes_it(root, cfg):
+    projects.create_project(root, cfg, "My Thing", summary="Does the thing.")
+
+    text = (root / "docs" / "projects" / "my-thing" / "project.md").read_text()
+    assert "summary: Does the thing." in text
+    assert projects.load_project(root, cfg, "my-thing").summary == "Does the thing."
+
+
+def test_create_project_without_summary_writes_the_placeholder(root, cfg):
+    projects.create_project(root, cfg, "My Thing")
+
+    assert projects.NEEDS_SUMMARY == "(needs summary)"
+    assert projects.load_project(root, cfg, "my-thing").summary == "(needs summary)"
+
+
+def test_complete_project_stamps_completed_with_today(root, cfg):
+    import datetime
+
+    projects.create_project(root, cfg, "Thing")
+    projects.complete_project(root, cfg, "thing")
+
+    loaded = projects.load_project(root, cfg, "thing")
+    assert loaded.completed == datetime.date.today().isoformat()
+
+
+def test_complete_project_keeps_an_existing_completed_date(root, cfg):
+    # Idempotent re-completion must not move the historical date.
+    projects.create_project(root, cfg, "Thing")
+    p = projects.load_project(root, cfg, "thing")
+    p.completed = "2020-01-01"
+    p.status = projects.COMPLETE_STATUS
+    (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+
+    projects.complete_project(root, cfg, "thing")
+    assert projects.load_project(root, cfg, "thing").completed == "2020-01-01"
+
+
+def test_a_project_without_the_new_fields_still_loads(root, cfg):
+    # Frontmatter written before summary/completed existed must keep loading.
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    text = path.read_text()
+    path.write_text("\n".join(
+        line for line in text.splitlines() if not line.startswith("summary:")
+    ) + "\n")
+
+    loaded = projects.load_project(root, cfg, "thing")
+    assert loaded.summary == ""
+    assert loaded.completed == ""
