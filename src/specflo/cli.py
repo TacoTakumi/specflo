@@ -18,6 +18,7 @@ from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import index as index_module
+from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
@@ -123,6 +124,9 @@ app.add_typer(task_app, name="task")
 
 milestone_app = typer.Typer(help="Group plan tasks into ordered milestones.")
 app.add_typer(milestone_app, name="milestone")
+
+review_app = typer.Typer(help="Record end-of-execute review rounds.")
+app.add_typer(review_app, name="review")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
@@ -1580,6 +1584,22 @@ def milestone_show(
     lines.append("")
     lines.append("Requirements: " + (", ".join(detail["reqs"]) if detail["reqs"] else "(none)"))
     typer.echo("\n".join(lines))
+
+
+@review_app.command("start", epilog="Example: specflo review start")
+def review_start(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Mint the active project's next review round and print its path."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        path = review_module.start_round(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"path": str(path)}))
+    else:
+        typer.echo(str(path))
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")

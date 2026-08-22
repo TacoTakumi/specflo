@@ -123,6 +123,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "List milestones with done/total rollup and the current one."},
     {"name": "milestone show", "group": "workflow", "args": "<M-NN>",
      "summary": "Show a milestone's Exit checklist, member tasks, and REQ set."},
+    {"name": "review start", "group": "workflow", "args": "",
+     "summary": "Mint the next review round (review-N.md) and print its path."},
 ]
 
 
