@@ -528,6 +528,11 @@ def test_malformed_report_file_that_is_not_text_refuses_the_close(tmp_path, monk
 # `open_round` used to scan backwards for the highest *open* round, which is not
 # the same as the latest round once a hand-edited directory holds two. That let
 # `review start` and `status` name different rounds as current.
+#
+# Both tests below fail against the old backwards scan. An arrangement where the
+# two rules happen to agree - two open rounds, both returning the higher - proves
+# nothing and is not worth a test; the arrangement table further down covers that
+# case among the other ten.
 
 
 def _open_file(project_dir, number):
@@ -537,18 +542,6 @@ def _open_file(project_dir, number):
         f"sha: ''\nreason: ''\n---\n\n# Review round {number}\n"
     )
     return path
-
-
-def test_latest_open_round_is_the_one_review_start_hands_back(tmp_path, monkeypatch):
-    project_dir = _project(tmp_path, monkeypatch)
-    _open_file(project_dir, 1)
-    _open_file(project_dir, 2)
-
-    result = runner.invoke(app, ["review", "start"])
-
-    assert result.exit_code == 0, result.output
-    assert str(project_dir / "review-2.md") in result.output
-    assert "already open" in result.output
 
 
 def test_latest_open_round_closing_it_frees_the_next_mint(tmp_path, monkeypatch):
