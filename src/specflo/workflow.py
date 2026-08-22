@@ -70,9 +70,10 @@ def _review_hint(review: dict | None) -> str:
     """What to do next once every task is done, given where the review stands.
 
     Four states, four different next actions (review-rounds REQ-20): no round
-    yet, a round left open, a round that asked for changes, and a round that
-    passed. Only the last one offers ``specflo advance``, because only it clears
-    the completion gate.
+    yet, a round left open, a round that passed, and a round that did not. Only
+    the passing one offers ``specflo advance``, and it reads the ``passing`` flag
+    the review state carries rather than naming verdicts itself - so the hint and
+    the completion gate can never disagree about which verdicts clear it.
     """
     if review is None:
         return (
@@ -85,14 +86,14 @@ def _review_hint(review: dict | None) -> str:
             f"All tasks done - finish the open review round {review['file']} and "
             "close it with `specflo review done --verdict <v>`."
         )
-    if review["verdict"] == "changes-requested":
+    if review["passing"]:
         return (
-            f"All tasks done - address the findings in {review['file']}, then run "
-            "another round with `specflo review start`."
+            f"All tasks done and {review['file']} is {review['verdict']} - run "
+            "`specflo advance` to complete the project."
         )
     return (
-        f"All tasks done and {review['file']} is {review['verdict']} - run "
-        "`specflo advance` to complete the project."
+        f"All tasks done - address the findings in {review['file']}, then run "
+        "another round with `specflo review start`."
     )
 
 

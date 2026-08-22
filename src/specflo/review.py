@@ -172,7 +172,8 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
 
     The latest round is the highest-numbered one, open or closed (REQ-19); its
     verdict is what every surface reports, so an open round after a passing one
-    reads as open rather than as that earlier pass. Read fresh from the files on
+    reads as open rather than as that earlier pass. ``passing`` says whether that
+    verdict clears the completion gate, so every reader shares one judgement. Read fresh from the files on
     every call - nothing is cached and nothing is mirrored (REQ-09).
     """
     files = round_files(root, cfg, slug)
@@ -186,6 +187,11 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         "latest": latest,
         "verdict": verdict,
         "open": not verdict,
+        # Whether this round clears the completion gate, decided here so the
+        # next-step hint does not re-derive it. `workflow` cannot import this
+        # module (review -> projects -> workflow would close a cycle), and two
+        # copies of the rule are two chances to disagree.
+        "passing": verdict in PASSING,
         "date": str(fields.get("date", "") or ""),
         "sha": str(fields.get("sha", "") or ""),
         "reason": str(fields.get("reason", "") or ""),

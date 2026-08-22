@@ -156,7 +156,10 @@ def _hint(review):
 
 
 def _closed(number, verdict):
+    from specflo import review
+
     return {"rounds": number, "latest": number, "verdict": verdict, "open": False,
+            "passing": verdict in review.PASSING,
             "date": "2026-08-02", "sha": "abc1234", "reason": "",
             "file": f"review-{number}.md"}
 
@@ -169,7 +172,7 @@ def test_next_step_review_hint_with_no_round_calls_for_the_review():
 
 def test_next_step_review_hint_with_an_open_round_names_that_file():
     open_round = {"rounds": 3, "latest": 3, "verdict": "", "open": True,
-                  "date": "2026-08-09", "sha": "", "reason": "",
+                  "passing": False, "date": "2026-08-09", "sha": "", "reason": "",
                   "file": "review-3.md"}
     hint = _hint(open_round)
     assert "review-3.md" in hint
@@ -195,8 +198,49 @@ def test_next_step_review_hints_differ_across_all_four_states():
     hints = {
         _hint(None),
         _hint({"rounds": 1, "latest": 1, "verdict": "", "open": True,
-               "date": "2026-08-09", "sha": "", "reason": "", "file": "review-1.md"}),
+               "passing": False, "date": "2026-08-09", "sha": "", "reason": "",
+               "file": "review-1.md"}),
         _hint(_closed(1, "changes-requested")),
         _hint(_closed(1, "ready-to-merge")),
     }
     assert len(hints) == 4
+
+
+# --- hint and gate agree on which verdicts pass (round 1, F4) -----------------
+# The hint used to branch on "not changes-requested", so a verdict the gate
+# rejects still got offered `specflo advance`. One rule, one owner.
+
+
+def test_next_step_offers_advance_only_for_passing_verdicts():
+    from specflo import review
+
+    for verdict in ("ready-to-merge", "changes-requested", "waived", "approved",
+                    "lgtm", ""):
+        state = _closed(1, verdict)
+        state["open"] = not verdict
+        state["passing"] = verdict in review.PASSING
+        hint = _hint(state)
+        assert ("specflo advance" in hint) is state["passing"], verdict
+
+
+def test_review_state_marks_passing_verdicts_for_every_reader(tmp_path):
+    # The hint cannot import review (review -> projects -> workflow), so the
+    # judgement travels in the payload rather than being re-derived downstream.
+    from specflo import config, projects, review
+
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-08-01")
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
+    assert review.review_state(tmp_path, cfg, "thing")["passing"] is False  # open
+
+    review.close_round(tmp_path, cfg, "thing", "ready-to-merge", today="2026-08-02")
+    assert review.review_state(tmp_path, cfg, "thing")["passing"] is True
+
+
+def test_the_gate_and_the_hint_never_disagree_on_a_passing_verdicts_set():
+    # Stated once, structurally: both read review.PASSING rather than each
+    # keeping its own idea of which verdicts clear the review.
+    from specflo import review
+
+    assert review.PASSING == ("ready-to-merge", "waived")
+    assert set(review.PASSING) < set(review.VERDICTS)
