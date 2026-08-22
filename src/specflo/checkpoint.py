@@ -58,6 +58,15 @@ def build_checkpoint(
     for filename in _ARTIFACT_ORDER:
         if (directory / filename).is_file():
             read_first.append(display_path(directory / filename, root, posix=True))
+    # Where the review stands, read fresh from the round files (review-rounds
+    # REQ-09). None without cfg, or while the project has no rounds.
+    review_info = review.review_state(root, cfg, project.slug) if cfg is not None else None
+    # The latest round joins Read first only when it asked for changes (REQ-14):
+    # that is the one case where the resuming session has work to do about it.
+    # Listing a passing round would pull its stale findings into the next
+    # reviewer's context for no gain.
+    if review_info is not None and review_info["verdict"] == "changes-requested":
+        read_first.append(display_path(directory / review_info["file"], root, posix=True))
     shelved = project.status == SHELVED_STATUS
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
@@ -83,7 +92,7 @@ def build_checkpoint(
     elif project.phase == "execute":
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
-            review=review.review_state(root, cfg, project.slug) if cfg else None,
+            review=review_info,
         )
         # Stuck on a superseded dependency: surface the same targeted rewire
         # remediation as `task show`/`status`, replacing the generic hint.

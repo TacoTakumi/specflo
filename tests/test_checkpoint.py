@@ -393,3 +393,64 @@ def test_checkpoint_omits_the_rule_line_without_completed_projects(tmp_path):
     cfg, project = _project(tmp_path)
     path = checkpoint.write_checkpoint(tmp_path, project, cfg=cfg)
     assert config.rule_text("historical") not in path.read_text()
+
+
+# --- the latest round in Read first (review-rounds REQ-14) --------------------
+# A fresh session is handed the round file only when it has work to do about it.
+# Listing a passing round's findings would just pull stale text into the next
+# reviewer's context.
+
+
+def _round(tmp_path, cfg, verdict=None, reason=None):
+    """Mint a round, closing it with ``verdict`` unless it should stay open."""
+    from specflo import review
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
+    if verdict is not None:
+        review.close_round(tmp_path, cfg, "thing", verdict, reason=reason,
+                           today="2026-08-02")
+
+
+def _read_first(tmp_path, cfg, project):
+    return checkpoint.build_checkpoint(
+        tmp_path, project, cfg=cfg, today="2026-08-02"
+    )["read_first"]
+
+
+def test_checkpoint_review_lists_the_round_file_when_changes_are_requested(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "changes-requested")
+
+    read_first = _read_first(tmp_path, cfg, project)
+
+    assert "docs/projects/thing/review-1.md" in read_first
+    text = checkpoint.render_checkpoint(
+        checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02")
+    )
+    assert "review-1.md" in text.split("## Do next")[0]      # under Read first
+
+
+def test_checkpoint_review_lists_no_round_file_when_passing_open_or_absent(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    baseline = _read_first(tmp_path, cfg, project)           # no rounds at all
+    assert not any("review-" in path for path in baseline)
+
+    _round(tmp_path, cfg, "ready-to-merge")
+    assert _read_first(tmp_path, cfg, project) == baseline
+
+    _round(tmp_path, cfg, "waived", reason="not reviewing")
+    assert _read_first(tmp_path, cfg, project) == baseline
+
+    _round(tmp_path, cfg)                                    # round 3, left open
+    assert _read_first(tmp_path, cfg, project) == baseline
+
+
+def test_checkpoint_review_lists_only_the_latest_round_file(tmp_path):
+    # REQ-19: an older changes-requested round is history once a newer one lands.
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "changes-requested")               # review-1.md
+    _round(tmp_path, cfg, "changes-requested")               # review-2.md
+
+    read_first = _read_first(tmp_path, cfg, project)
+
+    assert "docs/projects/thing/review-2.md" in read_first
+    assert "docs/projects/thing/review-1.md" not in read_first
