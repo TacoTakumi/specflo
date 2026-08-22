@@ -49,7 +49,13 @@ the emitted bootstrap is the source of truth, not this file.
    hook / clearanddo / pi). Each continuing pass re-runs `specflo auto` — the
    bootstrap self-propagates, so the run stays in auto mode across a context clear
    rather than reverting to ask-first.
-5. **Stop when the payload says stop.** When `specflo auto` emits an escalation,
+5. **Run and record the review round.** At the end of execute the run performs
+   the final whole-branch review itself — in fresh context, per the execute skill,
+   never as inline self-review — and records it with `specflo review start` and
+   `specflo review done --verdict …`. Completing the project is not part of that:
+   the run halts on the completion directive and `specflo advance` stays the
+   user's call, which is where auto already stopped.
+6. **Stop when the payload says stop.** When `specflo auto` emits an escalation,
    the kill-switch halt, or the completion directive (rather than a bootstrap),
    the run is over — hand off to the human; do not start another pass.
 

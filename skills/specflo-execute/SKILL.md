@@ -63,11 +63,19 @@ superseding requirement — never silently mutate a task or drift off its
 6. **Readiness** — when `specflo task show` reports no actionable task and
    `specflo validate execute` is clean (all tasks done, coverage holds), run a
    **final whole-branch review in fresh context**:
+   - Open the round first: `specflo review start` mints `review-N.md` and prints
+     its path. The round is the reviewer's artifact, not a note in the chat.
    - With subagents: dispatch a reviewer on the most capable model — it verifies
      the *diff*, not your report (spec compliance + code quality), and returns
-     ready-to-merge / not.
+     ready-to-merge / not. Hand it the diff alone; a previous round's findings
+     are yours to act on, not the fresh reviewer's to inherit.
    - Without subagents: do **not** review inline (it defeats fresh eyes and burns
      context) — `specflo checkpoint`, then run the review in a fresh session.
+   - Record the outcome: `specflo review done --verdict ready-to-merge |
+     changes-requested | waived` (waived needs `--reason`; `--file <path>` ingests
+     a reviewer's report as the round's body). On `changes-requested`, fix what
+     the round names, then run another round — rounds are numbered, and the
+     latest one is the one that counts.
    On ready-to-merge, **pause before completing — don't auto-complete**: the work
    is done and reviewed and the **checkpoint is saved** (the project's
    `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
@@ -136,5 +144,7 @@ Before completing the project:
 
 - [ ] Every active task is `done` and each earned its own atomic commit.
 - [ ] `specflo validate execute` exits 0 (coverage holds; all tasks done).
-- [ ] A fresh-context final whole-branch review returned ready-to-merge.
+- [ ] A fresh-context final whole-branch review ran under `specflo review start`
+      and was recorded with `specflo review done --verdict …`; the latest round
+      is ready-to-merge (or a reasoned waived).
 - [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` (project completion) to the user.

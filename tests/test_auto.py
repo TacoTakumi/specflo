@@ -1020,3 +1020,17 @@ def test_a_new_pass_reopens_an_ended_run(tmp_path):
     auto.set_kill_switch(tmp_path, killed=False)
     auto.auto_pass(tmp_path, max_passes=1000)
     assert _state(tmp_path).get("ended") is not True
+
+
+def test_auto_skill_says_the_run_records_the_review_but_not_the_completion():
+    # review-rounds REQ-18/D-13: an auto run performs and records the round
+    # itself; `specflo advance` stays the user's call, as it already did.
+    from pathlib import Path
+
+    skill = Path(__file__).resolve().parents[1] / "skills" / "specflo-auto" / "SKILL.md"
+    text = skill.read_text()
+    assert "specflo review start" in text
+    assert "specflo review done" in text
+    low = text.lower()
+    assert "specflo advance" in text
+    assert "user's call" in low or "user to call" in low
