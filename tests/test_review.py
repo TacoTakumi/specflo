@@ -321,3 +321,81 @@ def test_ingest_of_a_missing_report_refuses_and_leaves_the_round_open(
 
     assert result.exit_code != 0
     assert not _frontmatter(project_dir / "review-1.md")["verdict"]
+
+
+def _execute_all_done(root):
+    """A 'Thing' at execute whose only task is done - ready but for the review."""
+    from specflo import plan, spec
+
+    cfg = config.init_config(root)
+    projects.create_project(root, cfg, "Thing", created="2026-08-01")
+    projects.switch_project(root, cfg, "Thing")
+    spec.start_spec(root, cfg, "thing", today="2026-08-01")
+    spec.add_requirement(root, cfg, "thing", "r", acceptance="a", today="2026-08-01")
+    proj_md = root / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text(proj_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    plan.start_plan(root, cfg, "thing", today="2026-08-01")
+    plan.add_task(root, cfg, "thing", "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-08-01")
+    plan.start_task(root, cfg, "thing", "T-01", today="2026-08-01")
+    plan.done_task(root, cfg, "thing", "T-01", today="2026-08-01")
+    return cfg
+
+
+def _derived(root, cfg):
+    """Every surface that reads review state, as one comparable snapshot."""
+    from specflo import status, validators
+
+    project = projects.load_project(root, cfg, "thing")
+    info = status.build_status(root, cfg, project)
+    return (
+        status.render_status(root, info),
+        info["next_step"],
+        validators.execute_issues(root, cfg, "thing"),
+    )
+
+
+def test_a_later_commit_leaves_a_closed_round_stale_free(tmp_path, monkeypatch):
+    # REQ-08: the stamp is evidence for a human judgement call, never a derived
+    # verdict. Committing after the review changes HEAD, and nothing else.
+    from specflo import review
+
+    monkeypatch.chdir(tmp_path)
+    _git_repo(tmp_path)
+    cfg = _execute_all_done(tmp_path)
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
+    round_file = review.close_round(
+        tmp_path, cfg, "thing", "ready-to-merge", today="2026-08-02"
+    )
+    before = _derived(tmp_path, cfg)
+    assert before[2] == []                       # the gate is open before the commit
+    old_head = _frontmatter(round_file)["sha"]
+    assert old_head and old_head in before[0]    # the stamp really is on the line
+    round_text = round_file.read_text()
+
+    import subprocess
+
+    (tmp_path / "later.txt").write_text("work that landed after the review\n")
+    subprocess.run(["git", "add", "later.txt"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "later"], cwd=tmp_path, check=True,
+                   capture_output=True)
+    new_head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=tmp_path,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    assert _derived(tmp_path, cfg) == before     # byte-identical on every surface
+    assert round_file.read_text() == round_text  # the round itself is untouched
+    assert new_head not in before[0]             # the line still names the old sha
+
+
+def test_no_surface_asks_git_whether_a_round_is_stale(tmp_path):
+    # The same guard stated structurally: nothing in the read path compares the
+    # round's sha to HEAD, so there is no code path that could grow an expiry.
+    from conftest import executable_identifiers
+
+    from specflo import review
+
+    for func in (review.review_state, review.completion_issues):
+        code = executable_identifiers(func)
+        assert "head_sha" not in code
+        assert "stale" not in code
