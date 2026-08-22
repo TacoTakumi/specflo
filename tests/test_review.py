@@ -262,3 +262,62 @@ def test_stamp_is_empty_outside_git_and_the_close_still_succeeds(
     fields = _frontmatter(project_dir / "review-1.md")
     assert fields["sha"] == ""
     assert str(fields["date"]) == datetime.date.today().isoformat()
+
+
+def test_ingest_replaces_an_untouched_skeleton_body_with_the_report(
+    tmp_path, monkeypatch
+):
+    # REQ-10: the escape hatch for a subagent that returns its report as text.
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+    report = tmp_path / "report.md"
+    report.write_text("# Round 1\n\n## Findings\n\n- one nit.\n")
+
+    result = runner.invoke(
+        app,
+        ["review", "done", "--verdict", "ready-to-merge", "--file", str(report)],
+    )
+
+    assert result.exit_code == 0, result.output
+    minted = project_dir / "review-1.md"
+    from specflo.review import body_of
+
+    assert body_of(minted) == report.read_text()
+    assert _frontmatter(minted)["verdict"] == "ready-to-merge"
+
+
+def test_ingest_refuses_when_the_round_body_was_already_written(
+    tmp_path, monkeypatch
+):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+    minted = project_dir / "review-1.md"
+    minted.write_text(minted.read_text().replace("## Findings\n", "## Findings\n\n- a.\n"))
+    before = minted.read_text()
+    report = tmp_path / "report.md"
+    report.write_text("a different report\n")
+
+    result = runner.invoke(
+        app,
+        ["review", "done", "--verdict", "ready-to-merge", "--file", str(report)],
+    )
+
+    assert result.exit_code != 0
+    assert "already has content" in result.output.lower()
+    assert minted.read_text() == before          # still open, still the human's text
+
+
+def test_ingest_of_a_missing_report_refuses_and_leaves_the_round_open(
+    tmp_path, monkeypatch
+):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(
+        app,
+        ["review", "done", "--verdict", "waived", "--reason", "x",
+         "--file", str(tmp_path / "nope.md")],
+    )
+
+    assert result.exit_code != 0
+    assert not _frontmatter(project_dir / "review-1.md")["verdict"]

@@ -1615,12 +1615,18 @@ def review_done(
     reason: str = typer.Option(
         None, "--reason", help="Why the review was waived (waived only)."
     ),
+    file: str = typer.Option(
+        None, "--file", metavar="<path>",
+        help="A report file whose text becomes the round's body.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Close the active project's open review round with a verdict."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     try:
-        path = review_module.close_round(root, cfg, slug, verdict, reason=reason)
+        path = review_module.close_round(
+            root, cfg, slug, verdict, reason=reason, report=file
+        )
     except SpecfloError as exc:
         raise _die(str(exc))
     if json_output:

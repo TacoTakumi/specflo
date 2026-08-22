@@ -128,6 +128,11 @@ def start_round(
     return path, True
 
 
+def skeleton_body(number: int) -> str:
+    """The body ``review start`` mints for round ``number``."""
+    return _TEMPLATE.format(number=number, today="").split("---", 2)[2].lstrip("\n")
+
+
 def body_of(path: Path) -> str:
     """A round file's body: everything after its frontmatter."""
     parts = path.read_text().split("---", 2)
@@ -177,15 +182,22 @@ def close_round(
     verdict: str,
     reason: str | None = None,
     today: str | None = None,
+    report: str | None = None,
 ) -> Path:
     """Close the open round with ``verdict``, date and sha (REQ-04, REQ-05, REQ-07).
 
     The date and sha stamp the close, overwriting the mint-time date: what
     matters is when the review was decided, not when its file appeared.
 
+    ``report`` is a path whose text becomes the round's body (REQ-10) - the
+    escape hatch for a reviewer that returns its report as text rather than
+    writing into the file. It is refused once the body has been written into,
+    so an ingest can never overwrite a review someone already recorded.
+
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
     not one of :data:`VERDICTS`, when ``waived`` comes without a reason
-    (REQ-06), or when no round is open.
+    (REQ-06), when the report file is missing or the body is already written,
+    or when no round is open.
     """
     if verdict not in VERDICTS:
         raise SpecfloError(
@@ -196,6 +208,12 @@ def close_round(
             "Verdict 'waived' needs a --reason, so a project that skipped review"
             " records why."
         )
+    report_text = ""
+    if report is not None:
+        report_path = Path(report)
+        if not report_path.is_file():
+            raise SpecfloError(f"No report file at {report}.")
+        report_text = report_path.read_text()
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
         if path is None:
@@ -203,10 +221,18 @@ def close_round(
                 "No review is open. Start one with `specflo review start`."
             )
         fields = frontmatter(path)
+        body = body_of(path)
+        if report is not None:
+            if body.strip() != skeleton_body(int(fields.get("round") or 0)).strip():
+                raise SpecfloError(
+                    f"{path.name} already has content; ingesting {report} would"
+                    " overwrite it. Close the round without --file instead."
+                )
+            body = report_text
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
         fields["sha"] = head_sha(root)
         if reason is not None:
             fields["reason"] = reason
-        path.write_text(_render(fields, body_of(path)))
+        path.write_text(_render(fields, body))
     return path
