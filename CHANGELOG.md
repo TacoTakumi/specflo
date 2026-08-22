@@ -8,6 +8,44 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.10.0]
+
+### Added
+- **Recorded review rounds (review-rounds).** The end-of-execute whole-branch
+  review is now an artifact instead of a memory. `specflo review start` mints
+  the next numbered `review-N.md` in the active project's directory and prints
+  its path; `specflo review done --verdict <v>` closes it. Verdicts are
+  `ready-to-merge`, `changes-requested` and `waived` (`waived` requires
+  `--reason`, so a skipped review records why). `--file <path>` ingests a
+  reviewer's report as the round's body, refusing once the body has been
+  written into. Closing a round stamps the date and, inside a git repo, the
+  short HEAD sha.
+- **Review state on the read surfaces.** `specflo status` carries a `Reviews:`
+  line naming the round count and where the latest round stands - its verdict,
+  date and sha, or that it is still open. The all-tasks-done next-step hint now
+  turns on that state: run the review, finish the open round, address the
+  findings and run another round, or advance. The checkpoint's Read first lists
+  the latest round file only when it asked for changes.
+
+### Changed
+- **Completing a project from execute now requires a passing review round.**
+  `specflo advance` at the execute phase refuses unless the latest round is
+  closed `ready-to-merge` or `waived`; an open round or a `changes-requested`
+  one blocks. The gate keys on the verdict alone and never on the round's
+  findings, and it binds only the execute-to-complete boundary - the earlier
+  advances are unchanged. This is a behaviour change for any project that
+  completed without recording a round.
+- **The execute and auto skills name the review commands.** The execute skill's
+  readiness step and verification checklist run the round through
+  `specflo review start` / `specflo review done`; the auto skill states that an
+  auto run performs and records the round while `specflo advance` stays the
+  user's call.
+
+### Notes
+- Review state lives in the round files alone. Nothing is mirrored into
+  `project.md`, and specflo never derives staleness from a round's stamp -
+  commits landing after a closed round change nothing.
+
 ## [0.9.0]
 
 ### Added
