@@ -62,37 +62,49 @@ reason: ''
 """
 
 
-def round_path(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> Path:
-    return project_dir(root, cfg, slug) / f"review-{number}.md"
+def number_of(path: Path) -> int | None:
+    """The round number in a round file's name, or None if it is not one."""
+    match = _ROUND_RE.match(Path(path).name)
+    return int(match.group(1)) if match else None
 
 
-def round_numbers(root: Path, cfg: SpecfloConfig, slug: str) -> list[int]:
-    """Every round number present in the project directory, ascending."""
+def round_files(root: Path, cfg: SpecfloConfig, slug: str) -> list[tuple[int, Path]]:
+    """Every round file in the project directory, ascending by number.
+
+    Each path is carried alongside its number rather than rebuilt from it. A
+    hand-created ``review-007.md`` parses as round 7, and reconstructing
+    ``review-7.md`` from that number would name a file nobody wrote - which is
+    how a single stray filename could otherwise take down every read path.
+    """
     directory = project_dir(root, cfg, slug)
     if not directory.is_dir():
         return []
-    numbers = [
-        int(match.group(1))
+    found = [
+        (number, entry)
         for entry in directory.iterdir()
-        if (match := _ROUND_RE.match(entry.name)) and entry.is_file()
+        if entry.is_file() and (number := number_of(entry)) is not None
     ]
-    return sorted(numbers)
+    return sorted(found, key=lambda item: (item[0], item[1].name))
 
 
 def frontmatter(path: Path) -> dict:
     """A round file's frontmatter mapping; ``{}`` when it has none to read.
 
-    A hand-mangled round file must not take the CLI down: it reads as a round
-    with no verdict, which is the same as an open one, and the session is
-    steered back into it rather than past it.
+    A hand-mangled round file must not take the CLI down: whatever is wrong with
+    it - no fence, unparseable YAML, or frontmatter that is not a mapping at all
+    - it reads as a round with no verdict, which is the same as an open one, and
+    the session is steered back into it rather than past it.
     """
     parts = path.read_text().split("---", 2)
     if len(parts) < 3 or parts[0].strip():
         return {}
     try:
-        return yaml.safe_load(parts[1]) or {}
+        fields = yaml.safe_load(parts[1])
     except yaml.YAMLError:
         return {}
+    # A scalar or a list parses fine and is truthy, so `or {}` is not enough:
+    # only a mapping has the keys the caller is about to ask for.
+    return fields if isinstance(fields, dict) else {}
 
 
 def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
@@ -103,8 +115,7 @@ def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
     hand-edited directory holds several, the highest-numbered one wins - it is
     the latest round, and the latest is what every surface reports (REQ-19).
     """
-    for number in reversed(round_numbers(root, cfg, slug)):
-        path = round_path(root, cfg, slug, number)
+    for _number, path in reversed(round_files(root, cfg, slug)):
         if not str(frontmatter(path).get("verdict", "") or ""):
             return path
     return None
@@ -125,7 +136,7 @@ def start_round(
         existing = open_round(root, cfg, slug)
         if existing is not None:
             return existing, False
-        number = (max(round_numbers(root, cfg, slug), default=0)) + 1
+        number = max((n for n, _ in round_files(root, cfg, slug)), default=0) + 1
         path = directory / f"review-{number}.md"
         path.write_text(_TEMPLATE.format(number=number, today=today))
     return path, True
@@ -151,7 +162,6 @@ def _render(fields: dict, body: str) -> str:
     since the CLI reads only the five it wrote.
     """
     ordered = {key: fields.get(key, "") or "" for key in _FIELDS}
-    ordered["round"] = int(ordered["round"] or 0)
     ordered.update({k: v for k, v in fields.items() if k not in _FIELDS})
     frontmatter_text = yaml.safe_dump(ordered, sort_keys=False).strip()
     return f"---\n{frontmatter_text}\n---\n\n{body}"
@@ -165,15 +175,14 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     reads as open rather than as that earlier pass. Read fresh from the files on
     every call - nothing is cached and nothing is mirrored (REQ-09).
     """
-    numbers = round_numbers(root, cfg, slug)
-    if not numbers:
+    files = round_files(root, cfg, slug)
+    if not files:
         return None
-    latest = numbers[-1]
-    path = round_path(root, cfg, slug, latest)
+    latest, path = files[-1]
     fields = frontmatter(path)
     verdict = str(fields.get("verdict", "") or "")
     return {
-        "rounds": len(numbers),
+        "rounds": len(files),
         "latest": latest,
         "verdict": verdict,
         "open": not verdict,
@@ -233,6 +242,25 @@ def head_sha(root: Path) -> str:
     return result.stdout.strip() if result.returncode == 0 else ""
 
 
+def _round_number(path: Path, raw) -> int:
+    """The number to write back into ``path``'s frontmatter.
+
+    The filename is the authority: it is what allocated the round and what every
+    read path counts, so a file whose frontmatter never carried a number keeps
+    its own rather than being stamped 0. A frontmatter number that is not a
+    number is a hand-edit the CLI will not guess at.
+    """
+    if raw is None or raw == "":
+        return number_of(path) or 0
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        raise SpecfloError(
+            f"{path.name} has a non-numeric round ({raw!r}) in its frontmatter."
+            " Fix it by hand, then close the round."
+        ) from None
+
+
 def close_round(
     root: Path,
     cfg: SpecfloConfig,
@@ -271,7 +299,10 @@ def close_round(
         report_path = Path(report)
         if not report_path.is_file():
             raise SpecfloError(f"No report file at {report}.")
-        report_text = report_path.read_text()
+        try:
+            report_text = report_path.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SpecfloError(f"Cannot read {report} as text: {exc}") from exc
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
         if path is None:
@@ -279,6 +310,7 @@ def close_round(
                 "No review is open. Start one with `specflo review start`."
             )
         fields = frontmatter(path)
+        fields["round"] = _round_number(path, fields.get("round"))
         body = body_of(path)
         if report is not None:
             if body.strip() != skeleton_body(int(fields.get("round") or 0)).strip():

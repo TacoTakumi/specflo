@@ -399,3 +399,126 @@ def test_no_surface_asks_git_whether_a_round_is_stale(tmp_path):
         code = executable_identifiers(func)
         assert "head_sha" not in code
         assert "stale" not in code
+
+
+# --- degrading on a round file nobody minted (round 1, F2/F3) -----------------
+# Round files are CLI-owned, but `review.py` promises a hand-mangled one reads as
+# open rather than taking the CLI down. These pin that promise on the paths a
+# fresh session actually walks: status, checkpoint, advance, review start.
+
+
+def _malformed_project(tmp_path, monkeypatch, name, text):
+    """An execute-phase project carrying one hand-written round file."""
+    monkeypatch.chdir(tmp_path)
+    cfg = _execute_all_done(tmp_path)
+    (tmp_path / "docs" / "projects" / "thing" / name).write_text(text)
+    return cfg
+
+
+def test_malformed_frontmatter_reads_as_an_open_round(tmp_path, monkeypatch):
+    # yaml.safe_load returns a str here, not a mapping - .get() would blow up.
+    _malformed_project(tmp_path, monkeypatch, "review-1.md",
+                       "---\njust some text\n---\n\nbody\n")
+
+    for args in (["status"], ["checkpoint"], ["review", "start"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, (args, result.output)
+    assert "round 1 open" in runner.invoke(app, ["status"]).output
+    assert not (tmp_path / "docs" / "projects" / "thing" / "review-2.md").exists()
+
+
+def test_malformed_missing_frontmatter_reads_as_an_open_round(tmp_path, monkeypatch):
+    _malformed_project(tmp_path, monkeypatch, "review-1.md", "no frontmatter here\n")
+
+    result = runner.invoke(app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    assert "round 1 open" in result.output
+
+
+def test_malformed_zero_padded_filename_acts_on_the_file_that_exists(tmp_path, monkeypatch):
+    # review-007.md parses as round 7; rebuilding "review-7.md" names nothing.
+    _malformed_project(
+        tmp_path, monkeypatch, "review-007.md",
+        "---\nround: 7\nverdict: ready-to-merge\ndate: '2026-08-02'\n"
+        "sha: abc1234\nreason: ''\n---\n\n# Review round 7\n",
+    )
+    project_dir = tmp_path / "docs" / "projects" / "thing"
+
+    for args in (["status"], ["checkpoint"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, (args, result.output)
+    assert "round 7 ready-to-merge" in runner.invoke(app, ["status"]).output
+
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    assert (project_dir / "review-8.md").is_file()          # minted past it
+    assert not (project_dir / "review-7.md").exists()       # never conjured
+
+
+def test_malformed_zero_padded_filename_still_clears_the_completion_gate(
+    tmp_path, monkeypatch
+):
+    _malformed_project(
+        tmp_path, monkeypatch, "review-007.md",
+        "---\nround: 7\nverdict: ready-to-merge\ndate: '2026-08-02'\n"
+        "sha: abc1234\nreason: ''\n---\n\n# Review round 7\n",
+    )
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    assert "status: complete" in (
+        tmp_path / "docs" / "projects" / "thing" / "project.md"
+    ).read_text()
+
+
+def test_malformed_non_numeric_round_refuses_the_close_without_a_traceback(
+    tmp_path, monkeypatch
+):
+    _malformed_project(
+        tmp_path, monkeypatch, "review-1.md",
+        "---\nround: one\nverdict: ''\ndate: '2026-08-01'\n"
+        "sha: ''\nreason: ''\n---\n\n# Review round 1\n",
+    )
+    round_file = tmp_path / "docs" / "projects" / "thing" / "review-1.md"
+    before = round_file.read_text()
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "error:" in result.output.lower()
+    assert round_file.read_text() == before                 # still open, untouched
+
+
+def test_malformed_close_of_a_file_without_frontmatter_keeps_its_own_number(
+    tmp_path, monkeypatch
+):
+    _malformed_project(tmp_path, monkeypatch, "review-1.md", "no frontmatter here\n")
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    fields = _frontmatter(tmp_path / "docs" / "projects" / "thing" / "review-1.md")
+    assert fields["round"] == 1                             # from its name, not 0
+
+
+def test_malformed_report_file_that_is_not_text_refuses_the_close(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg = _execute_all_done(tmp_path)
+    from specflo import review
+
+    round_file = review.start_round(tmp_path, cfg, "thing", today="2026-08-01")[0]
+    before = round_file.read_text()
+    binary = tmp_path / "report.bin"
+    binary.write_bytes(b"\xff\xfe\x00\x80not utf-8\x00")
+
+    result = runner.invoke(
+        app,
+        ["review", "done", "--verdict", "ready-to-merge", "--file", str(binary)],
+    )
+
+    assert result.exit_code != 0
+    assert result.exception is None or isinstance(result.exception, SystemExit)
+    assert "error:" in result.output.lower()
+    assert round_file.read_text() == before
