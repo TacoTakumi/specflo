@@ -99,7 +99,11 @@ def test_start_with_an_open_round_reuses_it_and_mints_nothing(tmp_path, monkeypa
 
     assert result.exit_code == 0, result.output
     assert str(still_open) in result.output
-    assert "open" in result.output
+    # REQ-03 wants the path carried with a note that the round is already open.
+    # Strip the path before looking for the note: pytest's tmp_path is named
+    # after this test, so it contains "open" itself and a bare substring check
+    # would pass on the path alone, with or without the note.
+    assert "already open" in result.output.replace(str(still_open), "")
     assert not (project_dir / "review-3.md").exists()
     assert still_open.read_text() == before          # reused, not rewritten
 
