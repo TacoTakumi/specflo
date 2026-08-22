@@ -75,3 +75,41 @@ def test_mint_numbers_past_the_highest_round_and_never_fills_a_gap(
     assert (project_dir / "review-4.md").is_file()
     assert not (project_dir / "review-2.md").exists()
     assert _frontmatter(project_dir / "review-4.md")["round"] == 4
+
+
+def _open_round(project_dir, number):
+    """An unclosed round: present, numbered, with no verdict yet."""
+    path = project_dir / f"review-{number}.md"
+    path.write_text(
+        f"---\nround: {number}\nverdict: ''\ndate: '2026-08-22'\n"
+        f"sha: ''\nreason: ''\n---\n\n# Review round {number}\n"
+    )
+    return path
+
+
+def test_start_with_an_open_round_reuses_it_and_mints_nothing(tmp_path, monkeypatch):
+    # REQ-03: a session that died mid-review is walked back into, not stepped
+    # over -- there is no discard command, so reuse is the whole recovery path.
+    project_dir = _project(tmp_path, monkeypatch)
+    _closed_round(project_dir, 1)
+    still_open = _open_round(project_dir, 2)
+    before = still_open.read_text()
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code == 0, result.output
+    assert str(still_open) in result.output
+    assert "open" in result.output
+    assert not (project_dir / "review-3.md").exists()
+    assert still_open.read_text() == before          # reused, not rewritten
+
+
+def test_open_round_is_the_one_with_an_empty_verdict(tmp_path, monkeypatch):
+    # A closed latest round is no obstacle: the next `review start` mints.
+    project_dir = _project(tmp_path, monkeypatch)
+    _closed_round(project_dir, 1, verdict="changes-requested")
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code == 0, result.output
+    assert (project_dir / "review-2.md").is_file()

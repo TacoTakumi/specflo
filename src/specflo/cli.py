@@ -1593,13 +1593,14 @@ def review_start(
     """Mint the active project's next review round and print its path."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     try:
-        path = review_module.start_round(root, cfg, slug)
+        path, created = review_module.start_round(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     if json_output:
-        typer.echo(json.dumps({"path": str(path)}))
+        typer.echo(json.dumps({"path": str(path), "created": created}))
     else:
-        typer.echo(str(path))
+        note = "" if created else " (already open)"
+        typer.echo(f"{path}{note}")
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")
