@@ -125,6 +125,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show a milestone's Exit checklist, member tasks, and REQ set."},
     {"name": "review start", "group": "workflow", "args": "",
      "summary": "Mint the next review round (review-N.md) and print its path."},
+    {"name": "review done", "group": "workflow", "args": "",
+     "summary": "Close the open review round with a verdict (--verdict)."},
 ]
 
 

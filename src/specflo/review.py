@@ -19,10 +19,17 @@ from pathlib import Path
 import yaml
 
 from .config import SpecfloConfig
+from .errors import SpecfloError
 from .locking import lock_path_for, locked
 from .projects import project_dir
 
 _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
+# The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
+# completion gate; changes-requested blocks it.
+VERDICTS = ("ready-to-merge", "changes-requested", "waived")
+# Frontmatter key order, pinned so a close rewrites a round file in the
+# shape `review start` minted it.
+_FIELDS = ("round", "verdict", "date", "sha", "reason")
 # Minting reads every round file then writes one; the lock covers that whole
 # critical section so two processes cannot mint the same number. It is named
 # for the series, not for a file, because the file's name is what is being
@@ -115,3 +122,54 @@ def start_round(
         path = directory / f"review-{number}.md"
         path.write_text(_TEMPLATE.format(number=number, today=today))
     return path, True
+
+
+def body_of(path: Path) -> str:
+    """A round file's body: everything after its frontmatter."""
+    parts = path.read_text().split("---", 2)
+    if len(parts) < 3 or parts[0].strip():
+        return path.read_text()
+    return parts[2].lstrip("\n")
+
+
+def _render(fields: dict, body: str) -> str:
+    """A round file from its frontmatter mapping and body.
+
+    Keys keep their minted order; any key a human added survives after them,
+    since the CLI reads only the five it wrote.
+    """
+    ordered = {key: fields.get(key, "") or "" for key in _FIELDS}
+    ordered["round"] = int(ordered["round"] or 0)
+    ordered.update({k: v for k, v in fields.items() if k not in _FIELDS})
+    frontmatter_text = yaml.safe_dump(ordered, sort_keys=False).strip()
+    return f"---\n{frontmatter_text}\n---\n\n{body}"
+
+
+def close_round(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    verdict: str,
+    reason: str | None = None,
+) -> Path:
+    """Close the open round by writing ``verdict`` into it (REQ-04, REQ-05).
+
+    Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
+    not one of :data:`VERDICTS`, or when no round is open.
+    """
+    if verdict not in VERDICTS:
+        raise SpecfloError(
+            f"Unknown verdict {verdict!r}. Valid values: " + ", ".join(VERDICTS) + "."
+        )
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        path = open_round(root, cfg, slug)
+        if path is None:
+            raise SpecfloError(
+                "No review is open. Start one with `specflo review start`."
+            )
+        fields = frontmatter(path)
+        fields["verdict"] = verdict
+        if reason is not None:
+            fields["reason"] = reason
+        path.write_text(_render(fields, body_of(path)))
+    return path

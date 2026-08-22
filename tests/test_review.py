@@ -113,3 +113,55 @@ def test_open_round_is_the_one_with_an_empty_verdict(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert (project_dir / "review-2.md").is_file()
+
+
+def test_close_writes_the_verdict_into_the_open_round(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+    minted = project_dir / "review-1.md"
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    assert _frontmatter(minted)["verdict"] == "ready-to-merge"
+    assert "## Findings" in minted.read_text()       # the body survives the close
+
+
+def test_close_accepts_each_of_the_three_verdicts(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    for number, verdict in enumerate(
+        ("ready-to-merge", "changes-requested", "waived"), start=1
+    ):
+        runner.invoke(app, ["review", "start"])
+        args = ["review", "done", "--verdict", verdict]
+        if verdict == "waived":
+            args += ["--reason", "not reviewing this one"]
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, result.output
+        assert _frontmatter(project_dir / f"review-{number}.md")["verdict"] == verdict
+
+
+def test_close_with_no_open_round_refuses_and_changes_nothing(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    closed = _closed_round(project_dir, 1)
+    before = closed.read_text()
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "changes-requested"])
+
+    assert result.exit_code != 0
+    assert "no review is open" in result.output.lower()
+    assert closed.read_text() == before
+
+
+def test_close_rejects_an_unknown_verdict_and_leaves_the_round_open(
+    tmp_path, monkeypatch
+):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "approved"])
+
+    assert result.exit_code != 0
+    for valid in ("ready-to-merge", "changes-requested", "waived"):
+        assert valid in result.output
+    assert not _frontmatter(project_dir / "review-1.md")["verdict"]

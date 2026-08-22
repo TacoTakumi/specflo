@@ -1603,6 +1603,32 @@ def review_start(
         typer.echo(f"{path}{note}")
 
 
+@review_app.command(
+    "done",
+    epilog="Example: specflo review done --verdict ready-to-merge",
+)
+def review_done(
+    verdict: str = typer.Option(
+        ..., "--verdict", metavar="<v>",
+        help="ready-to-merge | changes-requested | waived.",
+    ),
+    reason: str = typer.Option(
+        None, "--reason", help="Why the review was waived (waived only)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Close the active project's open review round with a verdict."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        path = review_module.close_round(root, cfg, slug, verdict, reason=reason)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"path": str(path), "verdict": verdict}))
+    else:
+        typer.echo(f"{path} closed {verdict}")
+
+
 @config_app.command("get", epilog="Example: specflo config get autonomy")
 def config_get(
     key: str = typer.Argument(
