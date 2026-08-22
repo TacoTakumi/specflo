@@ -108,17 +108,22 @@ def frontmatter(path: Path) -> dict:
 
 
 def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
-    """The unclosed round's path, or None when every round carries a verdict.
+    """The open round's path, or None when the latest round carries a verdict.
 
-    A round is open exactly while its frontmatter verdict is empty (REQ-03).
-    At most one can be open, because minting refuses while one is; if a
-    hand-edited directory holds several, the highest-numbered one wins - it is
-    the latest round, and the latest is what every surface reports (REQ-19).
+    A round is open exactly while its frontmatter verdict is empty (REQ-03), and
+    only the **latest** round - the highest-numbered one (REQ-19) - is ever
+    considered. At most one can be open, because minting refuses while one is;
+    an older unclosed file in a hand-edited directory is stale, not current, so
+    it neither blocks the next mint nor gets reported as open. Scanning back for
+    the highest *open* round instead would let this and ``review_state`` name
+    different rounds as current, which is the disagreement derived state exists
+    to prevent.
     """
-    for _number, path in reversed(round_files(root, cfg, slug)):
-        if not str(frontmatter(path).get("verdict", "") or ""):
-            return path
-    return None
+    files = round_files(root, cfg, slug)
+    if not files:
+        return None
+    path = files[-1][1]
+    return path if not str(frontmatter(path).get("verdict", "") or "") else None
 
 
 def start_round(

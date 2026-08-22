@@ -522,3 +522,68 @@ def test_malformed_report_file_that_is_not_text_refuses_the_close(tmp_path, monk
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "error:" in result.output.lower()
     assert round_file.read_text() == before
+
+
+# --- only the latest round can be open (round 2, G3) -------------------------
+# `open_round` used to scan backwards for the highest *open* round, which is not
+# the same as the latest round once a hand-edited directory holds two. That let
+# `review start` and `status` name different rounds as current.
+
+
+def _open_file(project_dir, number):
+    path = project_dir / f"review-{number}.md"
+    path.write_text(
+        f"---\nround: {number}\nverdict: ''\ndate: '2026-08-01'\n"
+        f"sha: ''\nreason: ''\n---\n\n# Review round {number}\n"
+    )
+    return path
+
+
+def test_latest_open_round_is_the_one_review_start_hands_back(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _open_file(project_dir, 1)
+    _open_file(project_dir, 2)
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code == 0, result.output
+    assert str(project_dir / "review-2.md") in result.output
+    assert "already open" in result.output
+
+
+def test_latest_open_round_closing_it_frees_the_next_mint(tmp_path, monkeypatch):
+    # The stale round-1 file must not hold the series hostage forever.
+    project_dir = _project(tmp_path, monkeypatch)
+    _open_file(project_dir, 1)
+    _open_file(project_dir, 2)
+    assert runner.invoke(
+        app, ["review", "done", "--verdict", "ready-to-merge"]
+    ).exit_code == 0
+    assert _frontmatter(project_dir / "review-2.md")["verdict"] == "ready-to-merge"
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code == 0, result.output
+    assert (project_dir / "review-3.md").is_file()
+
+
+def test_latest_open_round_agrees_with_what_status_reports(tmp_path, monkeypatch):
+    # One state, one answer: `open_round` and `review_state["open"]` are the same
+    # judgement about the same file, in every arrangement of rounds.
+    from specflo import review
+
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    _open_file(project_dir, 1)
+    _closed_round(project_dir, 2)
+
+    state = review.review_state(tmp_path, cfg, "thing")
+    assert state["open"] is False                       # latest (2) is closed
+    assert review.open_round(tmp_path, cfg, "thing") is None
+    assert "round 2 ready-to-merge" in runner.invoke(app, ["status"]).output
+
+    _open_file(project_dir, 3)
+
+    state = review.review_state(tmp_path, cfg, "thing")
+    assert state["open"] is True
+    assert review.open_round(tmp_path, cfg, "thing") == project_dir / "review-3.md"
