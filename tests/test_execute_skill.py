@@ -41,3 +41,17 @@ def test_skill_names_the_review_round_commands(tmp_path=None):
     for section in (readiness, checklist):
         assert "specflo review start" in section
         assert "specflo review done" in section
+
+
+def test_skill_readiness_trigger_is_not_made_unsatisfiable_by_the_gate():
+    # review-rounds round 2, G4: the review gate lives inside `validate execute`,
+    # so that command cannot be clean before the review it is meant to trigger.
+    # The trigger is the task state; the failing validator is the reminder.
+    text = SKILL.read_text()
+    readiness = text.split("**Readiness**", 1)[1].split("## ", 1)[0]
+    checklist = text.split("## Verification", 1)[1]
+
+    assert "`specflo validate execute` is clean" not in readiness
+    assert "no actionable task" in readiness.lower()          # the real trigger
+    for section in (readiness, checklist):
+        assert "until the round is closed" in section.lower()

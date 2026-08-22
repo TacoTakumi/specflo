@@ -60,9 +60,12 @@ superseding requirement — never silently mutate a task or drift off its
 5. **Stop on irreversibility** — destructive migrations, data deletion, secret
    handling, posting/outbound actions, or "anything you can't undo with `git
    revert`": stop and checkpoint with the human before proceeding.
-6. **Readiness** — when `specflo task show` reports no actionable task and
-   `specflo validate execute` is clean (all tasks done, coverage holds), run a
-   **final whole-branch review in fresh context**:
+6. **Readiness** — when `specflo task show` reports no actionable task (every
+   active task done, coverage holding), run a **final whole-branch review in
+   fresh context**. Don't wait for a clean `specflo validate execute`: the review
+   gate lives *inside* that validator, so it keeps reporting the missing review
+   **until the round is closed** — a failing validate here is the reminder to
+   review, not a reason to hold off:
    - Open the round first: `specflo review start` mints `review-N.md` and prints
      its path. The round is the reviewer's artifact, not a note in the chat.
    - With subagents: dispatch a reviewer on the most capable model — it verifies
@@ -143,7 +146,9 @@ worse than an honest "blocked."
 Before completing the project:
 
 - [ ] Every active task is `done` and each earned its own atomic commit.
-- [ ] `specflo validate execute` exits 0 (coverage holds; all tasks done).
+- [ ] `specflo validate execute` exits 0. It stays red
+      **until the round is closed**, so expect it to pass only once the review
+      below is recorded — not before it.
 - [ ] A fresh-context final whole-branch review ran under `specflo review start`
       and was recorded with `specflo review done --verdict …`; the latest round
       is ready-to-merge (or a reasoned waived).
