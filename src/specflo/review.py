@@ -108,22 +108,24 @@ def frontmatter(path: Path) -> dict:
 
 
 def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
-    """The open round's path, or None when the latest round carries a verdict.
+    """The open round's path, or None - when no round exists, or when the latest
+    one carries a verdict.
 
-    A round is open exactly while its frontmatter verdict is empty (REQ-03), and
-    only the **latest** round - the highest-numbered one (REQ-19) - is ever
-    considered. At most one can be open, because minting refuses while one is;
-    an older unclosed file in a hand-edited directory is stale, not current, so
-    it neither blocks the next mint nor gets reported as open. Scanning back for
-    the highest *open* round instead would let this and ``review_state`` name
-    different rounds as current, which is the disagreement derived state exists
-    to prevent.
+    Derived from :func:`review_state`, never decided again here: a round is open
+    exactly while the latest round - the highest-numbered one (REQ-19) - carries
+    an empty verdict (REQ-03), and that judgement has one owner. An older
+    unclosed file in a hand-edited directory is stale, not current, so it neither
+    blocks the next mint nor gets reported as open. Two copies of the rule would
+    be two chances for this and ``review_state`` to name different rounds as
+    current - the disagreement derived state exists to prevent.
+
+    The state carries the file's own name, so a hand-created ``review-007.md``
+    is returned as itself rather than rebuilt as ``review-7.md``.
     """
-    files = round_files(root, cfg, slug)
-    if not files:
+    state = review_state(root, cfg, slug)
+    if state is None or not state["open"]:
         return None
-    path = files[-1][1]
-    return path if not str(frontmatter(path).get("verdict", "") or "") else None
+    return project_dir(root, cfg, slug) / state["file"]
 
 
 def start_round(

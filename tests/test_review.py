@@ -587,3 +587,95 @@ def test_latest_open_round_agrees_with_what_status_reports(tmp_path, monkeypatch
     state = review.review_state(tmp_path, cfg, "thing")
     assert state["open"] is True
     assert review.open_round(tmp_path, cfg, "thing") == project_dir / "review-3.md"
+
+
+# --- one owner for the open-round rule (round 3, N2) -------------------------
+# T-16 made `open_round` and `review_state` agree; they agreed by being two
+# hand-written copies of the same rule, which is the shape of the bug T-16 fixed.
+# `open_round` now derives from `review_state`, so agreement is structural.
+
+# Each arrangement is a list of (filename, verdict) - "" meaning an open round -
+# paired with the file `open_round` must return, or None. These are the
+# arrangements a hand-edited project directory can actually be in.
+_ARRANGEMENTS = [
+    ("no rounds", [], None),
+    ("one open", [("review-1.md", "")], "review-1.md"),
+    ("one closed", [("review-1.md", "ready-to-merge")], None),
+    ("several closed", [("review-1.md", "changes-requested"),
+                        ("review-2.md", "ready-to-merge")], None),
+    ("stale open under a closed latest", [("review-1.md", ""),
+                                          ("review-2.md", "waived")], None),
+    ("stale open under an open latest", [("review-1.md", ""),
+                                         ("review-2.md", "")], "review-2.md"),
+    ("a gap in the numbering", [("review-1.md", "ready-to-merge"),
+                                ("review-3.md", "")], "review-3.md"),
+    ("zero-padded alone, open", [("review-007.md", "")], "review-007.md"),
+    ("zero-padded alone, closed", [("review-007.md", "waived")], None),
+    # Same number, two files: the (number, name) sort makes review-7.md latest.
+    ("collision, padded open", [("review-007.md", ""),
+                                ("review-7.md", "ready-to-merge")], None),
+    ("collision, plain open", [("review-007.md", "ready-to-merge"),
+                               ("review-7.md", "")], "review-7.md"),
+]
+
+
+def _arrange(project_dir, files):
+    for name, verdict in files:
+        number = name.removeprefix("review-").removesuffix(".md")
+        (project_dir / name).write_text(
+            f"---\nround: {int(number)}\nverdict: {verdict or chr(39) * 2}\n"
+            f"date: '2026-08-01'\nsha: ''\nreason: ''\n---\n\n# Round\n"
+        )
+
+
+def test_one_open_rule_holds_across_every_arrangement(tmp_path, monkeypatch):
+    from specflo import review
+
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    for label, files, expected in _ARRANGEMENTS:
+        for stale in list(project_dir.glob("review-*.md")):
+            stale.unlink()
+        _arrange(project_dir, files)
+
+        opened = review.open_round(tmp_path, cfg, "thing")
+        state = review.review_state(tmp_path, cfg, "thing")
+
+        assert opened == (project_dir / expected if expected else None), label
+        # The two surfaces are one judgement about one file, not two that happen
+        # to coincide.
+        if opened is None:
+            assert state is None or not state["open"], label
+        else:
+            assert state["open"] and state["file"] == opened.name, label
+
+
+def test_one_open_rule_is_not_reimplemented_in_open_round(tmp_path):
+    # Structural half: `open_round` reads no frontmatter of its own, so there is
+    # no second copy of the rule that could drift from the first.
+    from conftest import executable_identifiers
+
+    from specflo import review
+
+    code = executable_identifiers(review.open_round)
+    assert "review_state" in code
+    assert "frontmatter" not in code
+    assert "verdict" not in code
+
+
+def test_one_open_rule_follows_review_state_when_it_changes(tmp_path, monkeypatch):
+    # Behavioural half of the same point: bend `review_state` and `open_round`
+    # bends with it, which a second implementation would not.
+    from specflo import review
+
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    _arrange(project_dir, [("review-1.md", ""), ("review-2.md", "")])
+    assert review.open_round(tmp_path, cfg, "thing") == project_dir / "review-2.md"
+
+    monkeypatch.setattr(
+        review, "review_state",
+        lambda *a, **k: {"open": True, "file": "review-1.md", "latest": 1},
+    )
+
+    assert review.open_round(tmp_path, cfg, "thing") == project_dir / "review-1.md"
