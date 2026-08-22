@@ -165,3 +165,40 @@ def test_close_rejects_an_unknown_verdict_and_leaves_the_round_open(
     for valid in ("ready-to-merge", "changes-requested", "waived"):
         assert valid in result.output
     assert not _frontmatter(project_dir / "review-1.md")["verdict"]
+
+
+def test_waived_without_a_reason_is_refused_and_the_round_stays_open(
+    tmp_path, monkeypatch
+):
+    # REQ-06: the recorded escape past the completion gate has to say why.
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "waived"])
+
+    assert result.exit_code != 0
+    assert "reason" in result.output.lower()
+    assert not _frontmatter(project_dir / "review-1.md")["verdict"]
+
+
+def test_waived_with_a_reason_closes_and_stores_it(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(
+        app, ["review", "done", "--verdict", "waived", "--reason", "text"]
+    )
+
+    assert result.exit_code == 0, result.output
+    fields = _frontmatter(project_dir / "review-1.md")
+    assert (fields["verdict"], fields["reason"]) == ("waived", "text")
+
+
+def test_waived_reason_is_not_required_by_the_other_verdicts(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    assert not _frontmatter(project_dir / "review-1.md")["reason"]

@@ -26,7 +26,10 @@ from .projects import project_dir
 _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
 # completion gate; changes-requested blocks it.
-VERDICTS = ("ready-to-merge", "changes-requested", "waived")
+READY = "ready-to-merge"
+CHANGES_REQUESTED = "changes-requested"
+WAIVED = "waived"
+VERDICTS = (READY, CHANGES_REQUESTED, WAIVED)
 # Frontmatter key order, pinned so a close rewrites a round file in the
 # shape `review start` minted it.
 _FIELDS = ("round", "verdict", "date", "sha", "reason")
@@ -155,11 +158,17 @@ def close_round(
     """Close the open round by writing ``verdict`` into it (REQ-04, REQ-05).
 
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
-    not one of :data:`VERDICTS`, or when no round is open.
+    not one of :data:`VERDICTS`, when ``waived`` comes without a reason
+    (REQ-06), or when no round is open.
     """
     if verdict not in VERDICTS:
         raise SpecfloError(
             f"Unknown verdict {verdict!r}. Valid values: " + ", ".join(VERDICTS) + "."
+        )
+    if verdict == WAIVED and not (reason or "").strip():
+        raise SpecfloError(
+            "Verdict 'waived' needs a --reason, so a project that skipped review"
+            " records why."
         )
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
