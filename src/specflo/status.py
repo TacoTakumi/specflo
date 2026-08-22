@@ -48,9 +48,12 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         validator = validators.VALIDATORS.get(project.phase)
         if validator is not None:
             validates = not validator(root, cfg, project.slug)
+    # Read before the hint is built: with every task done, where the review
+    # stands is what the hint turns on (review-rounds REQ-20).
+    review_info = review.review_state(root, cfg, project.slug)
     next_step = workflow.next_step(
         project.phase, progress=progress, complete=complete, shelved=shelved,
-        validates=validates,
+        validates=validates, review=review_info,
     )
     # In the stuck execute state (nothing actionable, a pending task blocked by a
     # superseded dependency), replace the generic hint with targeted rewire
@@ -102,7 +105,6 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         info["boundary"] = boundary
     # Only carried once a round file exists (review-rounds REQ-11), so a project
     # that has never been reviewed ships no review field - mirrors `progress`.
-    review_info = review.review_state(root, cfg, project.slug)
     if review_info is not None:
         info["review"] = review_info
     return info

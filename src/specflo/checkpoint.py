@@ -15,7 +15,7 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from . import index as index_module, plan as plan_module, validators, workflow
+from . import index as index_module, plan as plan_module, review, validators, workflow
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
 from .projects import (
@@ -82,7 +82,8 @@ def build_checkpoint(
         do_next = workflow.next_step(project.phase, shelved=True)
     elif project.phase == "execute":
         do_next = workflow.next_step(
-            "execute", progress=prog, complete=project.status == COMPLETE_STATUS
+            "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
+            review=review.review_state(root, cfg, project.slug) if cfg else None,
         )
         # Stuck on a superseded dependency: surface the same targeted rewire
         # remediation as `task show`/`status`, replacing the generic hint.

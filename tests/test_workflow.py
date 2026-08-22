@@ -142,3 +142,61 @@ def test_resolve_reopen_target_later_phase_error_points_to_advance():
     with pytest.raises(ValueError) as exc:
         workflow.resolve_reopen_target("spec", "plan")
     assert "advance" in str(exc.value).lower()
+
+
+# --- the review-aware all-tasks-done hint (review-rounds REQ-20) --------------
+# Once every task is done, what to do next depends entirely on where the review
+# stands, so the hint splits four ways.
+
+_ALL_DONE = {"total": 2, "all_done": True, "next_actionable": []}
+
+
+def _hint(review):
+    return workflow.next_step("execute", progress=_ALL_DONE, review=review)
+
+
+def _closed(number, verdict):
+    return {"rounds": number, "latest": number, "verdict": verdict, "open": False,
+            "date": "2026-08-02", "sha": "abc1234", "reason": "",
+            "file": f"review-{number}.md"}
+
+
+def test_next_step_review_hint_with_no_round_calls_for_the_review():
+    hint = _hint(None)
+    assert "review start" in hint
+    assert "specflo advance" not in hint
+
+
+def test_next_step_review_hint_with_an_open_round_names_that_file():
+    open_round = {"rounds": 3, "latest": 3, "verdict": "", "open": True,
+                  "date": "2026-08-09", "sha": "", "reason": "",
+                  "file": "review-3.md"}
+    hint = _hint(open_round)
+    assert "review-3.md" in hint
+    assert "review done" in hint
+    assert "specflo advance" not in hint
+
+
+def test_next_step_review_hint_with_changes_requested_sends_you_back():
+    hint = _hint(_closed(2, "changes-requested"))
+    assert "review-2.md" in hint
+    assert "review start" in hint                  # another round, not an advance
+    assert "specflo advance" not in hint
+
+
+def test_next_step_review_hint_with_a_passing_round_offers_advance():
+    for verdict in ("ready-to-merge", "waived"):
+        hint = _hint(_closed(1, verdict))
+        assert "specflo advance" in hint, verdict
+        assert verdict in hint
+
+
+def test_next_step_review_hints_differ_across_all_four_states():
+    hints = {
+        _hint(None),
+        _hint({"rounds": 1, "latest": 1, "verdict": "", "open": True,
+               "date": "2026-08-09", "sha": "", "reason": "", "file": "review-1.md"}),
+        _hint(_closed(1, "changes-requested")),
+        _hint(_closed(1, "ready-to-merge")),
+    }
+    assert len(hints) == 4

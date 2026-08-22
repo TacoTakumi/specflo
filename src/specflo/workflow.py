@@ -66,12 +66,43 @@ def resolve_reopen_target(phase: str, target: str | None = None) -> str:
     return target
 
 
+def _review_hint(review: dict | None) -> str:
+    """What to do next once every task is done, given where the review stands.
+
+    Four states, four different next actions (review-rounds REQ-20): no round
+    yet, a round left open, a round that asked for changes, and a round that
+    passed. Only the last one offers ``specflo advance``, because only it clears
+    the completion gate.
+    """
+    if review is None:
+        return (
+            "All tasks done - run the final whole-branch review (fresh context) "
+            "and record it: `specflo review start`, then `specflo review done "
+            "--verdict <v>`."
+        )
+    if review["open"]:
+        return (
+            f"All tasks done - finish the open review round {review['file']} and "
+            "close it with `specflo review done --verdict <v>`."
+        )
+    if review["verdict"] == "changes-requested":
+        return (
+            f"All tasks done - address the findings in {review['file']}, then run "
+            "another round with `specflo review start`."
+        )
+    return (
+        f"All tasks done and {review['file']} is {review['verdict']} - run "
+        "`specflo advance` to complete the project."
+    )
+
+
 def next_step(
     phase: str,
     progress: dict | None = None,
     complete: bool = False,
     shelved: bool = False,
     validates: bool = False,
+    review: dict | None = None,
 ) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
@@ -79,6 +110,10 @@ def next_step(
     not advanced from any phase): the hint directs to resume or start anew. For
     the ``execute`` phase the hint is otherwise progress-aware: pass the
     ``plan_progress`` dict and/or ``complete=True`` (project finished).
+
+    ``review`` is the derived review state (``review.review_state``) or None
+    when no round file exists; with every task done it decides which of the four
+    review-aware hints is returned (review-rounds REQ-20).
 
     For brainstorm/spec/plan, ``validates=True`` means the phase's artifact
     passed its real validator, so the hint offers ``specflo advance`` and names
@@ -97,10 +132,7 @@ def next_step(
             return "Project complete. Start the next piece of work with `specflo new`."
         if progress is not None and progress.get("total", 0) > 0:
             if progress.get("all_done"):
-                return (
-                    "All tasks done - run the final whole-branch review (fresh "
-                    "context), then `specflo advance` to complete the project."
-                )
+                return _review_hint(review)
             actionable = progress.get("next_actionable") or []
             if actionable:
                 return f"Work the next task: {', '.join(actionable)} (`specflo task show`)."
