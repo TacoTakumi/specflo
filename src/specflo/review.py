@@ -154,6 +154,33 @@ def _render(fields: dict, body: str) -> str:
     return f"---\n{frontmatter_text}\n---\n\n{body}"
 
 
+def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
+    """The project's derived review state, or None while no round file exists.
+
+    The latest round is the highest-numbered one, open or closed (REQ-19); its
+    verdict is what every surface reports, so an open round after a passing one
+    reads as open rather than as that earlier pass. Read fresh from the files on
+    every call - nothing is cached and nothing is mirrored (REQ-09).
+    """
+    numbers = round_numbers(root, cfg, slug)
+    if not numbers:
+        return None
+    latest = numbers[-1]
+    path = round_path(root, cfg, slug, latest)
+    fields = frontmatter(path)
+    verdict = str(fields.get("verdict", "") or "")
+    return {
+        "rounds": len(numbers),
+        "latest": latest,
+        "verdict": verdict,
+        "open": not verdict,
+        "date": str(fields.get("date", "") or ""),
+        "sha": str(fields.get("sha", "") or ""),
+        "reason": str(fields.get("reason", "") or ""),
+        "file": path.name,
+    }
+
+
 def head_sha(root: Path) -> str:
     """The short HEAD sha, or "" wherever git cannot answer (REQ-07).
 

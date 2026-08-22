@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from . import auto, checkpoint, plan, projects, validators, workflow
+from . import auto, checkpoint, plan, projects, review, validators, workflow
 from .config import SpecfloConfig, display_path
 
 
@@ -100,7 +100,27 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     # payloads ship no boundary field — mirrors `milestone`.
     if boundary is not None:
         info["boundary"] = boundary
+    # Only carried once a round file exists (review-rounds REQ-11), so a project
+    # that has never been reviewed ships no review field - mirrors `progress`.
+    review_info = review.review_state(root, cfg, project.slug)
+    if review_info is not None:
+        info["review"] = review_info
     return info
+
+
+def _review_line(state: dict) -> str:
+    """The one-line review summary: how many rounds, and where the latest sits.
+
+    An open round is reported as open with the date it started (REQ-12) - it
+    has no verdict to report yet. A closed one carries its verdict, its close
+    date, and the sha when git could supply one.
+    """
+    plural = "round" if state["rounds"] == 1 else "rounds"
+    head = f"Reviews: {state['rounds']} {plural}; latest round {state['latest']}"
+    if state["open"]:
+        return f"{head} open (started {state['date']})"
+    stamp = ", ".join(part for part in (state["date"], state["sha"]) if part)
+    return f"{head} {state['verdict']}" + (f" ({stamp})" if stamp else "")
 
 
 def render_status(root: Path, info: dict) -> str:
@@ -125,6 +145,8 @@ def render_status(root: Path, info: dict) -> str:
     if "milestone" in info:
         m = info["milestone"]
         lines.append(f"Milestone: {m['id']} {m['title']} — {m['done']}/{m['total']} done")
+    if "review" in info:
+        lines.append(_review_line(info["review"]))
     if "boundary" in info:
         lines.extend(plan.boundary_beat_lines(info["boundary"]))
     lines.append(f"Next:    {info['next_step']}")

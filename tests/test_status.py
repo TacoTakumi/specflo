@@ -276,3 +276,83 @@ def test_render_status_ignores_the_auto_run_block(tmp_path):
     auto.auto_pass(tmp_path, max_passes=1000)
     running = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project))
     assert running == idle
+
+
+# --- the review line (review-rounds REQ-11, REQ-12, REQ-09, REQ-19) -----------
+# Status is the read surface for review rounds: how many, and where the latest
+# one stands. Every fact on the line is derived from the round files themselves.
+
+
+def _close_review(tmp_path, cfg, verdict, reason=None):
+    from specflo import review
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
+    return review.close_round(
+        tmp_path, cfg, "thing", verdict, reason=reason, today="2026-08-02"
+    )
+
+
+def test_status_review_line_names_the_count_and_the_latest_verdict(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "changes-requested")
+    _close_review(tmp_path, cfg, "ready-to-merge")
+
+    info = status.build_status(tmp_path, cfg, project)
+    line = [ln for ln in status.render_status(tmp_path, info).splitlines()
+            if ln.startswith("Reviews:")]
+
+    assert info["review"]["rounds"] == 2
+    assert len(line) == 1
+    assert "2 rounds" in line[0]
+    assert "round 2" in line[0]
+    assert "ready-to-merge" in line[0]
+    assert "2026-08-02" in line[0]                 # the close date, not the start
+
+
+def test_status_review_line_reports_an_open_round_as_open(tmp_path):
+    # REQ-12/REQ-19: the latest round is the highest-numbered one, open or not,
+    # and an open one shows its start date rather than a verdict.
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "ready-to-merge")
+    _close_review(tmp_path, cfg, "changes-requested")
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-09")
+
+    info = status.build_status(tmp_path, cfg, project)
+    line = next(ln for ln in status.render_status(tmp_path, info).splitlines()
+                if ln.startswith("Reviews:"))
+
+    assert info["review"]["open"] is True
+    assert info["review"]["latest"] == 3
+    assert "round 3 open" in line
+    assert "2026-08-09" in line
+    assert "ready-to-merge" not in line            # round 1's verdict is not current
+
+
+def test_status_has_no_review_line_before_any_round_exists(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    info = status.build_status(tmp_path, cfg, project)
+    assert "review" not in info
+    assert "Reviews:" not in status.render_status(tmp_path, info)
+
+
+def test_status_review_state_never_reaches_project_md(tmp_path):
+    # REQ-09: round files are the only store; project.md gains no review keys.
+    import yaml
+    cfg, project = _plan_at_execute(tmp_path)
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    before = set(yaml.safe_load(proj_md.read_text().split("---", 2)[1]))
+
+    _close_review(tmp_path, cfg, "ready-to-merge")
+
+    assert set(yaml.safe_load(proj_md.read_text().split("---", 2)[1])) == before
+
+
+def test_status_review_state_follows_a_deleted_round_file(tmp_path):
+    # REQ-09: derived, not mirrored -- removing the file removes the state.
+    cfg, project = _plan_at_execute(tmp_path)
+    path = _close_review(tmp_path, cfg, "ready-to-merge")
+    assert status.build_status(tmp_path, cfg, project)["review"]["rounds"] == 1
+
+    path.unlink()
+
+    assert "review" not in status.build_status(tmp_path, cfg, project)
