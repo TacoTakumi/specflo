@@ -1596,6 +1596,7 @@ def review_start(
         path, created = review_module.start_round(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"path": str(path), "created": created}))
     else:
@@ -1629,6 +1630,7 @@ def review_done(
         )
     except SpecfloError as exc:
         raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
     if json_output:
         typer.echo(json.dumps({"path": str(path), "verdict": verdict}))
     else:

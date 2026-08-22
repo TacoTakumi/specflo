@@ -3460,3 +3460,67 @@ def test_advance_review_gate_leaves_the_earlier_phases_alone(tmp_path, monkeypat
 
     assert "Phase:   execute" in status_out
     assert "Reviews:" not in status_out
+
+
+# --- the review commands keep checkpoint.md current (review-rounds round 1, F1)
+# Every other state-mutating command refreshes the checkpoint; these two did not,
+# so the file a stopping session is pointed at kept telling it to run a review
+# that had already run.
+
+
+def _checkpoint_text(tmp_path):
+    return (tmp_path / "docs" / "projects" / "thing" / "checkpoint.md").read_text()
+
+
+def test_review_checkpoint_refreshed_after_a_changes_requested_close(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    assert "review-1.md" not in _checkpoint_text(tmp_path)      # precondition
+
+    runner.invoke(app, ["review", "start"])
+    assert runner.invoke(
+        app, ["review", "done", "--verdict", "changes-requested"]
+    ).exit_code == 0
+
+    text = _checkpoint_text(tmp_path)
+    read_first, do_next = text.split("## Do next", 1)
+    assert "review-1.md" in read_first                          # REQ-14, on disk
+    assert "address the findings" in do_next                    # REQ-20, on disk
+
+
+def test_review_checkpoint_refreshed_after_a_round_is_opened(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+
+    do_next = _checkpoint_text(tmp_path).split("## Do next", 1)[1]
+    assert "review-1.md" in do_next
+    assert "review done" in do_next
+    # An open round is not something to read first - there is nothing in it yet.
+    assert "review-1.md" not in _checkpoint_text(tmp_path).split("## Do next", 1)[0]
+
+
+def test_review_checkpoint_refresh_failure_never_fails_the_command(tmp_path, monkeypatch):
+    # The refresh runs after the round has already been written, so a read-only
+    # FS or a clobbered path must not turn a recorded review into an error.
+    monkeypatch.chdir(tmp_path)
+    from specflo import checkpoint as checkpoint_module
+
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+
+    def _boom(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    monkeypatch.setattr(checkpoint_module, "write_checkpoint", _boom)
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    r = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    assert r.exit_code == 0
+    round_file = tmp_path / "docs" / "projects" / "thing" / "review-1.md"
+    assert "verdict: ready-to-merge" in round_file.read_text()   # the round landed
