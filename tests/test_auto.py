@@ -245,11 +245,12 @@ def test_auto_on_complete_project_stops_without_continue(tmp_path):
 def test_cli_advance_emits_the_completion_signal_the_bootstrap_names(tmp_path, monkeypatch):
     # end-to-end: the terminal `advance` prints exactly the string auto keys on.
     monkeypatch.chdir(tmp_path)
-    from test_cli import _project_at_execute
+    from test_cli import _project_at_execute, _review_passed
 
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)               # the completion gate (review-rounds)
     result = runner.invoke(app, ["advance"])  # execute -> complete
     assert auto.COMPLETION_SIGNAL in result.stdout
 

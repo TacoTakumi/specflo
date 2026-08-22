@@ -31,6 +31,9 @@ READY = "ready-to-merge"
 CHANGES_REQUESTED = "changes-requested"
 WAIVED = "waived"
 VERDICTS = (READY, CHANGES_REQUESTED, WAIVED)
+# The verdicts that clear the completion gate (D-08). ``waived`` is a
+# deliberate, reasoned way past it, not an accident.
+PASSING = (READY, WAIVED)
 # Frontmatter key order, pinned so a close rewrites a round file in the
 # shape `review start` minted it.
 _FIELDS = ("round", "verdict", "date", "sha", "reason")
@@ -179,6 +182,34 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         "reason": str(fields.get("reason", "") or ""),
         "file": path.name,
     }
+
+
+def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
+    """What the review still owes before the project may complete (REQ-21).
+
+    Empty means the latest round is closed with a passing verdict. The gate
+    reads that verdict and nothing else - never the round's findings (REQ-16),
+    and never how old the round is (REQ-08). A reviewer that weighed some nits
+    and still said ready-to-merge is not second-guessed here.
+    """
+    state = review_state(root, cfg, slug)
+    if state is None:
+        return [
+            "no review round recorded: run the final whole-branch review, then"
+            " `specflo review start` and `specflo review done --verdict <v>`."
+        ]
+    if state["open"]:
+        return [
+            f"review round {state['latest']} is still open ({state['file']}):"
+            " close it with `specflo review done --verdict <v>`."
+        ]
+    if state["verdict"] not in PASSING:
+        return [
+            f"the latest review round ({state['file']}) is {state['verdict']}:"
+            " address the findings, then run another round with"
+            " `specflo review start`."
+        ]
+    return []
 
 
 def head_sha(root: Path) -> str:

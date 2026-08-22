@@ -310,11 +310,12 @@ def test_banner_skips_a_missing_artifact(root, cfg):
 
 def test_banner_stamped_by_the_final_cli_advance(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    from test_cli import _project_at_execute
+    from test_cli import _project_at_execute, _review_passed
 
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)               # the completion gate (review-rounds)
     runner.invoke(app, ["advance"])
 
     pdir = tmp_path / "docs" / "projects" / "thing"

@@ -1064,6 +1064,18 @@ def _project_at_execute(runner, app, tmp_path):
     runner.invoke(app, ["advance"])                 # plan -> execute
 
 
+
+def _review_passed(runner, app):
+    """Record a passing review round, so the completion gate clears.
+
+    Every project now needs one before `advance` will complete it
+    (review-rounds REQ-21); the tests below care about what happens *after*
+    that gate, so they satisfy it here rather than restating it each time.
+    """
+    runner.invoke(app, ["review", "start"])
+    runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+
 def _project_at_plan_phase(runner, app, tmp_path):
     _new_project_with_spec(runner, app)
     # _new_project_with_spec leaves us at brainstorm phase (OOS empty, advance fails).
@@ -1150,6 +1162,7 @@ def test_validate_execute_prints_resolution_notes(tmp_path, monkeypatch):
     runner.invoke(app, ["task", "done", "T-01"])
     runner.invoke(app, ["requirement", "add", "--text", "better",
                         "--acceptance", "b", "--supersedes", "REQ-01"])            # REQ-02
+    _review_passed(runner, app)
     r = runner.invoke(app, ["validate", "execute"])
     assert r.exit_code == 0
     assert "T-01 covers REQ-02 via superseded REQ-01" in r.output
@@ -1184,6 +1197,7 @@ def test_supersession_mid_execute_unsticks_validate_and_advance(tmp_path, monkey
                         "--acceptance", "matches reality", "--supersedes", "REQ-01"])  # REQ-03
     runner.invoke(app, ["requirement", "add", "--text", "second, as shipped",
                         "--acceptance", "matches reality", "--supersedes", "REQ-02"])  # REQ-04
+    _review_passed(runner, app)
     r = runner.invoke(app, ["validate", "execute"])
     assert r.exit_code == 0                          # unstuck: residue is notes, not issues
     assert "T-01 covers REQ-03 via superseded REQ-01" in r.output
@@ -1227,6 +1241,7 @@ def test_advance_completion_offers_clear_context_affordance(tmp_path, monkeypatc
     _project_at_execute(runner, app, tmp_path)            # at execute, T-01 pending
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     out = runner.invoke(app, ["advance"]).output          # human, completes the project
     assert "Completed project" in out
     assert "may clear context" in out.lower()             # the final phase-end gets it too
@@ -1301,6 +1316,7 @@ def test_advance_completion_emits_a_clear_point_with_neither_resume_command(tmp_
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     out = runner.invoke(app, ["advance"]).output          # completes the project
     assert "Completed project" in out
     assert "may clear context" in out.lower()
@@ -1442,6 +1458,7 @@ def test_advance_completion_json_continuation_is_clear_point_only(tmp_path, monk
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     data = _json.loads(runner.invoke(app, ["advance", "--json"]).output)
     assert data["complete"] is True
     assert continuation.CLEAR_POINT_MARKER in data["continuation"]
@@ -2034,9 +2051,10 @@ def test_advance_completes_project_at_execute(tmp_path, monkeypatch):
     assert runner.invoke(app, ["advance"]).exit_code == 1
     proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
     assert "status: active" in proj_md.read_text()
-    # do the task, then advance completes the project
+    # do the task and record the review, then advance completes the project
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     r = runner.invoke(app, ["advance", "--json"])
     assert r.exit_code == 0
     data = _json.loads(r.output)
@@ -2054,6 +2072,7 @@ def test_status_complete_project_is_progress_aware(tmp_path, monkeypatch):
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     runner.invoke(app, ["advance"])                       # completes the project
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
     assert data["status"] == "complete"
@@ -2068,6 +2087,7 @@ def test_execute_loop_end_to_end(tmp_path, monkeypatch):
     assert "T-01" in runner.invoke(app, ["task", "show"]).output
     assert runner.invoke(app, ["task", "start", "T-01"]).exit_code == 0
     assert runner.invoke(app, ["task", "done", "T-01"]).exit_code == 0
+    _review_passed(runner, app)
     assert runner.invoke(app, ["validate", "execute"]).exit_code == 0
     r = runner.invoke(app, ["advance", "--json"])
     assert _json.loads(r.output)["complete"] is True
@@ -3212,6 +3232,7 @@ def test_final_advance_stamps_completed_and_prompts_revision(tmp_path, monkeypat
     _project_at_execute(runner, app, tmp_path)
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
 
     out = runner.invoke(app, ["advance"]).output
     assert "Completed project" in out
@@ -3248,6 +3269,7 @@ def test_regen_advance_updates_the_phase_cell(tmp_path, monkeypatch):
 
     runner.invoke(app, ["task", "start", "T-01"])
     runner.invoke(app, ["task", "done", "T-01"])
+    _review_passed(runner, app)
     runner.invoke(app, ["advance"])          # terminal: completes the project
 
     text = _index_text(tmp_path)
@@ -3366,3 +3388,75 @@ def test_list_omits_the_rule_line_without_completed_projects(tmp_path, monkeypat
 
     out = runner.invoke(app, ["list"]).output
     assert config.rule_text("historical") not in out
+
+
+# --- the review gate at execute -> complete (review-rounds REQ-21, REQ-17) ----
+
+
+def _at_execute_all_done(runner, app, tmp_path):
+    """Drive a project to execute with its only task done, ready to complete."""
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "Use SQLite"])
+    bs = tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+    bs.write_text(bs.read_text().replace(
+        "## Out of scope / Deferred\n"
+        "<!-- required, must be non-empty before validate passes -->",
+        "## Out of scope / Deferred\n- nothing else.",
+    ))
+    assert runner.invoke(app, ["advance"]).exit_code == 0        # brainstorm -> spec
+    runner.invoke(app, ["spec", "start"])
+    runner.invoke(app, ["requirement", "add", "--text", "store data",
+                        "--acceptance", "data survives restart", "--from", "D-01"])
+    spec_md = tmp_path / "docs" / "projects" / "thing" / "spec.md"
+    spec_md.write_text(spec_md.read_text()
+                       .replace("### In scope\n<!-- required, non-empty -->",
+                                "### In scope\n- the thing.")
+                       .replace("### Out of scope\n"
+                                "<!-- required, non-empty; carried from the brainstorm's Out of scope / Deferred -->",
+                                "### Out of scope\n- other things."))
+    assert runner.invoke(app, ["advance"]).exit_code == 0        # spec -> plan
+    runner.invoke(app, ["plan", "start"])
+    runner.invoke(app, ["task", "add", "--text", "build it", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])
+    assert runner.invoke(app, ["advance"]).exit_code == 0        # plan -> execute
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+
+
+def test_advance_review_gate_blocks_completion_without_a_round(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _at_execute_all_done(runner, app, tmp_path)
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code != 0
+    assert "review" in result.output.lower()
+    proj_md = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "status: active" in proj_md                # not completed
+
+
+def test_advance_review_gate_completes_on_a_passing_round(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _at_execute_all_done(runner, app, tmp_path)
+    runner.invoke(app, ["review", "start"])
+    runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    proj_md = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "status: complete" in proj_md
+
+
+def test_advance_review_gate_leaves_the_earlier_phases_alone(tmp_path, monkeypatch):
+    # REQ-17: review state gates nothing before execute -> complete. This project
+    # never records a round and still walks brainstorm -> spec -> plan -> execute.
+    monkeypatch.chdir(tmp_path)
+    _at_execute_all_done(runner, app, tmp_path)     # every advance asserted above
+
+    status_out = runner.invoke(app, ["status"]).output
+
+    assert "Phase:   execute" in status_out
+    assert "Reviews:" not in status_out
