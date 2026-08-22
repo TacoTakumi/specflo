@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import subprocess
 from pathlib import Path
 
 import yaml
@@ -148,14 +149,39 @@ def _render(fields: dict, body: str) -> str:
     return f"---\n{frontmatter_text}\n---\n\n{body}"
 
 
+def head_sha(root: Path) -> str:
+    """The short HEAD sha, or "" wherever git cannot answer (REQ-07).
+
+    Degrades exactly as ``index.py`` does: git missing, the directory untracked,
+    a repo with no commits yet, or a hung call all give the empty stamp, and the
+    close carries on. Nothing derives validity from this (REQ-08) - it is
+    evidence for a human judgement call, never a verdict.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
 def close_round(
     root: Path,
     cfg: SpecfloConfig,
     slug: str,
     verdict: str,
     reason: str | None = None,
+    today: str | None = None,
 ) -> Path:
-    """Close the open round by writing ``verdict`` into it (REQ-04, REQ-05).
+    """Close the open round with ``verdict``, date and sha (REQ-04, REQ-05, REQ-07).
+
+    The date and sha stamp the close, overwriting the mint-time date: what
+    matters is when the review was decided, not when its file appeared.
 
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
     not one of :data:`VERDICTS`, when ``waived`` comes without a reason
@@ -178,6 +204,8 @@ def close_round(
             )
         fields = frontmatter(path)
         fields["verdict"] = verdict
+        fields["date"] = today or datetime.date.today().isoformat()
+        fields["sha"] = head_sha(root)
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body_of(path)))

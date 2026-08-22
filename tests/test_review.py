@@ -202,3 +202,63 @@ def test_waived_reason_is_not_required_by_the_other_verdicts(tmp_path, monkeypat
 
     assert result.exit_code == 0, result.output
     assert not _frontmatter(project_dir / "review-1.md")["reason"]
+
+
+def _git_repo(path):
+    """Turn ``path`` into a git repo with one commit, and return its short sha."""
+    import subprocess
+
+    run = lambda *args: subprocess.run(  # noqa: E731 - terse local shorthand
+        args, cwd=path, capture_output=True, text=True, check=True
+    )
+    run("git", "init", "-q")
+    run("git", "config", "user.email", "t@example.com")
+    run("git", "config", "user.name", "T")
+    (path / "seed.txt").write_text("seed\n")
+    run("git", "add", "seed.txt")
+    run("git", "commit", "-qm", "seed")
+    return run("git", "rev-parse", "--short", "HEAD").stdout.strip()
+
+
+def test_stamp_records_todays_date_over_the_start_date(tmp_path, monkeypatch):
+    import datetime
+
+    from specflo import review
+
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    review.start_round(tmp_path, cfg, "thing", today="2020-01-01")
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    stamped = str(_frontmatter(project_dir / "review-1.md")["date"])
+    assert stamped == datetime.date.today().isoformat()
+
+
+def test_stamp_records_the_short_head_sha_inside_a_git_repo(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    sha = _git_repo(tmp_path)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    assert _frontmatter(project_dir / "review-1.md")["sha"] == sha
+
+
+def test_stamp_is_empty_outside_git_and_the_close_still_succeeds(
+    tmp_path, monkeypatch
+):
+    # The git lookup degrades the way index.py's does: no repo, no stamp, no error.
+    import datetime
+
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+
+    assert result.exit_code == 0, result.output
+    fields = _frontmatter(project_dir / "review-1.md")
+    assert fields["sha"] == ""
+    assert str(fields["date"]) == datetime.date.today().isoformat()
