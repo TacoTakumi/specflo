@@ -8,6 +8,17 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.10.1]
+
+### Fixed
+- **README documents the review rounds shipped in 0.10.0.** The pipeline's
+  execute step said a reconcile gate confirms every task is done, omitting that
+  completion also requires a passing review round; the command reference listed
+  neither `specflo review start` nor `specflo review done`, and described
+  `validate execute` as a task-only gate; and the `specflo-execute` skill entry
+  did not mention recording the review. No behaviour change - the 0.10.0 code was
+  correct, only its documentation was incomplete.
+
 ## [0.10.0]
 
 ### Added

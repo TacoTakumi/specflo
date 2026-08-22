@@ -94,10 +94,17 @@ Four phases, each gated by a validated artifact:
 1. **brainstorm** - capture the idea; resolve open questions into recorded decisions (`D-NN`).
 2. **spec** - synthesize testable requirements (`REQ-NN`), each traced to the decisions behind it.
 3. **plan** - decompose into dependency-ordered tasks (`T-NN`), each with an acceptance criterion, a verify step, and the requirements it implements; optionally grouped into milestones (`M-NN`).
-4. **execute** - work tasks one at a time; a reconcile gate confirms every task is done before the project completes.
+4. **execute** - work tasks one at a time; a completion gate confirms every task is done *and* that the final whole-branch review was recorded with a passing verdict before the project completes.
 
 `specflo advance` validates the current phase's artifact before moving on, so a
 hole in the spec stops the line early instead of surfacing mid-execution.
+
+The end-of-execute review is an artifact too. `specflo review start` mints a
+numbered `review-N.md`; `specflo review done --verdict ...` closes it with one of
+`ready-to-merge`, `changes-requested` or `waived`. Completing the project
+requires the latest round to have closed with a passing verdict, so a review that
+happened in some cleared context is no longer something you have to remember.
+
 Artifacts are plain markdown under `docs/projects/<slug>/` (configurable):
 
 ```text
@@ -156,7 +163,9 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo task block <T-NN> [--reason ...]` / `task reopen <T-NN>` - mark a task `blocked` (optionally recording why) / return it to `pending`.
 - `specflo task list [--json]` - all tasks with their progress state and the deps-aware next-actionable marker.
 - `specflo task show [<T-NN>] [--json]` - a task's brief: acceptance criterion, cited requirements, and constraints. Defaults to the next actionable task.
-- `specflo validate execute [--json]` - reconcile gate: confirms all tasks are done before the project can be completed.
+- `specflo review start [--json]` - mint the next numbered review round (`review-N.md`) in the project directory and print its path. Numbering only ever goes up, so a deleted round leaves a permanent gap rather than a reused identity. With a round already open, prints that round's path and mints nothing - reusing it is how an abandoned review is resumed.
+- `specflo review done --verdict ready-to-merge|changes-requested|waived [--reason ...] [--file <path>] [--json]` - close the open round by writing the verdict into its frontmatter, stamped with the date and, inside a git repo, the short `HEAD` sha. `waived` requires `--reason`, so a project that skipped review records why. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
+- `specflo validate execute [--json]` - completion gate: confirms every task is done, then that the latest review round closed `ready-to-merge` or `waived`. The gate keys on the verdict alone and never on the round's findings, so a passing round may still list nits.
 - `specflo advance [--json]` - validate the current phase's artifact, then move the active project to the next phase (`brainstorm -> spec -> plan -> execute`).
 - `specflo reopen [<phase>]` - the inverse of `advance`: move the phase pointer backward (bare `reopen` goes one phase back, `reopen <phase>` jumps to a named earlier phase). A pure pointer move; no artifact is rewritten.
 - `specflo checkpoint [--json]` - print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
@@ -332,7 +341,7 @@ The seven skills:
 - **`specflo-brainstorm`** (`skills/specflo-brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
 - **`specflo-spec`** (`skills/specflo-spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
 - **`specflo-plan`** (`skills/specflo-plan/SKILL.md`) - drives the plan phase (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase).
-- **`specflo-execute`** (`skills/specflo-execute/SKILL.md`) - drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, validate with `validate execute`, complete the project with `advance`).
+- **`specflo-execute`** (`skills/specflo-execute/SKILL.md`) - drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, run the final whole-branch review in fresh context and record it with `review start`/`review done`, validate with `validate execute`, complete the project with `advance`).
 - **`specflo-research`** (`skills/specflo-research/SKILL.md`) - a research subagent the `specflo-brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
 - **`specflo-shelve`** (`skills/specflo-shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
 - **`specflo-auto`** (`skills/specflo-auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
