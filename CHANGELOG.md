@@ -8,6 +8,24 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.11.0]
+
+### Added
+- **Global `-C DIR` / `--directory DIR` option and `SPECFLO_DIRECTORY` env var
+  (root-option).** Run any specflo command as if it had been started in `DIR`:
+  the app callback changes directory before the subcommand and restores the
+  process cwd when the command finishes, so every command - `init`, `hook
+  reseed`, `auto`, `extension install --scope project` included - resolves its
+  root by the usual walk up from `DIR`. Precedence is flag, then env var, then
+  cwd; an empty env var counts as unset; a missing or non-directory `DIR` exits
+  2 before anything runs. Relative path arguments of the subcommand resolve
+  against `DIR`. To keep the redirect visible, `specflo status` prints a `Root:
+  <path> (via -C|SPECFLO_DIRECTORY)` line (plus `root` and `directory_source`
+  in `--json`) only when the directory was overridden, `specflo hook reseed`
+  (both formats) leads with one line naming the root when `SPECFLO_DIRECTORY`
+  is set, and the pi statusline segment starts its walk from
+  `SPECFLO_DIRECTORY` when set. Without an override every output is unchanged.
+
 ## [0.10.1]
 
 ### Fixed

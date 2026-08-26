@@ -122,6 +122,14 @@ fresh session back to work.
 
 ## Command reference
 
+### Global option: run in another directory
+
+- `specflo -C DIR <command>` / `specflo --directory DIR <command>` - run the command as if specflo had been started in `DIR`. Every command honors it, including `init`, `hook reseed`, `auto`, and `extension install --scope project`; root discovery is the usual walk up from `DIR` to the nearest `.specflo/config.yaml`. `DIR` must exist and be a directory, or the command exits 2 before anything runs. The option goes before the subcommand.
+- `SPECFLO_DIRECTORY=DIR` - the environment variable has the same effect. Precedence is the flag, then the env var, then the current directory; a set-but-empty variable counts as unset.
+- Relative path arguments given to the subcommand (`review done --file report.md`, `init --projects-dir custom`) resolve against `DIR`, not the caller's cwd - the same contract as `git -C`.
+- The change lasts only for the command: the process cwd is restored when the command finishes.
+- `SPECFLO_DIRECTORY` reaches everything that inherits the environment: the Claude Code SessionStart hook, the pi extension (its specflo calls and its statusline segment), and any subagent an orchestrating agent spawns. This is the intended effect for an agent driving a project in another tree. To make the redirect visible, `specflo status` prints a `Root: <path> (via -C|SPECFLO_DIRECTORY)` line (and `root` / `directory_source` keys in `--json`) when the directory was overridden, and the reseed payload from `specflo hook reseed` leads with one line naming the root when the env var is set. Without an override, all outputs are unchanged.
+
 ### Setup and orientation
 
 - `specflo --version` - print the installed version and exit.
