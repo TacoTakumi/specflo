@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -122,17 +123,31 @@ def _root(
     """A spec-driven software-engineering workflow."""
     if directory is None:
         return
-    previous = os.getcwd()
+    # The caller's cwd may already be gone (a shell left in a deleted directory)
+    # or vanish while the command runs; -C exists to make that cwd irrelevant,
+    # so neither end of the restore may fail the command.
+    try:
+        previous: str | None = os.getcwd()
+    except OSError:
+        previous = None
     os.chdir(directory)
-    ctx.call_on_close(lambda: os.chdir(previous))
-    # Compared by name: Typer may vendor its own click, so the enum members of
-    # ``click.core.ParameterSource`` are not necessarily the ones ctx reports.
+    if previous is not None:
+        ctx.call_on_close(lambda: _restore_cwd(previous))
+    # Compared by name: Typer 0.26 ships its own click fork (``typer._click``)
+    # and ``ctx`` reports that fork's ``ParameterSource`` members, which are
+    # not the ``click.core.ParameterSource`` members this module imports.
     source = ctx.get_parameter_source("directory")
     from_env = getattr(source, "name", None) == "ENVIRONMENT"
     ctx.obj = {
         "directory": directory,
         "directory_source": "env" if from_env else "flag",
     }
+
+
+def _restore_cwd(previous: str) -> None:
+    """Put the process back where ``-C`` found it; a vanished cwd is not an error."""
+    with contextlib.suppress(OSError):
+        os.chdir(previous)
 
 
 brainstorm_app = typer.Typer(help="Work with the brainstorm artifact.")

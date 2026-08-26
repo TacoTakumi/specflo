@@ -3545,7 +3545,6 @@ def test_directory_option_flag_and_env_run_status_in_dir(monkeypatch, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     plain = runner.invoke(app, ["status"])
@@ -3599,7 +3598,6 @@ def test_directory_option_restores_cwd_on_the_error_path(monkeypatch, tmp_path):
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     r = runner.invoke(app, ["-C", str(empty), "checkpoint"])
@@ -3616,7 +3614,6 @@ def _unbox(text: str) -> str:
 def test_directory_invalid_missing_dir_is_rejected_before_the_subcommand(monkeypatch, tmp_path):
     """A DIR that does not exist exits 2 naming the option and the path; no status output (REQ-05)."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
     missing = tmp_path / "no" / "such" / "dir"
     r = runner.invoke(app, ["-C", str(missing), "status"])
@@ -3633,7 +3630,6 @@ def test_directory_invalid_missing_dir_is_rejected_before_the_subcommand(monkeyp
 def test_directory_invalid_regular_file_is_rejected(monkeypatch, tmp_path):
     """A DIR that is a regular file exits 2 with 'is a file' (REQ-05)."""
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     f = tmp_path / "plain.txt"
     f.write_text("x")
     r = runner.invoke(app, ["-C", str(f), "status"])
@@ -3645,7 +3641,6 @@ def test_directory_invalid_regular_file_is_rejected(monkeypatch, tmp_path):
 
 def test_directory_help_names_flag_env_and_relative_path_rule(monkeypatch):
     """Top-level help lists -C, --directory, SPECFLO_DIRECTORY and the DIR rules (REQ-04)."""
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     monkeypatch.setenv("COLUMNS", "200")
     r = runner.invoke(app, ["--help"])
     assert r.exit_code == 0
@@ -3665,7 +3660,6 @@ def test_directory_walks_up_from_a_nested_dir_to_the_repo_root(monkeypatch, tmp_
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     r = runner.invoke(app, ["-C", str(nested), "status"])
@@ -3682,7 +3676,6 @@ def test_directory_init_scaffolds_under_dir_with_a_relative_projects_dir(monkeyp
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     r = runner.invoke(app, ["-C", str(target), "init", "--projects-dir", "custom"])
@@ -3709,10 +3702,13 @@ def test_directory_source_scan_finds_no_module_level_cwd_capture():
             enclosing[child] = parent
 
     def inside_function(node: ast.AST) -> bool:
+        """True only for nodes in a function *body*: defaults and decorators are
+        evaluated at import time, before the callback's chdir, so they count as
+        module-level even though a FunctionDef encloses them."""
         while node in enclosing:
-            node = enclosing[node]
+            child, node = node, enclosing[node]
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                return True
+                return child in node.body
         return False
 
     cwd_calls = [
@@ -3733,7 +3729,6 @@ def test_status_root_line_shows_the_override_and_its_source(monkeypatch, tmp_pat
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     abs_root = repo.resolve()
 
     r = runner.invoke(app, ["-C", str(repo), "status"])
@@ -3752,7 +3747,6 @@ def test_status_json_directory_source_and_root_carry_the_override(monkeypatch, t
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     abs_root = repo.resolve()
 
     data = json.loads(runner.invoke(app, ["-C", str(repo), "status", "--json"]).output)
@@ -3770,7 +3764,6 @@ def test_status_json_directory_source_and_root_carry_the_override(monkeypatch, t
 
 def test_status_root_line_and_directory_source_absent_without_override(cwd, monkeypatch):
     """Plain status inside a repo is unchanged: no Root: line, no root/directory_source keys (REQ-11, REQ-12)."""
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
 
@@ -3782,3 +3775,44 @@ def test_status_root_line_and_directory_source_absent_without_override(cwd, monk
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
     assert "root" not in data
     assert "directory_source" not in data
+
+
+def test_directory_option_restores_cwd_on_exit_2_and_on_an_uncaught_exception(
+    monkeypatch, tmp_path
+):
+    """The restore also runs after a subcommand usage error and after a crash (REQ-10)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Dir Project")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    before = os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(repo), "status", "--bogus"])
+    assert r.exit_code == 2
+    assert os.getcwd() == before
+
+    import specflo.cli as cli_module
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli_module.status_view, "build_status", boom)
+    r = runner.invoke(app, ["-C", str(repo), "status"])
+    assert isinstance(r.exception, RuntimeError)
+    assert os.getcwd() == before
+
+
+def test_directory_option_survives_a_deleted_caller_cwd(monkeypatch, tmp_path):
+    """-C makes the caller's cwd irrelevant, so a vanished cwd is not an error (REQ-10)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Dir Project")
+    doomed = tmp_path / "doomed"
+    doomed.mkdir()
+    monkeypatch.chdir(doomed)
+    doomed.rmdir()
+    with pytest.raises(OSError):
+        os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(repo), "status"])
+    assert r.exit_code == 0, r.output
+    assert "dir-project" in r.output
+    monkeypatch.chdir(tmp_path)  # leave a real cwd behind for later tests

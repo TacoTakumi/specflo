@@ -365,11 +365,12 @@ export interface SegmentText {
 }
 
 /**
- * The specflo status segment for the session cwd, or null when there is
- * nothing to show.
+ * The specflo status segment for the tree specflo acts on - SPECFLO_DIRECTORY
+ * when that variable is set and non-empty, else the session ``cwd`` - or null
+ * when there is nothing to show.
  *
  * Parses the specflo artifacts directly - .specflo/config.yaml walked up from
- * ``cwd``, the active project's project.md frontmatter, and its plan.md task
+ * that start directory, the active project's project.md frontmatter, and its plan.md task
  * blocks - with exactly the rules of ~/.claude/statusline.sh's specflo_seg
  * (D-02). A slug longer than 17 characters is truncated to its first 16 plus
  * an ellipsis; complete/shelved render dim 'slug done'/'slug shelved'; plan

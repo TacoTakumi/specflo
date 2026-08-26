@@ -66,6 +66,17 @@ def live_keys(text: str) -> list[str]:
         if ":" in line and not line.startswith("#")
     ]
 @pytest.fixture(autouse=True)
+def _no_directory_override(monkeypatch):
+    """Keep ``SPECFLO_DIRECTORY`` out of the suite's environment.
+
+    The variable redirects every specflo command (root-option REQ-02), so a
+    caller that exported it would otherwise steer the whole suite away from
+    each test's tmp repo. Tests that exercise the env var set it themselves.
+    """
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_config_warnings():
     """Clear the once-per-process invalid-value warnings between tests.
 

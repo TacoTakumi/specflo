@@ -694,7 +694,6 @@ def test_directory_option_ingests_a_report_relative_to_dir(tmp_path, monkeypatch
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
     assert not (outside / "report.md").exists()
 

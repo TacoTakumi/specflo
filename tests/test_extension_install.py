@@ -306,7 +306,6 @@ def test_cli_extension_install_directory_option_project_scope(
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     result = runner.invoke(

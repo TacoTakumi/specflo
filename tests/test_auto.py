@@ -1047,7 +1047,6 @@ def test_cli_auto_directory_option_reports_dirs_project(tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     result = runner.invoke(app, ["-C", str(repo), "auto", "--json"])

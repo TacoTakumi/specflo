@@ -597,7 +597,6 @@ def test_cli_hook_reseed_directory_option_follows_dir(tmp_path, monkeypatch):
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
 
     assert runner.invoke(app, ["hook", "reseed"]).output == ""  # nothing here
@@ -639,7 +638,6 @@ def test_cli_hook_reseed_directory_env_both_formats_lead_with_the_line(tmp_path,
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
     before = os.getcwd()
     env = {"SPECFLO_DIRECTORY": str(repo)}
 
@@ -670,7 +668,6 @@ def test_cli_hook_reseed_directory_flag_alone_adds_no_line(tmp_path, monkeypatch
     outside = tmp_path / "outside"
     outside.mkdir()
     monkeypatch.chdir(outside)
-    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
 
     flagged = runner.invoke(app, ["-C", str(repo), "hook", "reseed"])
     assert flagged.exit_code == 0
