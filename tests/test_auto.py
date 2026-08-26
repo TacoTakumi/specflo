@@ -1034,3 +1034,26 @@ def test_auto_skill_says_the_run_records_the_review_but_not_the_completion():
     low = text.lower()
     assert "specflo advance" in text
     assert "user's call" in low or "user to call" in low
+
+
+def test_cli_auto_directory_option_reports_dirs_project(tmp_path, monkeypatch):
+    """`-C DIR auto --json` reports DIR's active project (REQ-08)."""
+    import json
+    import os
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _active_at(repo, "brainstorm", name="Dir Thing")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    result = runner.invoke(app, ["-C", str(repo), "auto", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.stdout)
+    assert auto.BOOTSTRAP_MARKER in data["payload"]
+    assert "dir-thing" in data["payload"]
+    assert os.getcwd() == before

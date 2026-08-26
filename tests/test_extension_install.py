@@ -294,3 +294,26 @@ def test_cli_extension_install_reports_a_missing_harness_without_a_traceback(
     assert result.exit_code != 0
     assert result.exception is None or isinstance(result.exception, SystemExit)
     assert "pi is not detected" in result.stderr  # a message, not a traceback
+
+
+def test_cli_extension_install_directory_option_project_scope(
+    pi_home, pi_project, tmp_path, monkeypatch
+):
+    """`-C DIR extension install --scope project` writes under DIR/.pi, not cwd/.pi (REQ-08)."""
+    import os
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: pi_home))
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    result = runner.invoke(
+        app, ["-C", str(pi_project), "extension", "install", "--scope", "project"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert (pi_project / ".pi" / "extensions" / "specflo" / "package.json").is_file()
+    assert not (outside / ".pi").exists()
+    assert os.getcwd() == before

@@ -585,3 +585,26 @@ def test_reseed_text_shelved_corrupt_project_is_silent(tmp_path):
     _shelved(tmp_path)
     (tmp_path / "docs" / "projects" / "my-thing" / "project.md").unlink()
     assert hook.reseed_text(tmp_path) == ""
+
+
+def test_cli_hook_reseed_directory_option_follows_dir(tmp_path, monkeypatch):
+    """`-C DIR hook reseed` prints DIR's active project checkpoint (REQ-08)."""
+    import os
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _active(repo, "Dir Thing")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    assert runner.invoke(app, ["hook", "reseed"]).output == ""  # nothing here
+    result = runner.invoke(app, ["-C", str(repo), "hook", "reseed"])
+
+    assert result.exit_code == 0
+    assert hook.CONFIRMATION_DIRECTIVE in result.output
+    assert "## Do next" in result.output
+    assert "dir-thing" in result.output
+    assert os.getcwd() == before

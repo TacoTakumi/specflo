@@ -3687,3 +3687,36 @@ def test_directory_init_scaffolds_under_dir_with_a_relative_projects_dir(monkeyp
     assert not (outside / ".specflo").exists()
     assert not (outside / "custom").exists()
     assert os.getcwd() == before
+
+
+def test_directory_source_scan_finds_no_module_level_cwd_capture():
+    """Every cwd read in the CLI module sits inside a function, so the callback's
+    chdir precedes it (REQ-08)."""
+    import ast
+    import inspect
+
+    import specflo.cli as cli_module
+
+    tree = ast.parse(inspect.getsource(cli_module))
+    enclosing: dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            enclosing[child] = parent
+
+    def inside_function(node: ast.AST) -> bool:
+        while node in enclosing:
+            node = enclosing[node]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                return True
+        return False
+
+    cwd_calls = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"cwd", "getcwd"}
+    ]
+    assert cwd_calls  # the scan looks at something
+    offenders = [n.lineno for n in cwd_calls if not inside_function(n)]
+    assert offenders == []
