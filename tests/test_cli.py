@@ -3560,7 +3560,12 @@ def test_directory_option_flag_and_env_run_status_in_dir(monkeypatch, tmp_path):
     r = runner.invoke(app, ["status"], env={"SPECFLO_DIRECTORY": str(repo)})
     assert r.exit_code == 0, r.output
     assert "dir-project" in r.output
-    assert r.output == runner.invoke(app, ["-C", str(repo), "status"]).output
+    # Same output as the flag form, bar the Root: line that names the source (REQ-11).
+    def without_root_line(text):
+        return "\n".join(l for l in text.splitlines() if not l.startswith("Root:"))
+
+    flagged = runner.invoke(app, ["-C", str(repo), "status"]).output
+    assert without_root_line(r.output) == without_root_line(flagged)
     assert os.getcwd() == before
 
 
@@ -3720,3 +3725,60 @@ def test_directory_source_scan_finds_no_module_level_cwd_capture():
     assert cwd_calls  # the scan looks at something
     offenders = [n.lineno for n in cwd_calls if not inside_function(n)]
     assert offenders == []
+
+
+def test_status_root_line_shows_the_override_and_its_source(monkeypatch, tmp_path):
+    """-C gives 'Root: <abs root> (via -C)'; the env var gives '(via SPECFLO_DIRECTORY)' (REQ-11)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Dir Project")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    abs_root = repo.resolve()
+
+    r = runner.invoke(app, ["-C", str(repo), "status"])
+    assert r.exit_code == 0, r.output
+    assert f"Root:    {abs_root} (via -C)" in r.output
+    assert "dir-project" in r.output
+
+    r = runner.invoke(app, ["status"], env={"SPECFLO_DIRECTORY": str(repo)})
+    assert r.exit_code == 0, r.output
+    assert f"Root:    {abs_root} (via SPECFLO_DIRECTORY)" in r.output
+
+
+def test_status_json_directory_source_and_root_carry_the_override(monkeypatch, tmp_path):
+    """--json has root == <abs root> and directory_source 'flag' or 'env' (REQ-12)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Dir Project")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    abs_root = repo.resolve()
+
+    data = json.loads(runner.invoke(app, ["-C", str(repo), "status", "--json"]).output)
+    assert Path(data["root"]) == abs_root
+    assert Path(data["root"]).is_absolute()
+    assert data["directory_source"] == "flag"
+    assert data["active_project"] == "dir-project"
+
+    data = json.loads(
+        runner.invoke(app, ["status", "--json"], env={"SPECFLO_DIRECTORY": str(repo)}).output
+    )
+    assert Path(data["root"]) == abs_root
+    assert data["directory_source"] == "env"
+
+
+def test_status_root_line_and_directory_source_absent_without_override(cwd, monkeypatch):
+    """Plain status inside a repo is unchanged: no Root: line, no root/directory_source keys (REQ-11, REQ-12)."""
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+
+    text = runner.invoke(app, ["status"]).output
+    assert "Root:" not in text
+    assert text.splitlines()[0] == "Project: My Thing (my-thing)"
+    assert text.splitlines()[1].startswith("Dir:     ")
+
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert "root" not in data
+    assert "directory_source" not in data

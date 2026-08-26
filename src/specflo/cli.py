@@ -125,10 +125,13 @@ def _root(
     previous = os.getcwd()
     os.chdir(directory)
     ctx.call_on_close(lambda: os.chdir(previous))
+    # Compared by name: Typer may vendor its own click, so the enum members of
+    # ``click.core.ParameterSource`` are not necessarily the ones ctx reports.
     source = ctx.get_parameter_source("directory")
+    from_env = getattr(source, "name", None) == "ENVIRONMENT"
     ctx.obj = {
         "directory": directory,
-        "directory_source": "env" if source is click.core.ParameterSource.ENVIRONMENT else "flag",
+        "directory_source": "env" if from_env else "flag",
     }
 
 
@@ -169,6 +172,12 @@ app.add_typer(config_app, name="config")
 def _die(message: str) -> typer.Exit:
     typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
     return typer.Exit(code=1)
+
+
+def _directory_override(ctx: click.Context) -> dict | None:
+    """The ``-C``/``SPECFLO_DIRECTORY`` override recorded by the app callback, if any."""
+    obj = ctx.find_root().obj
+    return obj if isinstance(obj, dict) and "directory" in obj else None
 
 
 def _require_root() -> Path:
@@ -492,6 +501,7 @@ def resume(
 
 @app.command(epilog="Example: specflo status --json")
 def status(
+    ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Show the active project, its phase, and what's next."""
@@ -528,6 +538,10 @@ def status(
         raise _die(str(exc))
 
     info = status_view.build_status(root, cfg, project)
+    override = _directory_override(ctx)
+    if override is not None:
+        info["root"] = str(root)
+        info["directory_source"] = override["directory_source"]
     if json_output:
         typer.echo(json.dumps(info))
     else:

@@ -129,7 +129,11 @@ def render_status(root: Path, info: dict) -> str:
     """Render the human-readable status block from a :func:`build_status` payload."""
     name, slug = info["name"], info["active_project"]
     label = name if name == slug else f"{name} ({slug})"
-    lines = [
+    lines = []
+    if "directory_source" in info:
+        via = "-C" if info["directory_source"] == "flag" else "SPECFLO_DIRECTORY"
+        lines.append(f"Root:    {info['root']} (via {via})")
+    lines += [
         f"Project: {label}",
         f"Dir:     {display_path(Path(info['dir']), root)}",
     ]
