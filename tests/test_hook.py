@@ -693,3 +693,30 @@ def test_cli_hook_reseed_directory_env_with_no_active_project_is_silent(tmp_path
     result = runner.invoke(app, ["hook", "reseed"], env={"SPECFLO_DIRECTORY": str(repo)})
     assert result.exit_code == 0
     assert result.output == ""
+
+
+def test_cli_hook_reseed_directory_line_credits_the_flag_when_it_wins(tmp_path, monkeypatch):
+    """With SPECFLO_DIRECTORY=A and -C B, the line names B via -C, not the env var (REQ-03, REQ-13)."""
+    repo_a = tmp_path / "a"
+    repo_a.mkdir()
+    _active(repo_a, "Alpha")
+    repo_b = tmp_path / "b"
+    repo_b.mkdir()
+    _active(repo_b, "Bravo")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    env = {"SPECFLO_DIRECTORY": str(repo_a)}
+
+    for args in (["-C", str(repo_b), "hook", "reseed"],
+                 ["-C", str(repo_b), "hook", "reseed", "--format", "claude"]):
+        result = runner.invoke(app, args, env=env)
+        assert result.exit_code == 0, result.output
+        text = result.output
+        if "claude" in args:
+            text = json.loads(text)["hookSpecificOutput"]["additionalContext"]
+        first = text.splitlines()[0]
+        assert str(repo_b.resolve()) in first
+        assert "via -C" in first
+        assert "via SPECFLO_DIRECTORY" not in first
+        assert "bravo" in text and "alpha" not in text

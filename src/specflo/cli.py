@@ -743,6 +743,7 @@ def auto_(
     epilog="Wired into a SessionStart hook by `specflo hook install`.",
 )
 def hook_reseed(
+    ctx: typer.Context,
     output_format: str = typer.Option(
         "text",
         "--format",
@@ -774,10 +775,12 @@ def hook_reseed(
         # user to type `continue`, which contradicts a payload that just told the
         # agent to start. Refuse rather than silently drop one of the two flags.
         raise _die("--continue is not supported with --format claude.")
+    override = _directory_override(ctx)
+    source = override["directory_source"] if override else None
     out = (
-        hook.claude_session_start_output()
+        hook.claude_session_start_output(directory_source=source)
         if output_format == "claude"
-        else hook.reseed_text(direct=direct)
+        else hook.reseed_text(direct=direct, directory_source=source)
     )
     if out:
         typer.echo(out)

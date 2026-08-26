@@ -77,7 +77,9 @@ def _task_brief_text(root: Path, cfg, project) -> str | None:
         return None
 
 
-def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
+def reseed_text(
+    cwd: Path | None = None, *, direct: bool = False, directory_source: str | None = None
+) -> str:
     """Return the reseed payload for the active project found from ``cwd``.
 
     The payload is a leading directive followed by the verbatim
@@ -94,6 +96,11 @@ def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
     "do you want to continue" (REQ-18). The flag changes nothing else — same body,
     same assembly — and it does **not** override the complete or shelved
     directives, since neither state has a next step to carry out.
+
+    ``directory_source`` is the CLI's record of which override put the process
+    where it is (``"flag"`` for ``-C``, ``"env"`` for ``SPECFLO_DIRECTORY``,
+    ``None`` for neither); it only decides how the leading override line
+    credits the redirect (REQ-13).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) — even resolving the
@@ -120,26 +127,26 @@ def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
             brief = _task_brief_text(root, _cfg, project)
         else:
             directive = CONFIRMATION_DIRECTIVE
-        return _directory_override_line(root) + continuation.build_reseed(
+        return _directory_override_line(root, directory_source) + continuation.build_reseed(
             directive, body, brief
         )
     except Exception:
         return ""
 
 
-def _directory_override_line(root: Path) -> str:
-    """One leading line when ``SPECFLO_DIRECTORY`` redirects specflo away from the cwd.
+def _directory_override_line(root: Path, directory_source: str | None = None) -> str:
+    """One leading line when ``SPECFLO_DIRECTORY`` is set in the environment.
 
     The env var is the silent case: a session that inherits it sees a payload
-    that looks like the cwd repo's. Only the env var reaches the hook, so the
-    ``-C`` flag needs no handling here. A set-but-empty value counts as unset.
+    that looks like the cwd repo's, so the line is emitted whenever the variable
+    is set (a set-but-empty value counts as unset). A ``-C`` flag alone adds
+    nothing - the caller typed it. When both are present the flag won the
+    directory, so the line credits ``-C`` rather than the variable.
     """
     if not os.environ.get("SPECFLO_DIRECTORY"):
         return ""
-    return (
-        f"specflo commands act on {root} via SPECFLO_DIRECTORY, "
-        "not on the session cwd.\n"
-    )
+    via = "-C" if directory_source == "flag" else "SPECFLO_DIRECTORY"
+    return f"Directory override: specflo commands act on {root} (via {via}).\n"
 
 
 def _user_message(root: Path, cfg, project) -> str:
@@ -172,7 +179,9 @@ def _user_message(root: Path, cfg, project) -> str:
     return f"{status_block}\n\n{prompt}"
 
 
-def claude_session_start_output(cwd: Path | None = None) -> str:
+def claude_session_start_output(
+    cwd: Path | None = None, *, directory_source: str | None = None
+) -> str:
     """Claude Code ``SessionStart`` JSON for the active project found from ``cwd``.
 
     Wraps the portable :func:`reseed_text` payload as ``additionalContext`` (for
@@ -187,7 +196,7 @@ def claude_session_start_output(cwd: Path | None = None) -> str:
     try:
         if cwd is None:
             cwd = Path.cwd()
-        context = reseed_text(cwd)
+        context = reseed_text(cwd, directory_source=directory_source)
         if not context:
             return ""
         found = _active_project(cwd)
