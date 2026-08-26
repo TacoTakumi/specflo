@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import click
@@ -93,6 +94,7 @@ def _version_callback(value: bool) -> None:
 
 @app.callback()
 def _root(
+    ctx: typer.Context,
     version: bool = typer.Option(
         None,
         "--version",
@@ -100,8 +102,34 @@ def _root(
         is_eager=True,
         help="Show the specflo version and exit.",
     ),
+    directory: Path | None = typer.Option(
+        None,
+        "-C",
+        "--directory",
+        envvar="SPECFLO_DIRECTORY",
+        exists=True,
+        file_okay=False,
+        dir_okay=True,
+        resolve_path=True,
+        metavar="DIR",
+        help=(
+            "Run as if specflo had been started in DIR. "
+            "Relative path arguments of the subcommand resolve against DIR. "
+            "The flag wins over SPECFLO_DIRECTORY, which wins over the current directory."
+        ),
+    ),
 ) -> None:
     """A spec-driven software-engineering workflow."""
+    if directory is None:
+        return
+    previous = os.getcwd()
+    os.chdir(directory)
+    ctx.call_on_close(lambda: os.chdir(previous))
+    source = ctx.get_parameter_source("directory")
+    ctx.obj = {
+        "directory": directory,
+        "directory_source": "env" if source is click.core.ParameterSource.ENVIRONMENT else "flag",
+    }
 
 
 brainstorm_app = typer.Typer(help="Work with the brainstorm artifact.")

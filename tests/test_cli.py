@@ -1,4 +1,5 @@
 import json
+import os
 import json as _json
 import subprocess
 import sys
@@ -3524,3 +3525,79 @@ def test_review_checkpoint_refresh_failure_never_fails_the_command(tmp_path, mon
     assert r.exit_code == 0
     round_file = tmp_path / "docs" / "projects" / "thing" / "review-1.md"
     assert "verdict: ready-to-merge" in round_file.read_text()   # the round landed
+
+
+# --- -C / --directory / SPECFLO_DIRECTORY (root-option REQ-01..03, REQ-10) ---
+
+
+def _repo_with_project(monkeypatch, path, name):
+    """init + new inside ``path`` (created if needed); leaves cwd at ``path``."""
+    path.mkdir(parents=True, exist_ok=True)
+    monkeypatch.chdir(path)
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert runner.invoke(app, ["new", name]).exit_code == 0
+    return path
+
+
+def test_directory_option_flag_and_env_run_status_in_dir(monkeypatch, tmp_path):
+    """-C DIR, --directory DIR and SPECFLO_DIRECTORY=DIR each run status in DIR (REQ-01, REQ-02, REQ-10)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Dir Project")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    plain = runner.invoke(app, ["status"])
+    assert "Not a specflo project" in plain.output
+
+    for args in (["-C", str(repo), "status"], ["--directory", str(repo), "status"]):
+        r = runner.invoke(app, args)
+        assert r.exit_code == 0, r.output
+        assert "dir-project" in r.output
+        assert os.getcwd() == before
+
+    r = runner.invoke(app, ["status"], env={"SPECFLO_DIRECTORY": str(repo)})
+    assert r.exit_code == 0, r.output
+    assert "dir-project" in r.output
+    assert r.output == runner.invoke(app, ["-C", str(repo), "status"]).output
+    assert os.getcwd() == before
+
+
+def test_directory_option_flag_beats_env_and_empty_env_is_unset(monkeypatch, tmp_path):
+    """Precedence: flag over env var over cwd; SPECFLO_DIRECTORY='' counts as unset (REQ-03)."""
+    repo_a = _repo_with_project(monkeypatch, tmp_path / "a", "Alpha")
+    repo_b = _repo_with_project(monkeypatch, tmp_path / "b", "Bravo")
+    repo_c = _repo_with_project(monkeypatch, tmp_path / "c", "Charlie")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    before = os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(repo_b), "status"], env={"SPECFLO_DIRECTORY": str(repo_a)})
+    assert r.exit_code == 0, r.output
+    assert "bravo" in r.output and "alpha" not in r.output
+    assert os.getcwd() == before
+
+    monkeypatch.chdir(repo_c)
+    before = os.getcwd()
+    r = runner.invoke(app, ["status"], env={"SPECFLO_DIRECTORY": ""})
+    assert r.exit_code == 0, r.output
+    assert "charlie" in r.output
+    assert os.getcwd() == before
+
+
+def test_directory_option_restores_cwd_on_the_error_path(monkeypatch, tmp_path):
+    """The chdir is undone when the command fails with exit 1 (REQ-10)."""
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(empty), "checkpoint"])
+    assert r.exit_code == 1
+    assert "Not a specflo project" in r.output
+    assert os.getcwd() == before
