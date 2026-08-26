@@ -191,3 +191,41 @@ describe("computeSegment - format table (REQ-03)", () => {
     });
   }
 });
+
+describe("computeSegment - SPECFLO_DIRECTORY starts the walk (REQ-14)", () => {
+  const saved = process.env.SPECFLO_DIRECTORY;
+  afterEach(() => {
+    if (saved === undefined) delete process.env.SPECFLO_DIRECTORY;
+    else process.env.SPECFLO_DIRECTORY = saved;
+  });
+
+  it("returns the env var repo's segment from a cwd outside any repo", () => {
+    const repo = createFixtureRepo();
+    cleanups.push(repo);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-status-outside-"));
+    cleanups.push(outside);
+    process.env.SPECFLO_DIRECTORY = repo;
+    assert.deepEqual(computeSegment(outside), { text: "demo:execute", style: "accent" });
+  });
+
+  it("falls back to the cwd walk when the variable is unset or empty", () => {
+    const repo = createFixtureRepo();
+    cleanups.push(repo);
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-status-outside-"));
+    cleanups.push(outside);
+    delete process.env.SPECFLO_DIRECTORY;
+    assert.equal(computeSegment(outside), null);
+    assert.deepEqual(computeSegment(repo), { text: "demo:execute", style: "accent" });
+    process.env.SPECFLO_DIRECTORY = "";
+    assert.equal(computeSegment(outside), null);
+    assert.deepEqual(computeSegment(repo), { text: "demo:execute", style: "accent" });
+  });
+
+  it("degrades to no segment on an unusable value, never a throw", () => {
+    const repo = createFixtureRepo();
+    cleanups.push(repo);
+    process.env.SPECFLO_DIRECTORY = path.join(os.tmpdir(), "no", "such", "dir");
+    assert.doesNotThrow(() => computeSegment(repo));
+    assert.equal(computeSegment(repo), null);
+  });
+});

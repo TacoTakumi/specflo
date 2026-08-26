@@ -385,8 +385,13 @@ export function computeSegment(cwd: string): SegmentText | null {
   try {
     // Walk up from the cwd to the first .specflo/config.yaml, exactly the
     // statusline's loop (realpath first, so a symlinked cwd resolves the
-    // same repo a shell would resolve it to).
-    let root = fs.realpathSync(cwd);
+    // same repo a shell would resolve it to). SPECFLO_DIRECTORY, when set and
+    // non-empty, is where the walk starts instead - the same override the
+    // specflo CLI honours - so the segment names the tree specflo acts on. A
+    // missing directory fails realpath and lands in the catch below: no
+    // segment, never a throw.
+    const override = process.env.SPECFLO_DIRECTORY;
+    let root = fs.realpathSync(override ? override : cwd);
     for (;;) {
       if (fs.existsSync(path.join(root, ".specflo", "config.yaml"))) break;
       const parent = path.dirname(root);
