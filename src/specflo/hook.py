@@ -14,6 +14,7 @@ beyond reading the artifacts the checkpoint already derives from.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 from . import checkpoint, config, continuation, plan, projects, status
@@ -119,9 +120,26 @@ def reseed_text(cwd: Path | None = None, *, direct: bool = False) -> str:
             brief = _task_brief_text(root, _cfg, project)
         else:
             directive = CONFIRMATION_DIRECTIVE
-        return continuation.build_reseed(directive, body, brief)
+        return _directory_override_line(root) + continuation.build_reseed(
+            directive, body, brief
+        )
     except Exception:
         return ""
+
+
+def _directory_override_line(root: Path) -> str:
+    """One leading line when ``SPECFLO_DIRECTORY`` redirects specflo away from the cwd.
+
+    The env var is the silent case: a session that inherits it sees a payload
+    that looks like the cwd repo's. Only the env var reaches the hook, so the
+    ``-C`` flag needs no handling here. A set-but-empty value counts as unset.
+    """
+    if not os.environ.get("SPECFLO_DIRECTORY"):
+        return ""
+    return (
+        f"specflo commands act on {root} via SPECFLO_DIRECTORY, "
+        "not on the session cwd.\n"
+    )
 
 
 def _user_message(root: Path, cfg, project) -> str:

@@ -608,3 +608,91 @@ def test_cli_hook_reseed_directory_option_follows_dir(tmp_path, monkeypatch):
     assert "## Do next" in result.output
     assert "dir-thing" in result.output
     assert os.getcwd() == before
+
+
+def test_reseed_text_directory_env_leads_with_the_override_line(tmp_path, monkeypatch):
+    """With SPECFLO_DIRECTORY set, the payload starts with one line naming the root (REQ-13)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _active(repo, "Dir Thing")
+    monkeypatch.setenv("SPECFLO_DIRECTORY", str(repo))
+
+    out = hook.reseed_text(repo)
+    first = out.splitlines()[0]
+    assert str(repo.resolve()) in first
+    assert "SPECFLO_DIRECTORY" in first
+    assert out.splitlines()[1:] and hook.CONFIRMATION_DIRECTIVE.startswith(out.splitlines()[1])
+
+    direct = hook.reseed_text(repo, direct=True)
+    assert direct.splitlines()[0] == first
+    assert direct.index(first) < direct.index(hook.DIRECT_DIRECTIVE)
+    assert "## Do next" in direct
+
+
+def test_cli_hook_reseed_directory_env_both_formats_lead_with_the_line(tmp_path, monkeypatch):
+    """`hook reseed` text and the claude additionalContext both start with the line (REQ-13)."""
+    import os
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _active(repo, "Dir Thing")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+    env = {"SPECFLO_DIRECTORY": str(repo)}
+
+    text = runner.invoke(app, ["hook", "reseed"], env=env)
+    assert text.exit_code == 0
+    first = text.output.splitlines()[0]
+    assert str(repo.resolve()) in first
+    assert "SPECFLO_DIRECTORY" in first
+    assert "## Do next" in text.output
+
+    claude = runner.invoke(app, ["hook", "reseed", "--format", "claude"], env=env)
+    assert claude.exit_code == 0
+    context = json.loads(claude.output)["hookSpecificOutput"]["additionalContext"]
+    assert context.splitlines()[0] == first
+
+    direct = runner.invoke(app, ["hook", "reseed", "--continue"], env=env)
+    assert direct.exit_code == 0
+    assert direct.output.splitlines()[0] == first
+    assert direct.output.index(first) < direct.output.index(hook.DIRECT_DIRECTIVE)
+    assert os.getcwd() == before
+
+
+def test_cli_hook_reseed_directory_flag_alone_adds_no_line(tmp_path, monkeypatch):
+    """`-C DIR hook reseed`, plain `hook reseed`, and an empty env var add no line (REQ-13)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _active(repo, "Dir Thing")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+
+    flagged = runner.invoke(app, ["-C", str(repo), "hook", "reseed"])
+    assert flagged.exit_code == 0
+    assert "## Do next" in flagged.output
+    assert "SPECFLO_DIRECTORY" not in flagged.output
+    assert flagged.output.startswith(hook.CONFIRMATION_DIRECTIVE)
+
+    monkeypatch.chdir(repo)
+    plain = runner.invoke(app, ["hook", "reseed"])
+    assert plain.output == flagged.output
+    empty = runner.invoke(app, ["hook", "reseed"], env={"SPECFLO_DIRECTORY": ""})
+    assert empty.output == flagged.output
+
+
+def test_cli_hook_reseed_directory_env_with_no_active_project_is_silent(tmp_path, monkeypatch):
+    """A repo under SPECFLO_DIRECTORY with no active project still emits nothing (REQ-13)."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    config.init_config(repo)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    result = runner.invoke(app, ["hook", "reseed"], env={"SPECFLO_DIRECTORY": str(repo)})
+    assert result.exit_code == 0
+    assert result.output == ""
