@@ -3601,3 +3601,52 @@ def test_directory_option_restores_cwd_on_the_error_path(monkeypatch, tmp_path):
     assert r.exit_code == 1
     assert "Not a specflo project" in r.output
     assert os.getcwd() == before
+
+
+def _unbox(text: str) -> str:
+    """Flatten rich's wrapped error box into one whitespace-normalized line."""
+    return " ".join(text.replace("\u2502", " ").split())
+
+
+def test_directory_invalid_missing_dir_is_rejected_before_the_subcommand(monkeypatch, tmp_path):
+    """A DIR that does not exist exits 2 naming the option and the path; no status output (REQ-05)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+    missing = tmp_path / "no" / "such" / "dir"
+    r = runner.invoke(app, ["-C", str(missing), "status"])
+    assert r.exit_code == 2
+    err = _unbox(r.stderr)
+    assert "--directory" in err
+    assert "does not exist" in err
+    assert str(missing) in err
+    assert "Not a specflo project" not in r.stdout
+    assert "Project:" not in r.stdout
+    assert os.getcwd() == before
+
+
+def test_directory_invalid_regular_file_is_rejected(monkeypatch, tmp_path):
+    """A DIR that is a regular file exits 2 with 'is a file' (REQ-05)."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    f = tmp_path / "plain.txt"
+    f.write_text("x")
+    r = runner.invoke(app, ["-C", str(f), "status"])
+    assert r.exit_code == 2
+    assert "is a file" in _unbox(r.stderr)
+    assert "Not a specflo project" not in r.stdout
+    assert "Project:" not in r.stdout
+
+
+def test_directory_help_names_flag_env_and_relative_path_rule(monkeypatch):
+    """Top-level help lists -C, --directory, SPECFLO_DIRECTORY and the DIR rules (REQ-04)."""
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    monkeypatch.setenv("COLUMNS", "200")
+    r = runner.invoke(app, ["--help"])
+    assert r.exit_code == 0
+    out = " ".join(r.output.split())
+    assert "-C" in out
+    assert "--directory" in out
+    assert "SPECFLO_DIRECTORY" in out
+    assert "DIR must exist" in out
+    assert "resolve against DIR" in out

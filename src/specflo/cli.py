@@ -113,7 +113,7 @@ def _root(
         resolve_path=True,
         metavar="DIR",
         help=(
-            "Run as if specflo had been started in DIR. "
+            "Run as if specflo had been started in DIR. DIR must exist. "
             "Relative path arguments of the subcommand resolve against DIR. "
             "The flag wins over SPECFLO_DIRECTORY, which wins over the current directory."
         ),
