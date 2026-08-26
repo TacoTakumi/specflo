@@ -676,3 +676,36 @@ def test_one_open_rule_follows_review_state_when_it_changes(tmp_path, monkeypatc
     )
 
     assert review.open_round(tmp_path, cfg, "thing") == project_dir / "review-1.md"
+
+
+def test_directory_option_ingests_a_report_relative_to_dir(tmp_path, monkeypatch):
+    """`-C DIR review done --file report.md` reads DIR/report.md, not cwd/report.md (REQ-09)."""
+    import os
+
+    from specflo.review import body_of
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    project_dir = _project(repo, monkeypatch)
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    report = repo / "report.md"
+    report.write_text("# Round 1\n\n## Findings\n\n- ingested via -C.\n")
+
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+    assert not (outside / "report.md").exists()
+
+    result = runner.invoke(
+        app,
+        ["-C", str(repo), "review", "done", "--verdict", "ready-to-merge",
+         "--file", "report.md"],
+    )
+
+    assert result.exit_code == 0, result.output
+    minted = project_dir / "review-1.md"
+    assert body_of(minted) == report.read_text()
+    assert _frontmatter(minted)["verdict"] == "ready-to-merge"
+    assert os.getcwd() == before

@@ -3650,3 +3650,40 @@ def test_directory_help_names_flag_env_and_relative_path_rule(monkeypatch):
     assert "SPECFLO_DIRECTORY" in out
     assert "DIR must exist" in out
     assert "resolve against DIR" in out
+
+
+def test_directory_walks_up_from_a_nested_dir_to_the_repo_root(monkeypatch, tmp_path):
+    """Root discovery from DIR is the usual walk-up to the nearest .specflo (REQ-06)."""
+    repo = _repo_with_project(monkeypatch, tmp_path / "repo", "Rooted")
+    nested = repo / "some" / "nested" / "dir"
+    nested.mkdir(parents=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(nested), "status"])
+    assert r.exit_code == 0, r.output
+    assert "rooted" in r.output
+    assert not (nested / ".specflo").exists()
+    assert os.getcwd() == before
+
+
+def test_directory_init_scaffolds_under_dir_with_a_relative_projects_dir(monkeypatch, tmp_path):
+    """init honors -C and its relative --projects-dir resolves against DIR (REQ-07, REQ-09)."""
+    target = tmp_path / "target"
+    target.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    monkeypatch.chdir(outside)
+    monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+    before = os.getcwd()
+
+    r = runner.invoke(app, ["-C", str(target), "init", "--projects-dir", "custom"])
+    assert r.exit_code == 0, r.output
+    assert (target / ".specflo" / "config.yaml").is_file()
+    assert (target / "custom").is_dir()
+    assert not (outside / ".specflo").exists()
+    assert not (outside / "custom").exists()
+    assert os.getcwd() == before
