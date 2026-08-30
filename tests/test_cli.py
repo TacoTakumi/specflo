@@ -4324,3 +4324,84 @@ def test_notes_do_not_leak_and_are_uncapped(tmp_path, monkeypatch):
         runner.invoke(app, ["task", "show", "T-01", "--json"]).output
     )["task"]["notes"]
     assert [n["text"] for n in notes] == [f"note {i}" for i in range(20)]
+
+
+def test_task_edit_rewrites_each_field(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    r = runner.invoke(app, [
+        "task", "edit", "T-01", "--title", "build it better",
+        "--acceptance", "it works twice", "--verify", "uv run pytest",
+        "--scope", "thin", "--files", "a.py, b.py", "--needs", "gpu",
+        "--implements", "REQ-01", "--json",
+    ])
+    assert r.exit_code == 0, r.output
+    data = _json.loads(r.output)
+    assert data["id"] == "T-01"
+    assert data["changed"] == ["title", "acceptance", "verify", "scope", "files",
+                               "needs"]  # implements already REQ-01
+    text = plan_md.read_text()
+    assert "### T-01 — build it better" in text
+    assert "- Acceptance: it works twice" in text
+    assert "- Scope: thin" in text
+    assert "- Files: a.py, b.py" in text
+    assert "- Needs: gpu" in text
+
+
+def test_task_edit_requires_an_edit_flag(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_text()
+    r = runner.invoke(app, ["task", "edit", "T-01"])
+    assert r.exit_code != 0
+    assert "--acceptance" in r.output or "acceptance" in r.output
+    assert plan_md.read_text() == before
+    r = runner.invoke(app, ["task", "edit", "T-99", "--acceptance", "x"])
+    assert r.exit_code != 0
+    assert plan_md.read_text() == before
+
+
+def test_task_edit_adds_and_drops_dependencies(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "second", "--acceptance", "a",
+                        "--verify", "true", "--from", "REQ-01"])  # T-02
+    r = runner.invoke(app, ["task", "edit", "T-02", "--add-depends-on", "T-01", "--json"])
+    assert r.exit_code == 0, r.output
+    assert _json.loads(r.output)["changed"] == ["depends_on"]
+    tasks = {t["id"]: t for t in _json.loads(
+        runner.invoke(app, ["task", "list", "--json"]).output)["tasks"]}
+    assert tasks["T-02"]["depends_on"] == ["T-01"]
+    r = runner.invoke(app, ["task", "edit", "T-02", "--drop-depends-on", "T-01"])
+    assert r.exit_code == 0, r.output
+    r = runner.invoke(app, ["task", "edit", "T-02", "--add-depends-on", "T-02"])
+    assert r.exit_code != 0  # self-edge
+
+
+def test_task_edit_state_gate_at_the_cli(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    runner.invoke(app, ["task", "start", "T-01"])
+    runner.invoke(app, ["task", "done", "T-01"])
+    before = plan_md.read_text()
+    r = runner.invoke(app, ["task", "edit", "T-01", "--acceptance", "new"])
+    assert r.exit_code != 0
+    assert "--force" in r.output and "task note" in r.output
+    assert "task add --supersedes" in r.output
+    assert plan_md.read_text() == before
+    r = runner.invoke(app, ["task", "edit", "T-01", "--acceptance", "new", "--force"])
+    assert r.exit_code == 0, r.output
+    assert "- Acceptance: new" in plan_md.read_text()
+    assert "[Edit] forced edit of Acceptance" in plan_md.read_text()
+    # a superseded task refuses with and without --force
+    runner.invoke(app, ["task", "add", "--text", "replacement", "--acceptance", "a",
+                        "--verify", "true", "--from", "REQ-01", "--supersedes", "T-01"])
+    frozen = plan_md.read_text()
+    for args in (["--acceptance", "x"], ["--acceptance", "x", "--force"]):
+        r = runner.invoke(app, ["task", "edit", "T-01", *args])
+        assert r.exit_code != 0
+        assert "frozen" in r.output
+        assert plan_md.read_text() == frozen

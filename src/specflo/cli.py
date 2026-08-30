@@ -1420,6 +1420,53 @@ def task_set_milestone(
 
 
 @task_app.command(
+    "edit",
+    epilog='Example: specflo task edit T-01 --acceptance "it works twice"',
+)
+def task_edit(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to edit."),
+    title: str = typer.Option(None, "--title", help="Rewrite the task title."),
+    acceptance: str = typer.Option(None, "--acceptance", help="Rewrite Acceptance."),
+    verify: str = typer.Option(None, "--verify", help="Rewrite Verify."),
+    scope: str = typer.Option(None, "--scope", help="Rewrite Scope."),
+    files: str = typer.Option(None, "--files", help="Rewrite Files (comma-separated)."),
+    needs: str = typer.Option(None, "--needs", help="Rewrite Needs (comma-separated pools)."),
+    implements: str = typer.Option(
+        None, "--implements", metavar="REQ-NN[,REQ-MM]", help="Rewrite Implements."
+    ),
+    add_depends_on: list[str] = typer.Option(
+        None, "--add-depends-on", metavar="T-NN", help="Add a dependency (repeatable)."
+    ),
+    drop_depends_on: list[str] = typer.Option(
+        None, "--drop-depends-on", metavar="T-NN", help="Drop a dependency (repeatable)."
+    ),
+    force: bool = typer.Option(
+        False, "--force",
+        help="Edit a done task anyway, recording an [Edit] note of the old value."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Edit an active task's fields and dependencies in place."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        tid, changed = plan.edit_task(
+            root, cfg, slug, task_id, title=title, acceptance=acceptance,
+            verify=verify, scope=scope, files=files, needs=needs,
+            implements=implements, add_depends_on=list(add_depends_on or []),
+            drop_depends_on=list(drop_depends_on or []), force=force,
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"id": tid, "changed": changed}))
+    elif changed:
+        typer.echo(f"{tid} edited: {', '.join(changed)}")
+    else:
+        typer.echo(f"{tid} unchanged: every field already held the given value.")
+
+
+@task_app.command(
     "note",
     epilog='Example: specflo task note T-01 --text "why we changed course" --label Design',
 )

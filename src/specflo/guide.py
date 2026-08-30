@@ -115,6 +115,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mark a task blocked."},
     {"name": "task reopen", "group": "workflow", "args": "<T-NN>",
      "summary": "Return a task to pending."},
+    {"name": "task edit", "group": "workflow", "args": "<T-NN>",
+     "summary": "Edit an active task's fields and dependencies in place."},
     {"name": "task note", "group": "workflow", "args": "<T-NN>",
      "summary": "Append a dated note to a task (--text, --label)."},
     {"name": "task list", "group": "workflow", "args": "",
