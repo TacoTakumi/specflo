@@ -1322,3 +1322,44 @@ def test_every_milestone_command_leaves_spec_untouched(root, cfg, project):
 
     assert sp.read_bytes() == before_bytes         # spec content byte-for-byte unchanged
     assert sp.stat().st_mtime_ns == before_mtime   # spec mtime untouched
+
+
+# --- execution mode in the task brief (fan-out-plans REQ-03, REQ-14) ---------
+
+
+def _working_ahead_plan(root, cfg, project):
+    """M-01's only task is in progress; M-02 has a ready task (working ahead)."""
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"]), ("Second", ["b"])],
+        [_raw_task_entry("T-01", milestone="M-01", progress="in_progress"),
+         _raw_task_entry("T-02", milestone="M-02")])
+
+
+@pytest.mark.parametrize("mode", ["linear", "fan-out"])
+def test_task_brief_carries_and_renders_the_execution_mode(root, cfg, project, mode):
+    _good_plan(root, cfg, project)
+    projects.set_execution(root, cfg, project, mode)
+    brief = plan.task_brief(root, cfg, project)
+    assert brief["execution"] == mode
+    lines = plan.render_task_brief(brief).splitlines()
+    assert lines[0].startswith("T-01 - ")
+    assert lines[1] == f"Execution: {mode}"
+
+
+def test_task_brief_linear_keeps_the_working_ahead_note(root, cfg, project):
+    _working_ahead_plan(root, cfg, project)
+    brief = plan.task_brief(root, cfg, project)
+    assert brief["task"]["id"] == "T-02"
+    assert brief["execution"] == "linear"
+    assert brief["working_ahead"] is True
+    assert "working ahead" in plan.render_task_brief(brief)
+
+
+def test_task_brief_fan_out_suppresses_the_working_ahead_note(root, cfg, project):
+    _working_ahead_plan(root, cfg, project)
+    projects.set_execution(root, cfg, project, "fan-out")
+    brief = plan.task_brief(root, cfg, project)
+    assert brief["task"]["id"] == "T-02"
+    assert brief["execution"] == "fan-out"
+    assert brief["working_ahead"] is None
+    assert "working ahead" not in plan.render_task_brief(brief)

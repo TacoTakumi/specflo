@@ -19,7 +19,7 @@ from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
-from .projects import load_project, project_dir
+from .projects import FAN_OUT_EXECUTION, load_project, project_dir
 
 PLAN_FILENAME = "plan.md"
 
@@ -1139,6 +1139,7 @@ def render_task_brief(brief: dict) -> str:
     header = f"{t['id']} - {t['text']}  [{t['progress']}]"
     if brief.get("working_ahead"):
         header += "  — working ahead (later milestone than current)"
+    execution_line = f"Execution: {brief['execution']}"
     resolutions = {
         r["id"]: r["resolved"] for r in brief["requirements"] if r.get("resolved")
     }
@@ -1148,6 +1149,7 @@ def render_task_brief(brief: dict) -> str:
     ]
     lines = [
         header,
+        execution_line,
         f"  Acceptance: {t['acceptance']}",
         f"  Verify:     {t['verify']}",
         f"  Implements: {', '.join(implements)}",
@@ -1187,6 +1189,11 @@ def task_brief(
     constraints = markdown.strip_comments(
         markdown.section_body(doc, "## Global constraints") or ""
     ).strip() or None
+    # The recorded execution mode (fan-out-plans REQ-03). Under fan-out the
+    # working-ahead note is dropped: lanes crossing milestones is the expected
+    # shape, not a warning (REQ-14).
+    execution = load_project(root, cfg, slug).execution
+    fan_out = execution == FAN_OUT_EXECUTION
     if task_id is None:
         task_id = _default_actionable(active, milestones)
         if task_id is None:
@@ -1198,6 +1205,7 @@ def task_brief(
                 return {
                     "task": None, "requirements": [],
                     "global_constraints": constraints,
+                    "execution": execution,
                     "working_ahead": None, "boundary": boundary,
                 }
             blocks = blocked_on_superseded(root, cfg, slug)
@@ -1242,7 +1250,10 @@ def task_brief(
         },
         "requirements": requirements,
         "global_constraints": constraints,
-        "working_ahead": _task_working_ahead(task, milestones, active),
+        "execution": execution,
+        "working_ahead": (
+            None if fan_out else _task_working_ahead(task, milestones, active)
+        ),
         # The soft milestone-boundary verify beat (None off a boundary), so the
         # execute surface can surface the just-completed milestone's Exit checklist
         # alongside the next task (REQ-14).
