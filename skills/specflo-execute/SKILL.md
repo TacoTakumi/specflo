@@ -156,6 +156,33 @@ A task is done when its Verify step ran and passed and the diff matches the
 acceptance — not when it "looks done." Check the diff, not your own report; a
 stated rationale never downgrades a real gap.
 
+## Correcting and annotating tasks
+
+Never hand-edit `plan.md` — the CLI owns it. Two commands cover everything a
+session needs, and which one applies is decided by the task's state: **edit
+before done, annotate after.**
+
+- **A task that is not yet done is wrong on its face** (a stale `Files` list, a
+  missing dependency, a typo in `Acceptance`): fix it with `specflo task edit
+  T-NN --acceptance "…"` — also `--title`, `--verify`, `--scope`, `--files`,
+  `--needs`, `--implements`, and the repeatable `--add-depends-on` /
+  `--drop-depends-on`. This is a correction, not a re-plan: if the *work* the
+  task describes is wrong, the **HARD-GATE** still applies — supersede it.
+- **A task that is done is history.** Record what you learned against it with
+  `specflo task note T-NN --text "…" --label Design`, or replace the work with
+  `specflo task add --supersedes T-NN`. `task edit` refuses a done task unless
+  you pass `--force`, which is for a genuine correction to a finished entry and
+  appends an `[Edit]` note carrying the value it overwrote.
+- **A superseded entry is frozen** — `task edit` refuses it with or without
+  `--force`. Edit the task that superseded it instead.
+- **Labels** are a closed set: `Note` (the default), `Design`, `Resolution`,
+  `Descoped`. `Edit` is reserved for `task edit --force` and rejected from
+  `--label`. Note text is one line; notes accumulate at the bottom of the entry
+  and surface in `specflo task show`, nowhere else.
+- **Closing a task with a note**: `specflo task done T-NN --note "…"` and
+  `specflo task reopen T-NN --note "…"` record the note in the same write as the
+  state change.
+
 ## Anti-sycophancy
 
 Do not open with "All done!", "Looks perfect", or similar. State what's

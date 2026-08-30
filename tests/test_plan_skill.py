@@ -47,3 +47,26 @@ def test_skill_has_fan_out_capable_decomposition_rules():
     assert "--needs" in rules and "pool add" in rules        # hardware / shared envs
     assert "--needs user" in rules                           # user-in-the-loop tasks
     assert "regardless of" in low                            # every plan, every mode
+
+
+def _edit_and_note_section():
+    text = SKILL.read_text()
+    assert "## Correcting and annotating tasks" in text
+    return text.split("## Correcting and annotating tasks", 1)[1].split("\n## ", 1)[0]
+
+
+def test_skill_directs_corrections_to_task_edit_and_task_note():
+    # task-edit-and-task-note REQ-13.
+    section = _edit_and_note_section()
+    assert "specflo task edit" in section
+    assert "specflo task note" in section
+    assert "specflo task add --supersedes" in section
+    low = section.lower()
+    assert "done" in low and "superseded" in low
+    for label in ("Note", "Design", "Resolution", "Descoped", "Edit"):
+        assert label in section, f"missing note label: {label}"
+
+
+def test_skill_forbids_hand_editing_plan_md():
+    text = SKILL.read_text().lower()
+    assert "never hand-edit `plan.md`" in text or "never hand-edit plan.md" in text

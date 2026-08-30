@@ -109,3 +109,29 @@ def test_skill_process_steps_are_kept_verbatim():
         "7. Next: `specflo task show` again.",
     ]:
         assert phrase in text, f"process step changed: {phrase!r}"
+
+
+def _edit_and_note_section():
+    text = SKILL.read_text()
+    assert "## Correcting and annotating tasks" in text
+    return text.split("## Correcting and annotating tasks", 1)[1].split("\n## ", 1)[0]
+
+
+def test_skill_directs_corrections_to_task_edit_and_task_note():
+    # task-edit-and-task-note REQ-13: the two commands, the edit-before-done
+    # rule, and the closed label set.
+    section = _edit_and_note_section()
+    assert "specflo task edit" in section
+    assert "specflo task note" in section
+    assert "specflo task add --supersedes" in section
+    low = section.lower()
+    assert "--force" in section and "[edit]" in low
+    assert "superseded" in low and "frozen" in low
+    for label in ("Note", "Design", "Resolution", "Descoped", "Edit"):
+        assert label in section, f"missing note label: {label}"
+    assert "--note" in section  # the ride-along on task done / task reopen
+
+
+def test_skill_forbids_hand_editing_plan_md():
+    text = SKILL.read_text().lower()
+    assert "never hand-edit `plan.md`" in text or "never hand-edit plan.md" in text

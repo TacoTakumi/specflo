@@ -110,6 +110,23 @@ that logic:
 - Milestones are **optional**: a plan with zero milestones stays dormant and
   behaves exactly as today — add them only when they earn their keep.
 
+## Correcting and annotating tasks
+
+Never hand-edit `plan.md` — the CLI owns it. While a task is not yet done, fix a
+wrong field with `specflo task edit T-NN` (`--title`, `--acceptance`,
+`--verify`, `--scope`, `--files`, `--needs`, `--implements`, and the repeatable
+`--add-depends-on` / `--drop-depends-on`), rather than rewriting the entry by
+hand or minting a near-duplicate task.
+
+Record the reasoning behind a change — why an approach was dropped, what a
+review resolved — with `specflo task note T-NN --text "…" --label Design`. The
+labels are a closed set: `Note` (the default), `Design`, `Resolution`,
+`Descoped`; `Edit` is reserved for `task edit --force`.
+
+Once a task is done its entry is history: annotate it with `task note`, or
+replace the work with `specflo task add --supersedes T-NN`. A superseded entry
+is frozen.
+
 ## Anti-sycophancy
 
 Do not open with "Great plan!", "You're absolutely right", or similar. State the
