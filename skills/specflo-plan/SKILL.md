@@ -41,7 +41,28 @@ not planning.
    **verification** command/step, and `Implements: REQ-NN` (repeatable). Structure
    behavior-adding tasks as RED→GREEN (write the failing test first). Declare
    `Depends on` for ordering.
-4. **Capture inline** — run `specflo task add` with `--text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …]` the moment each task
+   **Decomposition rules (fan-out capable).** Every plan is shaped this way
+   **regardless of** the project's execution mode, so an orchestrator could fan
+   it out to subagents without replanning — and a linear run loses nothing:
+   - **Files.** List every file a task edits in `--files`; the CLI parses it
+     into the task's ownership set (a trailing parenthetical note per entry is
+     allowed: `~/x/y (venv, outside repo)`).
+   - **Shared files get an edge.** Wherever two tasks **share a file**, add a
+     `--depends-on` edge so they never run at once; `specflo validate plan`
+     warns naming the pair when you miss one.
+   - **Parallel producers, one merge.** Give tasks that produce results in
+     parallel their own per-task output files, then add one deterministic
+     **merge task** that depends on all of them — never have producers append
+     to a shared file.
+   - **Contract first.** Order the task that fixes a **contract** (schema, wire
+     format, interface) before the tasks on either side of it, so both sides
+     can proceed against it at once.
+   - **Pools.** Declare hardware and shared environments (a GPU, a venv, a
+     port) with `--needs <pool>` and size them with `specflo pool add <name>
+     --size N`; an undeclared pool has one slot.
+   - **User in the loop.** Mark a task that needs the user (a by-eye verdict,
+     a desktop session) with `--needs user`; it is never delegated.
+4. **Capture inline** — run `specflo task add` with `--text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …] [--files …] [--needs <pool> …]` the moment each task
    lands (un-batched). **Emit artifact-writing add calls sequentially: one at a
    time, never batched in parallel.** The CLI's advisory lock (D-01) makes
    concurrent adds safe but cannot fix ordering — minted `T-NN`/`M-NN` IDs follow
