@@ -19,6 +19,7 @@ from agentsquire.sources import default_source
 from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
+from . import graph as graph_module
 from . import index as index_module
 from . import review as review_module
 from . import extension_install as extension_module
@@ -1273,6 +1274,38 @@ def plan_start(
     else:
         note = "" if created else " (already started)"
         typer.echo(f"{path}{note}")
+
+
+@plan_app.command("graph", epilog="Example: specflo plan graph --json")
+def plan_graph(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Render the plan's execution graph: waves, one line per active task, and a mermaid block."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        data = plan.execution_graph(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    tasks, milestones = data["tasks"], data["milestones"]
+    if json_output:
+        typer.echo(json.dumps(graph_module.payload(tasks, milestones)))
+        return
+    lines = []
+    for n, ids in enumerate(graph_module.waves(tasks)):
+        lines.append(f"Wave {n}: {', '.join(ids)}")
+    if lines:
+        lines.append("")
+    for t in tasks:
+        line = f"{t.id}  {t.text}  [{t.progress}]"
+        if t.file_list:
+            line += f"  files: {', '.join(t.file_list)}"
+        if t.needs:
+            line += f"  needs: {', '.join(t.needs)}"
+        lines.append(line)
+    if not tasks:
+        lines.append("No tasks yet. Add one with `specflo task add`.")
+    lines += ["", graph_module.mermaid(tasks, milestones)]
+    typer.echo("\n".join(lines))
 
 
 @task_app.command(

@@ -1053,6 +1053,20 @@ def progress_from_doc(doc: str) -> dict:
     return prog
 
 
+def execution_graph(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    """The active tasks and milestones of the plan for :mod:`specflo.graph`
+    (fan-out-plans REQ-13). Read-only; raises the no-plan error when there is
+    no plan.md."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    doc = path.read_text()
+    return {
+        "tasks": [t for t in _parse_tasks(doc) if t.status == "active"],
+        "milestones": _parse_milestones(doc),
+    }
+
+
 def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     """The orchestrator's frontier (fan-out-plans REQ-10), read-only.
 

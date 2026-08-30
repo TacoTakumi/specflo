@@ -4143,3 +4143,76 @@ def test_task_list_json_pools_is_empty_on_a_plain_plan(tmp_path, monkeypatch):
     data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
     assert data["pools"] == {}
     assert data["tasks"][0]["ready"] is True and data["tasks"][0]["next"] is True
+
+
+# --- specflo plan graph (fan-out-plans REQ-13) --------------------------------
+
+
+def _graph_fixture(tmp_path):
+    """T-01, T-02 no deps; T-03 on T-01, T-02; T-04 on T-03; M-01 = T-01, T-03;
+    M-02 = T-02, T-04; T-05 superseded by T-04."""
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["milestone", "add", "--text", "Roots", "--exit", "a"])
+    runner.invoke(app, ["milestone", "add", "--text", "Leaves", "--exit", "b"])
+    add = ["task", "add", "--acceptance", "a", "--verify", "v", "--from", "REQ-01"]
+    runner.invoke(app, add + ["--text", "first", "--milestone", "M-01",
+                              "--files", "src/a.py", "--needs", "gpu:3090"])
+    runner.invoke(app, add + ["--text", "second", "--milestone", "M-02"])
+    runner.invoke(app, add + ["--text", "third", "--milestone", "M-01",
+                              "--depends-on", "T-01", "--depends-on", "T-02"])
+    runner.invoke(app, add + ["--text", "old fourth", "--milestone", "M-02",
+                              "--depends-on", "T-03"])                       # T-04
+    runner.invoke(app, add + ["--text", "fourth", "--milestone", "M-02",
+                              "--depends-on", "T-03", "--supersedes", "T-04"])  # T-05
+
+
+def test_plan_graph_prints_waves_tasks_and_mermaid_without_writing(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.chdir(tmp_path)
+    _graph_fixture(tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = hashlib.sha256(plan_md.read_bytes()).hexdigest()
+
+    result = runner.invoke(app, ["plan", "graph"])
+    assert result.exit_code == 0, result.output
+    out = result.output
+    assert hashlib.sha256(plan_md.read_bytes()).hexdigest() == before
+
+    assert "Wave 0: T-01, T-02" in out
+    assert "Wave 1: T-03" in out
+    assert "Wave 2: T-05" in out
+    assert "T-04" not in out                                   # superseded omitted
+    task_line = next(l for l in out.splitlines() if l.startswith("T-01"))
+    assert "first" in task_line and "pending" in task_line
+    assert "src/a.py" in task_line and "gpu:3090" in task_line
+    assert "```mermaid" in out and "graph LR" in out and "```" in out
+    assert "T01 --> T03" in out and "T02 --> T03" in out and "T03 --> T05" in out
+    assert "subgraph" in out and "M-01" in out and "M-02" in out
+
+
+def test_plan_graph_json_emits_the_payload(tmp_path, monkeypatch):
+    import hashlib
+    monkeypatch.chdir(tmp_path)
+    _graph_fixture(tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = hashlib.sha256(plan_md.read_bytes()).hexdigest()
+
+    result = runner.invoke(app, ["plan", "graph", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert hashlib.sha256(plan_md.read_bytes()).hexdigest() == before
+    assert data["waves"] == [["T-01", "T-02"], ["T-03"], ["T-05"]]
+    assert data["edges"] == [["T-01", "T-03"], ["T-02", "T-03"], ["T-03", "T-05"]]
+    assert [t["id"] for t in data["tasks"]] == ["T-01", "T-02", "T-03", "T-05"]
+    assert data["tasks"][0] == {"id": "T-01", "text": "first", "progress": "pending",
+                                "files": ["src/a.py"], "needs": ["gpu:3090"],
+                                "milestone": "M-01"}
+
+
+def test_plan_graph_without_a_plan_exits_nonzero_with_the_no_plan_message(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing"])
+    result = runner.invoke(app, ["plan", "graph"])
+    assert result.exit_code != 0
+    assert "No plan yet" in result.output

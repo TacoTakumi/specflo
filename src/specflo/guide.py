@@ -101,6 +101,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Move the phase pointer back to an earlier phase (undo an advance)."},
     {"name": "plan start", "group": "workflow", "args": "",
      "summary": "Create the plan.md artifact."},
+    {"name": "plan graph", "group": "workflow", "args": "",
+     "summary": "Render the execution graph: waves, tasks, and a mermaid block."},
     {"name": "task add", "group": "workflow", "args": "",
      "summary": "Record a plan task (T-NN)."},
     {"name": "task rewire", "group": "workflow", "args": "",
