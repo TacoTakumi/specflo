@@ -609,6 +609,34 @@ def complete_plan(
     path.write_text(doc)
 
 
+def check_implements(
+    root: Path, cfg: SpecfloConfig, slug: str, implements: list[str]
+) -> None:
+    """Raise SpecfloError unless every id in *implements* is an active requirement.
+
+    Shared by :func:`add_task` and :func:`edit_task` so a task cannot be edited
+    into citing a requirement `task add` would have refused.
+    """
+    sp = spec_mod.spec_path(root, cfg, slug)
+    if not sp.is_file():
+        raise SpecfloError("Cannot link requirements: no spec.md for this project.")
+    spec_doc = sp.read_text()
+    active_reqs = spec_mod.active_requirement_ids(spec_doc)
+    smap = spec_mod.supersession_map(spec_doc)
+    for req_id in implements:
+        if req_id in active_reqs:
+            continue
+        resolved = spec_mod.resolve_requirement(req_id, active_reqs, smap)
+        if resolved is not None:
+            raise SpecfloError(
+                f"Cannot implement {req_id}: superseded by {resolved}; "
+                f"cite {resolved} instead."
+            )
+        raise SpecfloError(
+            f"Cannot implement {req_id}: not an active requirement in spec.md."
+        )
+
+
 def add_task(
     root: Path,
     cfg: SpecfloConfig,
@@ -646,24 +674,7 @@ def add_task(
         if not implements:
             raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
 
-        sp = spec_mod.spec_path(root, cfg, slug)
-        if not sp.is_file():
-            raise SpecfloError("Cannot link requirements: no spec.md for this project.")
-        spec_doc = sp.read_text()
-        active_reqs = spec_mod.active_requirement_ids(spec_doc)
-        smap = spec_mod.supersession_map(spec_doc)
-        for req_id in implements:
-            if req_id in active_reqs:
-                continue
-            resolved = spec_mod.resolve_requirement(req_id, active_reqs, smap)
-            if resolved is not None:
-                raise SpecfloError(
-                    f"Cannot implement {req_id}: superseded by {resolved}; "
-                    f"cite {resolved} instead."
-                )
-            raise SpecfloError(
-                f"Cannot implement {req_id}: not an active requirement in spec.md."
-            )
+        check_implements(root, cfg, slug, implements)
 
         for dep in depends_on:
             if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
@@ -903,6 +914,89 @@ def rewire_dependency(
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     return changed
+
+
+# The fields `task edit` rewrites in place (REQ-01). `title` lives in the entry
+# heading; the rest are single `- <Field>:` lines. Depends on is edited by the
+# add/drop flags instead, because an edge needs existence and cycle checks.
+EDITABLE_FIELDS = ("title", "acceptance", "verify", "scope", "files", "needs",
+                   "implements")
+_EDIT_FIELD_KEYS = {
+    "acceptance": "Acceptance", "verify": "Verify", "scope": "Scope",
+    "files": "Files", "needs": "Needs", "implements": "Implements",
+}
+
+
+def _edit_is_a_change(task: Task, name: str, value: str) -> bool:
+    """True when writing *value* into *name* would change the task's parsed state."""
+    if name == "title":
+        return value != task.text
+    if name == "needs":
+        return _split_refs(value) != task.needs
+    if name == "implements":
+        return _split_refs(value) != task.implements
+    return value != (getattr(task, name) or "")
+
+
+def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
+    if name == "title":
+        return re.sub(
+            rf"(?m)^### {re.escape(task_id)} —.*$", f"### {task_id} — {value}", doc,
+            count=1,
+        )
+    if name in ("needs", "implements"):
+        value = ", ".join(_split_refs(value))
+    return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
+
+
+def edit_task(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
+    title: str | None = None, acceptance: str | None = None,
+    verify: str | None = None, scope: str | None = None, files: str | None = None,
+    needs: str | None = None, implements: str | None = None,
+    today: str | None = None,
+) -> tuple[str, list[str]]:
+    """Rewrite a task's single-line fields in place; return ``(id, changed)``.
+
+    Only the named field lines and the frontmatter date are touched, and a field
+    already carrying the requested value is reported as unchanged rather than
+    rewritten. Everything is validated before the write, so a refusal leaves
+    plan.md byte-identical.
+    """
+    edits = {
+        name: value for name, value in (
+            ("title", title), ("acceptance", acceptance), ("verify", verify),
+            ("scope", scope), ("files", files), ("needs", needs),
+            ("implements", implements),
+        ) if value is not None
+    }
+    if not edits:
+        raise SpecfloError(
+            "Nothing to edit: pass at least one of " + ", ".join(EDITABLE_FIELDS) + "."
+        )
+    if implements is not None:
+        check_implements(root, cfg, slug, _split_refs(implements))
+    if needs is not None:
+        for pool in _split_refs(needs):
+            validate_pool_name(pool)
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    with locked(lock_path_for(root, slug, path)):
+        doc = path.read_text()
+        task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+        if task is None:
+            raise SpecfloError(f"No task {task_id}.")
+        changed = [
+            name for name in EDITABLE_FIELDS
+            if name in edits and _edit_is_a_change(task, name, edits[name])
+        ]
+        if changed:
+            for name in changed:
+                doc = _apply_edit(doc, task_id, name, edits[name])
+            doc = markdown.bump_updated(doc, today)
+            path.write_text(doc)
+    return task_id, changed
 
 
 def add_note(

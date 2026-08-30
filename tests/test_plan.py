@@ -1913,7 +1913,7 @@ def test_parse_tasks_notes_do_not_disturb_the_other_fields():
 
 
 def _plan_with_task(root, cfg, project, **kw):
-    _spec_with_reqs(root, cfg, project, n=1)
+    _spec_with_reqs(root, cfg, project, n=2)
     plan.start_plan(root, cfg, project, today="2026-06-22")
     return plan.add_task(
         root, cfg, project, "first",
@@ -2019,3 +2019,60 @@ def test_malformed_note_warning_clears_when_the_note_is_removed(root, cfg, proje
     assert plan.plan_warnings(root, cfg, project)
     path.write_text(markdown.clear_entry_field(path.read_text(), task.id, "Note"))
     assert plan.plan_warnings(root, cfg, project) == []
+
+
+def test_edit_task_fields_rewrites_only_the_named_lines(root, cfg, project):
+    task = _plan_with_task(root, cfg, project, files="a.py", scope="thin")
+    path = _ppath(root, cfg, project)
+    before = path.read_text().splitlines(keepends=True)
+    tid, changed = plan.edit_task(
+        root, cfg, project, task.id, title="first, revised",
+        acceptance="passes twice", verify="uv run pytest -q", scope="thinner",
+        files="a.py, b.py", needs="gpu", implements="REQ-02", today="2026-08-30",
+    )
+    assert tid == task.id
+    assert changed == ["title", "acceptance", "verify", "scope", "files", "needs",
+                       "implements"]
+    after = path.read_text().splitlines(keepends=True)
+    changed_lines = [ln for ln in after if ln not in before]
+    assert sorted(changed_lines) == sorted([
+        "### T-01 — first, revised\n",
+        "- Acceptance: passes twice\n",
+        "- Verify: uv run pytest -q\n",
+        "- Implements: REQ-02\n",
+        "- Files: a.py, b.py\n",
+        "- Needs: gpu\n",
+        "- Scope: thinner\n",
+        "updated: 2026-08-30\n",
+    ])
+    reparsed = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert reparsed.text == "first, revised"
+    assert reparsed.needs == ["gpu"] and reparsed.implements == ["REQ-02"]
+
+
+def test_edit_task_fields_reports_only_what_changed(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    _, changed = plan.edit_task(
+        root, cfg, project, task.id, acceptance="passes", today="2026-08-30",
+    )
+    assert changed == []  # same value: nothing to rewrite
+    _, changed = plan.edit_task(
+        root, cfg, project, task.id, acceptance="passes twice", today="2026-08-30",
+    )
+    assert changed == ["acceptance"]
+
+
+def test_edit_task_fields_rejections_leave_the_plan_byte_identical(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as no_edit:
+        plan.edit_task(root, cfg, project, task.id, today="2026-08-30")
+    assert "acceptance" in str(no_edit.value)  # names the editable fields
+    with pytest.raises(SpecfloError):
+        plan.edit_task(root, cfg, project, "T-99", acceptance="x", today="2026-08-30")
+    with pytest.raises(SpecfloError):  # not an active requirement
+        plan.edit_task(root, cfg, project, task.id, implements="REQ-99", today="2026-08-30")
+    with pytest.raises(SpecfloError):  # not a valid pool name
+        plan.edit_task(root, cfg, project, task.id, needs="two words", today="2026-08-30")
+    assert path.read_text() == before
