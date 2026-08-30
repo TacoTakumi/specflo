@@ -3938,3 +3938,25 @@ def test_validate_plan_shared_file_warning_exits_zero(tmp_path, monkeypatch):
     result = runner.invoke(app, ["validate", "plan"])
     assert result.exit_code == 0, result.output
     assert "T-01" in result.output and "T-02" in result.output and "src/a.py" in result.output
+
+
+def test_task_list_marks_only_file_clear_tasks_as_next(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    for text, files in (("one", "src/a.py"), ("two", "src/a.py"), ("three", "src/b.py")):
+        runner.invoke(app, ["task", "add", "--text", text, "--acceptance", "a",
+                            "--verify", "v", "--from", "REQ-01", "--files", files])
+    runner.invoke(app, ["advance"])                      # plan -> execute
+    assert runner.invoke(app, ["task", "start", "T-01"]).exit_code == 0
+
+    listed = runner.invoke(app, ["task", "list"]).output.splitlines()
+    marked = [ln for ln in listed if ln.startswith(">")]
+    assert len(marked) == 1 and "T-03" in marked[0]
+    data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert data["progress"]["next_actionable"] == ["T-03"]
+    assert {t["id"]: t["next"] for t in data["tasks"]} == {
+        "T-01": False, "T-02": False, "T-03": True}
+
+    runner.invoke(app, ["task", "done", "T-01"])
+    data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert data["progress"]["next_actionable"] == ["T-02", "T-03"]

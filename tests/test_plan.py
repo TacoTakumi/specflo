@@ -1485,3 +1485,74 @@ def test_shared_file_warning_is_a_warning_not_a_validation_issue(root, cfg, proj
         _entry_with_files("T-02", "src/a.py"),
     ])
     assert plan.validate_plan(root, cfg, project) == []
+
+
+# --- ready set excludes file conflicts with an in_progress task (fan-out-plans
+# REQ-06) -------------------------------------------------------------------
+
+
+def _file_conflict_plan(root, cfg, project):
+    """T-01 in_progress (src/a.py), T-02 pending (src/a.py), T-03 pending (src/b.py)."""
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _entry_with_files("T-01", "src/a.py").replace(
+            "Progress: pending", "Progress: in_progress"),
+        _entry_with_files("T-02", "src/a.py"),
+        _entry_with_files("T-03", "src/b.py"),
+    ])
+
+
+def test_ready_set_excludes_a_pending_task_sharing_a_file_with_in_progress(root, cfg, project):
+    _file_conflict_plan(root, cfg, project)
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-03"]
+
+
+def test_ready_set_readmits_the_task_once_the_holder_is_done(root, cfg, project):
+    _file_conflict_plan(root, cfg, project)
+    plan.done_task(root, cfg, project, "T-01")
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-02", "T-03"]
+
+
+def test_ready_set_readmits_the_task_once_the_holder_is_reopened(root, cfg, project):
+    _file_conflict_plan(root, cfg, project)
+    plan.reopen_task(root, cfg, project, "T-01")
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01", "T-02", "T-03"]
+
+
+def test_ready_set_readmits_the_task_once_the_holder_is_blocked(root, cfg, project):
+    _file_conflict_plan(root, cfg, project)
+    plan.block_task(root, cfg, project, "T-01", reason="stuck")
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-02", "T-03"]
+
+
+def test_ready_set_never_excludes_a_task_without_files(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _entry_with_files("T-01", "src/a.py").replace(
+            "Progress: pending", "Progress: in_progress"),
+        _raw_task_entry("T-02"),
+    ])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-02"]
+
+
+def test_ready_set_file_conflict_normalizes_trailing_notes(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _entry_with_files("T-01", "src/a.py (shared helper)").replace(
+            "Progress: pending", "Progress: in_progress"),
+        _entry_with_files("T-02", "src/a.py"),
+        _raw_task_entry("T-03"),
+    ])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-03"]
+
+
+def test_ready_set_falls_back_to_the_in_progress_task_when_files_exclude_everything(root, cfg, project):
+    # Only pending work conflicts with the in-progress task: that task is still
+    # the work to continue (existing continue-in-progress behaviour holds).
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _entry_with_files("T-01", "src/a.py").replace(
+            "Progress: pending", "Progress: in_progress"),
+        _entry_with_files("T-02", "src/a.py"),
+    ])
+    assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]

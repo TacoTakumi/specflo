@@ -886,9 +886,16 @@ def _progress_from_tasks(active: list[Task]) -> dict:
     for t in active:
         by_state[t.progress if t.progress in by_state else "pending"] += 1
     done_ids = {t.id for t in active if t.progress == "done"}
+    # Files held by in-progress work: a dependency-ready pending task that
+    # shares a normalized path with one is not ready until that task is done,
+    # reopened or blocked (fan-out-plans REQ-06). Tasks with no Files are never
+    # excluded, so a Files-free plan keeps today's ready set.
+    held = {f for t in active if t.progress == "in_progress" for f in t.file_list}
     next_actionable = [
         t.id for t in active
-        if t.progress == "pending" and all(d in done_ids for d in t.depends_on)
+        if t.progress == "pending"
+        and all(d in done_ids for d in t.depends_on)
+        and not (held and held.intersection(t.file_list))
     ]
     # When no unstarted task is dependency-ready but a task on the plan is already
     # under way (the mid-task state a context clear lands in, or a half-started
