@@ -33,6 +33,71 @@ _MILESTONE_ID_RE = re.compile(r"^### (M-\d+) —")
 # and a soft warning, and tuned to avoid legitimate engineering language.
 _SCOPE_REDUCTION_TERMS = ("v1", "simplified", "for now", "stub")
 
+# Notes are append-only `- Note: <date> [<Label>] <text>` lines inside a task
+# entry (task-edit-and-task-note REQ-06). The label is bracketed data in the
+# value, never the field key, so the plan parser keeps one key for every note.
+# `Edit` is minted only by a forced `task edit`, never by `--label`.
+NOTE_LABELS = ("Note", "Design", "Resolution", "Descoped", "Edit")
+NOTE_DEFAULT_LABEL = "Note"
+NOTE_FORCED_LABEL = "Edit"
+NOTE_FIELD = "Note"
+_NOTE_VALUE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}) \[([^\[\]]+)\] (\S.*)$")
+
+
+def note_text(text: str) -> str:
+    """Collapse *text* to a single line, or raise if it holds no content."""
+    collapsed = " ".join((text or "").split())
+    if not collapsed:
+        raise SpecfloError("Note text is empty: pass some text to record.")
+    return collapsed
+
+
+def note_label(label: str | None, *, allow_edit: bool = False) -> str:
+    """Return the validated label for a note, defaulting to ``Note``."""
+    if label is None:
+        return NOTE_DEFAULT_LABEL
+    offered = [lb for lb in NOTE_LABELS if lb != NOTE_FORCED_LABEL]
+    if label == NOTE_FORCED_LABEL and not allow_edit:
+        raise SpecfloError(
+            f"Label {NOTE_FORCED_LABEL!r} is reserved for `task edit --force`. "
+            f"Accepted labels: {', '.join(offered)}."
+        )
+    if label not in NOTE_LABELS:
+        raise SpecfloError(
+            f"Unknown note label {label!r}. Accepted labels: {', '.join(offered)}."
+        )
+    return label
+
+
+def format_note(
+    text: str, label: str | None = None, today: str | None = None,
+    *, allow_edit: bool = False,
+) -> str:
+    """Render the value of a ``- Note:`` line: ``<date> [<Label>] <text>``."""
+    resolved = note_label(label, allow_edit=allow_edit)
+    body = note_text(text)
+    return f"{today or datetime.date.today().isoformat()} [{resolved}] {body}"
+
+
+def parse_note(value: str) -> dict | None:
+    """Split a note value back into ``{date, label, text}``; None if malformed.
+
+    A hand-written note that does not parse is a plan warning, never a hard
+    validation failure (REQ-10), so this returns None rather than raising.
+    """
+    m = _NOTE_VALUE_RE.match((value or "").strip())
+    if not m:
+        return None
+    date, label, text = m.groups()
+    try:
+        datetime.date.fromisoformat(date)
+    except ValueError:
+        return None
+    if label not in NOTE_LABELS:
+        return None
+    return {"date": date, "label": label, "text": text.strip()}
+
+
 _TEMPLATE = """\
 ---
 project: {slug}

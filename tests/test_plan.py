@@ -1810,3 +1810,65 @@ def test_brief_user_pool_task_says_it_runs_with_the_user(root, cfg, project):
     user_line = next(l for l in lines if "runs with the user" in l)
     assert "not delegated" in user_line
     assert plan.list_pools(root, cfg, project) == {"user": 1}
+
+
+# --- note grammar -----------------------------------------------------------
+
+
+def test_note_grammar_label_set_is_closed():
+    assert plan.NOTE_LABELS == ("Note", "Design", "Resolution", "Descoped", "Edit")
+
+
+def test_note_grammar_formats_a_dated_bracketed_line():
+    assert plan.format_note("wired it up", today="2026-08-30") == (
+        "2026-08-30 [Note] wired it up"
+    )
+    assert plan.format_note("why", label="Design", today="2026-08-30") == (
+        "2026-08-30 [Design] why"
+    )
+
+
+def test_note_grammar_collapses_whitespace_to_one_line():
+    value = plan.format_note("  two\nlines   and    runs \n", today="2026-08-30")
+    assert value == "2026-08-30 [Note] two lines and runs"
+
+
+def test_note_grammar_rejects_empty_text():
+    for text in ("", "   ", "\n\t "):
+        with pytest.raises(SpecfloError):
+            plan.format_note(text, today="2026-08-30")
+
+
+def test_note_grammar_rejects_unknown_and_user_supplied_edit_labels():
+    with pytest.raises(SpecfloError) as unknown:
+        plan.format_note("x", label="Bogus", today="2026-08-30")
+    assert "Design" in str(unknown.value)  # names the accepted labels
+    with pytest.raises(SpecfloError) as reserved:
+        plan.format_note("x", label="Edit", today="2026-08-30")
+    assert "Edit" in str(reserved.value)
+    # reserved for the forced edit, which asks for it explicitly
+    assert plan.format_note("x", label="Edit", today="2026-08-30", allow_edit=True) == (
+        "2026-08-30 [Edit] x"
+    )
+
+
+def test_note_grammar_parses_a_well_formed_value():
+    assert plan.parse_note("2026-08-30 [Design] why we did it") == {
+        "date": "2026-08-30",
+        "label": "Design",
+        "text": "why we did it",
+    }
+    assert plan.parse_note("2026-08-30 [Edit] old value") == {
+        "date": "2026-08-30",
+        "label": "Edit",
+        "text": "old value",
+    }
+
+
+def test_note_grammar_parse_returns_none_for_malformed_values():
+    assert plan.parse_note("not-a-date [Note] text") is None
+    assert plan.parse_note("2026-13-40 [Note] text") is None  # unparseable date
+    assert plan.parse_note("2026-08-30 [Bogus] text") is None  # label outside the set
+    assert plan.parse_note("2026-08-30 no brackets") is None
+    assert plan.parse_note("2026-08-30 [Note] ") is None  # no text
+    assert plan.parse_note("") is None
