@@ -362,20 +362,39 @@ def _find_cycle(tasks: list[Task]) -> list[str] | None:
     return None
 
 
+def _authored_text(doc: str) -> str:
+    """*doc* without the append-only note lines inside task entries.
+
+    Notes are history and no command removes one, so a note quoting a placeholder
+    word ("the retry path still has a TODO") must not block the plan for good
+    (review-4 F1). Everything else stays linted - authored prose that merely
+    starts with ``- Note:``, anywhere outside a task entry or inside a fence, is
+    not a note (review-5 F1). The key is read the way :func:`_parse_tasks` reads
+    it, so ``- Note : ...`` is treated alike by both.
+    """
+    kept: list[str] = []
+    in_entry = False
+    for _i, line, in_fence in markdown.iter_lines_with_fence(doc):
+        if not in_fence:
+            if _TASK_ID_RE.match(line):
+                in_entry = True
+            elif line.startswith("### ") or line.startswith("## "):
+                in_entry = False
+            if in_entry and line.startswith("- "):
+                key, sep, _ = line[2:].partition(":")
+                if sep and key.strip() == NOTE_FIELD:
+                    continue
+        kept.append(line)
+    return "".join(kept)
+
+
 def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """Return a list of blocking lint issues (empty == ready). Read-only."""
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         return ["plan.md not found — run `specflo plan start`."]
     doc = path.read_text()
-    # Notes are append-only history and no command removes one, so a note quoting
-    # a placeholder word ("still has a TODO") must not permanently block the plan
-    # (review-4 F1). Only authored plan text is linted.
-    authored = "".join(
-        line for line in markdown.strip_comments(doc).splitlines(keepends=True)
-        if not line.startswith(f"- {NOTE_FIELD}:")
-    )
-    issues = markdown.placeholder_issues(authored)
+    issues = markdown.placeholder_issues(_authored_text(markdown.strip_comments(doc)))
 
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
     if not active:
@@ -1044,6 +1063,11 @@ def _edited_depends_on(
     would close a cycle are all refusals (REQ-02). Re-adding an existing edge is
     a no-op, not a duplicate.
     """
+    both = [dep for dep in add if dep in drop]
+    if both:
+        raise SpecfloError(
+            f"Cannot add and drop the same dependency in one edit: {', '.join(both)}."
+        )
     known = {t.id for t in tasks}
     superseded = {t.id for t in tasks if t.status != "active"}
     for dep in add:
@@ -1067,12 +1091,18 @@ def _edited_depends_on(
     for dep in add:
         if dep not in deps:
             deps.append(dep)
-    proposed = [replace(t, depends_on=deps) if t.id == task.id else t for t in tasks]
-    cycle = _find_cycle([t for t in proposed if t.status == "active"])
-    if cycle:
-        raise SpecfloError(
-            f"Editing {task.id} would create a dependency cycle: " + " -> ".join(cycle) + "."
-        )
+    if add:
+        # Only an added edge can close a cycle. A plan that is *already* cyclic is
+        # exactly what these edits repair, so refuse only a cycle this call would
+        # introduce - never one it inherited (review-5 F2).
+        proposed = [replace(t, depends_on=deps) if t.id == task.id else t for t in tasks]
+        active = [t for t in tasks if t.status == "active"]
+        cycle = _find_cycle([t for t in proposed if t.status == "active"])
+        if cycle and not _find_cycle(active):
+            raise SpecfloError(
+                f"Editing {task.id} would create a dependency cycle: "
+                + " -> ".join(cycle) + "."
+            )
     return deps
 
 

@@ -2532,10 +2532,8 @@ def test_a_note_quoting_a_placeholder_word_does_not_block_validate(root, cfg, pr
     assert plan.validate_plan(root, cfg, project) == []
     # an authored placeholder outside a note still blocks
     path = _ppath(root, cfg, project)
-    path.write_text(path.read_text().replace("- Scope:", "- Scope: TODO", 1)
-                    if "- Scope:" in path.read_text()
-                    else path.read_text().replace("## Open questions\n",
-                                                  "## Open questions\nTODO\n", 1))
+    path.write_text(path.read_text().replace(
+        "## Open questions\n", "## Open questions\nTODO\n", 1))
     assert any("TODO" in i for i in plan.validate_plan(root, cfg, project))
 
 
@@ -2552,3 +2550,71 @@ def test_edit_task_depends_can_drop_a_dangling_edge(root, cfg, project):
     assert next(t for t in plan.list_tasks(root, cfg, project)
                 if t.id == third.id).depends_on == [first.id]
     assert not [i for i in plan.validate_plan(root, cfg, project) if "T-77" in i]
+
+
+def test_an_authored_note_line_outside_a_task_entry_is_still_linted(root, cfg, project):
+    # review-5 F1: only a task entry's append-only notes are exempt from the
+    # placeholder lint - authored prose that happens to start '- Note:' is not.
+    _plan_with_task(root, cfg, project, files="a.py")
+    plan.add_task(root, cfg, project, "second", acceptance="a", verify="v",
+                  implements=["REQ-02"], files="b.py", today="2026-08-30")
+    path = _ppath(root, cfg, project)
+    clean = path.read_text()
+    assert plan.validate_plan(root, cfg, project) == []
+    for authored in (
+        clean.replace("## Open questions\n", "## Open questions\n- Note: TBD whether we support X\n", 1),
+        clean.replace("## Approach\n", "## Approach\n```\n- Note: TODO\n```\n", 1),
+    ):
+        path.write_text(authored)
+        assert [i for i in plan.validate_plan(root, cfg, project)
+                if "placeholder" in i], authored[:80]
+    path.write_text(clean)
+    # a note inside an entry stays exempt, however the key is spaced
+    doc = markdown.append_entry_field(clean, "T-01", "Note",
+                                      "2026-08-30 [Note] still a TODO in the code")
+    path.write_text(doc.replace("- Note: 2026", "- Note : 2026", 1))
+    assert not [i for i in plan.validate_plan(root, cfg, project) if "placeholder" in i]
+
+
+def _make_cyclic(root, cfg, project, first, second):
+    path = _ppath(root, cfg, project)
+    doc = markdown.set_entry_field(path.read_text(), first.id, "Depends on", second.id)
+    path.write_text(markdown.set_entry_field(doc, second.id, "Depends on", first.id))
+    assert any("cycle" in i for i in plan.validate_plan(root, cfg, project))
+
+
+def test_edit_task_on_an_already_cyclic_plan_is_not_locked_out(root, cfg, project):
+    # review-5 F2: the cycle this feature exists to repair must not block the repair.
+    first, second, third = _three_tasks(root, cfg, project)
+    _make_cyclic(root, cfg, project, first, second)
+    _, changed = plan.edit_task(root, cfg, project, third.id, title="renamed",
+                                today="2026-08-30")
+    assert changed == ["title"]
+    # and the repair itself goes through
+    _, changed = plan.edit_task(root, cfg, project, second.id,
+                                drop_depends_on=[first.id], today="2026-08-30")
+    assert changed == ["depends_on"]
+    assert not [i for i in plan.validate_plan(root, cfg, project) if "cycle" in i]
+
+
+def test_edit_task_depends_still_refuses_a_newly_closed_cycle(root, cfg, project):
+    first, _second, third = _three_tasks(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:
+        plan.edit_task(root, cfg, project, first.id, add_depends_on=[third.id],
+                       today="2026-08-30")
+    assert "cycle" in str(exc.value).lower()
+    assert path.read_text() == before
+
+
+def test_edit_task_depends_refuses_adding_and_dropping_the_same_edge(root, cfg, project):
+    # review-5 F3: one call cannot mean both things.
+    _first, second, third = _three_tasks(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:
+        plan.edit_task(root, cfg, project, third.id, add_depends_on=[second.id],
+                       drop_depends_on=[second.id], today="2026-08-30")
+    assert second.id in str(exc.value)
+    assert path.read_text() == before
