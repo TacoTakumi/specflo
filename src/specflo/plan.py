@@ -949,6 +949,26 @@ def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
     return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
 
 
+def _check_edit_gate(task: Task, force: bool) -> None:
+    """Refuse to edit finished work, so supersession stays the way it changes (REQ-03).
+
+    A superseded entry is frozen outright; a done task opens only to ``force``,
+    which records an ``[Edit]`` note of what it overwrote.
+    """
+    if task.status != "active":
+        raise SpecfloError(
+            f"Task {task.id} is superseded; its entry is frozen. Edit the task "
+            f"that superseded it instead."
+        )
+    if task.progress == "done" and not force:
+        raise SpecfloError(
+            f"Task {task.id} is done: completed work changes by supersession, not "
+            f"by editing. Record the reasoning with `specflo task note {task.id}`, "
+            f"replace it with `specflo task add --supersedes {task.id}`, or pass "
+            f"--force to edit it anyway (a note recording the old value is added)."
+        )
+
+
 def _edited_depends_on(
     tasks: list[Task], task: Task, add: list[str], drop: list[str]
 ) -> list[str]:
@@ -990,7 +1010,7 @@ def edit_task(
     needs: str | None = None, implements: str | None = None,
     add_depends_on: list[str] | None = None,
     drop_depends_on: list[str] | None = None,
-    today: str | None = None,
+    force: bool = False, today: str | None = None,
 ) -> tuple[str, list[str]]:
     """Rewrite a task's single-line fields in place; return ``(id, changed)``.
 
@@ -1026,6 +1046,7 @@ def edit_task(
         task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
+        _check_edit_gate(task, force)
         changed = [
             name for name in EDITABLE_FIELDS
             if name in edits and _edit_is_a_change(task, name, edits[name])

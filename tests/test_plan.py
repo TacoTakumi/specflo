@@ -2139,3 +2139,47 @@ def test_edit_task_depends_alone_counts_as_an_edit(root, cfg, project):
     tid, changed = plan.edit_task(root, cfg, project, third.id,
                                   add_depends_on=[second.id], today="2026-08-30")
     assert tid == third.id and changed == ["depends_on"]
+
+
+def test_edit_task_gate_refuses_a_done_task_without_force(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    plan.done_task(root, cfg, project, task.id, today="2026-08-30")
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:
+        plan.edit_task(root, cfg, project, task.id, acceptance="new", today="2026-08-30")
+    message = str(exc.value)
+    assert "--force" in message
+    assert "task note" in message
+    assert "task add --supersedes" in message
+    assert path.read_text() == before
+
+
+def test_edit_task_gate_freezes_a_superseded_task(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.add_task(root, cfg, project, "replacement", acceptance="a", verify="v",
+                  implements=["REQ-02"], supersedes=task.id, today="2026-08-30")
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    for force in (False, True):
+        with pytest.raises(SpecfloError) as exc:
+            plan.edit_task(root, cfg, project, task.id, acceptance="new",
+                           force=force, today="2026-08-30")
+        assert "frozen" in str(exc.value)
+        assert path.read_text() == before
+
+
+def test_edit_task_gate_allows_pending_in_progress_and_blocked(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="a1",
+                                today="2026-08-30")
+    assert changed == ["acceptance"]
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="a2",
+                                today="2026-08-30")
+    assert changed == ["acceptance"]
+    plan.block_task(root, cfg, project, task.id, reason="waiting", today="2026-08-30")
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="a3",
+                                today="2026-08-30")
+    assert changed == ["acceptance"]
