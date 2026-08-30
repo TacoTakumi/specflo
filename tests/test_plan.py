@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pytest
 
 from specflo import brainstorm, config, markdown, plan, projects, spec
@@ -1872,3 +1874,39 @@ def test_note_grammar_parse_returns_none_for_malformed_values():
     assert plan.parse_note("2026-08-30 no brackets") is None
     assert plan.parse_note("2026-08-30 [Note] ") is None  # no text
     assert plan.parse_note("") is None
+
+
+_NOTED_ENTRY = (
+    "### T-01 — first\n"
+    "- Acceptance: passes\n"
+    "- Verify: uv run pytest\n"
+    "- Implements: REQ-01, REQ-02\n"
+    "- Files: a.py, b.py\n"
+    "- Progress: done\n"
+    "- Status: active\n"
+    "- Note: 2026-08-30 [Note] one\n"
+    "- Note: 2026-08-29 [Design] two\n"
+    "- Note: 2026-08-31 [Resolution] three\n"
+)
+
+
+def test_parse_tasks_collects_notes_in_document_order():
+    [task] = plan._parse_tasks(_NOTED_ENTRY)
+    assert [n["text"] for n in task.notes] == ["one", "two", "three"]
+    assert [n["label"] for n in task.notes] == ["Note", "Design", "Resolution"]
+    assert task.notes[0]["date"] == "2026-08-30"
+
+
+def test_parse_tasks_notes_default_to_an_empty_list():
+    [task] = plan._parse_tasks("### T-01 — first\n- Progress: pending\n- Status: active\n")
+    assert task.notes == []
+
+
+def test_parse_tasks_notes_do_not_disturb_the_other_fields():
+    [noted] = plan._parse_tasks(_NOTED_ENTRY)
+    plain_doc = "".join(
+        ln for ln in _NOTED_ENTRY.splitlines(keepends=True)
+        if not ln.startswith("- Note:")
+    )
+    [plain] = plan._parse_tasks(plain_doc)
+    assert replace(noted, notes=[]) == plain

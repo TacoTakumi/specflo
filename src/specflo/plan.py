@@ -143,6 +143,7 @@ class Task:
     blocked: str | None = None
     milestone: str | None = None
     needs: list[str] = field(default_factory=list)
+    notes: list[dict] = field(default_factory=list)
 
     @property
     def file_list(self) -> list[str]:
@@ -231,10 +232,19 @@ def _parse_tasks(doc: str) -> list[Task]:
                 end = i
                 break
         fields: dict[str, str] = {}
+        notes: list[dict] = []
         for ln in lines[start + 1:end]:
             if ln.startswith("- ") and ":" in ln:
                 key, _, val = ln[2:].partition(":")
-                fields[key.strip()] = val.strip()
+                key = key.strip()
+                if key == NOTE_FIELD:
+                    # Notes repeat: collect them in document order instead of
+                    # letting the last one win the single-value field dict.
+                    note = parse_note(val.strip())
+                    if note is not None:
+                        notes.append(note)
+                    continue
+                fields[key] = val.strip()
         status_raw = fields.get("Status", "")
         # A task is superseded if it carries the new bidirectional `Superseded by:`
         # field or only the legacy `Status: superseded by <id>` marker. The new
@@ -258,6 +268,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             blocked=fields.get("Blocked"),
             needs=parse_needs(fields.get("Needs")),
             milestone=fields.get("Milestone"),
+            notes=notes,
         ))
     return tasks
 
