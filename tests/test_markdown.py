@@ -1,3 +1,5 @@
+import pytest
+
 from specflo import markdown
 
 
@@ -90,3 +92,41 @@ def test_count_entry_field_counts_repeated_fields():
     assert markdown.count_entry_field(doc, "T-02", "Milestone") == 1   # well-formed single
     assert markdown.count_entry_field(doc, "T-02", "Depends on") == 0  # field absent
     assert markdown.count_entry_field(doc, "T-99", "Milestone") == 0   # entry not present
+
+
+def test_append_entry_field_inserts_after_the_last_metadata_line():
+    out = markdown.append_entry_field(_ENTRY, "T-01", "Note", "2026-08-30 [Note] first")
+    assert (
+        "### T-01 — first\n"
+        "- Acceptance: passes\n"
+        "- Progress: pending\n"
+        "- Status: active\n"
+        "- Note: 2026-08-30 [Note] first\n"
+    ) in out
+    # the next entry is untouched
+    assert "### T-02 — second\n- Progress: pending\n- Status: active\n" in out
+
+
+def test_append_entry_field_appends_after_the_last_existing_field_line():
+    once = markdown.append_entry_field(_ENTRY, "T-01", "Note", "first")
+    twice = markdown.append_entry_field(once, "T-01", "Note", "second")
+    assert "- Note: first\n- Note: second\n" in twice
+    assert markdown.count_entry_field(twice, "T-01", "Note") == 2
+    assert markdown.count_entry_field(twice, "T-02", "Note") == 0
+
+
+def test_append_entry_field_changes_nothing_else():
+    out = markdown.append_entry_field(_ENTRY, "T-02", "Note", "n")
+    assert out.replace("- Note: n\n", "", 1) == _ENTRY  # every other byte unchanged
+    assert out.rstrip("\n").endswith("- Note: n")  # last entry: lands before the doc end
+
+
+def test_append_entry_field_stays_before_the_next_header():
+    doc = _ENTRY + "\n## Open questions\nNone\n"
+    out = markdown.append_entry_field(doc, "T-02", "Note", "n")
+    assert out.index("- Note: n") < out.index("## Open questions")
+
+
+def test_append_entry_field_raises_for_an_unknown_entry():
+    with pytest.raises(StopIteration):
+        markdown.append_entry_field(_ENTRY, "T-99", "Note", "n")

@@ -142,6 +142,36 @@ def set_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
     return "".join(lines)
 
 
+def append_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
+    """Append a repeated ``- {field}: {value}`` line to the ``### {item_id} —`` entry.
+
+    Unlike :func:`set_entry_field`, an existing field line is never rewritten: the
+    new line lands after the entry's last ``- {field}:`` line, or after its last
+    ``- `` metadata line when the field is absent, and always before the next
+    ``###``/``## `` header. Repeated calls accumulate in call order, which is what
+    the append-only fields (notes) rely on.
+    """
+    lines = doc.splitlines(keepends=True)
+    start = next(
+        i for i, line, in_fence in iter_lines_with_fence(doc)
+        if not in_fence and line.startswith(f"### {item_id} —")
+    )
+    end = len(lines)
+    for i in range(start + 1, len(lines)):
+        if lines[i].startswith("### ") or lines[i].startswith("## "):
+            end = i
+            break
+    insert_at = start + 1
+    for i in range(start + 1, end):
+        if lines[i].startswith("- "):
+            insert_at = i + 1
+    for i in range(start + 1, end):
+        if lines[i].startswith(f"- {field}:"):
+            insert_at = i + 1  # a repeated field wins: append below its last line
+    lines.insert(insert_at, f"- {field}: {value}\n")
+    return "".join(lines)
+
+
 def clear_entry_field(doc: str, item_id: str, field: str) -> str:
     """Remove the ``- {field}:`` line from the ``### {item_id} —`` entry, if present."""
     lines = doc.splitlines(keepends=True)
