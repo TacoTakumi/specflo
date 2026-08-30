@@ -949,11 +949,47 @@ def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
     return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
 
 
+def _edited_depends_on(
+    tasks: list[Task], task: Task, add: list[str], drop: list[str]
+) -> list[str]:
+    """The task's Depends on list after *add* and *drop*, or raise.
+
+    Every edge is checked before anything is written: an unknown task, an edge to
+    the task itself, dropping an edge the task does not have, and an edge that
+    would close a cycle are all refusals (REQ-02). Re-adding an existing edge is
+    a no-op, not a duplicate.
+    """
+    known = {t.id for t in tasks}
+    for dep in add + drop:
+        if dep not in known:
+            raise SpecfloError(f"No task {dep}.")
+    for dep in add:
+        if dep == task.id:
+            raise SpecfloError(f"{task.id} cannot depend on itself.")
+    deps = list(task.depends_on)
+    for dep in drop:
+        if dep not in deps:
+            raise SpecfloError(f"{task.id} does not depend on {dep}.")
+        deps.remove(dep)
+    for dep in add:
+        if dep not in deps:
+            deps.append(dep)
+    proposed = [replace(t, depends_on=deps) if t.id == task.id else t for t in tasks]
+    cycle = _find_cycle([t for t in proposed if t.status == "active"])
+    if cycle:
+        raise SpecfloError(
+            f"Editing {task.id} would create a dependency cycle: " + " -> ".join(cycle) + "."
+        )
+    return deps
+
+
 def edit_task(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     title: str | None = None, acceptance: str | None = None,
     verify: str | None = None, scope: str | None = None, files: str | None = None,
     needs: str | None = None, implements: str | None = None,
+    add_depends_on: list[str] | None = None,
+    drop_depends_on: list[str] | None = None,
     today: str | None = None,
 ) -> tuple[str, list[str]]:
     """Rewrite a task's single-line fields in place; return ``(id, changed)``.
@@ -970,9 +1006,12 @@ def edit_task(
             ("implements", implements),
         ) if value is not None
     }
-    if not edits:
+    add_deps = list(add_depends_on or [])
+    drop_deps = list(drop_depends_on or [])
+    if not edits and not add_deps and not drop_deps:
         raise SpecfloError(
-            "Nothing to edit: pass at least one of " + ", ".join(EDITABLE_FIELDS) + "."
+            "Nothing to edit: pass at least one of " + ", ".join(EDITABLE_FIELDS)
+            + ", add-depends-on, drop-depends-on."
         )
     if implements is not None:
         check_implements(root, cfg, slug, _split_refs(implements))
@@ -991,9 +1030,17 @@ def edit_task(
             name for name in EDITABLE_FIELDS
             if name in edits and _edit_is_a_change(task, name, edits[name])
         ]
+        deps = _edited_depends_on(_parse_tasks(doc), task, add_deps, drop_deps)
+        if deps != task.depends_on:
+            changed.append("depends_on")
         if changed:
             for name in changed:
-                doc = _apply_edit(doc, task_id, name, edits[name])
+                if name == "depends_on":
+                    doc = markdown.set_entry_field(
+                        doc, task_id, "Depends on", ", ".join(deps)
+                    )
+                else:
+                    doc = _apply_edit(doc, task_id, name, edits[name])
             doc = markdown.bump_updated(doc, today)
             path.write_text(doc)
     return task_id, changed

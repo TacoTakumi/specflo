@@ -2076,3 +2076,66 @@ def test_edit_task_fields_rejections_leave_the_plan_byte_identical(root, cfg, pr
     with pytest.raises(SpecfloError):  # not a valid pool name
         plan.edit_task(root, cfg, project, task.id, needs="two words", today="2026-08-30")
     assert path.read_text() == before
+
+
+def _three_tasks(root, cfg, project):
+    first = _plan_with_task(root, cfg, project)
+    second = plan.add_task(root, cfg, project, "second", acceptance="a", verify="v",
+                           implements=["REQ-02"], today="2026-06-22")
+    third = plan.add_task(root, cfg, project, "third", acceptance="a", verify="v",
+                          implements=["REQ-02"], depends_on=[first.id], today="2026-06-22")
+    return first, second, third
+
+
+def test_edit_task_depends_adds_and_drops_edges(root, cfg, project):
+    first, second, third = _three_tasks(root, cfg, project)
+    _, changed = plan.edit_task(root, cfg, project, third.id,
+                                add_depends_on=[second.id], today="2026-08-30")
+    assert changed == ["depends_on"]
+    deps = {t.id: t.depends_on for t in plan.list_tasks(root, cfg, project)}
+    assert deps[third.id] == [first.id, second.id]
+    # re-adding is unchanged, never duplicated
+    _, changed = plan.edit_task(root, cfg, project, third.id,
+                                add_depends_on=[second.id], today="2026-08-30")
+    assert changed == []
+    assert plan.list_tasks(root, cfg, project)[2].depends_on == [first.id, second.id]
+    # dropping removes exactly that id and keeps the order of the rest
+    _, changed = plan.edit_task(root, cfg, project, third.id,
+                                drop_depends_on=[first.id], today="2026-08-30")
+    assert changed == ["depends_on"]
+    assert plan.list_tasks(root, cfg, project)[2].depends_on == [second.id]
+
+
+def test_edit_task_depends_rejects_bad_edges_before_any_write(root, cfg, project):
+    first, second, third = _three_tasks(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    bad = (
+        {"drop_depends_on": [second.id]},          # not a dependency of third
+        {"add_depends_on": ["T-99"]},              # unknown task
+        {"drop_depends_on": ["T-99"]},             # unknown task
+        {"add_depends_on": [third.id]},            # itself
+        {"add_depends_on": [first.id, "T-99"]},    # one good, one bad: all or nothing
+    )
+    for kwargs in bad:
+        with pytest.raises(SpecfloError):
+            plan.edit_task(root, cfg, project, third.id, today="2026-08-30", **kwargs)
+        assert path.read_text() == before, kwargs
+
+
+def test_edit_task_depends_rejects_a_cycle(root, cfg, project):
+    first, _second, third = _three_tasks(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:  # third already depends on first
+        plan.edit_task(root, cfg, project, first.id,
+                       add_depends_on=[third.id], today="2026-08-30")
+    assert "cycle" in str(exc.value).lower()
+    assert path.read_text() == before
+
+
+def test_edit_task_depends_alone_counts_as_an_edit(root, cfg, project):
+    _first, second, third = _three_tasks(root, cfg, project)
+    tid, changed = plan.edit_task(root, cfg, project, third.id,
+                                  add_depends_on=[second.id], today="2026-08-30")
+    assert tid == third.id and changed == ["depends_on"]
