@@ -4216,3 +4216,26 @@ def test_plan_graph_without_a_plan_exits_nonzero_with_the_no_plan_message(tmp_pa
     result = runner.invoke(app, ["plan", "graph"])
     assert result.exit_code != 0
     assert "No plan yet" in result.output
+
+
+def test_frontier_never_marks_an_in_progress_task_ready(tmp_path, monkeypatch):
+    # Review round 1, F1: when every pending task is held back, next_actionable
+    # falls back to the in-progress task (linear continue behaviour), but the
+    # orchestrator's ready flag must stay false so nothing is double-dispatched.
+    from specflo import plan as _plan
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    add = ["task", "add", "--acceptance", "a", "--verify", "v", "--from", "REQ-01"]
+    runner.invoke(app, add + ["--text", "one", "--files", "src/a.py", "--needs", "gpu:3090"])
+    runner.invoke(app, add + ["--text", "two", "--files", "src/a.py"])
+    runner.invoke(app, ["advance"])
+    assert runner.invoke(app, ["task", "start", "T-01"]).exit_code == 0
+
+    data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert data["progress"]["next_actionable"] == ["T-01"]      # unchanged fallback
+    assert {t["id"]: t["next"] for t in data["tasks"]} == {"T-01": True, "T-02": False}
+    assert {t["id"]: t["ready"] for t in data["tasks"]} == {"T-01": False, "T-02": False}
+    assert data["pools"] == {"gpu:3090": {"size": 1, "holders": ["T-01"]}}
+
+    fr = _plan.frontier(tmp_path, config.load_config(tmp_path), "thing")
+    assert {t["id"]: t["ready"] for t in fr["tasks"]} == {"T-01": False, "T-02": False}

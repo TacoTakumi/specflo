@@ -42,8 +42,11 @@ def waves(tasks: list[Task]) -> list[list[str]]:
 
 
 def edges(tasks: list[Task]) -> list[list[str]]:
-    """``[from, to]`` per ``Depends on`` entry, in plan order."""
-    return [[dep, t.id] for t in tasks for dep in t.depends_on]
+    """``[from, to]`` per ``Depends on`` entry, in plan order. Dependencies on
+    ids outside *tasks* (superseded tasks) are omitted, so neither the mermaid
+    block nor the payload references a node that is not drawn."""
+    ids = {t.id for t in tasks}
+    return [[dep, t.id] for t in tasks for dep in t.depends_on if dep in ids]
 
 
 def _node(tid: str) -> str:

@@ -122,7 +122,9 @@ each *subagent* does for its task, and you drive the frontier:
 1. **Frontier.** `specflo task list --json` — the tasks with `ready: true` are
    dispatchable now; the CLI has already removed file conflicts with in-progress
    work and pools with no free slot. The `pools` map shows every pool's size and
-   its current holders.
+   its current holders. An empty ready set with work still in progress means
+   **wait** for a running agent to finish — never re-`task start` a task that
+   is already `in_progress`.
 2. **Dispatch.** Per ready task: `specflo task start T-NN`, then spawn
    **one subagent** with the full `specflo task show T-NN` brief and, for each
    pool in its `Needs`, the concrete **pool member** it is assigned (which GPU,

@@ -100,3 +100,14 @@ def test_payload_carries_waves_tasks_and_edges():
         "files": [], "needs": [], "milestone": "M-02",
     }
     assert [t["id"] for t in p["tasks"]] == ["T-01", "T-02", "T-03", "T-04"]
+
+
+def test_edges_and_mermaid_ignore_dependencies_outside_the_given_tasks():
+    # Review round 1, F2: a dependency on a task not passed in (superseded) must
+    # not surface as an edge or a phantom node.
+    tasks = [_task("T-02", "b", deps=["T-99"]), _task("T-03", "c", deps=["T-02"])]
+    assert graph.edges(tasks) == [["T-02", "T-03"]]
+    text = graph.mermaid(tasks, [])
+    assert "T99" not in text
+    assert [l for l in text.splitlines() if "-->" in l] == ["  T02 --> T03"]
+    assert graph.payload(tasks, [])["edges"] == [["T-02", "T-03"]]

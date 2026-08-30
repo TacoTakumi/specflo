@@ -960,7 +960,7 @@ def add_pool(
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
     with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
-        if "## Tasks" not in doc:
+        if markdown.section_body(doc, "## Tasks") is None:
             raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
         doc = markdown.ensure_section_before(doc, POOLS_HEADER, "## Tasks")
         line = f"- {name}: {size}"
@@ -1071,14 +1071,19 @@ def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     """The orchestrator's frontier (fan-out-plans REQ-10), read-only.
 
     ``tasks`` carries, per active task, its ``files`` and ``needs`` lists and
-    ``ready`` (True exactly for ids in ``next_actionable``); ``pools`` maps each
-    declared or needed pool to ``{size, holders}`` where holders are the
-    in_progress tasks naming it.
+    ``ready``: True exactly for the *pending* ids in ``next_actionable``. When
+    every pending task is held back, ``next_actionable`` falls back to the
+    in-progress task (the linear continue-in-progress behaviour); that task is
+    never ``ready``, so an orchestrator sees an empty frontier and waits rather
+    than dispatching a second agent onto it (review round 1, F1). ``pools``
+    maps each declared or needed pool to ``{size, holders}`` where holders are
+    the in_progress tasks naming it.
     """
     path = plan_path(root, cfg, slug)
     doc = path.read_text() if path.is_file() else ""
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    ready = set(progress_from_doc(doc)["next_actionable"])
+    nexts = set(progress_from_doc(doc)["next_actionable"])
+    ready = {t.id for t in active if t.progress == "pending" and t.id in nexts}
     pools = {
         name: {
             "size": size,
@@ -1365,7 +1370,7 @@ def current_task_id(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
     doc = path.read_text()
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
     started = first_in_progress(active)
-    return started or _default_actionable(active, _parse_milestones(doc))
+    return started or _default_actionable(active, _parse_milestones(doc), parse_pools(doc))
 
 
 def render_task_brief(brief: dict) -> str:
