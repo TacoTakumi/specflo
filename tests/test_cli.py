@@ -4239,3 +4239,36 @@ def test_frontier_never_marks_an_in_progress_task_ready(tmp_path, monkeypatch):
 
     fr = _plan.frontier(tmp_path, config.load_config(tmp_path), "thing")
     assert {t["id"]: t["ready"] for t in fr["tasks"]} == {"T-01": False, "T-02": False}
+
+
+def test_task_note_appends_a_labelled_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "note", "T-01", "--text", "wired it up"])
+    assert r.exit_code == 0, r.output
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    assert "[Note] wired it up" in plan_md.read_text()
+    r = runner.invoke(app, ["task", "note", "T-01", "--text", "why", "--label", "Design",
+                            "--json"])
+    assert r.exit_code == 0, r.output
+    data = _json.loads(r.output)
+    assert data["id"] == "T-01"
+    assert data["note"]["label"] == "Design" and data["note"]["text"] == "why"
+    assert set(data["note"]) == {"date", "label", "text"}
+    assert "[Design] why" in plan_md.read_text()
+
+
+def test_task_note_rejections_leave_the_plan_untouched(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_text()
+    for args in (
+        ["T-01", "--text", "x", "--label", "Edit"],
+        ["T-01", "--text", "x", "--label", "Bogus"],
+        ["T-01", "--text", "   "],
+        ["T-99", "--text", "x"],
+    ):
+        r = runner.invoke(app, ["task", "note", *args])
+        assert r.exit_code != 0, args
+        assert plan_md.read_text() == before, args

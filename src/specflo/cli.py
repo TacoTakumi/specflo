@@ -1419,6 +1419,33 @@ def task_set_milestone(
         typer.echo(f"{task.id} -> milestone {task.milestone}")
 
 
+@task_app.command(
+    "note",
+    epilog='Example: specflo task note T-01 --text "why we changed course" --label Design',
+)
+def task_note(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to annotate."),
+    text: str = typer.Option(..., "--text", help="The note text (written as one line)."),
+    label: str = typer.Option(
+        None, "--label",
+        help="One of Note (default), Design, Resolution, Descoped. "
+             "Edit is reserved for `task edit --force`.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Append a dated note to a task, in any progress state."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        note = plan.add_note(root, cfg, slug, task_id, text, label=label)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"id": task_id, "note": note}))
+    else:
+        typer.echo(f"{task_id} note: {note['date']} [{note['label']}] {note['text']}")
+
+
 # The continuation fields a seam contributes to its `--json`. Always present, so
 # a harness can rely on the keys existing even when the values could not be
 # derived (REQ-12); `None` says "underivable", never "absent".
