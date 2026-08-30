@@ -406,15 +406,49 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if not path.is_file():
         return []
     warnings: list[str] = []
-    for t in _parse_tasks(path.read_text()):
-        if t.status != "active":
-            continue
+    active = [t for t in _parse_tasks(path.read_text()) if t.status == "active"]
+    for t in active:
         haystack = f"{t.text} {t.acceptance} {t.verify}".lower()
         for term in _SCOPE_REDUCTION_TERMS:
             if re.search(rf"\b{re.escape(term)}\b", haystack):
                 warnings.append(
                     f'{t.id} may reduce scope ("{term}") — deliver what the requirement needs, or split.'
                 )
+    warnings.extend(_shared_file_warnings(active))
+    return warnings
+
+
+def _shared_file_warnings(active: list[Task]) -> list[str]:
+    """One non-blocking warning per pair of active tasks that share a normalized
+    path and have no dependency path between them in either direction
+    (fan-out-plans REQ-05). Pairs joined by a direct or transitive Depends on
+    edge are ordered already, so they are silent."""
+    ids = {t.id for t in active}
+    deps = {t.id: [d for d in t.depends_on if d in ids] for t in active}
+
+    def ancestors(tid: str) -> set[str]:
+        seen, stack = set(), list(deps.get(tid, []))
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            stack.extend(deps.get(cur, []))
+        return seen
+
+    reach = {t.id: ancestors(t.id) for t in active}
+    warnings: list[str] = []
+    for i, a in enumerate(active):
+        if not a.file_list:
+            continue
+        for b in active[i + 1:]:
+            shared = [f for f in a.file_list if f in b.file_list]
+            if not shared or a.id in reach[b.id] or b.id in reach[a.id]:
+                continue
+            warnings.append(
+                f"{a.id} and {b.id} share {', '.join(shared)} with no dependency "
+                "between them — order them (Depends on) or split the file."
+            )
     return warnings
 
 
