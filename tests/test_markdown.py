@@ -128,5 +128,31 @@ def test_append_entry_field_stays_before_the_next_header():
 
 
 def test_append_entry_field_raises_for_an_unknown_entry():
+    # Mirrors set_entry_field: the id is pre-checked by every caller, so the
+    # entry scan is allowed to run out rather than mint its own error type.
     with pytest.raises(StopIteration):
         markdown.append_entry_field(_ENTRY, "T-99", "Note", "n")
+
+
+def test_entry_field_writers_keep_the_document_line_terminated():
+    # review-1 F3: a document with no trailing newline must not lose its last line.
+    doc = "### T-01 — a\n- Status: active"
+    assert markdown.append_entry_field(doc, "T-01", "Note", "x") == (
+        "### T-01 — a\n- Status: active\n- Note: x\n"
+    )
+    assert markdown.set_entry_field(doc, "T-01", "Files", "a.py") == (
+        "### T-01 — a\n- Status: active\n- Files: a.py\n"
+    )
+
+
+def test_set_entry_field_inserts_above_the_entrys_notes():
+    # review-1 F4: notes stay at the bottom of the entry.
+    doc = ("### T-01 — a\n- Status: active\n- Note: 2026-08-30 [Note] first\n"
+           "### T-02 — b\n- Status: active\n")
+    out = markdown.set_entry_field(doc, "T-01", "Files", "a.py")
+    assert out.startswith(
+        "### T-01 — a\n- Status: active\n- Files: a.py\n- Note: 2026-08-30 [Note] first\n"
+    )
+    # a note appended afterwards still lands below the existing notes
+    out = markdown.append_entry_field(out, "T-01", "Note", "2026-08-31 [Note] second")
+    assert "- Note: 2026-08-30 [Note] first\n- Note: 2026-08-31 [Note] second\n" in out

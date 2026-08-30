@@ -14,7 +14,7 @@ import re
 
 from conftest import executable_identifiers
 
-from specflo import continuation
+from specflo import continuation, plan
 from specflo.workflow import PHASES
 
 
@@ -344,12 +344,20 @@ def test_builder_is_a_pure_function_of_its_arguments():
 
 
 def test_reseed_brief_carries_a_task_note():
-    brief = (
-        "T-01 - build it  [in_progress]\n"
-        "  Acceptance: it works\n"
-        "  Notes:\n"
-        "    2026-08-30 [Design] why we changed course\n"
-    )
+    # The real renderer, so the seam breaks if render_task_brief stops emitting
+    # notes (review-1 F7).
+    brief = plan.render_task_brief({
+        "task": {
+            "id": "T-01", "text": "build it", "acceptance": "it works",
+            "verify": "uv run pytest", "implements": ["REQ-01"], "depends_on": [],
+            "files": [], "needs": [], "scope": None, "progress": "in_progress",
+            "notes": [{"date": "2026-08-30", "label": "Design",
+                       "text": "why we changed course"}],
+        },
+        "requirements": [], "global_constraints": None, "execution": "linear",
+        "working_ahead": None, "boundary": None,
+    })
+    assert "2026-08-30 [Design] why we changed course" in brief
     payload = continuation.build_reseed("directive", "body", brief)
     assert "2026-08-30 [Design] why we changed course" in payload
     assert payload.index("why we changed course") > payload.index("body")

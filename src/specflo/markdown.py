@@ -113,12 +113,24 @@ def next_id(doc: str, prefix: str) -> str:
     return f"{prefix}{nxt:02d}"
 
 
+def _insert_entry_line(lines: list[str], index: int, field: str, value: str) -> None:
+    """Insert a ``- {field}: {value}`` line, keeping the document line-terminated.
+
+    Without the guard, a document whose last line carries no newline would have
+    the inserted line concatenated onto it.
+    """
+    if index and not lines[index - 1].endswith("\n"):
+        lines[index - 1] += "\n"
+    lines.insert(index, f"- {field}: {value}\n")
+
+
 def set_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
     """Set the ``- {field}:`` line of the ``### {item_id} —`` entry to *value*.
 
     Updates the existing field line in place if present; otherwise inserts a new
-    ``- {field}: {value}`` line after the entry's last ``- `` metadata line
-    (before the next ``###``/``## `` header). Fence-aware via the heading scan.
+    ``- {field}: {value}`` line after the entry's last ``- `` metadata line other
+    than its trailing ``- Note:`` history (before the next ``###``/``## ``
+    header). Fence-aware via the heading scan.
     """
     lines = doc.splitlines(keepends=True)
     start = next(
@@ -136,9 +148,11 @@ def set_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
             return "".join(lines)
     insert_at = start + 1
     for i in range(start + 1, end):
-        if lines[i].startswith("- "):
+        # Append-only fields (notes) are the entry's history and stay at
+        # the bottom, so a new field line is inserted above them.
+        if lines[i].startswith("- ") and not lines[i].startswith("- Note:"):
             insert_at = i + 1
-    lines.insert(insert_at, f"- {field}: {value}\n")
+    _insert_entry_line(lines, insert_at, field, value)
     return "".join(lines)
 
 
@@ -168,7 +182,7 @@ def append_entry_field(doc: str, item_id: str, field: str, value: str) -> str:
     for i in range(start + 1, end):
         if lines[i].startswith(f"- {field}:"):
             insert_at = i + 1  # a repeated field wins: append below its last line
-    lines.insert(insert_at, f"- {field}: {value}\n")
+    _insert_entry_line(lines, insert_at, field, value)
     return "".join(lines)
 
 

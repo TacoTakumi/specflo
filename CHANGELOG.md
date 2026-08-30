@@ -8,7 +8,7 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
-## [0.13.0]
+## [0.12.0]
 
 ### Added
 - **`specflo task edit <T-NN>` (task-edit-and-task-note).** Correct an active
@@ -16,7 +16,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   `--acceptance`, `--verify`, `--scope`, `--files`, `--needs`, `--implements`,
   plus repeatable `--add-depends-on` / `--drop-depends-on`. At least one edit
   flag is required; a field already holding the given value is reported as
-  unchanged. Edge edits are refused before any write when the task is unknown,
+  unchanged. Every value is one line - a value carrying a line break is
+  refused - and `--title`, `--acceptance`, `--verify` and `--implements`
+  refuse an empty value, while an empty `--scope`, `--files` or `--needs`
+  clears that optional field. Edge edits are refused before any write when the task is unknown,
   is the task itself, is not a current dependency (on a drop), or would close a
   dependency cycle. Completed work still changes by supersession: a done task
   refuses the edit unless `--force`, which appends one `[Edit]` note per changed
@@ -36,10 +39,6 @@ latter. Release tags are of the form `vX.Y.Z`.
   the task's metadata and `--json` carries the list; `task list`, `status` and
   `checkpoint` are unchanged. A hand-written note that does not parse is a
   non-blocking plan warning, never a `validate plan` failure.
-
-## [0.12.0]
-
-### Added
 - **Execution mode (fan-out-plans).** Every project records `execution:
   linear|fan-out` in `project.md`; `specflo new --execution` sets it, a new
   `specflo execution <mode>` command switches it in either direction at any

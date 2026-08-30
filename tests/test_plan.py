@@ -2338,3 +2338,58 @@ def test_notes_are_additive_across_every_plan_in_this_repo(tmp_path):
             )
             assert stripped == before["briefs"][tid], (slug, tid)
     assert briefed >= 100  # the briefs really were rendered
+
+
+def test_edit_task_fields_treats_the_value_as_literal_text(root, cfg, project):
+    # review-1 F1: a user value must never be interpreted as a regex replacement.
+    task = _plan_with_task(root, cfg, project)
+    plan.edit_task(root, cfg, project, task.id, title=r"handle \d in the parser",
+                   today="2026-08-30")
+    doc = _ppath(root, cfg, project).read_text()
+    assert r"### T-01 — handle \d in the parser" in doc
+    plan.edit_task(root, cfg, project, task.id, title=r"C:\1 path", today="2026-08-30")
+    assert next(t for t in plan.list_tasks(root, cfg, project)).text == r"C:\1 path"
+
+
+def test_edit_task_fields_reject_a_value_carrying_a_newline(root, cfg, project):
+    # review-1 F1: every field is one line; a newline would inject plan.md lines.
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    injection = "real\n\n### T-99 — ghost\n- Acceptance: a\n- Status: active"
+    for field in ("title", "acceptance", "verify", "scope", "files"):
+        with pytest.raises(SpecfloError) as exc:
+            plan.edit_task(root, cfg, project, task.id, today="2026-08-30",
+                           **{field: injection})
+        assert "one line" in str(exc.value)
+        assert path.read_text() == before
+    with pytest.raises(SpecfloError):  # a carriage return is a line break too
+        plan.edit_task(root, cfg, project, task.id, title="a\rb", today="2026-08-30")
+    assert path.read_text() == before
+
+
+def test_edit_task_fields_reject_blanking_a_mandatory_field(root, cfg, project):
+    # review-1 F2: task add treats these as mandatory; edit must not hollow them out.
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    for field in ("title", "acceptance", "verify", "implements"):
+        for value in ("", "   "):
+            with pytest.raises(SpecfloError) as exc:
+                plan.edit_task(root, cfg, project, task.id, today="2026-08-30",
+                               **{field: value})
+            assert "empty" in str(exc.value).lower()
+            assert path.read_text() == before
+
+
+def test_edit_task_fields_blank_value_clears_an_optional_field(root, cfg, project):
+    task = _plan_with_task(root, cfg, project, files="a.py", scope="thin")
+    _, changed = plan.edit_task(root, cfg, project, task.id, files="", scope="",
+                                today="2026-08-30")
+    assert changed == ["scope", "files"]
+    doc = _ppath(root, cfg, project).read_text()
+    assert "- Files:" not in doc and "- Scope:" not in doc
+    # clearing a field the task does not carry is no change at all
+    _, changed = plan.edit_task(root, cfg, project, task.id, files="", needs="",
+                                today="2026-08-30")
+    assert changed == []

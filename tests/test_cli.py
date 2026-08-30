@@ -4356,7 +4356,7 @@ def test_task_edit_requires_an_edit_flag(tmp_path, monkeypatch):
     before = plan_md.read_text()
     r = runner.invoke(app, ["task", "edit", "T-01"])
     assert r.exit_code != 0
-    assert "--acceptance" in r.output or "acceptance" in r.output
+    assert "--acceptance" in r.output and "--add-depends-on" in r.output
     assert plan_md.read_text() == before
     r = runner.invoke(app, ["task", "edit", "T-99", "--acceptance", "x"])
     assert r.exit_code != 0

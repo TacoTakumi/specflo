@@ -927,6 +927,26 @@ _EDIT_FIELD_KEYS = {
 }
 
 
+# The fields `task add` will not create empty: blanking one would leave a task
+# nobody can act on, so `task edit` refuses it (review-1 F2). The rest are
+# optional, and an empty value clears the line.
+_MANDATORY_EDIT_FIELDS = ("title", "acceptance", "verify", "implements")
+
+
+def _check_edit_value(name: str, value: str) -> None:
+    """Reject an edit value that would break the one-field-one-line invariant."""
+    if "\n" in value or "\r" in value:
+        raise SpecfloError(
+            f"A task's {name} is one line: remove the line break "
+            f"(record longer prose with `specflo task note`)."
+        )
+    if not value.strip() and name in _MANDATORY_EDIT_FIELDS:
+        raise SpecfloError(
+            f"A task's {name} cannot be empty. Supersede the task instead if it "
+            f"no longer describes real work."
+        )
+
+
 def _edit_is_a_change(task: Task, name: str, value: str) -> bool:
     """True when writing *value* into *name* would change the task's parsed state."""
     if name == "title":
@@ -940,12 +960,16 @@ def _edit_is_a_change(task: Task, name: str, value: str) -> bool:
 
 def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
     if name == "title":
+        # A replacement *function*: nothing in the user's title is interpreted as
+        # an escape or a group reference (review-1 F1).
         return re.sub(
-            rf"(?m)^### {re.escape(task_id)} —.*$", f"### {task_id} — {value}", doc,
-            count=1,
+            rf"(?m)^### {re.escape(task_id)} —.*$",
+            lambda _m: f"### {task_id} — {value}", doc, count=1,
         )
     if name in ("needs", "implements"):
         value = ", ".join(_split_refs(value))
+    if not value.strip():
+        return markdown.clear_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name])
     return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
 
 
@@ -1047,10 +1071,13 @@ def edit_task(
     add_deps = list(add_depends_on or [])
     drop_deps = list(drop_depends_on or [])
     if not edits and not add_deps and not drop_deps:
+        flags = [f"--{name.replace('_', '-')}" for name in EDITABLE_FIELDS]
         raise SpecfloError(
-            "Nothing to edit: pass at least one of " + ", ".join(EDITABLE_FIELDS)
-            + ", add-depends-on, drop-depends-on."
+            "Nothing to edit: pass at least one of " + ", ".join(flags)
+            + ", --add-depends-on, --drop-depends-on."
         )
+    for name, value in edits.items():
+        _check_edit_value(name, value)
     if implements is not None:
         check_implements(root, cfg, slug, _split_refs(implements))
     if needs is not None:
@@ -1061,7 +1088,8 @@ def edit_task(
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
     with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
-        task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+        tasks = _parse_tasks(doc)
+        task = next((t for t in tasks if t.id == task_id), None)
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
         _check_edit_gate(task, force)
@@ -1069,7 +1097,7 @@ def edit_task(
             name for name in EDITABLE_FIELDS
             if name in edits and _edit_is_a_change(task, name, edits[name])
         ]
-        deps = _edited_depends_on(_parse_tasks(doc), task, add_deps, drop_deps)
+        deps = _edited_depends_on(tasks, task, add_deps, drop_deps)
         if deps != task.depends_on:
             changed.append("depends_on")
         if changed:
