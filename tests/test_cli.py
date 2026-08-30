@@ -4405,3 +4405,25 @@ def test_task_edit_state_gate_at_the_cli(tmp_path, monkeypatch):
         assert r.exit_code != 0
         assert "frozen" in r.output
         assert plan_md.read_text() == frozen
+
+
+def test_task_done_and_reopen_accept_a_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    runner.invoke(app, ["task", "start", "T-01"])
+    r = runner.invoke(app, ["task", "done", "T-01", "--note", "shipped it"])
+    assert r.exit_code == 0, r.output
+    assert "[Note] shipped it" in plan_md.read_text()
+    r = runner.invoke(app, ["task", "reopen", "T-01", "--note", "regressed"])
+    assert r.exit_code == 0, r.output
+    assert "[Note] regressed" in plan_md.read_text()
+
+
+def test_task_start_and_block_reject_a_note(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "start", "T-01", "--note", "x"])
+    assert r.exit_code != 0
+    r = runner.invoke(app, ["task", "block", "T-01", "--note", "x"])
+    assert r.exit_code != 0

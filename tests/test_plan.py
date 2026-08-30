@@ -2237,3 +2237,38 @@ def test_edit_task_force_note_covers_dependency_edges(root, cfg, project):
     assert edited.notes[0]["text"] == (
         'forced edit of Depends on; previous value: "T-01"'
     )
+
+
+def test_done_and_reopen_carry_a_ride_along_note(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    plan.done_task(root, cfg, project, task.id, note="shipped it", today="2026-08-30")
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert edited.progress == "done"
+    assert [(n["label"], n["text"]) for n in edited.notes] == [("Note", "shipped it")]
+    plan.reopen_task(root, cfg, project, task.id, note="regressed", today="2026-08-30")
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert edited.progress == "pending"
+    assert [n["text"] for n in edited.notes] == ["shipped it", "regressed"]
+
+
+def test_done_with_a_bad_note_changes_nothing(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError):
+        plan.done_task(root, cfg, project, task.id, note="   ", today="2026-08-30")
+    assert path.read_text() == before
+    assert next(t for t in plan.list_tasks(root, cfg, project)
+                if t.id == task.id).progress == "in_progress"
+
+
+def test_block_and_reopen_still_clear_the_blocked_field_with_notes(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.block_task(root, cfg, project, task.id, reason="waiting on API", today="2026-08-30")
+    assert "- Blocked: waiting on API" in _ppath(root, cfg, project).read_text()
+    plan.reopen_task(root, cfg, project, task.id, note="unblocked", today="2026-08-30")
+    doc = _ppath(root, cfg, project).read_text()
+    assert "- Blocked:" not in doc
+    assert "[Note] unblocked" in doc

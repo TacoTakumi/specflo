@@ -1120,10 +1120,14 @@ def add_note(
 
 def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
-    progress: str, reason: str | None = None, today: str | None = None,
+    progress: str, reason: str | None = None, note: str | None = None,
+    today: str | None = None,
 ) -> Task:
     if progress not in PROGRESS_STATES:
         raise SpecfloError(f"Unknown progress state {progress!r}.")
+    # The ride-along note is validated before the lock, so a bad note refuses the
+    # transition outright instead of leaving a half-applied write (REQ-11).
+    note_value = format_note(note, today=today) if note is not None else None
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
@@ -1144,6 +1148,8 @@ def _set_progress(
             doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
         else:
             doc = markdown.clear_entry_field(doc, task_id, "Blocked")
+        if note_value is not None:
+            doc = markdown.append_entry_field(doc, task_id, NOTE_FIELD, note_value)
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     task.progress = progress
@@ -1155,16 +1161,16 @@ def start_task(root, cfg, slug, task_id, today=None) -> Task:
     return _set_progress(root, cfg, slug, task_id, "in_progress", today=today)
 
 
-def done_task(root, cfg, slug, task_id, today=None) -> Task:
-    return _set_progress(root, cfg, slug, task_id, "done", today=today)
+def done_task(root, cfg, slug, task_id, note=None, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "done", note=note, today=today)
 
 
 def block_task(root, cfg, slug, task_id, reason=None, today=None) -> Task:
     return _set_progress(root, cfg, slug, task_id, "blocked", reason=reason, today=today)
 
 
-def reopen_task(root, cfg, slug, task_id, today=None) -> Task:
-    return _set_progress(root, cfg, slug, task_id, "pending", today=today)
+def reopen_task(root, cfg, slug, task_id, note=None, today=None) -> Task:
+    return _set_progress(root, cfg, slug, task_id, "pending", note=note, today=today)
 
 
 def set_milestone(

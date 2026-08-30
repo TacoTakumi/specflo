@@ -1588,12 +1588,15 @@ def task_start(
 @task_app.command("done", epilog="Example: specflo task done T-01")
 def task_done(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to mark done."),
+    note: str = typer.Option(
+        None, "--note", help="Record a note on the task in the same write."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mark a task done."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     try:
-        task = plan.done_task(root, cfg, slug, task_id)
+        task = plan.done_task(root, cfg, slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
@@ -1631,12 +1634,15 @@ def task_block(
 @task_app.command("reopen", epilog="Example: specflo task reopen T-01")
 def task_reopen(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to reopen (back to pending)."),
+    note: str = typer.Option(
+        None, "--note", help="Record a note on the task in the same write."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Return a task to pending (clears any block)."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     try:
-        task = plan.reopen_task(root, cfg, slug, task_id)
+        task = plan.reopen_task(root, cfg, slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
