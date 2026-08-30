@@ -985,7 +985,9 @@ def add_pool(
     return name, size
 
 
-def _progress_from_tasks(active: list[Task]) -> dict:
+def _progress_from_tasks(
+    active: list[Task], pools: dict[str, int] | None = None
+) -> dict:
     by_state = {s: 0 for s in PROGRESS_STATES}
     for t in active:
         by_state[t.progress if t.progress in by_state else "pending"] += 1
@@ -995,11 +997,25 @@ def _progress_from_tasks(active: list[Task]) -> dict:
     # reopened or blocked (fan-out-plans REQ-06). Tasks with no Files are never
     # excluded, so a Files-free plan keeps today's ready set.
     held = {f for t in active if t.progress == "in_progress" for f in t.file_list}
+    # Pool slots (fan-out-plans REQ-09): each in_progress task needing a pool
+    # holds one slot; a pending needer is not ready while every slot of any
+    # pool it needs is held. Undeclared pools (including 'user') have size 1.
+    sizes = dict(pools or {})
+    used: dict[str, int] = {}
+    for t in active:
+        if t.progress == "in_progress":
+            for name in t.needs:
+                used[name] = used.get(name, 0) + 1
+
+    def pools_full(t: Task) -> bool:
+        return any(used.get(name, 0) >= sizes.get(name, 1) for name in t.needs)
+
     next_actionable = [
         t.id for t in active
         if t.progress == "pending"
         and all(d in done_ids for d in t.depends_on)
         and not (held and held.intersection(t.file_list))
+        and not pools_full(t)
     ]
     # When no unstarted task is dependency-ready but a task on the plan is already
     # under way (the mid-task state a context clear lands in, or a half-started
@@ -1025,7 +1041,7 @@ def _progress_from_tasks(active: list[Task]) -> dict:
 
 def progress_from_doc(doc: str) -> dict:
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    prog = _progress_from_tasks(active)
+    prog = _progress_from_tasks(active, parse_pools(doc))
     # Steer the ready-task ordering to the current milestone so status's "next"
     # line, the next-step hint, and checkpoint's next-task note all lead with the
     # same task `task show` picks (REQ-13); dormant on milestone-free plans (REQ-04).
@@ -1097,7 +1113,10 @@ def _steer_actionable(
     return sorted(actionable, key=_key)
 
 
-def _default_actionable(active: list[Task], milestones: list[Milestone]) -> str | None:
+def _default_actionable(
+    active: list[Task], milestones: list[Milestone],
+    pools: dict[str, int] | None = None,
+) -> str | None:
     """The task ``task show`` defaults to: among dependency-ready pending tasks,
     steer to the current milestone (REQ-13).
 
@@ -1110,7 +1129,7 @@ def _default_actionable(active: list[Task], milestones: list[Milestone]) -> str 
     ``next_actionable[0]`` (REQ-04 dormancy).
     """
     steered = _steer_actionable(
-        _progress_from_tasks(active)["next_actionable"], active, milestones)
+        _progress_from_tasks(active, pools)["next_actionable"], active, milestones)
     return steered[0] if steered else None
 
 
@@ -1376,7 +1395,7 @@ def task_brief(
     execution = load_project(root, cfg, slug).execution
     fan_out = execution == FAN_OUT_EXECUTION
     if task_id is None:
-        task_id = _default_actionable(active, milestones)
+        task_id = _default_actionable(active, milestones, parse_pools(doc))
         if task_id is None:
             boundary = milestone_boundary_from_doc(doc)
             if boundary is not None and boundary.get("all_complete"):

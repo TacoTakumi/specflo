@@ -1678,3 +1678,87 @@ def test_validate_plan_accepts_a_plan_with_and_without_pools(root, cfg, project)
     assert plan.validate_plan(root, cfg, project) == []
     plan.add_pool(root, cfg, project, "gpu:3090", 2)
     assert plan.validate_plan(root, cfg, project) == []
+
+
+# --- ready set honours pool slots (fan-out-plans REQ-09, REQ-12) ------------
+
+
+def _entry_with_needs(tid, needs, progress="pending", deps=None):
+    entry = _raw_task_entry(tid, deps=deps, progress=progress)
+    return entry.replace("- Progress:", f"- Needs: {needs}\n- Progress:")
+
+
+def _pool_plan(root, cfg, project, entries, pools=()):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    for name, size in pools:
+        plan.add_pool(root, cfg, project, name, size)
+    path = _ppath(root, cfg, project)
+    doc = path.read_text()
+    for entry in entries:
+        doc = markdown.append_to_section(doc, "## Tasks", entry)
+    path.write_text(doc)
+
+
+def _ready(root, cfg, project):
+    return plan.plan_progress(root, cfg, project)["next_actionable"]
+
+
+def test_ready_set_pool_full_excludes_a_pending_needer(root, cfg, project):
+    _pool_plan(root, cfg, project, [
+        _entry_with_needs("T-01", "gpu:3090", progress="in_progress"),
+        _entry_with_needs("T-02", "gpu:3090", progress="in_progress"),
+        _entry_with_needs("T-03", "gpu:3090"),
+        _raw_task_entry("T-04"),
+    ], pools=[("gpu:3090", 2)])
+    assert _ready(root, cfg, project) == ["T-04"]
+    plan.done_task(root, cfg, project, "T-01")
+    assert _ready(root, cfg, project) == ["T-03", "T-04"]
+
+
+def test_ready_set_pool_with_a_free_slot_admits_the_needer(root, cfg, project):
+    _pool_plan(root, cfg, project, [
+        _entry_with_needs("T-01", "gpu:3090", progress="in_progress"),
+        _entry_with_needs("T-02", "gpu:3090"),
+    ], pools=[("gpu:3090", 2)])
+    assert _ready(root, cfg, project) == ["T-02"]
+
+
+def test_ready_set_undeclared_pool_has_one_slot(root, cfg, project):
+    _pool_plan(root, cfg, project, [
+        _entry_with_needs("T-04", "comfy-venv", progress="in_progress"),
+        _entry_with_needs("T-05", "comfy-venv"),
+        _raw_task_entry("T-06"),
+    ])
+    assert _ready(root, cfg, project) == ["T-06"]
+    plan.block_task(root, cfg, project, "T-04", reason="stuck")
+    assert _ready(root, cfg, project) == ["T-05", "T-06"]
+
+
+def test_ready_set_pool_slot_frees_on_reopen(root, cfg, project):
+    _pool_plan(root, cfg, project, [
+        _entry_with_needs("T-01", "comfy-venv", progress="in_progress"),
+        _entry_with_needs("T-02", "comfy-venv"),
+    ])
+    assert _ready(root, cfg, project) == ["T-01"]        # continue-in-progress fallback
+    plan.reopen_task(root, cfg, project, "T-01")
+    assert _ready(root, cfg, project) == ["T-01", "T-02"]
+
+
+def test_ready_set_user_pool_needs_no_declaration(root, cfg, project):
+    _pool_plan(root, cfg, project, [
+        _entry_with_needs("T-01", "user"),
+        _raw_task_entry("T-02"),
+    ])
+    assert _ready(root, cfg, project) == ["T-01", "T-02"]
+    plan.start_task(root, cfg, project, "T-01")
+    _pool_plan_doc = _ppath(root, cfg, project)
+    doc = _pool_plan_doc.read_text()
+    doc = markdown.append_to_section(doc, "## Tasks", _entry_with_needs("T-03", "user"))
+    _pool_plan_doc.write_text(doc)
+    assert _ready(root, cfg, project) == ["T-02"]        # the one user slot is held
+
+
+def test_ready_set_pool_rule_is_dormant_without_needs(root, cfg, project):
+    _file_conflict_plan(root, cfg, project)               # Files only, no Needs
+    assert _ready(root, cfg, project) == ["T-03"]
