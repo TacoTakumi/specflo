@@ -8,6 +8,35 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.13.0]
+
+### Added
+- **`specflo task edit <T-NN>` (task-edit-and-task-note).** Correct an active
+  task's fields in place instead of hand-editing `plan.md`: `--title`,
+  `--acceptance`, `--verify`, `--scope`, `--files`, `--needs`, `--implements`,
+  plus repeatable `--add-depends-on` / `--drop-depends-on`. At least one edit
+  flag is required; a field already holding the given value is reported as
+  unchanged. Edge edits are refused before any write when the task is unknown,
+  is the task itself, is not a current dependency (on a drop), or would close a
+  dependency cycle. Completed work still changes by supersession: a done task
+  refuses the edit unless `--force`, which appends one `[Edit]` note per changed
+  field carrying the overwritten value, and a superseded entry is frozen with or
+  without `--force`. `--json` emits `{id, changed}`.
+- **`specflo task note <T-NN> --text ... [--label ...]`.** Append a dated note
+  line - `- Note: <YYYY-MM-DD> [<Label>] <text>` - to a task entry. Notes are
+  append-only and accumulate in the order written, on a task in any progress
+  state including a done or superseded one. The label set is closed - `Note`
+  (default), `Design`, `Resolution`, `Descoped` - with `Edit` reserved for
+  `task edit --force`. Text is written as one line and empty text is refused.
+  `--json` emits `{id, note}`.
+- **`--note` on `task done` and `task reopen`.** Records the note in the same
+  locked write as the state change; `task start` and `task block` take no
+  `--note`.
+- **Notes in the task brief.** `specflo task show` prints a `Notes:` block after
+  the task's metadata and `--json` carries the list; `task list`, `status` and
+  `checkpoint` are unchanged. A hand-written note that does not parse is a
+  non-blocking plan warning, never a `validate plan` failure.
+
 ## [0.12.0]
 
 ### Added
