@@ -3816,3 +3816,94 @@ def test_directory_option_survives_a_deleted_caller_cwd(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert "dir-project" in r.output
     monkeypatch.chdir(tmp_path)  # leave a real cwd behind for later tests
+
+
+# --- execution mode: new --execution and the execution verb (fan-out-plans
+# REQ-01, REQ-02) ---------------------------------------------------------
+
+
+def _execution_of(tmp_path, slug="thing"):
+    from specflo import projects as _projects
+    root = tmp_path
+    return _projects.load_project(root, config.load_config(root), slug).execution
+
+
+def test_new_without_execution_flag_is_linear(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing"])
+    assert result.exit_code == 0
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "execution: linear" in text
+    assert _execution_of(tmp_path) == "linear"
+
+
+def test_new_with_execution_fan_out(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing", "--execution", "fan-out"])
+    assert result.exit_code == 0
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "execution: fan-out" in text
+    assert _execution_of(tmp_path) == "fan-out"
+
+
+def test_new_with_invalid_execution_exits_nonzero_naming_both(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing", "--execution", "other"])
+    assert result.exit_code != 0
+    assert "linear" in result.output and "fan-out" in result.output
+    assert not (tmp_path / "docs" / "projects" / "thing").exists()
+
+
+def test_execution_verb_switches_both_ways_at_execute_phase(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    assert _execution_of(tmp_path) == "linear"
+
+    for mode in ("fan-out", "linear", "fan-out"):
+        result = runner.invoke(app, ["execution", mode])
+        assert result.exit_code == 0, result.output
+        assert mode in result.output
+        assert _execution_of(tmp_path) == mode
+
+
+def test_execution_verb_reports_unchanged_when_mode_matches(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    runner.invoke(app, ["execution", "fan-out"])
+
+    result = runner.invoke(app, ["execution", "fan-out"])
+    assert result.exit_code == 0
+    assert "unchanged" in result.output
+    assert _execution_of(tmp_path) == "fan-out"
+
+
+def test_execution_verb_json_emits_mode_and_changed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+
+    first = runner.invoke(app, ["execution", "fan-out", "--json"])
+    assert first.exit_code == 0
+    assert json.loads(first.output) == {"execution": "fan-out", "changed": True}
+
+    again = runner.invoke(app, ["execution", "fan-out", "--json"])
+    assert again.exit_code == 0
+    assert json.loads(again.output) == {"execution": "fan-out", "changed": False}
+
+
+def test_execution_verb_rejects_invalid_mode(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    result = runner.invoke(app, ["execution", "other"])
+    assert result.exit_code != 0
+    assert "linear" in result.output and "fan-out" in result.output
+    assert _execution_of(tmp_path) == "linear"
+
+
+def test_execution_verb_requires_an_active_project(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["execution", "fan-out"])
+    assert result.exit_code != 0

@@ -279,12 +279,20 @@ def new(
         "--summary",
         help="One-line summary written to project.md; a visible placeholder otherwise.",
     ),
+    execution: str = typer.Option(
+        projects.LINEAR_EXECUTION,
+        "--execution",
+        metavar="linear|fan-out",
+        help="Execution mode recorded in project.md (default: linear).",
+    ),
 ) -> None:
     """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
     try:
-        project = projects.create_project(root, cfg, name, summary=summary)
+        project = projects.create_project(
+            root, cfg, name, summary=summary, execution=execution
+        )
         cfg.active_project = project.slug
         config.save_config(root, cfg)
     except SpecfloError as exc:
@@ -330,6 +338,33 @@ def summary(
         raise _die(str(exc))
     _refresh_index(root, cfg)
     typer.echo(f"Summary for '{project.slug}': {project.summary}")
+
+
+@app.command(epilog="Example: specflo execution fan-out")
+def execution(
+    mode: str = typer.Argument(
+        ...,
+        metavar="linear|fan-out",
+        help="The execution mode to record on the active project.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Switch the active project's execution mode (either direction, any phase)."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    try:
+        mode, changed = projects.set_execution(root, cfg, slug, mode)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if changed:
+        _refresh_checkpoint(root, cfg, slug)
+    if json_output:
+        typer.echo(json.dumps({"execution": mode, "changed": changed}))
+    elif changed:
+        typer.echo(f"Execution mode for '{slug}': {mode}")
+    else:
+        typer.echo(f"Execution mode for '{slug}' unchanged: {mode}")
 
 
 @app.command(epilog="Example: specflo index")

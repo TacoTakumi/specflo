@@ -53,6 +53,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "(Re)generate specflo-index.md, the ledger of every project."},
     {"name": "summary", "group": "setup", "args": "[<name>] <text>",
      "summary": "Set a project's one-line summary and refresh the index."},
+    {"name": "execution", "group": "setup", "args": "linear|fan-out",
+     "summary": "Switch the active project's execution mode (any phase)."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "shelve", "group": "setup", "args": "[<name>]",
