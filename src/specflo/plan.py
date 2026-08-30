@@ -1042,7 +1042,8 @@ def _check_edit_gate(task: Task, force: bool) -> None:
     if task.status != "active":
         raise SpecfloError(
             f"Task {task.id} is superseded; its entry is frozen. Edit the task "
-            f"that superseded it instead."
+            f"that superseded it instead, or annotate this one with "
+            f"`specflo task note {task.id}`."
         )
     if task.progress == "done" and not force:
         raise SpecfloError(
@@ -1051,6 +1052,28 @@ def _check_edit_gate(task: Task, force: bool) -> None:
             f"replace it with `specflo task add --supersedes {task.id}`, or pass "
             f"--force to edit it anyway (a note recording the old value is added)."
         )
+
+
+def _dependency_path(tasks: list[Task], start: str, target: str) -> list[str] | None:
+    """The ``depends_on`` path from *start* to *target*, or None if there is none.
+
+    Cycle-safe: a graph that already contains a cycle is walked once, not
+    forever, because this is used precisely on plans that may be cyclic.
+    """
+    by_id = {t.id: t for t in tasks if t.status == "active"}
+    stack: list[tuple[str, list[str]]] = [(start, [start])]
+    seen: set[str] = set()
+    while stack:
+        node, path = stack.pop()
+        if node == target:
+            return path
+        if node in seen:
+            continue
+        seen.add(node)
+        edges = by_id[node].depends_on if node in by_id else []
+        for nxt in edges:
+            stack.append((nxt, path + [nxt]))
+    return None
 
 
 def _edited_depends_on(
@@ -1091,17 +1114,17 @@ def _edited_depends_on(
     for dep in add:
         if dep not in deps:
             deps.append(dep)
-    if add:
-        # Only an added edge can close a cycle. A plan that is *already* cyclic is
-        # exactly what these edits repair, so refuse only a cycle this call would
-        # introduce - never one it inherited (review-5 F2).
-        proposed = [replace(t, depends_on=deps) if t.id == task.id else t for t in tasks]
-        active = [t for t in tasks if t.status == "active"]
-        cycle = _find_cycle([t for t in proposed if t.status == "active"])
-        if cycle and not _find_cycle(active):
+    # Only an added edge can close a cycle, and only the cycle *this* edge closes
+    # is this call's business: a plan that is already cyclic elsewhere is exactly
+    # what these edits repair (review-5 F2), but an inherited cycle must not
+    # license a new one (review-6 F1). So ask each added edge the precise
+    # question - does the task it points at already lead back here?
+    for dep in add:
+        path = _dependency_path(tasks, dep, task.id)
+        if path is not None:
             raise SpecfloError(
                 f"Editing {task.id} would create a dependency cycle: "
-                + " -> ".join(cycle) + "."
+                + " -> ".join([task.id] + path) + "."
             )
     return deps
 

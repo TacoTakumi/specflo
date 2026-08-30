@@ -2180,6 +2180,8 @@ def test_edit_task_gate_freezes_a_superseded_task(root, cfg, project):
             plan.edit_task(root, cfg, project, task.id, acceptance="new",
                            force=force, today="2026-08-30")
         assert "frozen" in str(exc.value)
+        # REQ-03: both refusals name the alternative (review-6 F5)
+        assert f"task note {task.id}" in str(exc.value)
         assert path.read_text() == before
 
 
@@ -2610,11 +2612,36 @@ def test_edit_task_depends_still_refuses_a_newly_closed_cycle(root, cfg, project
 
 def test_edit_task_depends_refuses_adding_and_dropping_the_same_edge(root, cfg, project):
     # review-5 F3: one call cannot mean both things.
-    _first, second, third = _three_tasks(root, cfg, project)
+    first, _second, third = _three_tasks(root, cfg, project)
     path = _ppath(root, cfg, project)
     before = path.read_text()
+    # an edge the task really holds, so the refusal cannot come from the drop loop
+    assert third.depends_on == [first.id]
     with pytest.raises(SpecfloError) as exc:
-        plan.edit_task(root, cfg, project, third.id, add_depends_on=[second.id],
-                       drop_depends_on=[second.id], today="2026-08-30")
-    assert second.id in str(exc.value)
+        plan.edit_task(root, cfg, project, third.id, add_depends_on=[first.id],
+                       drop_depends_on=[first.id], today="2026-08-30")
+    assert "add and drop the same dependency" in str(exc.value)
+    assert first.id in str(exc.value)
     assert path.read_text() == before
+
+
+def test_edit_task_depends_refuses_a_new_cycle_even_on_an_already_cyclic_plan(root, cfg, project):
+    # review-6 F1: an inherited cycle must not switch the guard off for the call.
+    first, second, third = _three_tasks(root, cfg, project)
+    fourth = plan.add_task(root, cfg, project, "fourth", acceptance="a", verify="v",
+                           implements=["REQ-02"], depends_on=[third.id],
+                           today="2026-08-30")
+    _make_cyclic(root, cfg, project, first, second)  # an unrelated pre-existing cycle
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    # third -> fourth would close a brand-new cycle (fourth already depends on third)
+    with pytest.raises(SpecfloError) as exc:
+        plan.edit_task(root, cfg, project, third.id, add_depends_on=[fourth.id],
+                       today="2026-08-30")
+    assert "cycle" in str(exc.value).lower()
+    assert third.id in str(exc.value) and fourth.id in str(exc.value)
+    assert path.read_text() == before
+    # while an edge that closes nothing still goes through on the same plan
+    _, changed = plan.edit_task(root, cfg, project, fourth.id,
+                                add_depends_on=[first.id], today="2026-08-30")
+    assert changed == ["depends_on"]
