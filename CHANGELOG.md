@@ -47,6 +47,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   skill gains decomposition rules that make every plan fan-out capable
   regardless of mode.
 
+### Changed
+- **`task show --json` `task.files` is now a list.** It was the raw `Files`
+  string (or null); it is now the parsed path list (empty when the field is
+  absent), matching `task list --json`. A pre-1.0 contract change for any
+  consumer that read the string.
+
 ## [0.11.0]
 
 ### Added
