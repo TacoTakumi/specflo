@@ -1556,3 +1556,42 @@ def test_ready_set_falls_back_to_the_in_progress_task_when_files_exclude_everyth
         _entry_with_files("T-02", "src/a.py"),
     ])
     assert plan.plan_progress(root, cfg, project)["next_actionable"] == ["T-01"]
+
+
+# --- task add --needs records and parses the Needs field (fan-out-plans
+# REQ-07) -------------------------------------------------------------------
+
+
+def test_add_task_needs_round_trips_after_files(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    task = plan.add_task(root, cfg, project, "gen", acceptance="a", verify="v",
+                         implements=["REQ-01"], files="src/a.py",
+                         needs=["gpu:3090", "comfy-venv"], today="2026-06-22")
+    assert task.needs == ["gpu:3090", "comfy-venv"]
+    doc = _ppath(root, cfg, project).read_text()
+    assert "- Files: src/a.py\n- Needs: gpu:3090, comfy-venv\n" in doc
+    parsed = {t.id: t for t in plan.list_tasks(root, cfg, project)}
+    assert parsed["T-01"].needs == ["gpu:3090", "comfy-venv"]
+    assert plan.task_brief(root, cfg, project, "T-01")["task"]["needs"] == [
+        "gpu:3090", "comfy-venv"]
+
+
+def test_add_task_without_needs_writes_no_line_and_parses_empty(root, cfg, project):
+    _good_plan(root, cfg, project)
+    doc = _ppath(root, cfg, project).read_text()
+    assert "Needs:" not in doc
+    for t in plan.list_tasks(root, cfg, project):
+        assert t.needs == []
+    assert plan.task_brief(root, cfg, project, "T-01")["task"]["needs"] == []
+
+
+@pytest.mark.parametrize("bad", ["a b", "", "a,b", " "])
+def test_add_task_rejects_malformed_needs(root, cfg, project, bad):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    before = _ppath(root, cfg, project).read_text()
+    with pytest.raises(SpecfloError):
+        plan.add_task(root, cfg, project, "gen", acceptance="a", verify="v",
+                      implements=["REQ-01"], needs=[bad], today="2026-06-22")
+    assert _ppath(root, cfg, project).read_text() == before

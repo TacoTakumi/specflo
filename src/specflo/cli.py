@@ -1288,6 +1288,10 @@ def task_add(
         None, "--depends-on", metavar="T-NN", help="Task(s) this depends on (repeatable)."
     ),
     files: str = typer.Option(None, "--files", help="Files likely touched."),
+    needs: list[str] = typer.Option(
+        None, "--needs", metavar="<pool>",
+        help="A resource pool this task needs (repeatable; e.g. gpu:3090).",
+    ),
     scope: str = typer.Option(None, "--scope", help="Estimated scope (Small/Medium/Large)."),
     supersedes: str = typer.Option(None, "--supersedes", metavar="T-NN", help="The task this replaces."),
     milestone: str = typer.Option(
@@ -1304,6 +1308,7 @@ def task_add(
             root, cfg, slug, text, acceptance, verify,
             implements=list(from_), depends_on=list(depends_on or []),
             files=files, scope=scope, supersedes=supersedes, milestone=milestone,
+            needs=list(needs or []),
         )
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -1547,7 +1552,7 @@ def task_list(
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
                  "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts,
-                 "files": t.file_list}
+                 "files": t.file_list, "needs": t.needs}
                 for t in tasks
             ],
             "progress": progress,

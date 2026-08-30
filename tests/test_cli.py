@@ -3960,3 +3960,46 @@ def test_task_list_marks_only_file_clear_tasks_as_next(tmp_path, monkeypatch):
     runner.invoke(app, ["task", "done", "T-01"])
     data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
     assert data["progress"]["next_actionable"] == ["T-02", "T-03"]
+
+
+# --- task add --needs (fan-out-plans REQ-07) ---------------------------------
+
+
+def test_task_add_needs_round_trips_through_json_surfaces(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    result = runner.invoke(app, ["task", "add", "--text", "gen", "--acceptance", "a",
+                                 "--verify", "v", "--from", "REQ-01",
+                                 "--needs", "gpu:3090", "--needs", "comfy-venv"])
+    assert result.exit_code == 0, result.output
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "- Needs: gpu:3090, comfy-venv" in plan_md
+
+    shown = json.loads(runner.invoke(app, ["task", "show", "T-01", "--json"]).output)
+    assert shown["task"]["needs"] == ["gpu:3090", "comfy-venv"]
+    listed = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert listed["tasks"][0]["needs"] == ["gpu:3090", "comfy-venv"]
+
+
+def test_task_add_without_needs_has_empty_needs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "gen", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "Needs:" not in plan_md
+    shown = json.loads(runner.invoke(app, ["task", "show", "T-01", "--json"]).output)
+    assert shown["task"]["needs"] == []
+    listed = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert listed["tasks"][0]["needs"] == []
+
+
+@pytest.mark.parametrize("bad", ["a b", ""])
+def test_task_add_rejects_malformed_needs(tmp_path, monkeypatch, bad):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    result = runner.invoke(app, ["task", "add", "--text", "gen", "--acceptance", "a",
+                                 "--verify", "v", "--from", "REQ-01", "--needs", bad])
+    assert result.exit_code != 0
+    plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+    assert "### T-01" not in plan_md

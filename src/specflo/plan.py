@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import datetime
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from . import markdown, spec as spec_mod
@@ -77,6 +77,7 @@ class Task:
     superseded_by: str | None = None
     blocked: str | None = None
     milestone: str | None = None
+    needs: list[str] = field(default_factory=list)
 
     @property
     def file_list(self) -> list[str]:
@@ -113,6 +114,22 @@ def parse_files(value: str | None) -> list[str]:
         if entry:
             out.append(entry)
     return out
+
+
+def parse_needs(value: str | None) -> list[str]:
+    """Parse a task's Needs text into pool names (fan-out-plans REQ-07)."""
+    return _split_refs(value or "")
+
+
+def validate_pool_name(name: str) -> str:
+    """Return *name* if it is a valid pool name: a non-empty token without
+    commas or whitespace (fan-out-plans REQ-07); else raise SpecfloError."""
+    if not name or "," in name or any(ch.isspace() for ch in name):
+        raise SpecfloError(
+            f"Invalid pool name {name!r}: must be a non-empty token without "
+            "commas or whitespace."
+        )
+    return name
 
 
 @dataclass
@@ -174,6 +191,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             supersedes=fields.get("Supersedes"),
             superseded_by=superseded_by,
             blocked=fields.get("Blocked"),
+            needs=parse_needs(fields.get("Needs")),
             milestone=fields.get("Milestone"),
         ))
     return tasks
@@ -515,6 +533,7 @@ def add_task(
     scope: str | None = None,
     supersedes: str | None = None,
     milestone: str | None = None,
+    needs: list[str] | None = None,
     today: str | None = None,
 ) -> Task:
     """Append a task to the Tasks section and return it.
@@ -525,6 +544,7 @@ def add_task(
     name a milestone present in ``## Milestones`` and is written as the task's
     single ``- Milestone:`` field.
     """
+    needs = [validate_pool_name(n) for n in (needs or [])]
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")
@@ -589,6 +609,8 @@ def add_task(
             entry_lines.append(f"- Depends on: {', '.join(depends_on)}")
         if files:
             entry_lines.append(f"- Files: {files}")
+        if needs:
+            entry_lines.append(f"- Needs: {', '.join(needs)}")
         if scope:
             entry_lines.append(f"- Scope: {scope}")
         if supersedes is not None:
@@ -606,7 +628,7 @@ def add_task(
         id=new_id, text=text, acceptance=acceptance, verify=verify,
         implements=implements, depends_on=depends_on, files=files, scope=scope,
         progress="pending", status="active", supersedes=supersedes,
-        milestone=milestone,
+        milestone=milestone, needs=needs,
     )
 
 
@@ -1323,6 +1345,7 @@ def task_brief(
             "id": task.id, "text": task.text, "acceptance": task.acceptance,
             "verify": task.verify, "implements": task.implements,
             "depends_on": task.depends_on, "files": task.file_list,
+            "needs": task.needs,
             "scope": task.scope, "progress": task.progress,
         },
         "requirements": requirements,
