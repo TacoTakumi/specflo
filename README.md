@@ -112,6 +112,7 @@ $ specflo status
 Project: Payment retries (payment-retries)
 Dir:     docs/projects/payment-retries
 Phase:   brainstorm
+Execution: linear
 Next:    Brainstorm and research; capture decisions, then write the spec.
 Resume:  specflo checkpoint
 ```
@@ -147,7 +148,8 @@ See **[The config file](#the-config-file)** for the file itself.
 
 ### Projects
 
-- `specflo new <name>` - create a project and make it active.
+- `specflo new <name> [--execution linear|fan-out]` - create a project and make it active. `--execution` records the execution mode in `project.md` (default `linear`; see "Execution modes and fan-out" below).
+- `specflo execution linear|fan-out [--json]` - switch the active project's execution mode, in either direction, at any phase. Reports `unchanged` when the mode already matches; `--json` emits `{execution, changed}`.
 - `specflo list [--json]` - list all projects, marking the active one and its phase.
 - `specflo switch <name>` - make another project active (by slug or name).
 - `specflo status [--json]` - show the active project, its phase, and what's next.
@@ -161,16 +163,18 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo spec start [--json]` - create (or locate) the active project's `spec.md`.
 - `specflo requirement add --text ... --acceptance ... [--from D-NN] [--supersedes REQ-NN]` - append a requirement (`REQ-NN`) to the spec.
 - `specflo plan start [--json]` - create (or locate) the active project's `plan.md`.
-- `specflo task add --text ... --acceptance ... --verify ... --from REQ-NN [--from REQ-NN ...] [--depends-on T-NN ...] [--supersedes T-NN]` - append a task (`T-NN`) to the plan. `--from` (repeatable, required) links to the requirement(s) the task implements; `--depends-on` (repeatable) declares execution ordering; `--acceptance` is a behavioural pass/fail criterion; `--verify` is the command or step to confirm it.
+- `specflo task add --text ... --acceptance ... --verify ... --from REQ-NN [--from REQ-NN ...] [--depends-on T-NN ...] [--files ...] [--needs <pool> ...] [--supersedes T-NN]` - append a task (`T-NN`) to the plan. `--from` (repeatable, required) links to the requirement(s) the task implements; `--depends-on` (repeatable) declares execution ordering; `--acceptance` is a behavioural pass/fail criterion; `--verify` is the command or step to confirm it. `--files` lists the files the task edits (comma-separated; one trailing parenthetical note per entry is allowed and stripped, as in `~/x/y (venv, outside repo)`); `--needs` (repeatable) names a resource pool the task needs - a non-empty token without commas or whitespace, such as `gpu:3090`.
+- `specflo pool add <name> --size N [--json]` / `pool list [--json]` - declare a pool of `N` slots (`N >= 1`) in the CLI-owned `## Pools` section of `plan.md`, updating the size in place on a repeated add; `pool list` shows every declared pool plus every pool an active task needs. A pool nobody declared has one slot. `user` is a reserved pool name meaning the task runs in the main session with the user; it needs no declaration.
+- `specflo plan graph [--json]` - render the plan's execution graph from its real data: waves by longest dependency path (wave 0 has no dependencies), one line per active task (id, title, progress, files, needs) and a mermaid `graph LR` block with one node per task, a subgraph per milestone and one edge per `Depends on` entry. `--json` emits `{waves, tasks, edges}`. Read-only: `plan.md` is byte-identical afterwards.
 - `specflo milestone add --text ... --exit ... [--exit ...]` - append a milestone (`M-NN`) with its Exit checklist to the plan; `milestone list` and `milestone show` report rollup and the current milestone.
-- `specflo validate brainstorm|spec|plan [--json]` - lint the phase's artifact and report readiness. The plan lint checks bidirectional REQ<->task coverage, that every task has acceptance + verification, and that dependencies resolve and are acyclic.
+- `specflo validate brainstorm|spec|plan [--json]` - lint the phase's artifact and report readiness. The plan lint checks bidirectional REQ<->task coverage, that every task has acceptance + verification, and that dependencies resolve and are acyclic. It also warns (non-blocking) when two active tasks share a file with no direct or transitive `Depends on` edge between them, naming the pair and the path.
 
 ### Working the plan
 
 - `specflo task start <T-NN>` / `task done <T-NN>` - mark a task `in_progress` / `done`.
 - `specflo task block <T-NN> [--reason ...]` / `task reopen <T-NN>` - mark a task `blocked` (optionally recording why) / return it to `pending`.
-- `specflo task list [--json]` - all tasks with their progress state and the deps-aware next-actionable marker.
-- `specflo task show [<T-NN>] [--json]` - a task's brief: acceptance criterion, cited requirements, and constraints. Defaults to the next actionable task.
+- `specflo task list [--json]` - all tasks with their progress state and the deps-aware next-actionable marker. `--json` is the orchestrator's frontier: each task also carries `files`, `needs` and `ready` (true exactly when the task is next-actionable), and the payload carries `pools`, a map from pool name to `{size, holders}` where holders are the in-progress tasks needing that pool.
+- `specflo task show [<T-NN>] [--json]` - a task's brief: acceptance criterion, cited requirements, and constraints, plus the execution mode and, when set, `Files:` and `Needs:` lines (a task needing `user` is marked as not delegated). Defaults to the next actionable task.
 - `specflo review start [--json]` - mint the next numbered review round (`review-N.md`) in the project directory and print its path. Numbering only ever goes up, so a deleted round leaves a permanent gap rather than a reused identity. With a round already open, prints that round's path and mints nothing - reusing it is how an abandoned review is resumed.
 - `specflo review done --verdict ready-to-merge|changes-requested|waived [--reason ...] [--file <path>] [--json]` - close the open round by writing the verdict into its frontmatter, stamped with the date and, inside a git repo, the short `HEAD` sha. `waived` requires `--reason`, so a project that skipped review records why. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
 - `specflo validate execute [--json]` - completion gate: confirms every task is done, then that the latest review round closed `ready-to-merge` or `waived`. The gate keys on the verdict alone and never on the round's findings, so a passing round may still list nits.
@@ -195,6 +199,43 @@ See **[The config file](#the-config-file)** for the file itself.
 
 - `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` - install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)**.
 - `specflo extension install [--scope user|project]` - install the bundled pi extension into pi's extension directory: `~/.pi/agent/extensions/specflo` by default, `./.pi/extensions/specflo` with `--scope project`. A plain local copy with a version stamp - no npm, no network - and pi discovers the directory on its own, so no pi settings are read or written. Re-run to update. See **[The pi extension](#the-pi-extension)**.
+
+## Execution modes and fan-out
+
+Every project records an execution mode in `project.md` (`execution: linear`
+or `execution: fan-out`; a file without the key reads as `linear`). Set it with
+`specflo new --execution ...` or switch it later with `specflo execution ...`;
+`status`, `checkpoint` and `task show` all state it.
+
+- **linear** (default) - one agent works the plan one task at a time, as the
+  execute skill has always done.
+- **fan-out** - the main session is an orchestrator: it reads the frontier from
+  `specflo task list --json`, runs `task start` and spawns one subagent per
+  ready task with its `task show` brief, re-runs the task's verify step when
+  the subagent returns, commits one task per commit and runs `task done`.
+  Subagents never run `git` or `specflo`. Under fan-out the working-ahead note
+  in `task show` is suppressed, since lanes crossing milestones is the
+  expected shape.
+
+The ready set (the `>` marker, `next_actionable`, `ready`) applies the same
+rules in both modes. A pending task whose dependencies are done is ready
+unless:
+
+- an in-progress task shares a file with it (from the parsed `Files` lists), or
+- a pool it needs has every slot held, counting one slot per in-progress task
+  naming that pool (sizes from `pool add`; undeclared pools, `user` included,
+  have one slot).
+
+A slot or file frees when its holder is done, reopened or blocked; `task
+reopen` is how an orchestrator releases work held by a dead agent. Tasks with
+no `Files` and no `Needs` are never held back, so plans written before these
+fields existed behave exactly as before.
+
+The plan skill decomposes every plan to be fan-out capable regardless of mode:
+every edited file in `Files`, an edge between tasks that share a file,
+per-task outputs plus one merge task for parallel producers, contract-first
+ordering, `--needs` plus `pool add` for hardware and shared environments, and
+`--needs user` for user-in-the-loop tasks.
 
 ## The config file
 

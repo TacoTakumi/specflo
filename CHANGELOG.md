@@ -8,6 +8,45 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.12.0]
+
+### Added
+- **Execution mode (fan-out-plans).** Every project records `execution:
+  linear|fan-out` in `project.md`; `specflo new --execution` sets it, a new
+  `specflo execution <mode>` command switches it in either direction at any
+  phase (reporting `unchanged` when it already matches, `{execution, changed}`
+  with `--json`), and `status`, `checkpoint` and `task show` all state it. A
+  `project.md` without the key reads as `linear`. Under `fan-out` the
+  working-ahead note in `task show` is suppressed.
+- **File ownership.** `task add --files` is parsed into a path list (comma
+  split, one trailing parenthetical note per entry stripped) carried as
+  `files` in `task list --json` and `task show --json`. `validate plan` warns
+  when two active tasks share a path with no direct or transitive `Depends on`
+  edge between them. The ready set drops a pending task that shares a file
+  with an in-progress task until that task is done, reopened or blocked.
+- **Pools.** `task add --needs <pool>` (repeatable) records the resource pools
+  a task needs as a `- Needs:` field; `specflo pool add <name> --size N` and
+  `pool list` manage a CLI-owned `## Pools` section of `plan.md`. A pool
+  nobody declared has one slot; `user` is a reserved pool meaning the task
+  runs with the user and is never delegated. The ready set drops a pending
+  task while every slot of a pool it needs is held by in-progress tasks.
+- **Orchestrator frontier.** `task list --json` adds `files`, `needs` and
+  `ready` per task and a top-level `pools` map (`name -> {size, holders}`);
+  existing keys are unchanged. The `task show` brief prints `Files:` and
+  `Needs:` lines when set, plus a not-delegated line for `user` tasks.
+- **`specflo plan graph`.** Renders the execution graph from the plan's real
+  data without writing anything: waves by longest dependency path, one line
+  per active task, and a mermaid `graph LR` block with a subgraph per
+  milestone and one edge per dependency; `--json` emits `{waves, tasks,
+  edges}`.
+- **Skills.** The execute skill gains a `## Fan-out` section (the
+  orchestrator loop: frontier from `task list --json`, `task start` then one
+  subagent per task with its brief and pool member, re-run Verify, stage by
+  path, one task per commit, `task done`; long tasks in the background; `user`
+  tasks never delegated; `task reopen` releases a dead agent's slot). The plan
+  skill gains decomposition rules that make every plan fan-out capable
+  regardless of mode.
+
 ## [0.11.0]
 
 ### Added
