@@ -1519,6 +1519,12 @@ def render_task_brief(brief: dict) -> str:
                 f"  This task needs the '{USER_POOL}' pool: it is not delegated "
                 "and runs with the user in the main session."
             )
+    # Notes (task-edit-and-task-note REQ-08): the task's own history, printed
+    # only when it has some, so a note-free brief renders exactly as before.
+    if t.get("notes"):
+        lines.append("  Notes:")
+        for note in t["notes"]:
+            lines.append(f"    {note['date']} [{note['label']}] {note['text']}")
     lines.append("")
     for req in brief["requirements"]:
         lines.append(req["section"].rstrip() if req["section"]
@@ -1611,6 +1617,7 @@ def task_brief(
             "depends_on": task.depends_on, "files": task.file_list,
             "needs": task.needs,
             "scope": task.scope, "progress": task.progress,
+            "notes": task.notes,
         },
         "requirements": requirements,
         "global_constraints": constraints,

@@ -1962,3 +1962,35 @@ def test_add_note_rejections_leave_the_plan_byte_identical(root, cfg, project):
         with pytest.raises(SpecfloError):
             plan.add_note(root, cfg, project, tid, today="2026-08-30", **kwargs)
         assert path.read_text() == before
+
+
+def test_task_brief_carries_notes_and_renders_them_after_needs(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    before = plan.render_task_brief(plan.task_brief(root, cfg, project, task.id))
+    plan.add_note(root, cfg, project, task.id, "wired it up", today="2026-08-30")
+    plan.add_note(root, cfg, project, task.id, "why", label="Design", today="2026-08-31")
+    brief = plan.task_brief(root, cfg, project, task.id)
+    assert brief["task"]["notes"] == [
+        {"date": "2026-08-30", "label": "Note", "text": "wired it up"},
+        {"date": "2026-08-31", "label": "Design", "text": "why"},
+    ]
+    text = plan.render_task_brief(brief)
+    assert "  Notes:" in text
+    assert "    2026-08-30 [Note] wired it up" in text
+    assert "    2026-08-31 [Design] why" in text
+    # the block sits after the metadata lines and before the cited requirement
+    assert text.index("  Notes:") > text.index("  Implements:")
+    assert text.index("2026-08-31 [Design] why") < text.index("### REQ-01")
+    # and nothing else moved: dropping the block restores the note-free brief
+    stripped = "\n".join(
+        ln for ln in text.splitlines()
+        if not ln.startswith("  Notes:") and not ln.startswith("    2026-08-3")
+    )
+    assert stripped == before.rstrip("\n")
+
+
+def test_task_brief_omits_the_notes_block_when_there_are_none(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    brief = plan.task_brief(root, cfg, project, task.id)
+    assert brief["task"]["notes"] == []
+    assert "Notes" not in plan.render_task_brief(brief)
