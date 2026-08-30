@@ -892,6 +892,31 @@ def rewire_dependency(
     return changed
 
 
+def add_note(
+    root: Path, cfg: SpecfloConfig, slug: str, task_id: str, text: str,
+    label: str | None = None, today: str | None = None,
+    *, allow_edit: bool = False,
+) -> dict:
+    """Append one ``- Note:`` line to a task entry and return the note record.
+
+    Notes are append-only history, so this works on a task in any progress state
+    and on a superseded one (REQ-05). The label and text are validated before the
+    lock is taken, so a rejected note leaves plan.md byte-identical.
+    """
+    value = format_note(text, label, today, allow_edit=allow_edit)
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    with locked(lock_path_for(root, slug, path)):
+        doc = path.read_text()
+        if not any(t.id == task_id for t in _parse_tasks(doc)):
+            raise SpecfloError(f"No task {task_id}.")
+        doc = markdown.append_entry_field(doc, task_id, NOTE_FIELD, value)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
+    return parse_note(value)
+
+
 def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     progress: str, reason: str | None = None, today: str | None = None,

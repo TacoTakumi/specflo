@@ -1910,3 +1910,55 @@ def test_parse_tasks_notes_do_not_disturb_the_other_fields():
     )
     [plain] = plan._parse_tasks(plain_doc)
     assert replace(noted, notes=[]) == plain
+
+
+def _plan_with_task(root, cfg, project, **kw):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    return plan.add_task(
+        root, cfg, project, "first",
+        acceptance="passes", verify="uv run pytest",
+        implements=["REQ-01"], today="2026-06-22", **kw,
+    )
+
+
+def test_add_note_appends_a_dated_labelled_line(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    note = plan.add_note(root, cfg, project, task.id, "wired it up", today="2026-08-30")
+    assert note == {"date": "2026-08-30", "label": "Note", "text": "wired it up"}
+    doc = _ppath(root, cfg, project).read_text()
+    assert "- Note: 2026-08-30 [Note] wired it up\n" in doc
+    assert "updated: 2026-08-30" in doc
+    plan.add_note(root, cfg, project, task.id, "and why", label="Design", today="2026-08-31")
+    [parsed] = [t for t in plan.list_tasks(root, cfg, project) if t.id == task.id]
+    assert [n["text"] for n in parsed.notes] == ["wired it up", "and why"]
+
+
+def test_add_note_works_on_a_done_and_on_a_superseded_task(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    plan.done_task(root, cfg, project, task.id, today="2026-08-30")
+    assert plan.add_note(root, cfg, project, task.id, "after the fact", today="2026-08-30")
+    later = plan.add_task(
+        root, cfg, project, "second", acceptance="a", verify="v",
+        implements=["REQ-01"], supersedes=task.id, today="2026-08-30",
+    )
+    assert later.supersedes == task.id
+    note = plan.add_note(root, cfg, project, task.id, "still writable", today="2026-08-30")
+    assert note["text"] == "still writable"
+
+
+def test_add_note_rejections_leave_the_plan_byte_identical(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    for kwargs in (
+        {"task_id": "T-99", "text": "x"},
+        {"task_id": task.id, "text": "x", "label": "Bogus"},
+        {"task_id": task.id, "text": "x", "label": "Edit"},
+        {"task_id": task.id, "text": "   "},
+    ):
+        tid = kwargs.pop("task_id")
+        with pytest.raises(SpecfloError):
+            plan.add_note(root, cfg, project, tid, today="2026-08-30", **kwargs)
+        assert path.read_text() == before
