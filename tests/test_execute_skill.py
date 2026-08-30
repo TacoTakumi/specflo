@@ -55,3 +55,57 @@ def test_skill_readiness_trigger_is_not_made_unsatisfiable_by_the_gate():
     assert "no actionable task" in readiness.lower()          # the real trigger
     for section in (readiness, checklist):
         assert "until the round is closed" in section.lower()
+
+
+def _fan_out_section():
+    text = SKILL.read_text()
+    assert "## Fan-out" in text, "missing '## Fan-out' section"
+    return text.split("## Fan-out", 1)[1].split("\n## ", 1)[0]
+
+
+def test_skill_fan_out_section_reads_the_mode_and_keeps_linear_unchanged():
+    # fan-out-plans REQ-15: the orchestrator reads the mode from status and the
+    # linear loop is untouched.
+    section = _fan_out_section()
+    assert "specflo status" in section
+    low = section.lower()
+    assert "linear" in low and "unchanged" in low
+
+
+def test_skill_fan_out_section_describes_the_dispatch_protocol():
+    section = _fan_out_section()
+    low = section.lower()
+    # the frontier
+    assert "task list --json" in section and "ready" in low
+    # per ready task: start, then one subagent with the brief and its pool member
+    assert "specflo task start" in section
+    assert "one subagent" in low
+    assert "specflo task show" in section
+    assert "pool" in low and "member" in low
+    # subagent discipline
+    assert "never run" in low and "git" in low and "specflo" in low
+    assert "files" in low and "new test files" in low
+    # orchestrator closes the task
+    assert "re-run" in low and "verify" in low
+    assert "by path" in low
+    assert "one task per commit" in low
+    assert "specflo task done" in section
+    # long tasks, the user pool, and slot recovery
+    assert "background" in low
+    assert "never delegated" in low and "user" in low
+    assert "specflo task reopen" in section
+    assert "dead" in low and "slot" in low
+
+
+def test_skill_process_steps_are_kept_verbatim():
+    # The fan-out section is additive: the existing per-task loop still reads
+    # exactly as before.
+    text = SKILL.read_text()
+    for phrase in [
+        "1. `specflo task start T-NN` (→ in_progress).",
+        "Run the task's **Verify** step; capture the passing evidence.",
+        "**Commit** one atomic commit for the task — stage only the files it",
+        "6. `specflo task done T-NN` (it refuses unless the task is in_progress).",
+        "7. Next: `specflo task show` again.",
+    ]:
+        assert phrase in text, f"process step changed: {phrase!r}"

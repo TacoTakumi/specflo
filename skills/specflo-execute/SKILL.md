@@ -111,6 +111,43 @@ don't reimplement them:
 Inspect milestones read-only with `specflo milestone list` / `specflo milestone
 show M-NN`; milestone state is derived from task progress, never hand-edited.
 
+## Fan-out
+
+The project's **execution mode** is a recorded fact: read it from
+`specflo status` (the `Execution:` line, or the `execution` key of `--json`).
+Under **linear** the loop above is unchanged — work one task at a time exactly
+as written. Under **fan-out** you are the *orchestrator*: the loop above is what
+each *subagent* does for its task, and you drive the frontier:
+
+1. **Frontier.** `specflo task list --json` — the tasks with `ready: true` are
+   dispatchable now; the CLI has already removed file conflicts with in-progress
+   work and pools with no free slot. The `pools` map shows every pool's size and
+   its current holders.
+2. **Dispatch.** Per ready task: `specflo task start T-NN`, then spawn
+   **one subagent** with the full `specflo task show T-NN` brief and, for each
+   pool in its `Needs`, the concrete **pool member** it is assigned (which GPU,
+   which venv, which port). Subagents **never run `git` or `specflo`** — plan
+   state and commits are yours — and edit only the task's **Files** plus any
+   **new test files** they create.
+3. **Close.** When a subagent returns, **re-run the Verify** step yourself; its
+   report is not evidence. On pass: stage the task's files **by path** (never
+   `git add -A`), commit **one task per commit**, then `specflo task done T-NN`.
+   On fail: send the failure back (or start a fresh subagent with the same brief
+   plus the failure) — never mark it done.
+4. **Long tasks** (downloads, benches, anything measured in minutes) run in the
+   **background**; keep dispatching the rest of the frontier and act on the
+   completion notification. Never predict a pending agent's result.
+5. **The `user` pool.** A task needing `user` is **never delegated**: it runs in
+   the main session with the user, and holds the one `user` slot while it does.
+6. **Recovery.** A slot held by a **dead** or abandoned agent is released with
+   `specflo task reopen T-NN` (→ pending): the task returns to the frontier and
+   its files and pool slots free.
+
+Re-read the frontier after every `task done` / `task reopen` — the ready set
+changes as slots and files free. Milestone boundaries still surface their Exit
+checklist; the working-ahead note is suppressed under fan-out because lanes
+crossing milestones is the expected shape.
+
 ## `task done` is earned
 
 A task is done when its Verify step ran and passed and the diff matches the
