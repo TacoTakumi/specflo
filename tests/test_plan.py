@@ -1,4 +1,6 @@
+import shutil
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -2272,3 +2274,67 @@ def test_block_and_reopen_still_clear_the_blocked_field_with_notes(root, cfg, pr
     doc = _ppath(root, cfg, project).read_text()
     assert "- Blocked:" not in doc
     assert "[Note] unblocked" in doc
+
+
+# --- additivity sweep over this repo's own plans -----------------------------
+
+_REPO_PROJECTS = Path(__file__).resolve().parents[1] / "docs" / "projects"
+
+
+def _repo_projects_copy(tmp_path):
+    """A tmp root carrying a copy of this repo's own project artifacts."""
+    config.init_config(tmp_path)
+    shutil.copytree(_REPO_PROJECTS, tmp_path / "docs" / "projects", dirs_exist_ok=True)
+    return config.load_config(tmp_path)
+
+
+def _plan_surfaces(root, cfg, slug):
+    """The read surfaces that must not move when a plan carries notes."""
+    tasks = [
+        (t.id, t.text, t.progress, t.status, t.implements, t.depends_on, t.files,
+         t.needs, t.milestone, t.scope)
+        for t in plan.list_tasks(root, cfg, slug, include_superseded=True)
+    ]
+    briefs = {}
+    for t in plan.list_tasks(root, cfg, slug):
+        try:
+            briefs[t.id] = plan.render_task_brief(plan.task_brief(root, cfg, slug, t.id))
+        except SpecfloError as exc:  # e.g. a plan whose spec was removed
+            briefs[t.id] = f"error: {exc}"
+    return {
+        "issues": plan.validate_plan(root, cfg, slug),
+        "warnings": plan.plan_warnings(root, cfg, slug),
+        "tasks": tasks,
+        "briefs": briefs,
+    }
+
+
+def test_notes_are_additive_across_every_plan_in_this_repo(tmp_path):
+    cfg = _repo_projects_copy(tmp_path)
+    slugs = sorted(
+        p.parent.name for p in (tmp_path / "docs" / "projects").glob("*/plan.md")
+    )
+    assert len(slugs) >= 10  # the sweep is only meaningful over the real corpus
+    briefed = 0
+    for slug in slugs:
+        path = plan.plan_path(tmp_path, cfg, slug)
+        doc = path.read_text()
+        assert "\n- Note:" not in doc  # the corpus predates notes
+        before = _plan_surfaces(tmp_path, cfg, slug)
+        for task in plan.list_tasks(tmp_path, cfg, slug, include_superseded=True):
+            doc = markdown.append_entry_field(
+                doc, task.id, "Note", "2026-08-30 [Note] added by the sweep"
+            )
+        path.write_text(doc)
+        after = _plan_surfaces(tmp_path, cfg, slug)
+        assert after["issues"] == before["issues"], slug
+        assert after["warnings"] == before["warnings"], slug
+        assert after["tasks"] == before["tasks"], slug
+        briefed += len(after["briefs"])
+        for tid, brief in after["briefs"].items():
+            stripped = "\n".join(
+                ln for ln in brief.splitlines()
+                if ln != "  Notes:" and ln.strip() != "2026-08-30 [Note] added by the sweep"
+            )
+            assert stripped == before["briefs"][tid], (slug, tid)
+    assert briefed >= 100  # the briefs really were rendered
