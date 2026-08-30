@@ -2183,3 +2183,57 @@ def test_edit_task_gate_allows_pending_in_progress_and_blocked(root, cfg, projec
     _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="a3",
                                 today="2026-08-30")
     assert changed == ["acceptance"]
+
+
+def _force_done_task(root, cfg, project):
+    task = _plan_with_task(root, cfg, project, files="a.py")
+    plan.start_task(root, cfg, project, task.id, today="2026-08-30")
+    plan.done_task(root, cfg, project, task.id, today="2026-08-30")
+    return task
+
+
+def test_edit_task_force_note_records_the_old_value(root, cfg, project):
+    task = _force_done_task(root, cfg, project)
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="passes twice",
+                                force=True, today="2026-08-30")
+    assert changed == ["acceptance"]
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert edited.acceptance == "passes twice"
+    assert [(n["label"], n["text"]) for n in edited.notes] == [
+        ("Edit", 'forced edit of Acceptance; previous value: "passes"')
+    ]
+    assert _ppath(root, cfg, project).read_text().count("- Note:") == 1
+
+
+def test_edit_task_force_note_is_one_note_per_changed_field(root, cfg, project):
+    task = _force_done_task(root, cfg, project)
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="new a",
+                                verify="new v", force=True, today="2026-08-30")
+    assert changed == ["acceptance", "verify"]
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert len(edited.notes) == 2
+    assert all(n["label"] == "Edit" for n in edited.notes)
+    assert 'previous value: "passes"' in edited.notes[0]["text"]
+    assert 'previous value: "uv run pytest"' in edited.notes[1]["text"]
+
+
+def test_edit_task_force_note_is_not_written_for_an_unfinished_task(root, cfg, project):
+    task = _plan_with_task(root, cfg, project)
+    _, changed = plan.edit_task(root, cfg, project, task.id, acceptance="passes twice",
+                                force=True, today="2026-08-30")
+    assert changed == ["acceptance"]
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == task.id)
+    assert edited.notes == []
+
+
+def test_edit_task_force_note_covers_dependency_edges(root, cfg, project):
+    _first, second, third = _three_tasks(root, cfg, project)
+    plan.start_task(root, cfg, project, third.id, today="2026-08-30")
+    plan.done_task(root, cfg, project, third.id, today="2026-08-30")
+    plan.edit_task(root, cfg, project, third.id, add_depends_on=[second.id],
+                   force=True, today="2026-08-30")
+    edited = next(t for t in plan.list_tasks(root, cfg, project) if t.id == third.id)
+    assert edited.depends_on == ["T-01", "T-02"]
+    assert edited.notes[0]["text"] == (
+        'forced edit of Depends on; previous value: "T-01"'
+    )

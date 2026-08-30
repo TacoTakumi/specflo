@@ -949,6 +949,24 @@ def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
     return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
 
 
+_EDIT_FIELD_LABELS = {
+    "title": "Title", "acceptance": "Acceptance", "verify": "Verify",
+    "scope": "Scope", "files": "Files", "needs": "Needs",
+    "implements": "Implements", "depends_on": "Depends on",
+}
+
+
+def _forced_edit_note(task: Task, name: str) -> str:
+    """The text of the ``[Edit]`` note a forced edit of *name* leaves behind."""
+    if name == "title":
+        old = task.text
+    elif name in ("needs", "implements", "depends_on"):
+        old = ", ".join(getattr(task, name))
+    else:
+        old = getattr(task, name) or ""
+    return f'forced edit of {_EDIT_FIELD_LABELS[name]}; previous value: "{old}"'
+
+
 def _check_edit_gate(task: Task, force: bool) -> None:
     """Refuse to edit finished work, so supersession stays the way it changes (REQ-03).
 
@@ -1062,6 +1080,14 @@ def edit_task(
                     )
                 else:
                     doc = _apply_edit(doc, task_id, name, edits[name])
+                # A forced edit of finished work records what it overwrote, in
+                # the same locked write as the edit itself (REQ-04).
+                if force and task.progress == "done":
+                    doc = markdown.append_entry_field(
+                        doc, task_id, NOTE_FIELD,
+                        format_note(_forced_edit_note(task, name), NOTE_FORCED_LABEL,
+                                    today, allow_edit=True),
+                    )
             doc = markdown.bump_updated(doc, today)
             path.write_text(doc)
     return task_id, changed
