@@ -1762,3 +1762,51 @@ def test_ready_set_user_pool_needs_no_declaration(root, cfg, project):
 def test_ready_set_pool_rule_is_dormant_without_needs(root, cfg, project):
     _file_conflict_plan(root, cfg, project)               # Files only, no Needs
     assert _ready(root, cfg, project) == ["T-03"]
+
+
+# --- task show brief prints Files, Needs and the user-pool line (fan-out-plans
+# REQ-11, REQ-12) -----------------------------------------------------------
+
+
+def _brief_lines(root, cfg, project, task_id):
+    brief = plan.task_brief(root, cfg, project, task_id)
+    return brief, plan.render_task_brief(brief).splitlines()
+
+
+def test_brief_prints_files_and_needs_after_depends_on(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "base", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-06-22")                   # T-01
+    plan.add_task(root, cfg, project, "gen", acceptance="a", verify="v",
+                  implements=["REQ-01"], depends_on=["T-01"],
+                  files="src/a.py, src/b.py (note)", needs=["gpu:3090"],
+                  today="2026-06-22")                                         # T-02
+    brief, lines = _brief_lines(root, cfg, project, "T-02")
+    assert brief["task"]["files"] == ["src/a.py", "src/b.py"]
+    assert brief["task"]["needs"] == ["gpu:3090"]
+    dep = next(i for i, l in enumerate(lines) if l.strip().startswith("Depends on:"))
+    assert lines[dep + 1].strip() == "Files:      src/a.py, src/b.py"
+    assert lines[dep + 2].strip() == "Needs:      gpu:3090"
+    assert not any("not delegated" in l for l in lines)
+
+
+def test_brief_omits_files_and_needs_lines_when_empty(root, cfg, project):
+    _good_plan(root, cfg, project)
+    brief, lines = _brief_lines(root, cfg, project, "T-01")
+    assert brief["task"]["files"] == [] and brief["task"]["needs"] == []
+    assert not any(l.strip().startswith(("Files:", "Needs:")) for l in lines)
+    assert not any("not delegated" in l for l in lines)
+
+
+def test_brief_user_pool_task_says_it_runs_with_the_user(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    plan.add_task(root, cfg, project, "ask", acceptance="a", verify="v",
+                  implements=["REQ-01"], needs=["user"], today="2026-06-22")
+    brief, lines = _brief_lines(root, cfg, project, "T-01")
+    assert brief["task"]["needs"] == ["user"]
+    assert any(l.strip() == "Needs:      user" for l in lines)
+    user_line = next(l for l in lines if "runs with the user" in l)
+    assert "not delegated" in user_line
+    assert plan.list_pools(root, cfg, project) == {"user": 1}

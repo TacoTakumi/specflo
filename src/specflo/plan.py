@@ -904,6 +904,9 @@ def first_in_progress(active: list[Task]) -> str | None:
 
 
 POOLS_HEADER = "## Pools"
+# Reserved pool: the task runs in the main session with the user. Needs no
+# declaration and has one slot (fan-out-plans REQ-12).
+USER_POOL = "user"
 _POOL_LINE = re.compile(r"^- (?P<name>\S+): (?P<size>\d+)\s*$")
 
 
@@ -1385,6 +1388,17 @@ def render_task_brief(brief: dict) -> str:
     ]
     if t["depends_on"]:
         lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
+    # Ownership and resources (fan-out-plans REQ-11): each line only when the
+    # field holds something, so a Files-free plan renders exactly as before.
+    if t.get("files"):
+        lines.append(f"  Files:      {', '.join(t['files'])}")
+    if t.get("needs"):
+        lines.append(f"  Needs:      {', '.join(t['needs'])}")
+        if USER_POOL in t["needs"]:
+            lines.append(
+                f"  This task needs the '{USER_POOL}' pool: it is not delegated "
+                "and runs with the user in the main session."
+            )
     lines.append("")
     for req in brief["requirements"]:
         lines.append(req["section"].rstrip() if req["section"]
