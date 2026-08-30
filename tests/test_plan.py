@@ -1994,3 +1994,28 @@ def test_task_brief_omits_the_notes_block_when_there_are_none(root, cfg, project
     brief = plan.task_brief(root, cfg, project, task.id)
     assert brief["task"]["notes"] == []
     assert "Notes" not in plan.render_task_brief(brief)
+
+
+def _hand_write_note(root, cfg, project, task_id, value):
+    path = _ppath(root, cfg, project)
+    path.write_text(markdown.append_entry_field(path.read_text(), task_id, "Note", value))
+    return path
+
+
+def test_malformed_note_is_a_plan_warning_not_a_validation_issue(root, cfg, project):
+    task = _plan_with_task(root, cfg, project, files="a.py")
+    assert plan.plan_warnings(root, cfg, project) == []
+    _hand_write_note(root, cfg, project, task.id, "not-a-date [Bogus] text")
+    [warning] = plan.plan_warnings(root, cfg, project)
+    assert task.id in warning and "note" in warning.lower()
+    assert "not-a-date [Bogus] text" in warning
+    # never a hard validation failure
+    assert not [i for i in plan.validate_plan(root, cfg, project) if "note" in i.lower()]
+
+
+def test_malformed_note_warning_clears_when_the_note_is_removed(root, cfg, project):
+    task = _plan_with_task(root, cfg, project, files="a.py")
+    path = _hand_write_note(root, cfg, project, task.id, "not-a-date [Bogus] text")
+    assert plan.plan_warnings(root, cfg, project)
+    path.write_text(markdown.clear_entry_field(path.read_text(), task.id, "Note"))
+    assert plan.plan_warnings(root, cfg, project) == []

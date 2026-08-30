@@ -144,6 +144,7 @@ class Task:
     milestone: str | None = None
     needs: list[str] = field(default_factory=list)
     notes: list[dict] = field(default_factory=list)
+    notes_malformed: list[str] = field(default_factory=list)
 
     @property
     def file_list(self) -> list[str]:
@@ -233,6 +234,7 @@ def _parse_tasks(doc: str) -> list[Task]:
                 break
         fields: dict[str, str] = {}
         notes: list[dict] = []
+        notes_malformed: list[str] = []
         for ln in lines[start + 1:end]:
             if ln.startswith("- ") and ":" in ln:
                 key, _, val = ln[2:].partition(":")
@@ -241,7 +243,12 @@ def _parse_tasks(doc: str) -> list[Task]:
                     # Notes repeat: collect them in document order instead of
                     # letting the last one win the single-value field dict.
                     note = parse_note(val.strip())
-                    if note is not None:
+                    if note is None:
+                        # A hand-written note that does not parse is a plan
+                        # warning, never a hard failure (REQ-10): keep the raw
+                        # text so the warning can quote it.
+                        notes_malformed.append(val.strip())
+                    else:
                         notes.append(note)
                     continue
                 fields[key] = val.strip()
@@ -269,6 +276,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             needs=parse_needs(fields.get("Needs")),
             milestone=fields.get("Milestone"),
             notes=notes,
+            notes_malformed=notes_malformed,
         ))
     return tasks
 
@@ -508,6 +516,11 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
                 warnings.append(
                     f'{t.id} may reduce scope ("{term}") — deliver what the requirement needs, or split.'
                 )
+        for raw in t.notes_malformed:
+            warnings.append(
+                f'{t.id} has a malformed note ("{raw}") — expected '
+                '"<YYYY-MM-DD> [Label] text"; it is not read back.'
+            )
     warnings.extend(_shared_file_warnings(active))
     return warnings
 
