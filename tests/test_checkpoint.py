@@ -454,3 +454,34 @@ def test_checkpoint_review_lists_only_the_latest_round_file(tmp_path):
 
     assert "docs/projects/thing/review-2.md" in read_first
     assert "docs/projects/thing/review-1.md" not in read_first
+
+
+# --- execution mode in the checkpoint (fan-out-plans REQ-03) ---------------
+
+
+def _project_with_execution(tmp_path, mode):
+    cfg = config.init_config(tmp_path)
+    project = projects.create_project(tmp_path, cfg, "Thing", execution=mode)
+    return cfg, project
+
+
+def test_build_checkpoint_carries_the_execution_mode(tmp_path):
+    for mode in ("linear", "fan-out"):
+        sub = tmp_path / mode
+        sub.mkdir()
+        cfg, project = _project_with_execution(sub, mode)
+        data = checkpoint.build_checkpoint(sub, project, cfg=cfg, today="2026-06-21")
+        assert data["execution"] == mode
+
+
+def test_render_checkpoint_shows_execution_in_the_subtitle(tmp_path):
+    for mode in ("linear", "fan-out"):
+        sub = tmp_path / mode
+        sub.mkdir()
+        cfg, project = _project_with_execution(sub, mode)
+        data = checkpoint.build_checkpoint(sub, project, cfg=cfg, today="2026-06-21")
+        lines = checkpoint.render_checkpoint(data).splitlines()
+        subtitle = lines[1]
+        assert subtitle.startswith("_phase: brainstorm")
+        assert f"execution: {mode}" in subtitle
+        assert subtitle.endswith("generated 2026-06-21_")

@@ -8,6 +8,8 @@ Execute keeps its progress-based hint (REQ-05).
 
 import json
 
+import pytest
+
 from typer.testing import CliRunner
 
 from specflo import config, projects, spec, status, workflow
@@ -356,3 +358,50 @@ def test_status_review_state_follows_a_deleted_round_file(tmp_path):
     path.unlink()
 
     assert "review" not in status.build_status(tmp_path, cfg, project)
+
+
+# --- execution mode surfaces (fan-out-plans REQ-03) ------------------------
+
+
+def _project_with_execution(tmp_path, mode):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06", execution=mode)
+    projects.switch_project(tmp_path, cfg, "Thing")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+@pytest.mark.parametrize("mode", ["linear", "fan-out"])
+def test_build_status_carries_the_execution_mode(tmp_path, mode):
+    cfg, project = _project_with_execution(tmp_path, mode)
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["execution"] == mode
+
+
+@pytest.mark.parametrize("mode", ["linear", "fan-out"])
+def test_render_status_prints_execution_after_phase(tmp_path, mode):
+    cfg, project = _project_with_execution(tmp_path, mode)
+    info = status.build_status(tmp_path, cfg, project)
+    lines = status.render_status(tmp_path, info).splitlines()
+    phase_idx = next(i for i, l in enumerate(lines) if l.startswith("Phase:"))
+    assert lines[phase_idx + 1] == f"Execution: {mode}"
+
+
+@pytest.mark.parametrize("mode", ["linear", "fan-out"])
+def test_status_command_json_reports_execution(tmp_path, monkeypatch, mode):
+    monkeypatch.chdir(tmp_path)
+    _project_with_execution(tmp_path, mode)
+    result = CliRunner().invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["execution"] == mode
+
+
+def test_status_reports_linear_for_a_project_md_without_the_key(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    cfg, _project = _project_with_execution(tmp_path, "fan-out")
+    proj_md = tmp_path / "docs" / "projects" / "thing" / "project.md"
+    proj_md.write_text("\n".join(
+        l for l in proj_md.read_text().splitlines() if not l.startswith("execution:")
+    ) + "\n")
+    result = CliRunner().invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["execution"] == "linear"

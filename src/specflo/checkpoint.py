@@ -122,6 +122,7 @@ def build_checkpoint(
         "project": project.slug,
         "phase": project.phase,
         "status": project.status,
+        "execution": project.execution,
         "shelved_reason": project.shelved_reason,
         # The prior-projects rule (project-index REQ-06): the checkpoint is what
         # carries it into the session-start hook payload. None without cfg, or
@@ -142,6 +143,7 @@ def render_checkpoint(payload: dict) -> str:
     subtitle = f"_phase: {payload['phase']}"
     if shelved:
         subtitle += " (shelved)"
+    subtitle += f" | execution: {payload['execution']}"
     subtitle += f" | generated {payload['generated']}_"
     lines = [
         f"# Checkpoint - {payload['project']}",

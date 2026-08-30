@@ -69,6 +69,9 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "dir": str(project.path),
         "phase": project.phase,
         "status": project.status,
+        # The recorded execution mode (fan-out-plans REQ-03); a project.md
+        # without the key already reads as linear from load_project.
+        "execution": project.execution,
         "next_phase": workflow.next_phase(project.phase),
         "next_step": next_step,
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
@@ -144,6 +147,7 @@ def render_status(root: Path, info: dict) -> str:
         reason = info.get("shelved_reason")
         phase_line += f"  (shelved: {reason})" if reason else "  (shelved)"
     lines.append(phase_line)
+    lines.append(f"Execution: {info['execution']}")
     if "progress" in info:
         p = info["progress"]
         nxt = " | next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
