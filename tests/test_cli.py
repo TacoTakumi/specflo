@@ -4300,3 +4300,27 @@ def test_task_show_note_free_brief_carries_no_notes_block(tmp_path, monkeypatch)
     assert _json.loads(
         runner.invoke(app, ["task", "show", "T-01", "--json"]).output
     )["task"]["notes"] == []
+
+
+def test_notes_do_not_leak_into_list_status_or_checkpoint(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    surfaces = (["task", "list"], ["task", "list", "--json"], ["status"], ["checkpoint"])
+    before = {tuple(cmd): runner.invoke(app, cmd).output for cmd in surfaces}
+    for i in range(10):
+        r = runner.invoke(app, ["task", "note", "T-01", "--text", f"note {i}"])
+        assert r.exit_code == 0, r.output
+    for cmd in surfaces:
+        assert runner.invoke(app, cmd).output == before[tuple(cmd)], cmd
+
+
+def test_notes_do_not_leak_and_are_uncapped(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    for i in range(20):
+        r = runner.invoke(app, ["task", "note", "T-01", "--text", f"note {i}"])
+        assert r.exit_code == 0, (i, r.output)
+    notes = _json.loads(
+        runner.invoke(app, ["task", "show", "T-01", "--json"]).output
+    )["task"]["notes"]
+    assert [n["text"] for n in notes] == [f"note {i}" for i in range(20)]
