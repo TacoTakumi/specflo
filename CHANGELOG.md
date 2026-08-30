@@ -19,10 +19,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   unchanged. Every value is one line - a value carrying a line break is
   refused - and `--title`, `--acceptance`, `--verify` and `--implements`
   refuse an empty value, while an empty `--scope`, `--files` or `--needs`
-  clears that optional field. Edge edits are refused before any write when the task is unknown,
-  is the task itself, is not a current dependency (on a drop), or would close a
-  dependency cycle. Completed work still changes by supersession: a done task
-  refuses the edit unless `--force`, which appends one `[Edit]` note per changed
+  clears that optional field. Edge edits are refused before any write when the
+  added task is unknown, is superseded, is the task itself, or would close a
+  dependency cycle; a drop is refused when the task does not hold that edge.
+  Completed work still changes by supersession: a done task refuses the edit
+  unless `--force`, which appends one `[Edit]` note per changed
   field carrying the overwritten value, and a superseded entry is frozen with or
   without `--force`. `--json` emits `{id, changed}`.
 - **`specflo task note <T-NN> --text ... [--label ...]`.** Append a dated note
@@ -38,7 +39,9 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **Notes in the task brief.** `specflo task show` prints a `Notes:` block after
   the task's metadata and `--json` carries the list; `task list`, `status` and
   `checkpoint` are unchanged. A hand-written note that does not parse is a
-  non-blocking plan warning, never a `validate plan` failure.
+  non-blocking plan warning, never a `validate plan` failure, and a note quoting
+  a placeholder word (TODO, TBD, ???) does not block the plan the way authored
+  plan text does.
 - **Execution mode (fan-out-plans).** Every project records `execution:
   linear|fan-out` in `project.md`; `specflo new --execution` sets it, a new
   `specflo execution <mode>` command switches it in either direction at any

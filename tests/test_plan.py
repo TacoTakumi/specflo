@@ -2516,3 +2516,39 @@ def test_task_brief_renders_exactly_one_notes_header(root, cfg, project):
     text = plan.render_task_brief(plan.task_brief(root, cfg, project, task.id))
     assert text.count("  Notes:") == 1
     assert text.count("[Note] ") == 2
+
+
+def test_a_note_quoting_a_placeholder_word_does_not_block_validate(root, cfg, project):
+    # review-4 F1: notes are append-only and no command removes one, so a note
+    # describing a TODO in the code must not permanently redden validate plan.
+    task = _plan_with_task(root, cfg, project, files="a.py")
+    plan.add_task(root, cfg, project, "second", acceptance="a", verify="v",
+                  implements=["REQ-02"], files="b.py", today="2026-08-30")
+    assert plan.validate_plan(root, cfg, project) == []
+    for text in ("the retry path still has a TODO",
+                 "left TBD by the upstream API",
+                 "the timeout value is ???"):
+        plan.add_note(root, cfg, project, task.id, text, today="2026-08-30")
+    assert plan.validate_plan(root, cfg, project) == []
+    # an authored placeholder outside a note still blocks
+    path = _ppath(root, cfg, project)
+    path.write_text(path.read_text().replace("- Scope:", "- Scope: TODO", 1)
+                    if "- Scope:" in path.read_text()
+                    else path.read_text().replace("## Open questions\n",
+                                                  "## Open questions\nTODO\n", 1))
+    assert any("TODO" in i for i in plan.validate_plan(root, cfg, project))
+
+
+def test_edit_task_depends_can_drop_a_dangling_edge(root, cfg, project):
+    # review-4 F2: an edge onto a task that no longer exists must be removable.
+    first, _second, third = _three_tasks(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    path.write_text(markdown.set_entry_field(
+        path.read_text(), third.id, "Depends on", f"{first.id}, T-77"))
+    assert any("T-77" in i for i in plan.validate_plan(root, cfg, project))
+    _, changed = plan.edit_task(root, cfg, project, third.id,
+                                drop_depends_on=["T-77"], today="2026-08-30")
+    assert changed == ["depends_on"]
+    assert next(t for t in plan.list_tasks(root, cfg, project)
+                if t.id == third.id).depends_on == [first.id]
+    assert not [i for i in plan.validate_plan(root, cfg, project) if "T-77" in i]

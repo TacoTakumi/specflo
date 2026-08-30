@@ -368,7 +368,14 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if not path.is_file():
         return ["plan.md not found — run `specflo plan start`."]
     doc = path.read_text()
-    issues = markdown.placeholder_issues(markdown.strip_comments(doc))
+    # Notes are append-only history and no command removes one, so a note quoting
+    # a placeholder word ("still has a TODO") must not permanently block the plan
+    # (review-4 F1). Only authored plan text is linted.
+    authored = "".join(
+        line for line in markdown.strip_comments(doc).splitlines(keepends=True)
+        if not line.startswith(f"- {NOTE_FIELD}:")
+    )
+    issues = markdown.placeholder_issues(authored)
 
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
     if not active:
@@ -1039,10 +1046,12 @@ def _edited_depends_on(
     """
     known = {t.id for t in tasks}
     superseded = {t.id for t in tasks if t.status != "active"}
-    for dep in add + drop:
+    for dep in add:
+        # Only an added edge must name a real task: a *drop* is how a dangling
+        # edge onto a deleted id gets removed (review-4 F2), and the drop loop
+        # below already refuses an edge the task does not hold.
         if dep not in known:
             raise SpecfloError(f"No task {dep}.")
-    for dep in add:
         if dep == task.id:
             raise SpecfloError(f"{task.id} cannot depend on itself.")
         if dep in superseded:
