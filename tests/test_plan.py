@@ -1595,3 +1595,86 @@ def test_add_task_rejects_malformed_needs(root, cfg, project, bad):
         plan.add_task(root, cfg, project, "gen", acceptance="a", verify="v",
                       implements=["REQ-01"], needs=[bad], today="2026-06-22")
     assert _ppath(root, cfg, project).read_text() == before
+
+
+# --- pools: CLI-owned '## Pools' section (fan-out-plans REQ-08) -------------
+
+
+def _plan_ready_for_pools(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    return _ppath(root, cfg, project)
+
+
+def test_add_pool_creates_the_section_before_tasks_and_updates_in_place(root, cfg, project):
+    path = _plan_ready_for_pools(root, cfg, project)
+    assert "## Pools" not in path.read_text()
+
+    assert plan.add_pool(root, cfg, project, "gpu:3090", 2) == ("gpu:3090", 2)
+    doc = path.read_text()
+    assert doc.index("## Pools") < doc.index("## Tasks")
+    assert markdown.section_body(doc, "## Pools").strip() == "- gpu:3090: 2"
+
+    plan.add_pool(root, cfg, project, "gpu:3090", 3)
+    doc = path.read_text()
+    assert doc.count("## Pools") == 1
+    assert doc.count("gpu:3090") == 1
+    assert markdown.section_body(doc, "## Pools").strip() == "- gpu:3090: 3"
+    assert plan.parse_pools(doc) == {"gpu:3090": 3}
+
+
+def test_add_pool_sits_after_milestones_when_present(root, cfg, project):
+    _plan_with_milestones_and_tasks(
+        root, cfg, project, [("First", ["a"])], [_raw_task_entry("T-01")])
+    plan.add_pool(root, cfg, project, "gpu:3090", 2)
+    doc = _ppath(root, cfg, project).read_text()
+    assert doc.index("## Milestones") < doc.index("## Pools") < doc.index("## Tasks")
+    assert plan._parse_milestones(doc)[0].id == "M-01"      # milestones intact
+    assert [t.id for t in plan.list_tasks(root, cfg, project)] == ["T-01"]
+
+
+@pytest.mark.parametrize("size", [0, -1])
+def test_add_pool_rejects_a_size_below_one(root, cfg, project, size):
+    path = _plan_ready_for_pools(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError):
+        plan.add_pool(root, cfg, project, "x", size)
+    assert path.read_text() == before
+
+
+def test_add_pool_rejects_a_malformed_name(root, cfg, project):
+    _plan_ready_for_pools(root, cfg, project)
+    with pytest.raises(SpecfloError):
+        plan.add_pool(root, cfg, project, "a b", 1)
+
+
+def test_parse_pools_merges_declared_and_needed_pools(root, cfg, project):
+    path = _plan_ready_for_pools(root, cfg, project)
+    plan.add_pool(root, cfg, project, "gpu:3090", 3)
+    plan.add_task(root, cfg, project, "gen", acceptance="a", verify="v",
+                  implements=["REQ-01"], needs=["gpu:3090", "comfy-venv"],
+                  today="2026-06-22")
+    assert plan.parse_pools(path.read_text()) == {"gpu:3090": 3, "comfy-venv": 1}
+    assert plan.list_pools(root, cfg, project) == {"gpu:3090": 3, "comfy-venv": 1}
+
+
+def test_parse_pools_ignores_superseded_tasks_needs(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01", status="superseded by T-02").replace(
+            "- Progress:", "- Needs: old-pool\n- Progress:"),
+        _raw_task_entry("T-02").replace("- Progress:", "- Needs: comfy-venv\n- Progress:"),
+    ])
+    assert plan.parse_pools(_ppath(root, cfg, project).read_text()) == {"comfy-venv": 1}
+
+
+def test_parse_pools_is_empty_without_pools_or_needs(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.parse_pools(_ppath(root, cfg, project).read_text()) == {}
+
+
+def test_validate_plan_accepts_a_plan_with_and_without_pools(root, cfg, project):
+    _good_plan(root, cfg, project)
+    assert plan.validate_plan(root, cfg, project) == []
+    plan.add_pool(root, cfg, project, "gpu:3090", 2)
+    assert plan.validate_plan(root, cfg, project) == []

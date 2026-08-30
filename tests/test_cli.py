@@ -4003,3 +4003,66 @@ def test_task_add_rejects_malformed_needs(tmp_path, monkeypatch, bad):
     assert result.exit_code != 0
     plan_md = (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
     assert "### T-01" not in plan_md
+
+
+# --- pool add / pool list (fan-out-plans REQ-08) -----------------------------
+
+
+def test_pool_add_then_readd_leaves_one_line_with_the_new_size(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+
+    first = runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "2"])
+    assert first.exit_code == 0, first.output
+    assert "- gpu:3090: 2" in plan_md.read_text()
+
+    again = runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "3", "--json"])
+    assert again.exit_code == 0
+    assert json.loads(again.output) == {"name": "gpu:3090", "size": 3}
+    text = plan_md.read_text()
+    assert text.count("gpu:3090") == 1 and "- gpu:3090: 3" in text
+    assert text.count("## Pools") == 1
+
+
+def test_pool_add_rejects_size_zero(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    result = runner.invoke(app, ["pool", "add", "x", "--size", "0"])
+    assert result.exit_code != 0
+    assert "## Pools" not in (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+
+
+def test_pool_list_merges_declared_and_undeclared_pools(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "3"])
+    runner.invoke(app, ["task", "add", "--text", "gen", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01", "--needs", "comfy-venv"])
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_text()
+
+    result = runner.invoke(app, ["pool", "list", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {"gpu:3090": 3, "comfy-venv": 1}
+    text = runner.invoke(app, ["pool", "list"]).output
+    assert "gpu:3090" in text and "3" in text and "comfy-venv" in text
+    assert plan_md.read_text() == before                       # read-only
+
+
+def test_pool_list_is_empty_on_a_pool_free_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    result = runner.invoke(app, ["pool", "list", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output) == {}
+
+
+def test_validate_plan_accepts_a_pools_section(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["task", "add", "--text", "gen", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01"])
+    assert runner.invoke(app, ["validate", "plan"]).exit_code == 0
+    runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "2"])
+    assert runner.invoke(app, ["validate", "plan"]).exit_code == 0

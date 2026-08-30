@@ -903,6 +903,88 @@ def first_in_progress(active: list[Task]) -> str | None:
     return next((t.id for t in active if t.progress == "in_progress"), None)
 
 
+POOLS_HEADER = "## Pools"
+_POOL_LINE = re.compile(r"^- (?P<name>\S+): (?P<size>\d+)\s*$")
+
+
+def _declared_pools(doc: str) -> dict[str, int]:
+    """The pools declared in the CLI-owned ``## Pools`` section, in order."""
+    body = markdown.section_body(doc, POOLS_HEADER) or ""
+    pools: dict[str, int] = {}
+    for line in body.splitlines():
+        m = _POOL_LINE.match(line.strip())
+        if m:
+            pools[m.group("name")] = int(m.group("size"))
+    return pools
+
+
+def parse_pools(doc: str) -> dict[str, int]:
+    """Merged pool map for *doc* (fan-out-plans REQ-08): every declared pool at
+    its declared size, plus every pool an active task Needs, undeclared ones at
+    size 1. Superseded tasks are ignored."""
+    pools = _declared_pools(doc)
+    for t in _parse_tasks(doc):
+        if t.status != "active":
+            continue
+        for name in t.needs:
+            pools.setdefault(name, 1)
+    return pools
+
+
+def list_pools(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, int]:
+    """Read-only :func:`parse_pools` over the project's plan.md."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    return parse_pools(path.read_text())
+
+
+def add_pool(
+    root: Path, cfg: SpecfloConfig, slug: str, name: str, size: int,
+    today: str | None = None,
+) -> tuple[str, int]:
+    """Declare (or resize) pool *name* with *size* slots (fan-out-plans REQ-08).
+
+    Creates ``## Pools`` immediately before ``## Tasks`` on first use and writes
+    or updates the pool's single ``- <name>: N`` line in place under the
+    advisory lock. ``size`` must be >= 1.
+    """
+    name = validate_pool_name(name)
+    if size < 1:
+        raise SpecfloError(f"Pool size must be >= 1 (got {size}).")
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    with locked(lock_path_for(root, slug, path)):
+        doc = path.read_text()
+        if "## Tasks" not in doc:
+            raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
+        doc = markdown.ensure_section_before(doc, POOLS_HEADER, "## Tasks")
+        line = f"- {name}: {size}"
+        lines = doc.splitlines(keepends=True)
+        start = next(i for i, ln in enumerate(lines) if ln.strip() == POOLS_HEADER)
+        end = next((i for i in range(start + 1, len(lines))
+                    if lines[i].startswith("## ")), len(lines))
+        for i in range(start + 1, end):
+            m = _POOL_LINE.match(lines[i].strip())
+            if m and m.group("name") == name:
+                lines[i] = line + "\n"
+                break
+        else:
+            # Append after the last pool line (or right after the header),
+            # keeping the blank line that separates the section from ## Tasks.
+            last = start
+            for i in range(start + 1, end):
+                if _POOL_LINE.match(lines[i].strip()):
+                    last = i
+            lines.insert(last + 1, line + "\n")
+            if last == start and (last + 2 >= len(lines) or lines[last + 2].strip()):
+                lines.insert(last + 2, "\n")
+        doc = markdown.bump_updated("".join(lines), today)
+        path.write_text(doc)
+    return name, size
+
+
 def _progress_from_tasks(active: list[Task]) -> dict:
     by_state = {s: 0 for s in PROGRESS_STATES}
     for t in active:

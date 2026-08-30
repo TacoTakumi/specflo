@@ -170,6 +170,8 @@ app.add_typer(task_app, name="task")
 
 milestone_app = typer.Typer(help="Group plan tasks into ordered milestones.")
 app.add_typer(milestone_app, name="milestone")
+pool_app = typer.Typer(help="Declare the resource pools tasks can need (fan-out).")
+app.add_typer(pool_app, name="pool")
 
 review_app = typer.Typer(help="Record end-of-execute review rounds.")
 app.add_typer(review_app, name="review")
@@ -1654,6 +1656,44 @@ def milestone_list(
     current = view["current"]
     typer.echo(f"\nCurrent: {current}" if current else
                "\nCurrent: none (all milestones complete).")
+
+
+@pool_app.command("add", epilog="Example: specflo pool add gpu:3090 --size 2")
+def pool_add(
+    name: str = typer.Argument(..., metavar="<name>", help="Pool name (e.g. gpu:3090)."),
+    size: int = typer.Option(..., "--size", metavar="N", help="Number of slots (>= 1)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Declare a pool of N slots in plan.md's '## Pools' section, or resize it."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        name, size = plan.add_pool(root, cfg, slug, name, size)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"name": name, "size": size}))
+    else:
+        typer.echo(f"Pool {name}: {size} slot(s).")
+
+
+@pool_app.command("list", epilog="Example: specflo pool list --json")
+def pool_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List every declared pool and every pool an active task needs, with sizes."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        pools = plan.list_pools(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(pools))
+        return
+    if not pools:
+        typer.echo("No pools. Declare one with `specflo pool add <name> --size N`.")
+        return
+    for name, size in pools.items():
+        typer.echo(f"{name}: {size}")
 
 
 @milestone_app.command("show", epilog="Example: specflo milestone show M-01")
