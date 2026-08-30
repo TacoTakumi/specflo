@@ -341,3 +341,15 @@ def test_builder_is_a_pure_function_of_its_arguments():
         first = continuation.build_continuation(phase, SENTINEL)
         second = continuation.build_continuation(phase, SENTINEL)
         assert first == second
+
+
+def test_reseed_brief_carries_a_task_note():
+    brief = (
+        "T-01 - build it  [in_progress]\n"
+        "  Acceptance: it works\n"
+        "  Notes:\n"
+        "    2026-08-30 [Design] why we changed course\n"
+    )
+    payload = continuation.build_reseed("directive", "body", brief)
+    assert "2026-08-30 [Design] why we changed course" in payload
+    assert payload.index("why we changed course") > payload.index("body")

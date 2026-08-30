@@ -4272,3 +4272,31 @@ def test_task_note_rejections_leave_the_plan_untouched(tmp_path, monkeypatch):
         r = runner.invoke(app, ["task", "note", *args])
         assert r.exit_code != 0, args
         assert plan_md.read_text() == before, args
+
+
+def test_task_show_prints_and_emits_notes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    plain = runner.invoke(app, ["task", "show", "T-01"])
+    assert plain.exit_code == 0, plain.output
+    runner.invoke(app, ["task", "note", "T-01", "--text", "wired it up"])
+    r = runner.invoke(app, ["task", "show", "T-01"])
+    assert r.exit_code == 0, r.output
+    assert "Notes:" in r.output and "[Note] wired it up" in r.output
+    j = runner.invoke(app, ["task", "show", "T-01", "--json"])
+    notes = _json.loads(j.output)["task"]["notes"]
+    assert [n["text"] for n in notes] == ["wired it up"]
+    # a note-free brief is byte-identical to the same command before the note
+    assert plain.output == runner.invoke(app, ["task", "show", "T-01"]).output.replace(
+        "  Notes:\n", ""
+    ).replace(f"    {notes[0]['date']} [Note] wired it up\n", "")
+
+
+def test_task_show_note_free_brief_carries_no_notes_block(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    r = runner.invoke(app, ["task", "show", "T-01"])
+    assert "Notes" not in r.output
+    assert _json.loads(
+        runner.invoke(app, ["task", "show", "T-01", "--json"]).output
+    )["task"]["notes"] == []
