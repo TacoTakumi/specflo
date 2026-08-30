@@ -1363,3 +1363,47 @@ def test_task_brief_fan_out_suppresses_the_working_ahead_note(root, cfg, project
     assert brief["execution"] == "fan-out"
     assert brief["working_ahead"] is None
     assert "working ahead" not in plan.render_task_brief(brief)
+
+
+# --- Files parsed as a normalized path list (fan-out-plans REQ-04) ----------
+
+
+def test_parse_files_splits_trims_and_strips_one_trailing_note():
+    assert plan.parse_files(
+        "src/a.py, ~/x/y (venv, outside repo), tests/b.py"
+    ) == ["src/a.py", "~/x/y", "tests/b.py"]
+
+
+def test_parse_files_drops_empty_entries_and_handles_none():
+    assert plan.parse_files("") == []
+    assert plan.parse_files(None) == []
+    assert plan.parse_files(" src/a.py , , tests/b.py, ") == ["src/a.py", "tests/b.py"]
+
+
+def test_parse_files_removes_only_one_trailing_parenthetical():
+    # One trailing note per entry; a nested/inner parenthetical is not a note.
+    assert plan.parse_files("a (x) (y)") == ["a (x)"]
+    assert plan.parse_files("a(b).py") == ["a(b).py"]
+
+
+def test_task_file_list_property_uses_parse_files(root, cfg, project):
+    entry = _raw_task_entry("T-01").replace(
+        "- Progress:", "- Files: src/a.py, ~/x/y (venv, outside repo), tests/b.py\n- Progress:")
+    _plan_with_entries(root, cfg, project, [entry, _raw_task_entry("T-02")])
+    tasks = {t.id: t for t in plan.list_tasks(root, cfg, project)}
+    assert tasks["T-01"].files == "src/a.py, ~/x/y (venv, outside repo), tests/b.py"
+    assert tasks["T-01"].file_list == ["src/a.py", "~/x/y", "tests/b.py"]
+    assert tasks["T-02"].files is None
+    assert tasks["T-02"].file_list == []
+
+
+def test_task_brief_carries_files_as_a_list_and_leaves_plan_md_alone(root, cfg, project):
+    entry = _raw_task_entry("T-01").replace(
+        "- Progress:", "- Files: src/a.py, ~/x/y (venv, outside repo), tests/b.py\n- Progress:")
+    path = _plan_with_entries(root, cfg, project, [entry, _raw_task_entry("T-02")])
+    before = path.read_text()
+    assert plan.task_brief(root, cfg, project, "T-01")["task"]["files"] == [
+        "src/a.py", "~/x/y", "tests/b.py"]
+    assert plan.task_brief(root, cfg, project, "T-02")["task"]["files"] == []
+    assert path.read_text() == before
+    assert "- Files: src/a.py, ~/x/y (venv, outside repo), tests/b.py" in before

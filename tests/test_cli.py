@@ -3907,3 +3907,23 @@ def test_execution_verb_requires_an_active_project(tmp_path, monkeypatch):
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["execution", "fan-out"])
     assert result.exit_code != 0
+
+
+# --- task list --json carries the parsed Files list (fan-out-plans REQ-04) --
+
+
+def test_task_list_json_carries_files_as_a_list(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)   # T-01, no Files
+    runner.invoke(app, ["task", "add", "--text", "more", "--acceptance", "a",
+                        "--verify", "v", "--from", "REQ-01",
+                        "--files", "src/a.py, ~/x/y (venv, outside repo), tests/b.py"])
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_text()
+
+    result = runner.invoke(app, ["task", "list", "--json"])
+    assert result.exit_code == 0
+    by_id = {t["id"]: t for t in json.loads(result.output)["tasks"]}
+    assert by_id["T-01"]["files"] == []
+    assert by_id["T-02"]["files"] == ["src/a.py", "~/x/y", "tests/b.py"]
+    assert plan_md.read_text() == before

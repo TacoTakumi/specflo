@@ -1546,7 +1546,8 @@ def task_list(
         typer.echo(json.dumps({
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
-                 "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts}
+                 "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts,
+                 "files": t.file_list}
                 for t in tasks
             ],
             "progress": progress,

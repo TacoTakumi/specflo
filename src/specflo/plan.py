@@ -78,6 +78,42 @@ class Task:
     blocked: str | None = None
     milestone: str | None = None
 
+    @property
+    def file_list(self) -> list[str]:
+        """The Files field as a normalized path list (fan-out-plans REQ-04)."""
+        return parse_files(self.files)
+
+
+def parse_files(value: str | None) -> list[str]:
+    """Parse a task's Files text into a list of paths (fan-out-plans REQ-04).
+
+    Split on commas, trim whitespace, drop one trailing parenthetical note per
+    entry (``~/x/y (venv, outside repo)`` -> ``~/x/y``), and drop empty
+    entries. Because a note may itself contain commas, entries are split on
+    commas outside parentheses. The plan.md text is never rewritten.
+    """
+    if not value:
+        return []
+    entries, depth, current = [], 0, []
+    for ch in value:
+        if ch == "(":
+            depth += 1
+        elif ch == ")" and depth:
+            depth -= 1
+        if ch == "," and depth == 0:
+            entries.append("".join(current)); current = []
+        else:
+            current.append(ch)
+    entries.append("".join(current))
+    out = []
+    for entry in entries:
+        entry = entry.strip()
+        if entry.endswith(")"):
+            entry = re.sub(r"\s*\([^()]*\)$", "", entry).strip()
+        if entry:
+            out.append(entry)
+    return out
+
 
 @dataclass
 class Milestone:
@@ -1245,7 +1281,7 @@ def task_brief(
         "task": {
             "id": task.id, "text": task.text, "acceptance": task.acceptance,
             "verify": task.verify, "implements": task.implements,
-            "depends_on": task.depends_on, "files": task.files,
+            "depends_on": task.depends_on, "files": task.file_list,
             "scope": task.scope, "progress": task.progress,
         },
         "requirements": requirements,
