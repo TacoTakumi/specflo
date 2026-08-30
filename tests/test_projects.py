@@ -322,3 +322,93 @@ def test_a_project_without_the_new_fields_still_loads(root, cfg):
     loaded = projects.load_project(root, cfg, "thing")
     assert loaded.summary == ""
     assert loaded.completed == ""
+
+
+def test_create_project_defaults_execution_to_linear(root, cfg):
+    project = projects.create_project(root, cfg, "Thing")
+    assert project.execution == "linear"
+    text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "execution: linear" in text.split("---")[1]
+    assert projects.load_project(root, cfg, "thing").execution == "linear"
+
+
+def test_create_project_accepts_fan_out_execution(root, cfg):
+    project = projects.create_project(root, cfg, "Thing", execution="fan-out")
+    assert project.execution == "fan-out"
+    text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "execution: fan-out" in text.split("---")[1]
+    assert projects.load_project(root, cfg, "thing").execution == "fan-out"
+
+
+def test_create_project_rejects_an_unknown_execution_naming_both(root, cfg):
+    with pytest.raises(SpecfloError) as exc:
+        projects.create_project(root, cfg, "Thing", execution="other")
+    assert "linear" in str(exc.value)
+    assert "fan-out" in str(exc.value)
+    assert not (root / "docs" / "projects" / "thing").exists()
+
+
+def test_a_project_without_an_execution_key_reads_as_linear(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    path.write_text("\n".join(
+        line for line in path.read_text().splitlines()
+        if not line.startswith("execution:")
+    ) + "\n")
+
+    assert "execution:" not in path.read_text()
+    assert projects.load_project(root, cfg, "thing").execution == "linear"
+
+
+def test_set_execution_rewrites_only_the_execution_key(root, cfg):
+    projects.create_project(root, cfg, "Thing", created="2026-06-15", summary="One line")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    # A hand-edited body must survive the switch verbatim.
+    before = path.read_text() + "\nSome hand-written notes.\n"
+    path.write_text(before)
+
+    assert projects.set_execution(root, cfg, "thing", "fan-out") == ("fan-out", True)
+    after = path.read_text()
+    assert after == before.replace("execution: linear", "execution: fan-out")
+    assert projects.load_project(root, cfg, "thing").execution == "fan-out"
+
+    assert projects.set_execution(root, cfg, "thing", "linear") == ("linear", True)
+    assert path.read_text() == before
+
+
+def test_set_execution_reports_unchanged_when_the_mode_already_matches(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    before = path.read_text()
+
+    assert projects.set_execution(root, cfg, "thing", "linear") == ("linear", False)
+    assert path.read_text() == before
+
+
+def test_set_execution_adds_the_key_when_it_is_absent(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    path.write_text("\n".join(
+        line for line in path.read_text().splitlines()
+        if not line.startswith("execution:")
+    ) + "\n")
+    before = path.read_text()
+
+    # Absent reads as linear, so setting linear is a no-op...
+    assert projects.set_execution(root, cfg, "thing", "linear") == ("linear", False)
+    assert path.read_text() == before
+    # ...and setting fan-out writes the key without disturbing anything else.
+    assert projects.set_execution(root, cfg, "thing", "fan-out") == ("fan-out", True)
+    after = path.read_text()
+    assert projects.load_project(root, cfg, "thing").execution == "fan-out"
+    assert after.replace("execution: fan-out\n", "") == before
+
+
+def test_set_execution_rejects_an_unknown_mode(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:
+        projects.set_execution(root, cfg, "thing", "other")
+    assert "linear" in str(exc.value) and "fan-out" in str(exc.value)
+    assert path.read_text() == before

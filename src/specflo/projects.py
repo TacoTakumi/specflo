@@ -28,6 +28,11 @@ SHELVED_STATUS = "shelved"
 # REQ-07). The index renders it as-is, so an unset summary is impossible to
 # mistake for a written one.
 NEEDS_SUMMARY = "(needs summary)"
+# Execution modes (fan-out-plans REQ-01). A project.md without the key reads
+# as linear so files written before the key existed keep their behaviour.
+LINEAR_EXECUTION = "linear"
+FAN_OUT_EXECUTION = "fan-out"
+EXECUTION_MODES = (LINEAR_EXECUTION, FAN_OUT_EXECUTION)
 
 
 @dataclass
@@ -41,6 +46,7 @@ class Project:
     shelved_reason: str = ""
     summary: str = ""
     completed: str = ""
+    execution: str = LINEAR_EXECUTION
 
 
 def slugify(name: str) -> str:
@@ -54,13 +60,25 @@ def project_dir(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return root / cfg.projects_dir / slug
 
 
+def validate_execution(mode: str) -> str:
+    """Return ``mode`` if it is a known execution mode, else raise naming both."""
+    if mode not in EXECUTION_MODES:
+        raise SpecfloError(
+            f"Unknown execution mode {mode!r}: expected one of "
+            + ", ".join(repr(m) for m in EXECUTION_MODES) + "."
+        )
+    return mode
+
+
 def create_project(
     root: Path,
     cfg: SpecfloConfig,
     name: str,
     created: str | None = None,
     summary: str | None = None,
+    execution: str = LINEAR_EXECUTION,
 ) -> Project:
+    execution = validate_execution(execution)
     slug = slugify(name)
     directory = project_dir(root, cfg, slug)
     if directory.exists():
@@ -74,6 +92,7 @@ def create_project(
         status=INITIAL_STATUS,
         path=directory,
         summary=summary or NEEDS_SUMMARY,
+        execution=execution,
     )
     directory.mkdir(parents=True)
     (directory / PROJECT_FILENAME).write_text(_render(project))
@@ -95,6 +114,7 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         shelved_reason=str(fields.get("shelved_reason", "") or ""),
         summary=str(fields.get("summary", "") or ""),
         completed=str(fields.get("completed", "") or ""),
+        execution=str(fields.get("execution") or LINEAR_EXECUTION),
     )
 
 
@@ -220,6 +240,38 @@ def set_summary(root: Path, cfg: SpecfloConfig, slug: str, text: str) -> Project
     return project
 
 
+def set_execution(
+    root: Path, cfg: SpecfloConfig, slug: str, mode: str
+) -> tuple[str, bool]:
+    """Set the project's execution mode, rewriting only that frontmatter key.
+
+    Returns ``(mode, changed)``; ``changed`` is False when the file already
+    reads as ``mode``. The rewrite is textual so every other frontmatter key
+    and the body survive byte-for-byte (fan-out-plans REQ-02). A missing key
+    is appended to the frontmatter when a non-default mode is set.
+    """
+    mode = validate_execution(mode)
+    path = project_dir(root, cfg, slug) / PROJECT_FILENAME
+    with locked(lock_path_for(root, slug, path)):
+        current = load_project(root, cfg, slug).execution
+        if current == mode:
+            return mode, False
+        text = path.read_text()
+        head, sep, rest = text.partition("---")
+        front, sep2, body = rest.partition("---")
+        lines = front.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith("execution:"):
+                lines[i] = f"execution: {mode}"
+                break
+        else:
+            # No key yet: add it as the last frontmatter line (front ends
+            # with the newline that precedes the closing fence).
+            lines.insert(len(lines) - 1, f"execution: {mode}")
+        path.write_text(head + sep + "\n".join(lines) + sep2 + body)
+    return mode, True
+
+
 def resume_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     """Un-shelve a project: status -> active, clear the reason, phase untouched.
 
@@ -241,6 +293,7 @@ def _render(project: Project) -> str:
         "created": project.created,
         "phase": project.phase,
         "status": project.status,
+        "execution": project.execution,
     }
     # Optional fields appear only once they hold something, so a project file
     # written before they existed does not sprout empty keys on rewrite.
