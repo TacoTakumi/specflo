@@ -156,3 +156,26 @@ def test_set_entry_field_inserts_above_the_entrys_notes():
     # a note appended afterwards still lands below the existing notes
     out = markdown.append_entry_field(out, "T-01", "Note", "2026-08-31 [Note] second")
     assert "- Note: 2026-08-30 [Note] first\n- Note: 2026-08-31 [Note] second\n" in out
+
+
+_FENCED = (
+    "## Approach\n"
+    "```\n"
+    "### T-01 — an example entry in prose\n"
+    "```\n\n"
+    "## Tasks\n\n"
+    "### T-01 — the real entry\n"
+    "- Status: active\n"
+)
+
+
+def test_set_entry_title_rewrites_the_real_heading_not_a_fenced_one():
+    # review-3 F1: the entry scan must be fence-aware, like every other writer.
+    out = markdown.set_entry_title(_FENCED, "T-01", "renamed")
+    assert "### T-01 — an example entry in prose\n" in out  # the fenced line stands
+    assert "### T-01 — renamed\n- Status: active\n" in out
+
+
+def test_set_entry_title_raises_for_an_unknown_entry():
+    with pytest.raises(StopIteration):
+        markdown.set_entry_title(_ENTRY, "T-99", "x")

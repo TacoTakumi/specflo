@@ -2475,3 +2475,44 @@ def test_malformed_note_on_a_superseded_task_still_warns(root, cfg, project):
     _hand_write_note(root, cfg, project, task.id, "not-a-date [Bogus] text")
     warnings = [w for w in plan.plan_warnings(root, cfg, project) if "note" in w.lower()]
     assert len(warnings) == 1 and task.id in warnings[0]
+
+
+def test_edit_task_fields_title_is_fence_aware(root, cfg, project):
+    # review-3 F1: a fenced example entry must not absorb the rename.
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    doc = path.read_text().replace(
+        "## Global constraints",
+        "```\n### T-01 — an example entry in prose\n```\n\n## Global constraints", 1,
+    )
+    path.write_text(doc)
+    _, changed = plan.edit_task(root, cfg, project, task.id, title="renamed",
+                                today="2026-08-30")
+    assert changed == ["title"]
+    after = path.read_text()
+    assert "### T-01 — an example entry in prose" in after  # untouched
+    assert next(t for t in plan.list_tasks(root, cfg, project)).text == "renamed"
+
+
+def test_edit_task_depends_rejects_a_superseded_target(root, cfg, project):
+    # review-3 F5: an edge onto a frozen entry fails validate plan immediately.
+    first, second, _third = _three_tasks(root, cfg, project)
+    plan.add_task(root, cfg, project, "replacement", acceptance="a", verify="v",
+                  implements=["REQ-02"], supersedes=second.id, today="2026-08-30")
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    with pytest.raises(SpecfloError) as exc:
+        plan.edit_task(root, cfg, project, first.id, add_depends_on=[second.id],
+                       today="2026-08-30")
+    assert "superseded" in str(exc.value)
+    assert path.read_text() == before
+
+
+def test_task_brief_renders_exactly_one_notes_header(root, cfg, project):
+    # review-3 F3: the stripping tests would not notice a doubled header.
+    task = _plan_with_task(root, cfg, project)
+    plan.add_note(root, cfg, project, task.id, "one", today="2026-08-30")
+    plan.add_note(root, cfg, project, task.id, "two", today="2026-08-30")
+    text = plan.render_task_brief(plan.task_brief(root, cfg, project, task.id))
+    assert text.count("  Notes:") == 1
+    assert text.count("[Note] ") == 2

@@ -925,16 +925,22 @@ def rewire_dependency(
 # add/drop flags instead, because an edge needs existence and cycle checks.
 EDITABLE_FIELDS = ("title", "acceptance", "verify", "scope", "files", "needs",
                    "implements")
-_EDIT_FIELD_KEYS = {
-    "acceptance": "Acceptance", "verify": "Verify", "scope": "Scope",
-    "files": "Files", "needs": "Needs", "implements": "Implements",
-}
 
 
 # The fields `task add` will not create empty: blanking one would leave a task
 # nobody can act on, so `task edit` refuses it (review-1 F2). The rest are
 # optional, and an empty value clears the line.
 _MANDATORY_EDIT_FIELDS = ("title", "acceptance", "verify", "implements")
+
+
+# One table: the plan.md field key for each editable field, which is also the
+# name the refusal messages use. `title` lives in the entry heading, `depends_on`
+# is written by the edge flags; neither is a plain `- <Field>:` line.
+_EDIT_FIELD_LABELS = {
+    "title": "Title", "acceptance": "Acceptance", "verify": "Verify",
+    "scope": "Scope", "files": "Files", "needs": "Needs",
+    "implements": "Implements", "depends_on": "Depends on",
+}
 
 
 def _normalize_edit_value(name: str, value: str) -> str:
@@ -955,13 +961,13 @@ def _check_edit_value(name: str, value: str) -> None:
     # \n and \r - a bare \x1e or \u2028 would inject a metadata line (review-2 F1).
     if value and value.splitlines() != [value]:
         raise SpecfloError(
-            f"A task's {name} is one line: remove the line break "
-            f"(record longer prose with `specflo task note`)."
+            f"A task's {_EDIT_FIELD_LABELS[name]} is one line: remove the line "
+            f"break (record longer prose with `specflo task note`)."
         )
     if not value and name in _MANDATORY_EDIT_FIELDS:
         raise SpecfloError(
-            f"A task's {name} cannot be empty. Supersede the task instead if it "
-            f"no longer describes real work."
+            f"A task's {_EDIT_FIELD_LABELS[name]} cannot be empty. Supersede the "
+            f"task instead if it no longer describes real work."
         )
 
 
@@ -979,13 +985,8 @@ def _edit_is_a_change(task: Task, name: str, value: str) -> bool:
 def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
     """Write an already-normalized *value* into the task's field."""
     if name == "title":
-        # A replacement *function*: nothing in the user's title is interpreted as
-        # an escape or a group reference (review-1 F1).
-        return re.sub(
-            rf"(?m)^### {re.escape(task_id)} —.*$",
-            lambda _m: f"### {task_id} — {value}", doc, count=1,
-        )
-    return _write_or_clear(doc, task_id, _EDIT_FIELD_KEYS[name], value)
+        return markdown.set_entry_title(doc, task_id, value)
+    return _write_or_clear(doc, task_id, _EDIT_FIELD_LABELS[name], value)
 
 
 def _write_or_clear(doc: str, item_id: str, field: str, value: str) -> str:
@@ -993,13 +994,6 @@ def _write_or_clear(doc: str, item_id: str, field: str, value: str) -> str:
     if not value:
         return markdown.clear_entry_field(doc, item_id, field)
     return markdown.set_entry_field(doc, item_id, field, value)
-
-
-_EDIT_FIELD_LABELS = {
-    "title": "Title", "acceptance": "Acceptance", "verify": "Verify",
-    "scope": "Scope", "files": "Files", "needs": "Needs",
-    "implements": "Implements", "depends_on": "Depends on",
-}
 
 
 def _forced_edit_note(task: Task, name: str) -> str:
@@ -1044,12 +1038,18 @@ def _edited_depends_on(
     a no-op, not a duplicate.
     """
     known = {t.id for t in tasks}
+    superseded = {t.id for t in tasks if t.status != "active"}
     for dep in add + drop:
         if dep not in known:
             raise SpecfloError(f"No task {dep}.")
     for dep in add:
         if dep == task.id:
             raise SpecfloError(f"{task.id} cannot depend on itself.")
+        if dep in superseded:
+            raise SpecfloError(
+                f"Task {dep} is superseded; depend on the task that superseded "
+                f"it instead."
+            )
     deps = list(task.depends_on)
     for dep in drop:
         if dep not in deps:
@@ -1144,7 +1144,6 @@ def edit_task(
 def add_note(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str, text: str,
     label: str | None = None, today: str | None = None,
-    *, allow_edit: bool = False,
 ) -> dict:
     """Append one ``- Note:`` line to a task entry and return the note record.
 
@@ -1152,7 +1151,7 @@ def add_note(
     and on a superseded one (REQ-05). The label and text are validated before the
     lock is taken, so a rejected note leaves plan.md byte-identical.
     """
-    value = format_note(text, label, today, allow_edit=allow_edit)
+    value = format_note(text, label, today)
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")

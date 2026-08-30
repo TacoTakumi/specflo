@@ -113,6 +113,21 @@ def next_id(doc: str, prefix: str) -> str:
     return f"{prefix}{nxt:02d}"
 
 
+def set_entry_title(doc: str, item_id: str, title: str) -> str:
+    """Rewrite the ``### {item_id} — <title>`` heading of an entry.
+
+    Fence-aware like the field writers, so a `### T-NN —` line quoted inside a
+    fenced example elsewhere in the document is never mistaken for the entry.
+    """
+    lines = doc.splitlines(keepends=True)
+    index = next(
+        i for i, line, in_fence in iter_lines_with_fence(doc)
+        if not in_fence and line.startswith(f"### {item_id} —")
+    )
+    lines[index] = f"### {item_id} — {title}\n"
+    return "".join(lines)
+
+
 def _insert_entry_line(lines: list[str], index: int, field: str, value: str) -> None:
     """Insert a ``- {field}: {value}`` line, keeping the document line-terminated.
 
