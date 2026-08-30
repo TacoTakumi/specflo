@@ -1050,6 +1050,35 @@ def progress_from_doc(doc: str) -> dict:
     return prog
 
 
+def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    """The orchestrator's frontier (fan-out-plans REQ-10), read-only.
+
+    ``tasks`` carries, per active task, its ``files`` and ``needs`` lists and
+    ``ready`` (True exactly for ids in ``next_actionable``); ``pools`` maps each
+    declared or needed pool to ``{size, holders}`` where holders are the
+    in_progress tasks naming it.
+    """
+    path = plan_path(root, cfg, slug)
+    doc = path.read_text() if path.is_file() else ""
+    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    ready = set(progress_from_doc(doc)["next_actionable"])
+    pools = {
+        name: {
+            "size": size,
+            "holders": [t.id for t in active
+                        if t.progress == "in_progress" and name in t.needs],
+        }
+        for name, size in parse_pools(doc).items()
+    }
+    return {
+        "tasks": [
+            {"id": t.id, "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
+            for t in active
+        ],
+        "pools": pools,
+    }
+
+
 def plan_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     path = plan_path(root, cfg, slug)
     return progress_from_doc(path.read_text() if path.is_file() else "")

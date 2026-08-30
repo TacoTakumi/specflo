@@ -4066,3 +4066,80 @@ def test_validate_plan_accepts_a_pools_section(tmp_path, monkeypatch):
     assert runner.invoke(app, ["validate", "plan"]).exit_code == 0
     runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "2"])
     assert runner.invoke(app, ["validate", "plan"]).exit_code == 0
+
+
+# --- task list --json is the orchestrator frontier (fan-out-plans REQ-10) ---
+
+
+def _frontier_fixture(tmp_path):
+    """Declared gpu:3090 (size 2), implicit comfy-venv, T-01 in_progress holding
+    both, T-02 pending needing gpu:3090 (ready), T-03 pending needing comfy-venv
+    (pool full), T-04 pending depending on T-01 (not ready), T-05 plain (ready)."""
+    _project_at_plan_phase(runner, app, tmp_path)
+    runner.invoke(app, ["pool", "add", "gpu:3090", "--size", "2"])
+    add = ["task", "add", "--acceptance", "a", "--verify", "v", "--from", "REQ-01"]
+    runner.invoke(app, add + ["--text", "one", "--files", "src/a.py",
+                              "--needs", "gpu:3090", "--needs", "comfy-venv"])
+    runner.invoke(app, add + ["--text", "two", "--needs", "gpu:3090"])
+    runner.invoke(app, add + ["--text", "three", "--needs", "comfy-venv"])
+    runner.invoke(app, add + ["--text", "four", "--depends-on", "T-01"])
+    runner.invoke(app, add + ["--text", "five", "--files", "src/b.py"])
+    runner.invoke(app, ["advance"])                      # plan -> execute
+    assert runner.invoke(app, ["task", "start", "T-01"]).exit_code == 0
+
+
+def test_frontier_helper_reports_ready_files_needs_and_pools(tmp_path, monkeypatch):
+    from specflo import plan as _plan
+    monkeypatch.chdir(tmp_path)
+    _frontier_fixture(tmp_path)
+    cfg = config.load_config(tmp_path)
+    fr = _plan.frontier(tmp_path, cfg, "thing")
+    by_id = {t["id"]: t for t in fr["tasks"]}
+    assert by_id["T-01"] == {"id": "T-01", "files": ["src/a.py"],
+                             "needs": ["gpu:3090", "comfy-venv"], "ready": False}
+    assert by_id["T-02"]["ready"] is True
+    assert by_id["T-03"]["ready"] is False
+    assert by_id["T-04"]["ready"] is False
+    assert by_id["T-05"]["ready"] is True
+    assert fr["pools"] == {"gpu:3090": {"size": 2, "holders": ["T-01"]},
+                           "comfy-venv": {"size": 1, "holders": ["T-01"]}}
+
+
+def test_task_list_json_carries_the_frontier_keys(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _frontier_fixture(tmp_path)
+    plan_md = tmp_path / "docs" / "projects" / "thing" / "plan.md"
+    before = plan_md.read_text()
+
+    result = runner.invoke(app, ["task", "list", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert plan_md.read_text() == before                  # read-only
+
+    ready_ids = set(data["progress"]["next_actionable"])
+    assert ready_ids == {"T-02", "T-05"}
+    for t in data["tasks"]:
+        for key in ("id", "text", "progress", "status", "implements", "depends_on",
+                    "next", "files", "needs", "ready"):
+            assert key in t, key
+        assert isinstance(t["files"], list) and isinstance(t["needs"], list)
+        assert t["ready"] is (t["id"] in ready_ids)
+        assert t["next"] is (t["id"] in ready_ids)
+    by_id = {t["id"]: t for t in data["tasks"]}
+    assert by_id["T-01"]["progress"] == "in_progress"
+    assert by_id["T-01"]["needs"] == ["gpu:3090", "comfy-venv"]
+    assert by_id["T-04"]["depends_on"] == ["T-01"]
+    assert by_id["T-05"]["files"] == ["src/b.py"]
+
+    pools = json.loads(runner.invoke(app, ["pool", "list", "--json"]).output)
+    assert {n: p["size"] for n, p in data["pools"].items()} == pools
+    assert data["pools"] == {"gpu:3090": {"size": 2, "holders": ["T-01"]},
+                             "comfy-venv": {"size": 1, "holders": ["T-01"]}}
+
+
+def test_task_list_json_pools_is_empty_on_a_plain_plan(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    data = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
+    assert data["pools"] == {}
+    assert data["tasks"][0]["ready"] is True and data["tasks"][0]["next"] is True

@@ -1550,14 +1550,18 @@ def task_list(
         raise _die(str(exc))
     nexts = set(progress["next_actionable"])
     if json_output:
+        # The orchestrator frontier (fan-out-plans REQ-10): files, needs and
+        # ready per task plus the pools map, alongside the unchanged keys.
+        fr = plan.frontier(root, cfg, slug)
         typer.echo(json.dumps({
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
                  "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts,
-                 "files": t.file_list, "needs": t.needs}
+                 "files": t.file_list, "needs": t.needs, "ready": t.id in nexts}
                 for t in tasks
             ],
             "progress": progress,
+            "pools": fr["pools"],
         }))
         return
     if not tasks:
