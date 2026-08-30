@@ -508,7 +508,16 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if not path.is_file():
         return []
     warnings: list[str] = []
-    active = [t for t in _parse_tasks(path.read_text()) if t.status == "active"]
+    tasks = _parse_tasks(path.read_text())
+    active = [t for t in tasks if t.status == "active"]
+    # A superseded entry is frozen, but an unreadable note in it is still lost
+    # history worth reporting (review-2 F6).
+    for t in tasks:
+        for raw in t.notes_malformed:
+            warnings.append(
+                f'{t.id} has a malformed note ("{raw}") — expected '
+                '"<YYYY-MM-DD> [Label] text"; it is not read back.'
+            )
     for t in active:
         haystack = f"{t.text} {t.acceptance} {t.verify}".lower()
         for term in _SCOPE_REDUCTION_TERMS:
@@ -516,11 +525,6 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
                 warnings.append(
                     f'{t.id} may reduce scope ("{term}") — deliver what the requirement needs, or split.'
                 )
-        for raw in t.notes_malformed:
-            warnings.append(
-                f'{t.id} has a malformed note ("{raw}") — expected '
-                '"<YYYY-MM-DD> [Label] text"; it is not read back.'
-            )
     warnings.extend(_shared_file_warnings(active))
     return warnings
 
@@ -933,14 +937,28 @@ _EDIT_FIELD_KEYS = {
 _MANDATORY_EDIT_FIELDS = ("title", "acceptance", "verify", "implements")
 
 
+def _normalize_edit_value(name: str, value: str) -> str:
+    """The value as it will be written: the same text the parser reads back.
+
+    Normalizing once - before the checks and before the write - keeps
+    :func:`_edit_is_a_change` and :func:`_apply_edit` from disagreeing about what
+    a padded or comma-only value means (review-2 F2, F5).
+    """
+    if name in ("needs", "implements"):
+        return ", ".join(_split_refs(value))
+    return value.strip()
+
+
 def _check_edit_value(name: str, value: str) -> None:
-    """Reject an edit value that would break the one-field-one-line invariant."""
-    if "\n" in value or "\r" in value:
+    """Reject a normalized edit value that a task field cannot hold."""
+    # plan.md is read back with str.splitlines(), which breaks on far more than
+    # \n and \r - a bare \x1e or \u2028 would inject a metadata line (review-2 F1).
+    if value and value.splitlines() != [value]:
         raise SpecfloError(
             f"A task's {name} is one line: remove the line break "
             f"(record longer prose with `specflo task note`)."
         )
-    if not value.strip() and name in _MANDATORY_EDIT_FIELDS:
+    if not value and name in _MANDATORY_EDIT_FIELDS:
         raise SpecfloError(
             f"A task's {name} cannot be empty. Supersede the task instead if it "
             f"no longer describes real work."
@@ -959,6 +977,7 @@ def _edit_is_a_change(task: Task, name: str, value: str) -> bool:
 
 
 def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
+    """Write an already-normalized *value* into the task's field."""
     if name == "title":
         # A replacement *function*: nothing in the user's title is interpreted as
         # an escape or a group reference (review-1 F1).
@@ -966,11 +985,14 @@ def _apply_edit(doc: str, task_id: str, name: str, value: str) -> str:
             rf"(?m)^### {re.escape(task_id)} —.*$",
             lambda _m: f"### {task_id} — {value}", doc, count=1,
         )
-    if name in ("needs", "implements"):
-        value = ", ".join(_split_refs(value))
-    if not value.strip():
-        return markdown.clear_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name])
-    return markdown.set_entry_field(doc, task_id, _EDIT_FIELD_KEYS[name], value)
+    return _write_or_clear(doc, task_id, _EDIT_FIELD_KEYS[name], value)
+
+
+def _write_or_clear(doc: str, item_id: str, field: str, value: str) -> str:
+    """Set *field* to *value*, or drop the line entirely when *value* is empty."""
+    if not value:
+        return markdown.clear_entry_field(doc, item_id, field)
+    return markdown.set_entry_field(doc, item_id, field, value)
 
 
 _EDIT_FIELD_LABELS = {
@@ -1062,7 +1084,7 @@ def edit_task(
     plan.md byte-identical.
     """
     edits = {
-        name: value for name, value in (
+        name: _normalize_edit_value(name, value) for name, value in (
             ("title", title), ("acceptance", acceptance), ("verify", verify),
             ("scope", scope), ("files", files), ("needs", needs),
             ("implements", implements),
@@ -1079,9 +1101,9 @@ def edit_task(
     for name, value in edits.items():
         _check_edit_value(name, value)
     if implements is not None:
-        check_implements(root, cfg, slug, _split_refs(implements))
+        check_implements(root, cfg, slug, _split_refs(edits["implements"]))
     if needs is not None:
-        for pool in _split_refs(needs):
+        for pool in _split_refs(edits["needs"]):
             validate_pool_name(pool)
     path = plan_path(root, cfg, slug)
     if not path.is_file():
@@ -1103,9 +1125,7 @@ def edit_task(
         if changed:
             for name in changed:
                 if name == "depends_on":
-                    doc = markdown.set_entry_field(
-                        doc, task_id, "Depends on", ", ".join(deps)
-                    )
+                    doc = _write_or_clear(doc, task_id, "Depends on", ", ".join(deps))
                 else:
                     doc = _apply_edit(doc, task_id, name, edits[name])
                 # A forced edit of finished work records what it overwrote, in

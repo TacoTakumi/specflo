@@ -2036,6 +2036,17 @@ def test_edit_task_fields_rewrites_only_the_named_lines(root, cfg, project):
     assert changed == ["title", "acceptance", "verify", "scope", "files", "needs",
                        "implements"]
     after = path.read_text().splitlines(keepends=True)
+    # both directions: a line silently dropped by the edit shows up as a removal
+    assert sorted(ln for ln in before if ln not in after) == sorted([
+        "### T-01 — first\n",
+        "- Acceptance: passes\n",
+        "- Verify: uv run pytest\n",
+        "- Implements: REQ-01\n",
+        "- Files: a.py\n",
+        "- Scope: thin\n",
+        "updated: 2026-06-22\n",
+    ])
+    assert len(after) == len(before) + 1  # the one added line: Needs
     changed_lines = [ln for ln in after if ln not in before]
     assert sorted(changed_lines) == sorted([
         "### T-01 — first, revised\n",
@@ -2319,7 +2330,6 @@ def test_notes_are_additive_across_every_plan_in_this_repo(tmp_path):
     for slug in slugs:
         path = plan.plan_path(tmp_path, cfg, slug)
         doc = path.read_text()
-        assert "\n- Note:" not in doc  # the corpus predates notes
         before = _plan_surfaces(tmp_path, cfg, slug)
         for task in plan.list_tasks(tmp_path, cfg, slug, include_superseded=True):
             doc = markdown.append_entry_field(
@@ -2332,11 +2342,18 @@ def test_notes_are_additive_across_every_plan_in_this_repo(tmp_path):
         assert after["tasks"] == before["tasks"], slug
         briefed += len(after["briefs"])
         for tid, brief in after["briefs"].items():
+            baseline = before["briefs"][tid]
             stripped = "\n".join(
                 ln for ln in brief.splitlines()
-                if ln != "  Notes:" and ln.strip() != "2026-08-30 [Note] added by the sweep"
+                if ln.strip() != "2026-08-30 [Note] added by the sweep"
             )
-            assert stripped == before["briefs"][tid], (slug, tid)
+            if "  Notes:" not in baseline:
+                # the sweep's note opened the block; a plan already using notes
+                # keeps its own header (review-2 F4)
+                stripped = "\n".join(
+                    ln for ln in stripped.splitlines() if ln != "  Notes:"
+                )
+            assert stripped == baseline, (slug, tid)
     assert briefed >= 100  # the briefs really were rendered
 
 
@@ -2393,3 +2410,68 @@ def test_edit_task_fields_blank_value_clears_an_optional_field(root, cfg, projec
     _, changed = plan.edit_task(root, cfg, project, task.id, files="", needs="",
                                 today="2026-08-30")
     assert changed == []
+
+
+def test_edit_task_fields_reject_every_line_separator(root, cfg, project):
+    # review-2 F1: plan.md is split with str.splitlines(), which breaks on far
+    # more than \n and \r - each of these injected a plan.md line.
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    for sep in ("\n", "\r", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85",
+                " ", " "):
+        for field in ("title", "acceptance", "verify", "scope", "files"):
+            with pytest.raises(SpecfloError) as exc:
+                plan.edit_task(root, cfg, project, task.id, today="2026-08-30",
+                               **{field: f"thin{sep}- Superseded by: T-99"})
+            assert "one line" in str(exc.value)
+    assert path.read_text() == before
+
+
+def test_edit_task_fields_reject_a_mandatory_field_emptied_by_normalizing(root, cfg, project):
+    # review-2 F2: ',' normalizes to the empty list and used to delete the line.
+    task = _plan_with_task(root, cfg, project)
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    for value in (",", " , ", ",,"):
+        with pytest.raises(SpecfloError) as exc:
+            plan.edit_task(root, cfg, project, task.id, implements=value,
+                           today="2026-08-30")
+        assert "empty" in str(exc.value).lower()
+        assert path.read_text() == before
+
+
+def test_edit_task_depends_drop_of_the_last_edge_clears_the_field(root, cfg, project):
+    # review-2 F3: no dangling '- Depends on: ' line.
+    first, _second, third = _three_tasks(root, cfg, project)
+    plan.edit_task(root, cfg, project, third.id, drop_depends_on=[first.id],
+                   today="2026-08-30")
+    doc = _ppath(root, cfg, project).read_text()
+    assert "- Depends on:" not in doc
+    assert next(t for t in plan.list_tasks(root, cfg, project)
+                if t.id == third.id).depends_on == []
+
+
+def test_edit_task_fields_padded_and_blank_values_settle(root, cfg, project):
+    # review-2 F5: the change test and the write must agree.
+    task = _plan_with_task(root, cfg, project, scope="thin")
+    _, changed = plan.edit_task(root, cfg, project, task.id, scope="  thin  ",
+                                today="2026-08-30")
+    assert changed == []  # padding is not a change
+    path = _ppath(root, cfg, project)
+    before = path.read_text()
+    _, changed = plan.edit_task(root, cfg, project, task.id, files="   ",
+                                today="2026-08-30")
+    assert changed == []  # clearing a field the task does not carry
+    assert path.read_text() == before
+
+
+def test_malformed_note_on_a_superseded_task_still_warns(root, cfg, project):
+    # review-2 F6: a frozen entry's unreadable note is still worth reporting.
+    task = _plan_with_task(root, cfg, project, files="a.py")
+    plan.add_task(root, cfg, project, "replacement", acceptance="a", verify="v",
+                  implements=["REQ-02"], supersedes=task.id, files="b.py",
+                  today="2026-08-30")
+    _hand_write_note(root, cfg, project, task.id, "not-a-date [Bogus] text")
+    warnings = [w for w in plan.plan_warnings(root, cfg, project) if "note" in w.lower()]
+    assert len(warnings) == 1 and task.id in warnings[0]
