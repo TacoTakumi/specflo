@@ -631,7 +631,11 @@ def _render_you_are_here(data: dict) -> list[str]:
 
 
 def _render_commands(data: dict) -> list[str]:
-    groups = [("setup", "Setup & navigation"), ("workflow", "Workflow")]
+    groups = [
+        ("setup", "Setup & navigation"),
+        ("workflow", "Workflow"),
+        ("agents", "Agents"),
+    ]
     width = max(len(f"{c['name']} {c['args']}".strip()) for c in data["commands"])
     lines: list[str] = []
     for key, title in groups:

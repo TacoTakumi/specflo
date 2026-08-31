@@ -139,6 +139,12 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mint the next review round (review-N.md) and print its path."},
     {"name": "review done", "group": "workflow", "args": "",
      "summary": "Close the open review round with a verdict (--verdict)."},
+    {"name": "agent start", "group": "agents", "args": "<name>",
+     "summary": "Start a detached pi agent host (--cwd, --pi-cmd)."},
+    {"name": "agent status", "group": "agents", "args": "<name>",
+     "summary": "Live-checked agent status; --json adds the state-dir paths."},
+    {"name": "agent list", "group": "agents", "args": "",
+     "summary": "List known agents with their live-checked states."},
 ]
 
 
