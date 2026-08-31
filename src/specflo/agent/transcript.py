@@ -61,9 +61,10 @@ class TranscriptRenderer:
             self._delta(event.get("delta", ""))
 
     def _render_message_end(self, frame: dict) -> None:
-        if self._streamed_chars == 0:
-            # nothing streamed (non-streaming provider path): print the text
-            message = frame.get("message") or {}
+        message = frame.get("message") or {}
+        if self._streamed_chars == 0 and message.get("role") == "assistant":
+            # nothing streamed (non-streaming provider path): print the text.
+            # assistant only - pi also echoes the user message as message_end
             content = message.get("content")
             if isinstance(content, list):
                 for block in content:

@@ -53,7 +53,7 @@ def test_renderer_covers_the_cycle_without_raw_frames():
         {"type": "message_update",
          "assistantMessageEvent": {"type": "text_delta", "delta": "pass."}},
         {"type": "message_end",
-         "message": {"content": [{"type": "text", "text": "All tests pass."}]}},
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "All tests pass."}]}},
         {"type": "tool_execution_start", "toolName": "bash",
          "args": {"command": "pytest -q"}},
         {"type": "tool_execution_end", "toolName": "bash", "isError": False},
@@ -75,7 +75,7 @@ def test_renderer_prints_unstreamed_reply_once():
     text = render_all([
         {"type": "message_start", "message": {}},
         {"type": "message_end",
-         "message": {"content": [{"type": "text", "text": "quiet reply"}]}},
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "quiet reply"}]}},
     ])
     assert text.count("quiet reply") == 1
 
@@ -86,9 +86,21 @@ def test_renderer_streamed_reply_not_duplicated_by_message_end():
         {"type": "message_update",
          "assistantMessageEvent": {"type": "text_delta", "delta": "hello"}},
         {"type": "message_end",
-         "message": {"content": [{"type": "text", "text": "hello"}]}},
+         "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]}},
     ])
     assert text.count("hello") == 1
+
+
+def test_renderer_skips_user_message_echo():
+    # pi echoes the submitted user message as message_start/message_end;
+    # the [prompt] line already covers it (seen in the T-14 live smoke)
+    text = render_all([
+        {"type": "host_forward", "command": "prompt", "message": "do it"},
+        {"type": "message_start", "message": {}},
+        {"type": "message_end",
+         "message": {"role": "user", "content": [{"type": "text", "text": "do it"}]}},
+    ])
+    assert text.count("do it") == 1
 
 
 def test_renderer_dialogs_and_exit():
