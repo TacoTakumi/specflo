@@ -17,6 +17,9 @@ Scenario keys:
             {"method": "confirm", "title": "Push?"} - "id" is generated
   exit_code process exit code for mode "exit" (default 1)
   capture   path - append every frame received on stdin, one JSON line each
+  ignore_sigterm  bool - install a SIGTERM-ignoring handler (tests kill
+                  escalation)
+  ignore_abort    bool - acknowledge abort but never settle the run
 
 The stub is the spec-sanctioned test double for pi (spec In scope); it mirrors
 the real event shapes from pi docs/rpc.md: a correlated "response" per command,
@@ -118,7 +121,7 @@ class Stub:
         """Commands arriving while a run is blocked on a dialog."""
         if cmd.get("type") == "abort":
             respond(cmd, "abort")
-            if self.run_open:
+            if self.run_open and not self.scenario.get("ignore_abort"):
                 self.settle_run("", stop_reason="aborted")
         else:
             respond(cmd, str(cmd.get("type")), success=False, error="stub: busy")
@@ -155,7 +158,7 @@ class Stub:
                 self.handle_prompt(cmd)
             elif ctype == "abort":
                 respond(cmd, "abort")
-                if self.run_open:
+                if self.run_open and not self.scenario.get("ignore_abort"):
                     self.settle_run("", stop_reason="aborted")
             elif ctype == "get_last_assistant_text":
                 respond(
@@ -172,6 +175,10 @@ class Stub:
 def main() -> None:
     with open(sys.argv[1], encoding="utf-8") as f:
         scenario = json.load(f)
+    if scenario.get("ignore_sigterm"):
+        import signal
+
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
     Stub(scenario).main()
 
 

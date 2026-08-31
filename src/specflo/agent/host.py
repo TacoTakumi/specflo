@@ -28,6 +28,7 @@ import os
 import socket
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -53,10 +54,12 @@ class PiHost:
         pi_cmd: list[str],
         cwd: Path | str | None = None,
         base_dir: Path | str | None = None,
+        grace: float = 5.0,
     ) -> None:
         self.name = name
         self.pi_cmd = list(pi_cmd)
         self.cwd = cwd
+        self.grace = grace
         self.paths = AgentPaths.resolve(name, base_dir).ensure()
         self.events = EventLog(self.paths.events)
         self.state = "starting"
@@ -293,10 +296,30 @@ class PiHost:
         }
 
     def _shutdown_from_stop(self) -> None:
-        """Basic stop: kill pi, land the final stopped state, stop serving."""
+        """Graceful stop (REQ-17): abort any in-flight run and give it a
+        bounded chance to settle, terminate pi escalating to kill after the
+        grace period, land the final stopped state, stop serving. events.jsonl
+        and status.json are retained on disk. (herdr release lands with the
+        herdr slice.)
+        """
         self._stopping = True
+        if self.state == "working" and self.proc is not None and self.proc.poll() is None:
+            try:
+                self.send({"type": "abort"})
+                self._log_event({"type": "host_abort_sent"})
+            except (RuntimeError, OSError):
+                pass
+            deadline = time.monotonic() + self.grace
+            while time.monotonic() < deadline and self.state == "working":
+                time.sleep(0.05)
         if self.proc is not None and self.proc.poll() is None:
-            self.proc.kill()
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=self.grace)
+            except subprocess.TimeoutExpired:
+                self._log_event({"type": "host_escalated_kill"})
+                self.proc.kill()
+                self.proc.wait(timeout=5)
         if self._reader is not None:
             self._reader.join(timeout=5)
         self._set_state("stopped")

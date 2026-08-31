@@ -376,6 +376,58 @@ def last(
         _print_last_text(client)
 
 
+@agent_app.command(epilog=f"Example: specflo agent stop builder\n\n{EXIT_CODES_HELP}")
+def stop(
+    name: str = typer.Argument(help="Agent name."),
+    timeout: float = typer.Option(
+        30.0, "--timeout", help="Bound the wait for the host to shut down."
+    ),
+) -> None:
+    """Gracefully stop an agent: abort its run, terminate pi, then the host."""
+    try:
+        paths = AgentPaths.resolve(name)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    try:
+        client = connect(name, connect_timeout=_PROBE_TIMEOUT)
+    except HostUnreachableError as exc:
+        if paths.status.exists() and read_status(paths.status).get("state") == "stopped":
+            typer.echo(f"agent '{name}' is already stopped")
+            return
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+    with client:
+        response = client.stop(timeout=timeout)
+        if not response.get("success"):
+            typer.echo(f"Error: stop refused: {response.get('error')}", err=True)
+            raise typer.Exit(code=EXIT_GENERIC)
+
+    def down() -> bool:
+        if not paths.status.exists():
+            return False
+        snapshot = read_status(paths.status)
+        if snapshot.get("state") != "stopped":
+            return False
+        host_pid = snapshot.get("host_pid")
+        if host_pid:
+            try:
+                os.kill(host_pid, 0)
+                return False  # host process still up
+            except OSError:
+                pass
+        return True
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if down():
+            typer.echo(f"stopped agent '{name}'")
+            return
+        time.sleep(0.1)
+    typer.echo(f"Error: agent '{name}' did not stop within {timeout}s", err=True)
+    raise typer.Exit(code=EXIT_TIMEOUT)
+
+
 @agent_app.command(epilog=f"Example: specflo agent log builder --follow\n\n{EXIT_CODES_HELP}")
 def log(
     name: str = typer.Argument(help="Agent name."),
