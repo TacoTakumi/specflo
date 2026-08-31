@@ -57,14 +57,14 @@ def rig(tmp_path):
 
     started: list[str] = []
 
-    def start_agent(name: str, scenario: dict) -> Path:
+    def start_agent(name: str, scenario: dict, *extra: str) -> Path:
         scenario_file = tmp_path / f"scenario-{name}.json"
         capture = tmp_path / f"capture-{name}.jsonl"
         scenario = {**scenario, "capture": str(capture)}
         scenario_file.write_text(json.dumps(scenario), encoding="utf-8")
         result = run_cli(
             "start", name, "--cwd", ".", "--pi-cmd",
-            f"{sys.executable} {STUB} {scenario_file}",
+            f"{sys.executable} {STUB} {scenario_file}", *extra,
         )
         assert result.returncode == 0, result.stderr
         started.append(name)
@@ -170,6 +170,7 @@ def test_no_wait_then_wait_then_last_recover_the_reply(rig):
             "reply": "recovered reply",
             "dialogs": [{"method": "confirm", "title": "Proceed?"}],
         },
+        "--no-auto-answer",  # the test answers the dialog itself
     )
     # the stub blocks on its dialog, so --no-wait provably returns pre-settle
     result = run_cli("prompt", "a1", "go", "--no-wait")

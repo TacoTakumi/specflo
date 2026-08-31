@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from specflo.agent.policy import DialogPolicy
 from specflo.agent.protocol import FrameDecoder, encode_frame, read_frames, write_frame
 from specflo.agent.statefiles import (
     AgentPaths,
@@ -55,11 +56,17 @@ class PiHost:
         cwd: Path | str | None = None,
         base_dir: Path | str | None = None,
         grace: float = 5.0,
+        policy: DialogPolicy | None = None,
+        auto_answer: bool = True,
     ) -> None:
         self.name = name
         self.pi_cmd = list(pi_cmd)
         self.cwd = cwd
         self.grace = grace
+        self.policy = policy if policy is not None else DialogPolicy()
+        self.auto_answer = auto_answer
+        self._dialog_count = 0
+        self._flooded = False
         self.paths = AgentPaths.resolve(name, base_dir).ensure()
         self.events = EventLog(self.paths.events)
         self.state = "starting"
@@ -185,15 +192,58 @@ class PiHost:
                 self._log_event(event)
                 etype = event.get("type")
                 if etype == "agent_start":
+                    self._dialog_count = 0
+                    self._flooded = False
                     self._set_state("working")
                 elif etype == "agent_settled":
                     self._set_state("idle")
+                elif etype == "extension_ui_request":
+                    self._handle_dialog(event)
         except Exception as exc:  # a malformed frame is a protocol violation
             self._log_event({"type": "host_error", "error": str(exc)})
         rc = self.proc.wait()
         self._log_event({"type": "process_exit", "exit_code": rc})
         if not self._stopping:
             self._set_state("exited")
+
+    def _handle_dialog(self, request: dict[str, Any]) -> None:
+        """Auto-answer one dialog by policy (REQ-10); enforce the flood cap."""
+        if not self.auto_answer:
+            return
+        answer = self.policy.answer_for(request)
+        if answer is None:
+            return  # fire-and-forget method, nothing to answer
+        self._dialog_count += 1
+        if self._dialog_count > self.policy.flood_threshold:
+            if not self._flooded:
+                self._flooded = True
+                self._log_event(
+                    {"type": "host_dialog_flood", "count": self._dialog_count}
+                )
+                self._set_state("needs-attention")
+            self._log_event(
+                {
+                    "type": "host_dialog_skipped",
+                    "request_id": request.get("id"),
+                    "method": request.get("method"),
+                }
+            )
+            return
+        try:
+            self.send(answer)
+        except (RuntimeError, OSError) as exc:
+            self._log_event({"type": "host_error", "error": f"dialog answer: {exc}"})
+            return
+        self._log_event(
+            {
+                "type": "host_dialog_answer",
+                "request_id": request.get("id"),
+                "method": request.get("method"),
+                "answer": {
+                    k: v for k, v in answer.items() if k not in ("type", "id")
+                },
+            }
+        )
 
     def _accept_loop(self) -> None:
         assert self._listener is not None

@@ -121,6 +121,11 @@ def start(
         "--pi-cmd",
         help="Command the host spawns and holds (default: the real pi in RPC mode).",
     ),
+    no_auto_answer: bool = typer.Option(
+        False,
+        "--no-auto-answer",
+        help="Disable the dialog auto-answer policy (dialogs wait for a controller).",
+    ),
 ) -> None:
     """Start a detached agent host; it and its pi survive this invocation."""
     try:
@@ -153,17 +158,20 @@ def start(
 
     paths.ensure()
     host_log = open(paths.root / "host.log", "ab")
+    host_argv = [
+        sys.executable,
+        "-m",
+        "specflo.agent.cli",
+        name,
+        "--cwd",
+        str(cwd),
+        "--pi-cmd",
+        pi_cmd,
+    ]
+    if no_auto_answer:
+        host_argv.append("--no-auto-answer")
     proc = subprocess.Popen(
-        [
-            sys.executable,
-            "-m",
-            "specflo.agent.cli",
-            name,
-            "--cwd",
-            str(cwd),
-            "--pi-cmd",
-            pi_cmd,
-        ],
+        host_argv,
         stdin=subprocess.DEVNULL,
         stdout=host_log,
         stderr=host_log,
@@ -459,11 +467,15 @@ def log(
 # -- detached host entry (``python -m specflo.agent.cli``) ------------------
 
 
-def run_host(name: str, cwd: str, pi_cmd: str) -> None:
+def run_host(name: str, cwd: str, pi_cmd: str, auto_answer: bool = True) -> None:
     """Run one agent host in the foreground until its stop verb fires."""
     from specflo.agent.host import PiHost
 
-    host = PiHost(name, shlex.split(pi_cmd), cwd=cwd).start().serve()
+    host = (
+        PiHost(name, shlex.split(pi_cmd), cwd=cwd, auto_answer=auto_answer)
+        .start()
+        .serve()
+    )
     try:
         host.wait_stopped()
     finally:
@@ -477,8 +489,9 @@ def _host_main(argv: list[str]) -> None:
     parser.add_argument("name")
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--pi-cmd", default=DEFAULT_PI_CMD)
+    parser.add_argument("--no-auto-answer", action="store_true")
     args = parser.parse_args(argv)
-    run_host(args.name, args.cwd, args.pi_cmd)
+    run_host(args.name, args.cwd, args.pi_cmd, auto_answer=not args.no_auto_answer)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,9 @@ from specflo.agent.protocol import encode_frame
 
 ENV_STATE_DIR = "SPECFLO_AGENT_STATE_DIR"
 
-LIFECYCLE_STATES = frozenset({"starting", "idle", "working", "exited", "stopped"})
+LIFECYCLE_STATES = frozenset(
+    {"starting", "idle", "working", "needs-attention", "exited", "stopped"}
+)
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
