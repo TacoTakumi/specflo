@@ -73,6 +73,7 @@ class PiHost:
         herdr_pane: str | None = None,
         herdr_workspace: str | None = None,
         herdr_tab: str | None = None,
+        transcript: Any | None = None,
     ) -> None:
         self.name = name
         self.pi_cmd = list(pi_cmd)
@@ -87,6 +88,7 @@ class PiHost:
         self.herdr_tab = herdr_tab
         self._herdr = HerdrAdapter() if herdr_pane else None
         self._herdr_seq = 0
+        self.transcript = transcript
         self.paths = AgentPaths.resolve(name, base_dir).ensure()
         self.events = EventLog(self.paths.events)
         self.state = "starting"
@@ -206,6 +208,11 @@ class PiHost:
         with self._log_lock:
             self.events.append(event)
             self._broadcast(event)
+            if self.transcript is not None:
+                try:
+                    self.transcript.render(event)
+                except Exception:  # rendering must never disturb the host
+                    pass
 
     def _broadcast(self, frame: dict[str, Any]) -> None:
         with self._subs_lock:
@@ -371,6 +378,15 @@ class PiHost:
             except (RuntimeError, OSError) as exc:
                 response.update(success=False, error=str(exc))
                 self._respond(conn, send_lock, response)
+            else:
+                if ctype in ("prompt", "steer", "follow_up"):
+                    self._log_event(
+                        {
+                            "type": "host_forward",
+                            "command": ctype,
+                            "message": request.get("message"),
+                        }
+                    )
             # on success, pi's own response frame reaches the client via
             # the broadcast stream, correlated by the request's id
 

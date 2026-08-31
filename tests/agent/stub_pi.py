@@ -20,6 +20,8 @@ Scenario keys:
   ignore_sigterm  bool - install a SIGTERM-ignoring handler (tests kill
                   escalation)
   ignore_abort    bool - acknowledge abort but never settle the run
+  tool            {"name": ..., "args": {...}} - emit one tool_execution
+                  start/end pair before the reply
 
 The stub is the spec-sanctioned test double for pi (spec In scope); it mirrors
 the real event shapes from pi docs/rpc.md: a correlated "response" per command,
@@ -83,6 +85,21 @@ class Stub:
     def settle_run(self, text: str, stop_reason: str = "stop") -> None:
         if stop_reason == "stop":
             self.last_text = text
+        tool = self.scenario.get("tool")
+        if tool and stop_reason == "stop":
+            emit({
+                "type": "tool_execution_start",
+                "toolCallId": "call_stub1",
+                "toolName": tool.get("name", "bash"),
+                "args": tool.get("args", {}),
+            })
+            emit({
+                "type": "tool_execution_end",
+                "toolCallId": "call_stub1",
+                "toolName": tool.get("name", "bash"),
+                "result": {"content": [{"type": "text", "text": "tool output"}]},
+                "isError": False,
+            })
         message = assistant_message(text, stop_reason)
         emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
         if self.scenario.get("stream"):

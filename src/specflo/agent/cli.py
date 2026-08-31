@@ -543,6 +543,7 @@ def run_host(
 ) -> None:
     """Run one agent host in the foreground until its stop verb fires."""
     from specflo.agent.host import PiHost
+    from specflo.agent.transcript import TranscriptRenderer
 
     host = (
         PiHost(
@@ -553,6 +554,8 @@ def run_host(
             herdr_pane=herdr_pane,
             herdr_workspace=herdr_workspace,
             herdr_tab=herdr_tab,
+            # stdout is the pane under herdr, host.log when headless (REQ-12)
+            transcript=TranscriptRenderer(sys.stdout),
         )
         .start()
         .serve()
