@@ -71,6 +71,7 @@ class PiHost:
         self._subscribers: dict[socket.socket, threading.Lock] = {}
         self._subs_lock = threading.Lock()
         self._stopping = False
+        self._stopped_evt = threading.Event()
 
     def start(self) -> "PiHost":
         self._set_state("starting")
@@ -105,6 +106,10 @@ class PiHost:
         self._accept_thread = threading.Thread(target=self._accept_loop, daemon=True)
         self._accept_thread.start()
         return self
+
+    def wait_stopped(self, timeout: float | None = None) -> bool:
+        """Block until the stop verb has shut this host down."""
+        return self._stopped_evt.wait(timeout)
 
     def close(self) -> None:
         """Tear down for tests/cleanup: kill pi if alive, drain, close files.
@@ -296,6 +301,7 @@ class PiHost:
             self._reader.join(timeout=5)
         self._set_state("stopped")
         self._close_listener()
+        self._stopped_evt.set()
 
     def _close_listener(self) -> None:
         if self._listener is not None:

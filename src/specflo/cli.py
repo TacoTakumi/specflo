@@ -25,6 +25,7 @@ from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
+from .agent.cli import agent_app
 from .errors import SpecfloError
 from .validators import VALIDATORS
 
@@ -185,6 +186,10 @@ app.add_typer(extension_app, name="extension")
 
 config_app = typer.Typer(help="Read and change specflo's own settings.")
 app.add_typer(config_app, name="config")
+
+# Composition point only: the agent subsystem stays import-independent of
+# pipeline code (REQ-15); the top-level CLI is where both meet.
+app.add_typer(agent_app, name="agent")
 
 
 def _die(message: str) -> typer.Exit:
