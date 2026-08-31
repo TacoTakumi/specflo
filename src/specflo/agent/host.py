@@ -299,5 +299,16 @@ class PiHost:
 
     def _close_listener(self) -> None:
         if self._listener is not None:
+            # close() alone does not wake a thread blocked in accept();
+            # shutdown() does, so the accept loop can actually exit
+            try:
+                self._listener.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
             self._listener.close()
+            if (
+                self._accept_thread is not None
+                and self._accept_thread is not threading.current_thread()
+            ):
+                self._accept_thread.join(timeout=5)
             self.paths.socket.unlink(missing_ok=True)
