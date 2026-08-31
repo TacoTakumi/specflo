@@ -239,6 +239,89 @@ per-task outputs plus one merge task for parallel producers, contract-first
 ordering, `--needs` plus `pool add` for hardware and shared environments, and
 `--needs user` for user-in-the-loop tasks.
 
+## pi subagents (`specflo agent`)
+
+**Experimental, work in progress.** The `specflo agent` surface is new and
+still settling; verbs, flags, and on-disk formats may change between releases.
+
+The `specflo agent` group runs and controls headless pi coding agents. Each
+agent is a detached host process that spawns `pi --mode rpc`, holds its stdio
+as the sole owner, logs every event, and exposes a per-agent Unix socket for
+control. A controller (you, or an orchestrating agent) drives it entirely
+through the CLI; the host never interprets assistant text, so conventions like
+completion phrases stay controller-side.
+
+### Verbs
+
+- `specflo agent start <name> [--cwd DIR] [--pi-cmd CMD] [--workspace ID] [--no-herdr] [--no-auto-answer]` -
+  start a detached host that spawns pi in `DIR`. Both survive the invoking
+  shell. Names are unique among live agents; a name is reusable once its host
+  is stopped or dead. `--pi-cmd` overrides the spawned command (default
+  `pi --mode rpc`; add `--model provider/id[:thinking]` there to pick a model).
+  `--no-auto-answer` disables the dialog policy so a controller answers
+  dialogs itself.
+- `specflo agent status <name> [--json]` - live-checked status: the socket is
+  probed first, so a dead host reports `dead` instead of echoing stale state.
+  `--json` carries the full snapshot (name, state, host and pi pids, context
+  percent when known, herdr workspace/tab/pane ids, last activity) plus the
+  state-dir paths (socket, events.jsonl, status.json).
+- `specflo agent list [--json]` - every known agent with its live-checked
+  state.
+- `specflo agent prompt <name> "<text>" [--timeout S] [--no-wait] [--steer | --follow-up]` -
+  send a prompt; block until the run settles and print the final assistant
+  text to stdout. A working agent refuses a plain prompt (exit 10) unless
+  `--steer` or `--follow-up` delivers it with pi streamingBehavior `steer` or
+  `followUp`. `--no-wait` submits and returns immediately.
+- `specflo agent wait <name> [--timeout S]` - block until the current run
+  settles; exits 0 immediately when nothing is in flight.
+- `specflo agent last <name>` - print the most recent final assistant text.
+- `specflo agent log <name> [--follow]` - print the agent's event log
+  (events.jsonl); `--follow` streams new events as they land.
+- `specflo agent stop <name> [--timeout S]` - graceful stop: abort any
+  in-flight run, terminate pi then the host (escalating to kill after a
+  bounded grace period), release the herdr registration, and write the final
+  `stopped` state. events.jsonl and status.json are retained on disk.
+
+### Exit codes
+
+Consistent across every agent verb, and stated in each verb's `--help`:
+
+| Code | Meaning |
+|------|---------|
+| 0    | success / run settled |
+| 10   | agent busy (working; use `--steer` or `--follow-up`) |
+| 11   | wait timeout |
+| 12   | host unreachable or unknown agent |
+| 1    | generic usage or error |
+
+### herdr placement and degraded mode
+
+When the `herdr` CLI is installed and its server answers, `start` creates or
+reuses a workspace labeled by the `agent_space` config key (default `agents`),
+creates one tab labeled with the agent name, and runs the host inside that
+tab's pane. The pane shows a live human-readable transcript - submitted
+prompts, streamed assistant text, tool executions, dialog answers, and state
+changes, never raw protocol frames - and accepts no input. The host pushes
+real agent state into herdr (`herdr pane report-agent`) across the lifecycle,
+so `herdr agent list` mirrors it without heuristic detection, and releases the
+registration on stop. `start --workspace <id>` places the tab in the given
+workspace instead of the `agent_space` one.
+
+When herdr is unavailable (not installed, or the server is down) or
+`--no-herdr` is passed, `start` proceeds headless with exactly one warning on
+stderr naming the degradation; everything else works the same, with the
+transcript going to `host.log` in the agent's state dir.
+
+Per-agent state lives under `~/.specflo/agents/<name>/` (override with
+`SPECFLO_AGENT_STATE_DIR`): the control socket, an append-only timestamped
+`events.jsonl`, and an atomically updated `status.json` snapshot.
+
+Dialogs from pi extensions are auto-answered by policy: confirm affirmed,
+select gets the first policy-safe option, input/editor get a policy nudge, and
+a dialog matching the danger pattern is cancelled. Every dialog and answer is
+logged; past a per-run flood threshold the agent flips to `needs-attention`
+and auto-answering stops for that run.
+
 ## The config file
 
 `.specflo/config.yaml` is written by `specflo init` and documents itself. Every
@@ -262,6 +345,9 @@ active_project: my-thing
 
 # Percent of the context window at which the pi extension arms clear-and-continue.
 # context_threshold_percent: 25
+
+# herdr workspace label where `specflo agent start` places agent tabs.
+# agent_space: agents
 ```
 
 It is your file, so specflo writes it conservatively:

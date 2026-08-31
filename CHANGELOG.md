@@ -8,6 +8,33 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.13.0]
+
+### Added
+- **`specflo agent` - headless pi subagents (pi-subagents).** A new command
+  group runs and controls pi coding agents: `start` launches a detached host
+  process that spawns `pi --mode rpc` and holds its stdio as sole owner;
+  `status`/`list` are live-checked (a dead host reports `dead`, never stale
+  state); `prompt` blocks until the run settles and prints the final
+  assistant text (`--timeout`, `--no-wait`, and `--steer`/`--follow-up` for a
+  busy agent); `wait`, `last`, and `log --follow` cover async retrieval;
+  `stop` aborts any in-flight run and terminates pi then the host with a
+  bounded grace period, retaining logs. Exit codes are uniform and stated in
+  every verb's help: 0 success, 10 busy, 11 timeout, 12 host unreachable or
+  unknown agent, 1 generic. Each agent keeps a per-agent state dir (control
+  socket, append-only `events.jsonl`, atomic `status.json`) under
+  `~/.specflo/agents/<name>/`. When herdr is available, `start` places the
+  host in a tab of the `agent_space` workspace (new config key, default
+  `agents`; `--workspace` overrides), the pane renders a live human-readable
+  transcript, and real agent state is pushed into herdr across the lifecycle
+  and released on stop; with herdr absent or `--no-herdr`, everything runs
+  headless with a single degradation warning. Dialogs from pi extensions are
+  auto-answered by a configurable policy (danger pattern cancels; a per-run
+  flood threshold flips the agent to `needs-attention`), disable with
+  `start --no-auto-answer`. The agent subsystem is structurally guarded to
+  stay import-independent of the pipeline and content-agnostic about
+  assistant text.
+
 ## [0.12.0]
 
 ### Added
