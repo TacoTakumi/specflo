@@ -23,6 +23,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Optional
 
 import typer
 
@@ -233,6 +234,174 @@ def list_agents(
         return
     for probe in probes:
         _echo_probe(probe)
+
+
+# -- prompt and retrieval verbs (REQ-06..REQ-09) ----------------------------
+
+EXIT_CODES_HELP = (
+    "Exit codes: 0 success/settled, 10 agent busy, 11 wait timeout, "
+    "12 host unreachable or unknown agent, 1 generic error."
+)
+
+
+def _connect_or_exit(name: str):
+    try:
+        return connect(name, connect_timeout=_PROBE_TIMEOUT)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    except HostUnreachableError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+
+
+def _settled(frame) -> bool:
+    return isinstance(frame, dict) and frame.get("type") == "agent_settled"
+
+
+def _pi_gone(frame) -> bool:
+    return isinstance(frame, dict) and frame.get("type") == "process_exit"
+
+
+def _wait_for_settle(client, timeout: float | None) -> None:
+    """Block until agent_settled; exit 11 on timeout, 12 when pi dies."""
+    try:
+        frame = client.read_until(
+            lambda f: _settled(f) or _pi_gone(f), timeout=timeout
+        )
+    except TimeoutError:
+        typer.echo(f"Error: agent did not settle within {timeout}s", err=True)
+        raise typer.Exit(code=EXIT_TIMEOUT)
+    except HostUnreachableError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+    if _pi_gone(frame):
+        typer.echo("Error: pi process exited before settling", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+
+
+def _print_last_text(client) -> None:
+    response = client.request({"type": "get_last_assistant_text"}, timeout=10.0)
+    if not response.get("success"):
+        typer.echo(
+            f"Error: get_last_assistant_text failed: {response.get('error')}",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_GENERIC)
+    text = (response.get("data") or {}).get("text")
+    if text is not None:
+        typer.echo(text)
+
+
+@agent_app.command(
+    epilog=f'Example: specflo agent prompt builder "run the tests"\n\n{EXIT_CODES_HELP}'
+)
+def prompt(
+    name: str = typer.Argument(help="Agent name."),
+    text: str = typer.Argument(help="The prompt text."),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="Bound the wait for settle, in seconds."
+    ),
+    no_wait: bool = typer.Option(
+        False, "--no-wait", help="Submit and return without waiting for settle."
+    ),
+    steer: bool = typer.Option(
+        False,
+        "--steer",
+        help="Deliver into a running agent (pi streamingBehavior 'steer').",
+    ),
+    follow_up: bool = typer.Option(
+        False,
+        "--follow-up",
+        help="Queue for after the current run (pi streamingBehavior 'followUp').",
+    ),
+) -> None:
+    """Send a prompt; block until settle and print the final assistant text."""
+    if steer and follow_up:
+        typer.echo("Error: --steer and --follow-up are mutually exclusive", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    with _connect_or_exit(name) as client:
+        status = client.status(timeout=_PROBE_TIMEOUT)["status"]
+        if status["state"] in ("exited", "stopped"):
+            typer.echo(
+                f"Error: agent '{name}' is {status['state']}; pi is not running",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_UNREACHABLE)
+        if status["state"] == "working" and not (steer or follow_up):
+            typer.echo(
+                f"Error: agent '{name}' is busy (working); "
+                "use --steer or --follow-up to deliver anyway",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_BUSY)
+
+        command = {"type": "prompt", "message": text}
+        if steer:
+            command["streamingBehavior"] = "steer"
+        elif follow_up:
+            command["streamingBehavior"] = "followUp"
+        response = client.request(command, timeout=10.0)
+        if not response.get("success"):
+            typer.echo(f"Error: prompt refused: {response.get('error')}", err=True)
+            raise typer.Exit(code=EXIT_BUSY)
+        if no_wait:
+            typer.echo("submitted; not waiting for settle", err=True)
+            return
+        _wait_for_settle(client, timeout)
+        _print_last_text(client)
+
+
+@agent_app.command(epilog=f"Example: specflo agent wait builder\n\n{EXIT_CODES_HELP}")
+def wait(
+    name: str = typer.Argument(help="Agent name."),
+    timeout: Optional[float] = typer.Option(
+        None, "--timeout", help="Bound the wait, in seconds."
+    ),
+) -> None:
+    """Block until the agent's current run settles (exit 0 if already idle)."""
+    with _connect_or_exit(name) as client:
+        status = client.status(timeout=_PROBE_TIMEOUT)["status"]
+        if status["state"] != "working":
+            return  # nothing in flight
+        _wait_for_settle(client, timeout)
+
+
+@agent_app.command(epilog=f"Example: specflo agent last builder\n\n{EXIT_CODES_HELP}")
+def last(
+    name: str = typer.Argument(help="Agent name."),
+) -> None:
+    """Print the most recent final assistant text."""
+    with _connect_or_exit(name) as client:
+        _print_last_text(client)
+
+
+@agent_app.command(epilog=f"Example: specflo agent log builder --follow\n\n{EXIT_CODES_HELP}")
+def log(
+    name: str = typer.Argument(help="Agent name."),
+    follow: bool = typer.Option(
+        False, "--follow", help="Keep streaming new events as they land."
+    ),
+) -> None:
+    """Print the agent's event log (events.jsonl)."""
+    try:
+        paths = AgentPaths.resolve(name)
+    except ValueError as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    if not paths.events.exists():
+        typer.echo(f"Error: unknown agent '{name}' (no event log)", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+    with open(paths.events, "rb") as f:
+        while True:
+            chunk = f.read(65536)
+            if chunk:
+                sys.stdout.buffer.write(chunk)
+                sys.stdout.buffer.flush()
+                continue
+            if not follow:
+                return
+            time.sleep(0.2)
 
 
 # -- detached host entry (``python -m specflo.agent.cli``) ------------------

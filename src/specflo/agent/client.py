@@ -129,6 +129,20 @@ class AgentClient:
         finally:
             self._pending.extendleft(reversed(skipped))
 
+    def read_until(self, predicate, timeout: float | None = None) -> Any:
+        """Read frames until one satisfies the predicate; return that frame.
+
+        Non-matching frames are consumed. Raises TimeoutError at the deadline.
+        """
+        deadline = None if timeout is None else time.monotonic() + timeout
+        while True:
+            remaining = None
+            if deadline is not None:
+                remaining = max(0.0, deadline - time.monotonic())
+            frame = self.read(remaining)
+            if predicate(frame):
+                return frame
+
     # -- conveniences for the host verbs ------------------------------------
 
     def status(self, timeout: float | None = 5.0) -> dict[str, Any]:

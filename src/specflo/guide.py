@@ -145,6 +145,15 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Live-checked agent status; --json adds the state-dir paths."},
     {"name": "agent list", "group": "agents", "args": "",
      "summary": "List known agents with their live-checked states."},
+    {"name": "agent prompt", "group": "agents", "args": "<name> <text>",
+     "summary": "Send a prompt; block until settle and print the reply "
+                "(--timeout, --no-wait, --steer, --follow-up)."},
+    {"name": "agent wait", "group": "agents", "args": "<name>",
+     "summary": "Block until the agent's current run settles."},
+    {"name": "agent last", "group": "agents", "args": "<name>",
+     "summary": "Print the most recent final assistant text."},
+    {"name": "agent log", "group": "agents", "args": "<name>",
+     "summary": "Print the agent's event log; --follow streams new events."},
 ]
 
 

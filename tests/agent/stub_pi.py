@@ -61,6 +61,7 @@ class Stub:
         self.capture_path = scenario.get("capture")
         self.frames: Iterator[Any] = self._captured_frames()
         self.run_open = False
+        self.last_text: str | None = None
 
     def _captured_frames(self) -> Iterator[Any]:
         for frame in read_frames(sys.stdin.buffer):
@@ -77,6 +78,8 @@ class Stub:
         emit({"type": "turn_start"})
 
     def settle_run(self, text: str, stop_reason: str = "stop") -> None:
+        if stop_reason == "stop":
+            self.last_text = text
         message = assistant_message(text, stop_reason)
         emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
         if self.scenario.get("stream"):
@@ -123,6 +126,18 @@ class Stub:
     # -- command loop -------------------------------------------------------
 
     def handle_prompt(self, cmd: dict) -> None:
+        if self.run_open:
+            # mirror real pi: a prompt during streaming needs streamingBehavior
+            if cmd.get("streamingBehavior") in ("steer", "followUp"):
+                respond(cmd, "prompt")  # queued; the open run continues
+            else:
+                respond(
+                    cmd,
+                    "prompt",
+                    success=False,
+                    error="agent is streaming; specify streamingBehavior",
+                )
+            return
         respond(cmd, "prompt")
         self.start_run()
         if self.mode == "exit":
@@ -142,6 +157,12 @@ class Stub:
                 respond(cmd, "abort")
                 if self.run_open:
                     self.settle_run("", stop_reason="aborted")
+            elif ctype == "get_last_assistant_text":
+                respond(
+                    cmd,
+                    "get_last_assistant_text",
+                    data={"text": self.last_text},
+                )
             elif ctype == "extension_ui_response":
                 pass  # stale/unsolicited; ignore like pi does
             else:
