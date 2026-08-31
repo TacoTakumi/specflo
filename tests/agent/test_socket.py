@@ -183,3 +183,18 @@ def test_malformed_request_gets_parse_error_response(make_host):
 def test_connect_without_host_raises_unreachable(tmp_path):
     with pytest.raises(HostUnreachableError):
         AgentClient(tmp_path / "absent" / "sock")
+
+
+def test_idle_client_survives_broadcast_send_timeout(make_host, monkeypatch):
+    # regression (found by the T-14 live smoke): a broadcast sets a send
+    # timeout on the shared socket; the recv loop must not treat the
+    # resulting idle-timeout as a dead client
+    from specflo.agent import host as host_module
+
+    monkeypatch.setattr(host_module, "_SUBSCRIBER_SEND_TIMEOUT", 0.3)
+    make, base = make_host
+    make("s8", {"reply": "ok"})
+    with connect("s8", base_dir=base) as client:
+        client.request({"type": "prompt", "message": "go"}, timeout=5)
+        time.sleep(1.0)  # idle well past the send timeout, nothing flowing
+        assert client.status()["status"]["name"] == "s8"

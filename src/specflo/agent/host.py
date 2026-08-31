@@ -311,6 +311,10 @@ class PiHost:
             while True:
                 try:
                     chunk = conn.recv(65536)
+                except socket.timeout:
+                    # a broadcast set a send timeout on this socket; an idle
+                    # client is not an error - keep waiting for its next frame
+                    continue
                 except OSError:
                     return
                 if not chunk:
