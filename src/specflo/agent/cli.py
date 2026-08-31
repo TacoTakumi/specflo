@@ -28,7 +28,13 @@ from typing import Optional
 import typer
 
 from specflo.agent.client import HostUnreachableError, connect
-from specflo.agent.statefiles import AgentPaths, default_base_dir, read_status
+from specflo.agent.herdr import HerdrAdapter, HerdrError
+from specflo.agent.statefiles import (
+    ENV_STATE_DIR,
+    AgentPaths,
+    default_base_dir,
+    read_status,
+)
 
 EXIT_OK = 0
 EXIT_GENERIC = 1
@@ -38,8 +44,17 @@ EXIT_UNREACHABLE = 12
 
 DEFAULT_PI_CMD = "pi --mode rpc"
 
+# herdr workspace label for agent tabs; the composition point (specflo.cli)
+# bridges the pipeline `agent_space` config value into this env var.
+AGENT_SPACE_ENV = "SPECFLO_AGENT_SPACE"
+DEFAULT_AGENT_SPACE = "agents"
+
 _PROBE_TIMEOUT = 2.0
 _START_DEADLINE = 15.0
+
+
+def _agent_space() -> str:
+    return os.environ.get(AGENT_SPACE_ENV) or DEFAULT_AGENT_SPACE
 
 agent_app = typer.Typer(help="Run and control pi subagents (headless pi hosts).")
 
@@ -126,6 +141,16 @@ def start(
         "--no-auto-answer",
         help="Disable the dialog auto-answer policy (dialogs wait for a controller).",
     ),
+    workspace: Optional[str] = typer.Option(
+        None,
+        "--workspace",
+        help="herdr workspace id for the agent tab (default: the agent_space workspace).",
+    ),
+    no_herdr: bool = typer.Option(
+        False,
+        "--no-herdr",
+        help="Skip herdr placement and run headless even when herdr is available.",
+    ),
 ) -> None:
     """Start a detached agent host; it and its pi survive this invocation."""
     try:
@@ -157,7 +182,6 @@ def start(
         paths.socket.unlink(missing_ok=True)  # stale socket of a dead host
 
     paths.ensure()
-    host_log = open(paths.root / "host.log", "ab")
     host_argv = [
         sys.executable,
         "-m",
@@ -170,18 +194,56 @@ def start(
     ]
     if no_auto_answer:
         host_argv.append("--no-auto-answer")
-    proc = subprocess.Popen(
-        host_argv,
-        stdin=subprocess.DEVNULL,
-        stdout=host_log,
-        stderr=host_log,
-        start_new_session=True,  # detach: survives this CLI and its shell
-    )
-    host_log.close()
+
+    # herdr placement (REQ-11) or degraded headless (REQ-14, one warning)
+    adapter = HerdrAdapter()
+    if no_herdr:
+        typer.echo(
+            "warning: --no-herdr; running headless without herdr placement",
+            err=True,
+        )
+        use_herdr = False
+    elif not adapter.available():
+        typer.echo(
+            "warning: herdr unavailable; running headless without herdr placement",
+            err=True,
+        )
+        use_herdr = False
+    else:
+        use_herdr = True
+
+    proc = None
+    if use_herdr:
+        try:
+            workspace_id = workspace or adapter.ensure_workspace(_agent_space())
+            env = {}
+            if os.environ.get(ENV_STATE_DIR):
+                env[ENV_STATE_DIR] = os.environ[ENV_STATE_DIR]
+            placement = adapter.create_tab(workspace_id, name, str(cwd), env=env)
+            host_argv += [
+                "--herdr-pane", placement.pane_id,
+                "--herdr-workspace", placement.workspace_id,
+                "--herdr-tab", placement.tab_id,
+            ]
+            # exec: the pane dies with the host, clearing the agent listing
+            adapter.run_in_pane(placement.pane_id, "exec " + shlex.join(host_argv))
+        except HerdrError as exc:
+            typer.echo(f"Error: herdr placement failed: {exc}", err=True)
+            raise typer.Exit(code=EXIT_GENERIC)
+    else:
+        host_log = open(paths.root / "host.log", "ab")
+        proc = subprocess.Popen(
+            host_argv,
+            stdin=subprocess.DEVNULL,
+            stdout=host_log,
+            stderr=host_log,
+            start_new_session=True,  # detach: survives this CLI and its shell
+        )
+        host_log.close()
 
     deadline = time.monotonic() + _START_DEADLINE
     while time.monotonic() < deadline:
-        if proc.poll() is not None:
+        if proc is not None and proc.poll() is not None:
             tail = (paths.root / "host.log").read_bytes()[-2000:].decode(errors="replace")
             typer.echo(
                 f"Error: host process exited with code {proc.returncode} during start\n{tail}",
@@ -192,9 +254,12 @@ def start(
             with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
                 data = client.status(timeout=_PROBE_TIMEOUT)
             status = data["status"]
+            where = (
+                f", pane {status['herdr_pane']}" if status.get("herdr_pane") else ""
+            )
             typer.echo(
                 f"started agent '{name}' (state {status['state']}, "
-                f"host pid {status['host_pid']}, pi pid {status['pi_pid']})"
+                f"host pid {status['host_pid']}, pi pid {status['pi_pid']}{where})"
             )
             return
         except (HostUnreachableError, TimeoutError, RuntimeError, OSError):
@@ -467,12 +532,28 @@ def log(
 # -- detached host entry (``python -m specflo.agent.cli``) ------------------
 
 
-def run_host(name: str, cwd: str, pi_cmd: str, auto_answer: bool = True) -> None:
+def run_host(
+    name: str,
+    cwd: str,
+    pi_cmd: str,
+    auto_answer: bool = True,
+    herdr_pane: str | None = None,
+    herdr_workspace: str | None = None,
+    herdr_tab: str | None = None,
+) -> None:
     """Run one agent host in the foreground until its stop verb fires."""
     from specflo.agent.host import PiHost
 
     host = (
-        PiHost(name, shlex.split(pi_cmd), cwd=cwd, auto_answer=auto_answer)
+        PiHost(
+            name,
+            shlex.split(pi_cmd),
+            cwd=cwd,
+            auto_answer=auto_answer,
+            herdr_pane=herdr_pane,
+            herdr_workspace=herdr_workspace,
+            herdr_tab=herdr_tab,
+        )
         .start()
         .serve()
     )
@@ -490,8 +571,19 @@ def _host_main(argv: list[str]) -> None:
     parser.add_argument("--cwd", default=os.getcwd())
     parser.add_argument("--pi-cmd", default=DEFAULT_PI_CMD)
     parser.add_argument("--no-auto-answer", action="store_true")
+    parser.add_argument("--herdr-pane", default=None)
+    parser.add_argument("--herdr-workspace", default=None)
+    parser.add_argument("--herdr-tab", default=None)
     args = parser.parse_args(argv)
-    run_host(args.name, args.cwd, args.pi_cmd, auto_answer=not args.no_auto_answer)
+    run_host(
+        args.name,
+        args.cwd,
+        args.pi_cmd,
+        auto_answer=not args.no_auto_answer,
+        herdr_pane=args.herdr_pane,
+        herdr_workspace=args.herdr_workspace,
+        herdr_tab=args.herdr_tab,
+    )
 
 
 if __name__ == "__main__":

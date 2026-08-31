@@ -79,9 +79,10 @@ def rig(tmp_path):
 
 
 def start_agent(run_cli, stub_cmd, name, scenario=None, tag=None):
+    # --no-herdr: lifecycle tests must never touch a real herdr session
     result = run_cli(
         "start", name, "--cwd", ".", "--pi-cmd",
-        stub_cmd(scenario or {"reply": "ok"}, tag or name),
+        stub_cmd(scenario or {"reply": "ok"}, tag or name), "--no-herdr",
     )
     assert result.returncode == 0, result.stderr
     return result
@@ -139,7 +140,10 @@ def test_colliding_start_refused_and_name_reusable(rig):
     start_agent(run_cli, stub_cmd, "a1")
     first_pid = status_json(run_cli, "a1")[1]["status"]["host_pid"]
 
-    result = run_cli("start", "a1", "--cwd", ".", "--pi-cmd", stub_cmd({"reply": "x"}, "dup"))
+    result = run_cli(
+        "start", "a1", "--cwd", ".", "--pi-cmd", stub_cmd({"reply": "x"}, "dup"),
+        "--no-herdr",
+    )
     assert result.returncode != 0
     assert "a1" in result.stderr
     assert "already running" in result.stderr

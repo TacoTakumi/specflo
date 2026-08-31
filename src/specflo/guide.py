@@ -140,7 +140,8 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "review done", "group": "workflow", "args": "",
      "summary": "Close the open review round with a verdict (--verdict)."},
     {"name": "agent start", "group": "agents", "args": "<name>",
-     "summary": "Start a detached pi agent host (--cwd, --pi-cmd)."},
+     "summary": "Start a detached pi agent host in a herdr tab when available "
+                "(--cwd, --pi-cmd, --workspace, --no-herdr)."},
     {"name": "agent status", "group": "agents", "args": "<name>",
      "summary": "Live-checked agent status; --json adds the state-dir paths."},
     {"name": "agent list", "group": "agents", "args": "",

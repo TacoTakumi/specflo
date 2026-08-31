@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from specflo.agent.herdr import HerdrAdapter, HerdrError
 from specflo.agent.policy import DialogPolicy
 from specflo.agent.protocol import FrameDecoder, encode_frame, read_frames, write_frame
 from specflo.agent.statefiles import (
@@ -47,6 +48,17 @@ HOST_VERBS = ("status", "stop")
 # How long a broadcast send may block on one slow client before it is dropped.
 _SUBSCRIBER_SEND_TIMEOUT = 5.0
 
+# Host lifecycle -> herdr report state (REQ-13). stopped maps to None: the
+# stop path releases the registration instead of reporting a state.
+HERDR_STATE_FOR = {
+    "starting": "unknown",
+    "idle": "idle",
+    "working": "working",
+    "needs-attention": "blocked",
+    "exited": "unknown",
+    "stopped": None,
+}
+
 
 class PiHost:
     def __init__(
@@ -58,6 +70,9 @@ class PiHost:
         grace: float = 5.0,
         policy: DialogPolicy | None = None,
         auto_answer: bool = True,
+        herdr_pane: str | None = None,
+        herdr_workspace: str | None = None,
+        herdr_tab: str | None = None,
     ) -> None:
         self.name = name
         self.pi_cmd = list(pi_cmd)
@@ -67,6 +82,11 @@ class PiHost:
         self.auto_answer = auto_answer
         self._dialog_count = 0
         self._flooded = False
+        self.herdr_pane = herdr_pane
+        self.herdr_workspace = herdr_workspace
+        self.herdr_tab = herdr_tab
+        self._herdr = HerdrAdapter() if herdr_pane else None
+        self._herdr_seq = 0
         self.paths = AgentPaths.resolve(name, base_dir).ensure()
         self.events = EventLog(self.paths.events)
         self.state = "starting"
@@ -158,8 +178,27 @@ class PiHost:
                     state,
                     host_pid=os.getpid(),
                     pi_pid=self.proc.pid if self.proc else None,
+                    herdr_workspace=self.herdr_workspace,
+                    herdr_tab=self.herdr_tab,
+                    herdr_pane=self.herdr_pane,
                 ),
             )
+            self._push_herdr_state(state)
+
+    def _push_herdr_state(self, state: str) -> None:
+        """Report the lifecycle transition into herdr (REQ-13); never fatal."""
+        if self._herdr is None:
+            return
+        herdr_state = HERDR_STATE_FOR.get(state)
+        if herdr_state is None:
+            return
+        self._herdr_seq += 1
+        try:
+            self._herdr.report_state(
+                self.herdr_pane, self.name, herdr_state, seq=self._herdr_seq
+            )
+        except HerdrError as exc:
+            self._log_event({"type": "host_error", "error": f"herdr report: {exc}"})
 
     def _log_event(self, event: dict[str, Any]) -> None:
         # serializes appends and keeps disk and wire ordering identical
@@ -373,6 +412,13 @@ class PiHost:
         if self._reader is not None:
             self._reader.join(timeout=5)
         self._set_state("stopped")
+        if self._herdr is not None:
+            try:
+                self._herdr.release(self.herdr_pane, self.name)
+            except HerdrError as exc:
+                self._log_event(
+                    {"type": "host_error", "error": f"herdr release: {exc}"}
+                )
         self._close_listener()
         self._stopped_evt.set()
 

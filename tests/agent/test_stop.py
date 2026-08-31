@@ -183,7 +183,7 @@ def test_cli_stop_takes_down_host_and_pi(rig):
     scenario_file.write_text(json.dumps({"mode": "never_settle"}), encoding="utf-8")
     result = run_cli(
         "start", "c1", "--cwd", ".", "--pi-cmd",
-        f"{sys.executable} {STUB} {scenario_file}",
+        f"{sys.executable} {STUB} {scenario_file}", "--no-herdr",
     )
     assert result.returncode == 0, result.stderr
     result = run_cli("prompt", "c1", "go", "--no-wait")

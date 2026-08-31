@@ -25,6 +25,7 @@ from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
+from .agent import cli as agent_cli
 from .agent.cli import agent_app
 from .errors import SpecfloError
 from .validators import VALIDATORS
@@ -188,8 +189,26 @@ config_app = typer.Typer(help="Read and change specflo's own settings.")
 app.add_typer(config_app, name="config")
 
 # Composition point only: the agent subsystem stays import-independent of
-# pipeline code (REQ-15); the top-level CLI is where both meet.
+# pipeline code (REQ-15); the top-level CLI is where both meet. The callback
+# bridges the pipeline `agent_space` config value into the env var the agent
+# group reads, without the agent subsystem importing config.
 app.add_typer(agent_app, name="agent")
+
+
+@agent_app.callback()
+def _agent_group() -> None:
+    """Run and control pi subagents (headless pi hosts)."""
+    if agent_cli.AGENT_SPACE_ENV in os.environ:
+        return
+    try:
+        root = config.find_root(Path.cwd())
+        if root is None:
+            return
+        value = getattr(config.load_config(root), "agent_space", None)
+        if value:
+            os.environ[agent_cli.AGENT_SPACE_ENV] = value
+    except Exception:  # config trouble must never break agent verbs
+        pass
 
 
 def _die(message: str) -> typer.Exit:

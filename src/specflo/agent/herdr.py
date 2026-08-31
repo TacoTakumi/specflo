@@ -99,10 +99,14 @@ class HerdrAdapter:
         return created["workspace"]["workspace_id"]
 
     def create_tab(
-        self, workspace_id: str, label: str, cwd: str
+        self,
+        workspace_id: str,
+        label: str,
+        cwd: str,
+        env: dict[str, str] | None = None,
     ) -> HerdrPlacement:
         """Create a labeled tab in the workspace; return its ids and root pane."""
-        result = self._run(
+        args = [
             "tab",
             "create",
             "--workspace",
@@ -111,8 +115,11 @@ class HerdrAdapter:
             label,
             "--cwd",
             cwd,
-            "--no-focus",
-        )
+        ]
+        for key, value in (env or {}).items():
+            args += ["--env", f"{key}={value}"]
+        args.append("--no-focus")
+        result = self._run(*args)
         return HerdrPlacement(
             workspace_id=workspace_id,
             tab_id=result["tab"]["tab_id"],

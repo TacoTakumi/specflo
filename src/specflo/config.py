@@ -193,6 +193,13 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         "Percent of the context window at which the pi extension arms clear-and-continue.",
         WholeNumber(*CONTEXT_THRESHOLD_RANGE),
     ),
+    ConfigField(
+        "agent_space",
+        str,
+        "agents",
+        "herdr workspace label where `specflo agent start` places agent tabs.",
+        Text(),
+    ),
 )
 
 FIELDS_BY_NAME = {f.name: f for f in CONFIG_FIELDS}

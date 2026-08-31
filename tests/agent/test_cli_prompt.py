@@ -62,9 +62,10 @@ def rig(tmp_path):
         capture = tmp_path / f"capture-{name}.jsonl"
         scenario = {**scenario, "capture": str(capture)}
         scenario_file.write_text(json.dumps(scenario), encoding="utf-8")
+        # --no-herdr: prompt tests must never touch a real herdr session
         result = run_cli(
             "start", name, "--cwd", ".", "--pi-cmd",
-            f"{sys.executable} {STUB} {scenario_file}", *extra,
+            f"{sys.executable} {STUB} {scenario_file}", "--no-herdr", *extra,
         )
         assert result.returncode == 0, result.stderr
         started.append(name)
