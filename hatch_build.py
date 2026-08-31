@@ -17,6 +17,7 @@ from pathlib import Path
 # the build; extra skills are allowed (this is a floor, not a ceiling).
 EXPECTED_SKILLS = frozenset(
     {
+        "specflo-agent",
         "specflo-auto",
         "specflo-brainstorm",
         "specflo-execute",

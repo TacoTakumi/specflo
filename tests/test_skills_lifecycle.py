@@ -20,6 +20,7 @@ from specflo import __version__
 from specflo.cli import build_cli
 
 SKILL_NAMES = [
+    "specflo-agent",
     "specflo-brainstorm",
     "specflo-execute",
     "specflo-plan",

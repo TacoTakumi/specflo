@@ -17,6 +17,7 @@ from agentsquire.sources import default_source
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SKILL_NAMES = [
+    "specflo-agent",
     "specflo-auto",
     "specflo-brainstorm",
     "specflo-execute",
