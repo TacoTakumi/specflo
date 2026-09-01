@@ -69,3 +69,9 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "rig: live-fire tests against real pi and herdr; run explicitly with -m rig",
+]
+# Rig tests create panes in the live herdr session; a plain pytest run must
+# never do that. `pytest -m rig` overrides (the command-line -m wins).
+addopts = "-m 'not rig'"
