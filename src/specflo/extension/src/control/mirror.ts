@@ -36,7 +36,8 @@ export function registerMirror(pi: ExtensionAPI, server: () => ControlServer | n
         const live = server();
         if (live === null) return;
         try {
-          live.appendEvent(event as Record<string, unknown>);
+          // Log and broadcast first, then move state - the v1 pump's order.
+          live.publish(event as Record<string, unknown>);
           if (type === "agent_start") live.setLifecycle("working");
           else if (type === "agent_settled") live.setLifecycle("idle");
         } catch {

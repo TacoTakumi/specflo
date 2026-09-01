@@ -23,6 +23,7 @@ import * as fs from "node:fs";
 import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
+import { translateCommand, type CommandHost } from "./commands.ts";
 import type { Ownership } from "./identity.ts";
 import { appendEvent, nowIso, writeStatusFile } from "./statefiles.ts";
 
@@ -45,15 +46,27 @@ export function servingDisabled(
   return fs.existsSync(path.join(baseDir, "serve.off"));
 }
 
+/**
+ * What command translation needs from the live pi session. mod.ts builds one
+ * from the extension API and the session_start context; tests fake it.
+ */
+export interface SessionBridge {
+  isIdle(): boolean;
+  abort(): void;
+  sendUserMessage(content: unknown, options?: { deliverAs: "steer" | "followUp" }): void;
+  state(): Record<string, unknown>;
+}
+
 export interface ControlServerOptions {
   baseDir: string;
   name: string;
   ownership: Ownership;
   cwd: string;
   pid: number;
+  bridge: SessionBridge;
 }
 
-export class ControlServer {
+export class ControlServer implements CommandHost {
   readonly root: string;
   readonly socketPath: string;
   readonly statusPath: string;
@@ -62,6 +75,8 @@ export class ControlServer {
   private readonly options: ControlServerOptions;
   private server: net.Server | null = null;
   private readonly connections = new Set<net.Socket>();
+  /** pi getLastAssistantText semantics, fed by the mirrored message stream. */
+  private lastAssistant: string | undefined;
 
   constructor(options: ControlServerOptions) {
     this.options = options;
@@ -89,6 +104,18 @@ export class ControlServer {
       socket.unref();
       this.connections.add(socket);
       socket.on("close", () => this.connections.delete(socket));
+      socket.on("error", () => socket.destroy());
+      // LF-JSONL in: buffer to newlines, one command per line (REQ-09).
+      socket.setEncoding("utf8");
+      let buffer = "";
+      socket.on("data", (chunk: string) => {
+        buffer += chunk;
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        for (const line of lines) {
+          if (line.trim() !== "") this.handleLine(socket, line);
+        }
+      });
     });
     // The control surface must never hold pi open: an unref'd listener does
     // not count toward the event loop, so a pi that is otherwise done exits
@@ -115,14 +142,120 @@ export class ControlServer {
     fs.rmSync(this.statusPath, { force: true });
   }
 
-  /** Mirror one RPC-shaped event line into events.jsonl (REQ-07). */
-  appendEvent(event: Record<string, unknown>): void {
-    appendEvent(this.eventsPath, event);
+  /**
+   * Publish one RPC-shaped frame the way v1's pump publishes what pi emits:
+   * into events.jsonl (ts-stamped) and to every connected client (ts-free,
+   * the wire's own shape). Mirrored run events and translated-command
+   * responses both come through here (REQ-07, REQ-09).
+   */
+  publish(frame: Record<string, unknown>): void {
+    this.trackLastAssistant(frame);
+    appendEvent(this.eventsPath, frame);
+    const data = `${JSON.stringify(frame)}\n`;
+    for (const socket of this.connections) {
+      try {
+        socket.write(data);
+      } catch {
+        socket.destroy();
+      }
+    }
   }
 
   /** Drive the v1 lifecycle in status.json: working at start, idle at settle. */
   setLifecycle(state: "working" | "idle"): void {
     this.writeStatus(state);
+  }
+
+  /** One socket line: parse, translate, answer or publish. */
+  private handleLine(socket: net.Socket, line: string): void {
+    let request: unknown;
+    try {
+      request = JSON.parse(line);
+    } catch (exc) {
+      this.sendTo(socket, {
+        type: "response",
+        command: "parse",
+        success: false,
+        error: `failed to parse command: ${exc instanceof Error ? exc.message : exc}`,
+      });
+      return;
+    }
+    try {
+      const { response, publish } = translateCommand(this, request);
+      if (publish) this.publish(response);
+      else this.sendTo(socket, response);
+    } catch (exc) {
+      // A throwing translation must not kill the connection loop.
+      this.sendTo(socket, {
+        type: "response",
+        command: "error",
+        success: false,
+        error: `${exc instanceof Error ? exc.message : exc}`,
+      });
+    }
+  }
+
+  private sendTo(socket: net.Socket, frame: Record<string, unknown>): void {
+    try {
+      socket.write(`${JSON.stringify(frame)}\n`);
+    } catch {
+      socket.destroy();
+    }
+  }
+
+  /**
+   * Track the last final assistant text off the mirrored message stream,
+   * with pi's getLastAssistantText semantics: the newest assistant message
+   * that is not an empty abort, its text blocks concatenated.
+   */
+  private trackLastAssistant(frame: Record<string, unknown>): void {
+    if (frame.type !== "message_end") return;
+    const message = frame.message as
+      | { role?: unknown; stopReason?: unknown; content?: unknown }
+      | undefined;
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) return;
+    if (message.stopReason === "aborted" && message.content.length === 0) return;
+    let text = "";
+    for (const block of message.content) {
+      if (block !== null && typeof block === "object" && (block as any).type === "text") {
+        text += (block as any).text ?? "";
+      }
+    }
+    this.lastAssistant = text;
+  }
+
+  // --- CommandHost ----------------------------------------------------------
+
+  isIdle(): boolean {
+    return this.options.bridge.isIdle();
+  }
+
+  abort(): void {
+    this.options.bridge.abort();
+  }
+
+  sendUserMessage(content: unknown, options?: { deliverAs: "steer" | "followUp" }): void {
+    this.options.bridge.sendUserMessage(content, options);
+  }
+
+  /** The v1 `status` host-verb payload, read from disk exactly as v1 reads it. */
+  statusData(): unknown {
+    return {
+      status: JSON.parse(fs.readFileSync(this.statusPath, "utf8")),
+      paths: {
+        socket: this.socketPath,
+        events: this.eventsPath,
+        status: this.statusPath,
+      },
+    };
+  }
+
+  state(): Record<string, unknown> {
+    return this.options.bridge.state();
+  }
+
+  lastAssistantText(): string | undefined {
+    return this.lastAssistant;
   }
 
   /** Atomically replace status.json, the same tmp-then-rename dance as v1. */

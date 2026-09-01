@@ -21,6 +21,8 @@ export type Handler = (event: any, ctx: any) => unknown;
 export interface HarnessOptions {
   /** The session working directory the fake ctx reports. */
   cwd?: string;
+  /** The session display name the fake session manager reports. */
+  sessionName?: string;
 }
 
 export interface ControlHarness {
@@ -38,6 +40,10 @@ export interface ControlHarness {
   ctx: any;
   /** Every ctx.ui call, in order, as `{ method, args }`. */
   uiCalls: Array<{ method: string; args: unknown[] }>;
+  /** What ctx.isIdle() reports; flip to false to fake a streaming agent. */
+  idle: boolean;
+  /** ctx.abort() invocations, in order. */
+  abortCalls: unknown[];
   /** Invoke every handler for ``event.type`` and return the last result. */
   emit(event: { type: string } & Record<string, unknown>): Promise<unknown>;
   /** Emit a session_start with the given reason (default "startup"). */
@@ -67,6 +73,8 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
     },
   };
 
+  const abortCalls: unknown[] = [];
+
   const ctx = {
     cwd: options.cwd ?? process.cwd(),
     ui: {
@@ -74,6 +82,16 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
         uiCalls.push({ method: "notify", args: [message, type] });
       },
     },
+    isIdle: () => harness.idle,
+    abort() {
+      abortCalls.push(true);
+    },
+    sessionManager: {
+      getSessionName: () => options.sessionName,
+      getSessionId: () => "fake-session",
+      getSessionFile: () => undefined,
+    },
+    model: undefined,
   };
 
   async function emit(event: { type: string } & Record<string, unknown>): Promise<unknown> {
@@ -85,7 +103,7 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
     return last;
   }
 
-  return {
+  const harness: ControlHarness = {
     api,
     handlers,
     commands,
@@ -93,6 +111,8 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
     invoked,
     ctx,
     uiCalls,
+    idle: true,
+    abortCalls,
     emit,
     async startSession(reason = "startup") {
       await emit({ type: "session_start", reason });
@@ -101,4 +121,5 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
       await emit({ type: "session_shutdown", reason });
     },
   };
+  return harness;
 }

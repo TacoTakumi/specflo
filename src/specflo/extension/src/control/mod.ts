@@ -48,6 +48,24 @@ export function registerControl(pi: ExtensionAPI): void {
         ownership: identity.ownership,
         cwd: ctx.cwd,
         pid: process.pid,
+        // The session bridge: what command translation reaches the live pi
+        // through (REQ-09, REQ-10). sendUserMessage injects a real user
+        // message - it lands in the transcript and triggers a turn.
+        bridge: {
+          isIdle: () => ctx.isIdle(),
+          abort: () => ctx.abort(),
+          sendUserMessage: (content, options) =>
+            (pi as any).sendUserMessage(content, options),
+          state: () => ({
+            model: ctx.model
+              ? { id: (ctx.model as any).id, name: (ctx.model as any).name, provider: (ctx.model as any).provider }
+              : undefined,
+            isStreaming: !ctx.isIdle(),
+            sessionFile: ctx.sessionManager?.getSessionFile?.(),
+            sessionId: ctx.sessionManager?.getSessionId?.(),
+            sessionName: ctx.sessionManager?.getSessionName?.(),
+          }),
+        },
       });
       await next.start();
       server = next;
