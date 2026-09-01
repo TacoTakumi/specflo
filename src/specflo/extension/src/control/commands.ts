@@ -30,6 +30,11 @@ export interface CommandHost {
   state(): Record<string, unknown>;
   /** The last final assistant text, pi's getLastAssistantText semantics. */
   lastAssistantText(): string | undefined;
+  /**
+   * Stand down durably: stop serving this session and remove the
+   * registration, leaving pi itself untouched (the stop-as-detach verb).
+   */
+  requestDetach(): void;
 }
 
 export interface Translation {
@@ -99,6 +104,12 @@ export function translateCommand(host: CommandHost, request: unknown): Translati
         response: respond({ success: true, data: { text: host.lastAssistantText() } }),
         publish: true,
       };
+    case "detach":
+      // The serving side does its own durable teardown, so a live session
+      // never resurrects the record a detach removed (REQ-06). Answered to
+      // the requester alone: the server is about to close every connection.
+      host.requestDetach();
+      return { response: respond({ success: true }), publish: false };
     default:
       return {
         response: respond({

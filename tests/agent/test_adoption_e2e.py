@@ -159,9 +159,7 @@ def test_adoption_discover_attach_detach(rig):
 
     pi = hand_start_pi()
     record = base / name / "status.json"
-    assert wait_until(lambda: record.exists(), timeout=30), (
-        f"no discovery record; pi stderr: {pi.stderr and ''}"
-    )
+    assert wait_until(lambda: record.exists(), timeout=30), "no discovery record"
     snapshot = json.loads(record.read_text())
     assert snapshot["ownership"] == "adopted"
     assert snapshot["transport"] == "tui"

@@ -23,6 +23,8 @@ export interface HarnessOptions {
   cwd?: string;
   /** The session display name the fake session manager reports. */
   sessionName?: string;
+  /** Session entries the fake session manager's getBranch returns. */
+  branch?: unknown[];
 }
 
 export interface ControlHarness {
@@ -90,6 +92,7 @@ export function createControlHarness(options: HarnessOptions = {}): ControlHarne
       getSessionName: () => options.sessionName,
       getSessionId: () => "fake-session",
       getSessionFile: () => undefined,
+      getBranch: () => options.branch ?? [],
     },
     model: undefined,
   };

@@ -158,8 +158,9 @@ def test_list_distinguishes_transport_and_ownership(rig):
 def test_stale_record_never_presented_as_attachable(rig):
     run_cli, start_v1, serve_v2, base, tmp_path = rig
     # An ungracefully killed served session: socket file and record left, the
-    # pid long gone.
-    dead = subprocess.run(["true"])  # a pid guaranteed dead
+    # pid long gone (a just-exited child's pid is guaranteed dead).
+    dead = subprocess.Popen(["true"])
+    dead.wait()
     stale = base / "ghost"
     stale.mkdir(parents=True)
     (stale / "sock").write_text("")
@@ -168,7 +169,7 @@ def test_stale_record_never_presented_as_attachable(rig):
             {
                 "name": "ghost",
                 "state": "working",
-                "pid": dead.args and 99999999,
+                "pid": dead.pid,
                 "transport": "tui",
                 "ownership": "adopted",
             }

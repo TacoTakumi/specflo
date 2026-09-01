@@ -35,6 +35,10 @@ ENV_START_TIMEOUT = "SPECFLO_AGENT_START_TIMEOUT"
 #: The interactive pi the pane runs by default (the TUI, not the RPC broker).
 DEFAULT_TUI_PI_CMD = "pi"
 
+#: The herdr lifecycle-authority source the extension registers panes under
+#: (src/control/herdr.ts HERDR_SOURCE); a release must use the same source.
+EXTENSION_HERDR_SOURCE = "specflo-pi-extension"
+
 _PROBE_TIMEOUT = 2.0
 
 
@@ -162,9 +166,24 @@ def stop_managed_tui(name: str, snapshot: dict, *, timeout: float = 15.0) -> boo
 def detach_session(name: str) -> None:
     """Remove specflo's registration of an adopted session; never signal pi.
 
-    The retained events.jsonl is history, not registration - it stays.
+    A live session is told to stand down over its own socket (the ``detach``
+    verb), so its server stops and cannot resurrect the record on the next
+    lifecycle event; the file removal below then only sweeps what a dead
+    session left behind. The retained events.jsonl is history, not
+    registration - it stays.
     """
-    _remove_registration(AgentPaths.resolve(name))
+    paths = AgentPaths.resolve(name)
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            client.request({"type": "detach"}, timeout=5.0)
+    except (HostUnreachableError, TimeoutError, OSError):
+        pass  # nothing live to tell; the record is just files now
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if not paths.socket.exists() and not paths.status.exists():
+            return
+        time.sleep(0.05)
+    _remove_registration(paths)
 
 
 def _remove_registration(paths: AgentPaths) -> None:

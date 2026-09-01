@@ -116,6 +116,21 @@ describe("herdr state reporting (T-10)", () => {
     assert.match(release!, /--agent worker/);
   });
 
+  test("the discovery record carries the handshake pane id", async () => {
+    // So an ownership-aware stop can release the registration even when the
+    // session dies without its own shutdown (review round 1, finding 2).
+    process.env.SPECFLO_AGENT_PANE = "w1:p9";
+    const harness = await served();
+    try {
+      const status = JSON.parse(
+        fs.readFileSync(path.join(base, "worker", "status.json"), "utf8"),
+      );
+      assert.equal(status.herdr_pane, "w1:p9");
+    } finally {
+      await harness.shutdownSession();
+    }
+  });
+
   test("no pane id means zero herdr invocations and zero errors", async () => {
     const harness = await served();
     await harness.emit({ type: "agent_start" });

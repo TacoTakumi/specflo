@@ -163,6 +163,44 @@ describe("blocked-state surfacing (T-11)", () => {
     }
   });
 
+  test("a settle during an open dialog surfaces at the close, not through it", async () => {
+    // Review round 1, finding 3: the run ending mid-dialog must not
+    // overwrite needs-attention, and the close must restore what the run
+    // state is NOW (idle), not what it was at the open (working).
+    process.env.SPECFLO_AGENT_PANE = "w1:p9";
+    const harness = await served();
+    try {
+      await harness.emit({ type: "agent_start" });
+      await harness.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "confirm" });
+      await harness.emit({ type: "agent_settled" });
+      assert.equal(state(), "needs-attention", "the open dialog owns the surface");
+      await harness.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm" });
+      assert.equal(state(), "idle", "the close restores the run's current state");
+      await waitFor(() => herdrReports().length >= 3);
+      assert.deepEqual(
+        herdrReports().map((report) => report.state),
+        ["working", "blocked", "idle"],
+      );
+    } finally {
+      await harness.shutdownSession();
+    }
+  });
+
+  test("nested prompts: first open captures, last close restores", async () => {
+    const harness = await served();
+    try {
+      await harness.emit({ type: "agent_start" });
+      await harness.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "confirm" });
+      await harness.emit({ type: "ui_prompt_start", reason: "ui_prompt", kind: "input" });
+      await harness.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "input" });
+      assert.equal(state(), "needs-attention", "one dialog is still open");
+      await harness.emit({ type: "ui_prompt_end", reason: "ui_prompt", kind: "confirm" });
+      assert.equal(state(), "working");
+    } finally {
+      await harness.shutdownSession();
+    }
+  });
+
   test("no pane still flips status but pushes nothing to herdr", async () => {
     const harness = await served();
     try {

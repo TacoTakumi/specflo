@@ -396,7 +396,8 @@ def list_agents(
 
 EXIT_CODES_HELP = (
     "Exit codes: 0 success/settled, 10 agent busy, 11 wait timeout, "
-    "12 host unreachable or unknown agent, 1 generic error."
+    "12 host unreachable or unknown agent, 13 adopted session detached (stop), "
+    "1 generic error."
 )
 
 
@@ -598,7 +599,9 @@ def _stop_tui(name: str, snapshot: dict, timeout: float) -> None:
         # a herdr hiccup must not block ending the process.
         pane = snapshot.get("herdr_pane")
         if pane:
-            adapter = HerdrAdapter()
+            # The extension registered the pane under its own source; the
+            # release must match it or herdr refuses the authority change.
+            adapter = HerdrAdapter(source=tui.EXTENSION_HERDR_SOURCE)
             if adapter.available():
                 try:
                     adapter.release(pane, name)

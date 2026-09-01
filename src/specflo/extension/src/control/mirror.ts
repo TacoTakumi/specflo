@@ -34,54 +34,53 @@ export function registerMirror(
   server: () => ControlServer | null,
   reporter: () => HerdrReporter | null = () => null,
 ): void {
-  registerPromptSurfacing(pi, server, reporter);
-  for (const type of MIRRORED_EVENTS) {
-    (pi.on as (event: string, handler: (event: unknown) => void) => void)(
-      type,
-      (event: unknown) => {
-        const live = server();
-        if (live === null) return;
-        try {
-          // Log and broadcast first, then move state - the v1 pump's order.
-          live.publish(event as Record<string, unknown>);
-          if (type === "agent_start") {
-            live.setLifecycle("working");
-            reporter()?.report("working");
-          } else if (type === "agent_settled") {
-            live.setLifecycle("idle");
-            reporter()?.report("idle");
-          }
-        } catch {
-          // Best-effort by requirement: never disturb the run.
-        }
-      },
-    );
-  }
-}
-
-/**
- * Blocked-state surfacing (REQ-12): a blocking UI prompt opening lands its
- * event line (kind, and title when pi supplied one), flips status.json to
- * needs-attention, and reads blocked in herdr for a known pane; the close
- * logs and restores the state the prompt interrupted.
- */
-function registerPromptSurfacing(
-  pi: ExtensionAPI,
-  server: () => ControlServer | null,
-  reporter: () => HerdrReporter | null,
-): void {
-  // The state the open prompt interrupted; one slot, per extension closure.
-  let interrupted: string | null = null;
   const on = pi.on as (event: string, handler: (event: unknown) => void) => void;
+
+  // The prompt-surfacing state (REQ-12), shared with the lifecycle branch
+  // below: while any blocking prompt is open, status.json stays
+  // needs-attention and the underlying run state only updates what the last
+  // close will restore - so a settle mid-dialog cannot overwrite the
+  // blocked surface, and the close never restores a state the run has
+  // already left. Nested prompts count; the first open captures, the last
+  // close restores.
+  let promptDepth = 0;
+  let interrupted = "idle";
+
+  const moveLifecycle = (live: ControlServer, state: "working" | "idle"): void => {
+    if (promptDepth > 0) {
+      interrupted = state;
+      return;
+    }
+    live.setLifecycle(state);
+    reporter()?.report(state);
+  };
+
+  for (const type of MIRRORED_EVENTS) {
+    on(type, (event: unknown) => {
+      const live = server();
+      if (live === null) return;
+      try {
+        // Log and broadcast first, then move state - the v1 pump's order.
+        live.publish(event as Record<string, unknown>);
+        if (type === "agent_start") moveLifecycle(live, "working");
+        else if (type === "agent_settled") moveLifecycle(live, "idle");
+      } catch {
+        // Best-effort by requirement: never disturb the run.
+      }
+    });
+  }
 
   on("ui_prompt_start", (event: unknown) => {
     const live = server();
     if (live === null) return;
     try {
-      interrupted = live.lifecycle;
       live.publish(event as Record<string, unknown>);
-      live.writeStatus("needs-attention");
-      reporter()?.report("blocked");
+      promptDepth += 1;
+      if (promptDepth === 1) {
+        interrupted = live.lifecycle;
+        live.writeStatus("needs-attention");
+        reporter()?.report("blocked");
+      }
     } catch {
       // Best-effort by requirement: never disturb the session.
     }
@@ -91,11 +90,13 @@ function registerPromptSurfacing(
     const live = server();
     if (live === null) return;
     try {
-      const restored = interrupted ?? "idle";
-      interrupted = null;
       live.publish(event as Record<string, unknown>);
-      live.writeStatus(restored);
-      reporter()?.report(restored === "working" ? "working" : "idle");
+      if (promptDepth > 0) promptDepth -= 1;
+      if (promptDepth === 0) {
+        const restored = interrupted === "working" ? "working" : "idle";
+        live.writeStatus(restored);
+        reporter()?.report(restored);
+      }
     } catch {
       // Best-effort by requirement: never disturb the session.
     }

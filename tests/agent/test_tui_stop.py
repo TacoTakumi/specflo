@@ -73,13 +73,17 @@ def rig(tmp_path):
             timeout=30,
         )
 
-    def serve_v2(name: str | None, cwd: Path) -> subprocess.Popen:
+    def serve_v2(
+        name: str | None, cwd: Path, extra_env: dict | None = None
+    ) -> subprocess.Popen:
         scenario = cwd / "scenario.json"
         scenario.write_text(json.dumps({"reply": "v2"}), encoding="utf-8")
         run_env = dict(env)
         if name is not None:
             run_env["SPECFLO_AGENT_NAME"] = name
             run_env["SPECFLO_AGENT_MANAGED"] = "1"
+        if extra_env:
+            run_env.update(extra_env)
         proc = subprocess.Popen(
             ["node", str(RUNNER), str(scenario)],
             cwd=cwd,
@@ -143,7 +147,50 @@ def test_managed_stop_releases_the_recorded_pane(rig):
     assert result.returncode == 0, result.stderr
     assert not (record / "sock").exists()
     assert not (record / "status.json").exists()
-    assert any(call[:2] == ["pane", "release-agent"] for call in herdr_calls())
+    releases = [call for call in herdr_calls() if call[:2] == ["pane", "release-agent"]]
+    assert releases
+    # The release must use the source the extension registered under, or
+    # herdr refuses the authority change (review round 1, finding 2).
+    for call in releases:
+        assert call[call.index("--source") + 1] == "specflo-pi-extension"
+
+
+def test_managed_stop_releases_a_live_sessions_recorded_pane(rig):
+    # The live path of the same finding: a real served session records its
+    # handshake pane, so stop can release it without any fabricated record.
+    run_cli, serve_v2, herdr_calls, base, tmp_path = rig
+    cwd = tmp_path / "live-managed"
+    cwd.mkdir()
+    fake_herdr_bin = tmp_path / "bin" / "herdr"
+    proc = serve_v2("worker", cwd, extra_env={
+        "SPECFLO_AGENT_PANE": "w9:p3",
+        "SPECFLO_HERDR_BIN": str(fake_herdr_bin),
+    })
+    assert wait_until(lambda: (base / "worker" / "status.json").exists())
+    snapshot = json.loads((base / "worker" / "status.json").read_text())
+    assert snapshot["herdr_pane"] == "w9:p3"
+
+    result = run_cli("stop", "worker")
+    assert result.returncode == 0, result.stderr
+    assert wait_until(lambda: proc.poll() is not None)
+    assert wait_until(
+        lambda: any(
+            call[:2] == ["pane", "release-agent"] and call[2] == "w9:p3"
+            for call in herdr_calls()
+        )
+    )
+
+
+def test_release_source_matches_the_extension_constant():
+    # Cross-language drift pin: the Python release source must be the very
+    # string the extension registers panes under.
+    from specflo.agent.tui import EXTENSION_HERDR_SOURCE
+
+    herdr_ts = (
+        Path(__file__).resolve().parents[2]
+        / "src" / "specflo" / "extension" / "src" / "control" / "herdr.ts"
+    )
+    assert f'"{EXTENSION_HERDR_SOURCE}"' in herdr_ts.read_text()
 
 
 def test_adopted_stop_detaches_without_killing(rig):

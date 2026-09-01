@@ -317,6 +317,61 @@ describe("command translation and broadcast (T-04)", () => {
     }
   });
 
+  test("detach stands the server down durably: later events resurrect nothing", async () => {
+    const { harness, socketPath } = await serve();
+    const dir = path.join(base, path.basename(cwd));
+    const c = await client(socketPath);
+    c.send({ type: "detach", id: "d1" });
+    const response = await c.response("d1");
+    assert.equal(response.success, true);
+    // The serving side removes its own registration...
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (!fs.existsSync(path.join(dir, "sock")) && !fs.existsSync(path.join(dir, "status.json")))
+        break;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.equal(fs.existsSync(path.join(dir, "sock")), false);
+    assert.equal(fs.existsSync(path.join(dir, "status.json")), false);
+    // ...and stays down: a live session's next lifecycle event must not
+    // recreate the record the detach removed (review round 1, finding 1).
+    const logSize = fs.statSync(path.join(dir, "events.jsonl")).size;
+    await harness.emit({ type: "agent_start" });
+    await harness.emit({ type: "agent_settled" });
+    assert.equal(fs.existsSync(path.join(dir, "status.json")), false);
+    assert.equal(fs.statSync(path.join(dir, "events.jsonl")).size, logSize);
+    await harness.shutdownSession(); // idempotent no-op after detach
+  });
+
+  test("get_last_assistant_text reads session state, so it survives a reload", async () => {
+    // A fresh server generation (post-/reload) has mirrored nothing; the
+    // answer comes from the session branch (review round 1, finding 4).
+    const harness = createControlHarness({
+      cwd,
+      branch: [
+        { type: "message", message: { role: "user", content: [{ type: "text", text: "q" }] } },
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "remembered across reloads" }],
+            stopReason: "stop",
+          },
+        },
+      ],
+    });
+    registerControl(harness.api);
+    await harness.startSession("reload");
+    try {
+      const c = await client(path.join(base, path.basename(cwd), "sock"));
+      c.send({ type: "get_last_assistant_text", id: "l1" });
+      const response = await c.response("l1");
+      assert.equal(response.data.text, "remembered across reloads");
+    } finally {
+      await harness.shutdownSession();
+    }
+  });
+
   test("translated responses land in events.jsonl like v1's pumped stream", async () => {
     const { harness, socketPath } = await serve();
     try {

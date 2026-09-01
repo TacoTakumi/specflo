@@ -56,6 +56,14 @@ export interface SessionBridge {
   abort(): void;
   sendUserMessage(content: unknown, options?: { deliverAs: "steer" | "followUp" }): void;
   state(): Record<string, unknown>;
+  /**
+   * The last final assistant text from the session's own state, or
+   * undefined when it cannot be read; survives extension reloads the way
+   * pi's getLastAssistantText does.
+   */
+  lastAssistantText(): string | undefined;
+  /** Stand down durably: forget this server and stop it (the detach verb). */
+  detach(): void;
 }
 
 export interface ControlServerOptions {
@@ -64,6 +72,8 @@ export interface ControlServerOptions {
   ownership: Ownership;
   cwd: string;
   pid: number;
+  /** The herdr pane from the managed handshake, when one was given. */
+  herdrPane?: string;
   bridge: SessionBridge;
 }
 
@@ -269,7 +279,13 @@ export class ControlServer implements CommandHost {
   }
 
   lastAssistantText(): string | undefined {
-    return this.lastAssistant;
+    // Session state is the truth - it survives reloads; the mirror-tracked
+    // value covers a session manager that cannot be read.
+    return this.options.bridge.lastAssistantText() ?? this.lastAssistant;
+  }
+
+  requestDetach(): void {
+    this.options.bridge.detach();
   }
 
   /** Atomically replace status.json, the same tmp-then-rename dance as v1. */
@@ -284,7 +300,9 @@ export class ControlServer implements CommandHost {
       context_percent: null,
       herdr_workspace: null,
       herdr_tab: null,
-      herdr_pane: null,
+      // Recorded so an ownership-aware stop can release the registration
+      // even when this session dies without its own shutdown (REQ-08).
+      herdr_pane: this.options.herdrPane ?? null,
       last_activity: nowIso(),
       // Discovery fields this project adds (REQ-02).
       transport: "tui",

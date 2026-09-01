@@ -73,6 +73,7 @@ export function registerControl(pi: ExtensionAPI): void {
         ownership: identity.ownership,
         cwd: ctx.cwd,
         pid: process.pid,
+        herdrPane: process.env[ENV_AGENT_PANE],
         // The session bridge: what command translation reaches the live pi
         // through (REQ-09, REQ-10). sendUserMessage injects a real user
         // message - it lands in the transcript and triggers a turn.
@@ -90,6 +91,22 @@ export function registerControl(pi: ExtensionAPI): void {
             sessionId: ctx.sessionManager?.getSessionId?.(),
             sessionName: ctx.sessionManager?.getSessionName?.(),
           }),
+          lastAssistantText: () => lastAssistantFromBranch(ctx),
+          detach: () => {
+            // Forget first, so no later event resurrects the record; then
+            // stop on a beat, so the success response reaches the client
+            // before its connection is destroyed.
+            const current = server;
+            const currentReporter = reporter;
+            server = null;
+            reporter = null;
+            if (currentReporter !== null) currentReporter.release();
+            if (current !== null) {
+              setTimeout(() => {
+                void current.stop("detach").catch(() => {});
+              }, 25);
+            }
+          },
         },
       });
       await next.start(event.reason);
@@ -132,4 +149,34 @@ export function registerControl(pi: ExtensionAPI): void {
   // thunks hand each event whatever is live right then - null while serving
   // is off, so the mirror writes nothing and herdr hears nothing.
   registerMirror(pi, () => server, () => reporter);
+}
+
+/**
+ * pi's getLastAssistantText over the session branch: the newest assistant
+ * message that is not an empty abort, its text blocks concatenated. Session
+ * state, so it survives extension reloads; undefined when the branch cannot
+ * be read (the mirror-tracked value covers that).
+ */
+function lastAssistantFromBranch(ctx: ExtensionContext): string | undefined {
+  try {
+    const branch = ctx.sessionManager?.getBranch?.();
+    if (!Array.isArray(branch)) return undefined;
+    for (let i = branch.length - 1; i >= 0; i -= 1) {
+      const entry = branch[i] as { type?: unknown; message?: any };
+      if (entry?.type !== "message") continue;
+      const message = entry.message;
+      if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+      if (message.stopReason === "aborted" && message.content.length === 0) continue;
+      let text = "";
+      for (const block of message.content) {
+        if (block !== null && typeof block === "object" && block.type === "text") {
+          text += block.text ?? "";
+        }
+      }
+      return text;
+    }
+    return undefined;
+  } catch {
+    return undefined;
+  }
 }
