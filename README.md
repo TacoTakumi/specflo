@@ -253,20 +253,25 @@ completion phrases stay controller-side.
 
 ### Verbs
 
-- `specflo agent start <name> [--cwd DIR] [--pi-cmd CMD] [--workspace ID] [--no-herdr] [--no-auto-answer]` -
-  start a detached host that spawns pi in `DIR`. Both survive the invoking
-  shell. Names are unique among live agents; a name is reusable once its host
-  is stopped or dead. `--pi-cmd` overrides the spawned command (default
-  `pi --mode rpc`; add `--model provider/id[:thinking]` there to pick a model).
-  `--no-auto-answer` disables the dialog policy so a controller answers
-  dialogs itself.
+- `specflo agent start <name> [--transport rpc|tui] [--cwd DIR] [--pi-cmd CMD] [--workspace ID] [--no-herdr] [--no-auto-answer]` -
+  start an agent in `DIR`. The default transport `rpc` starts a detached host
+  that spawns pi headless; both survive the invoking shell. `--transport tui`
+  runs a real interactive pi in a herdr pane instead (see The TUI transport
+  below); an unknown transport value is rejected naming the valid ones. Names
+  are unique among live agents; a name is reusable once its host is stopped
+  or dead. `--pi-cmd` overrides the spawned command (default `pi --mode rpc`,
+  or plain `pi` under `--transport tui`; add `--model provider/id[:thinking]`
+  there to pick a model). `--no-auto-answer` disables the dialog policy so a
+  controller answers dialogs itself (rpc transport only).
 - `specflo agent status <name> [--json]` - live-checked status: the socket is
   probed first, so a dead host reports `dead` instead of echoing stale state.
   `--json` carries the full snapshot (name, state, host and pi pids, context
   percent when known, herdr workspace/tab/pane ids, last activity) plus the
   state-dir paths (socket, events.jsonl, status.json).
 - `specflo agent list [--json]` - every known agent with its live-checked
-  state.
+  state, each row carrying transport (`rpc`/`tui`) and ownership
+  (`managed`/`adopted`). A dead session is never shown as attachable, and a
+  cleanly exited session's leftover event log is not listed at all.
 - `specflo agent prompt <name> "<text>" [--timeout S] [--no-wait] [--steer | --follow-up]` -
   send a prompt; block until the run settles and print the final assistant
   text to stdout. A working agent refuses a plain prompt (exit 10) unless
@@ -277,10 +282,14 @@ completion phrases stay controller-side.
 - `specflo agent last <name>` - print the most recent final assistant text.
 - `specflo agent log <name> [--follow]` - print the agent's event log
   (events.jsonl); `--follow` streams new events as they land.
-- `specflo agent stop <name> [--timeout S]` - graceful stop: abort any
-  in-flight run, terminate pi then the host (escalating to kill after a
-  bounded grace period), release the herdr registration, and write the final
-  `stopped` state. events.jsonl and status.json are retained on disk.
+- `specflo agent stop <name> [--timeout S]` - stop follows ownership. An rpc
+  agent gets the v1 graceful stop: abort any in-flight run, terminate pi then
+  the host (escalating to kill after a bounded grace period), release the
+  herdr registration, and write the final `stopped` state with events.jsonl
+  and status.json retained. A managed tui agent gets SIGTERM to the recorded
+  pi pid; the extension's own shutdown removes the socket and record. An
+  adopted session is never killed: stop detaches - it removes specflo's
+  record, leaves pi running, says so, and exits `13`.
 
 ### Exit codes
 
@@ -292,7 +301,42 @@ Consistent across every agent verb, and stated in each verb's `--help`:
 | 10   | agent busy (working; use `--steer` or `--follow-up`) |
 | 11   | wait timeout |
 | 12   | host unreachable or unknown agent |
+| 13   | adopted session detached (`stop`; pi left running) |
 | 1    | generic usage or error |
+
+### The TUI transport (`--transport tui`)
+
+`start --transport tui` runs a real interactive pi - the TUI a person sits
+at - in a herdr pane, and makes it a controllable agent at the same time. No
+host process exists on this path: the specflo pi extension inside the session
+binds the same per-agent control socket the v1 host binds, writes the same
+discovery record, mirrors run events to `events.jsonl`, and drives
+`status.json` through the same lifecycle, so every verb above (and the
+Python client under them) works identically against both transports. herdr
+is required for a tui start - the pane is the transport - and the command
+reports success only once the socket accepts a connection; on timeout
+(`SPECFLO_AGENT_START_TIMEOUT` overrides the bound) the pane is closed and
+the exit code is `11`.
+
+A controller and a human share the one session: socket prompts and typed
+input land in the same transcript, in order. A plain socket prompt against a
+streaming session is refused (exit 10); `--steer` and `--follow-up` deliver
+with pi's streaming behaviors. For a managed pane the extension pushes real
+lifecycle state into herdr - working during a run, idle at settle, blocked
+while a UI prompt is open - and a blocking dialog also flips `status.json`
+to `needs-attention` with the prompt kind and title in the event log, so a
+controller can see the session is waiting and answer the dialog with pane
+keystrokes (`herdr pane send-keys <pane> ...`).
+
+Serving is on for every pi session with the extension loaded, so a session
+someone started by hand is discoverable and adoptable: it appears in `list`
+as `tui adopted`, named by its cwd basename (pid-suffixed on collision), and
+can be attached with `status`, `prompt`, `wait`, `last`, and `log` like any
+agent. Disable serving entirely with `SPECFLO_AGENT_SERVE=0` (or `off`), or
+a `serve.off` marker file in the state base dir. On clean pi exit the socket
+and record are removed and the event log is retained; a record left by an
+unclean death is probed, never trusted - `list` marks it dead, and a new
+session for the same identity replaces it.
 
 ### herdr placement and degraded mode
 

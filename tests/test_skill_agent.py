@@ -23,6 +23,7 @@ DOCUMENTED_CODES = {
     "10": agent_cli.EXIT_BUSY,
     "11": agent_cli.EXIT_TIMEOUT,
     "12": agent_cli.EXIT_UNREACHABLE,
+    "13": agent_cli.EXIT_DETACHED,
     "1": agent_cli.EXIT_GENERIC,
 }
 
@@ -62,6 +63,7 @@ def test_exit_code_contract_pinned_both_sides():
     assert agent_cli.EXIT_BUSY == 10
     assert agent_cli.EXIT_TIMEOUT == 11
     assert agent_cli.EXIT_UNREACHABLE == 12
+    assert agent_cli.EXIT_DETACHED == 13
     assert agent_cli.EXIT_GENERIC == 1
     # ...and the skill states each code
     text = skill_text()

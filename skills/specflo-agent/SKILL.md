@@ -13,14 +13,18 @@ specflo feature request, not a workaround to script.
 
 ## The verbs
 
-- `specflo agent start <name> [--cwd DIR] [--pi-cmd CMD] [--workspace ID] [--no-herdr] [--no-auto-answer]` -
-  start a detached agent host running `pi --mode rpc` in DIR. Names are
-  unique among live agents. Under herdr the agent gets a visible pane;
-  headless (or `--no-herdr`) it degrades with one warning.
+- `specflo agent start <name> [--transport rpc|tui] [--cwd DIR] [--pi-cmd CMD] [--workspace ID] [--no-herdr] [--no-auto-answer]` -
+  start an agent in DIR. Default transport `rpc`: a detached host running
+  `pi --mode rpc`, headless (or `--no-herdr`) it degrades with one warning.
+  `--transport tui`: a real interactive pi in a herdr pane (herdr required),
+  served by the specflo extension inside the session - same verbs, same
+  socket. Names are unique among live agents.
 - `specflo agent status <name> [--json]` - live-checked state (a dead host
   reports `dead`, never stale state) plus pids, herdr ids, and state-dir
   paths under `--json`.
-- `specflo agent list [--json]` - every known agent, live-checked.
+- `specflo agent list [--json]` - every known agent, live-checked, with
+  transport (`rpc`/`tui`) and ownership (`managed`/`adopted`) per row. Dead
+  sessions are marked dead, never attachable.
 - `specflo agent prompt <name> "<text>" [--timeout S] [--no-wait] [--steer | --follow-up]` -
   send work; blocks until the run settles, then prints the final assistant
   text to stdout.
@@ -29,8 +33,11 @@ specflo feature request, not a workaround to script.
 - `specflo agent last <name>` - the most recent final assistant text.
 - `specflo agent log <name> [--follow]` - the agent's event log; `--follow`
   streams.
-- `specflo agent stop <name> [--timeout S]` - graceful stop: aborts any
-  in-flight run, terminates pi then the host, retains the logs.
+- `specflo agent stop <name> [--timeout S]` - stop follows ownership: an rpc
+  agent gets the graceful host stop (abort, terminate, logs retained); a
+  managed tui agent gets SIGTERM and the extension cleans up; an adopted
+  session is never killed - stop detaches it (record removed, pi left
+  running) and exits `13`.
 
 ## The blocking-prompt-as-background-task pattern
 
@@ -62,7 +69,33 @@ Uniform across every verb; branch on them, do not parse stderr:
   bound, or `stop` if it is stuck.
 - `12` - host unreachable or unknown agent. Check `specflo agent list`;
   a dead agent's name is reusable via a fresh `start`.
+- `13` - `stop` on an adopted session detached it: the record is gone and
+  the pi you did not start is still running. Not a failure.
 - `1` - generic usage error; read stderr.
+
+## The TUI transport: shared sessions
+
+`start --transport tui` runs a real interactive pi in a herdr pane; every
+verb above drives it over the same socket. What changes is who else is
+there: a human can be typing in the very session you are prompting.
+
+- **Discovery and attach.** Any pi session with the specflo extension serves
+  by default, including ones a person started by hand. `specflo agent list`
+  shows them as `tui adopted`, named by cwd basename; attach with `status`,
+  `prompt`, `wait`, `last`, `log` - no start needed.
+- **Prompt/typed coexistence.** Socket prompts and typed input land in one
+  transcript in order. A plain prompt at a streaming session is refused
+  (exit `10`); `--steer` / `--follow-up` deliver into the running turn or
+  queue behind it. Prefer follow-up when a human may be mid-thought.
+- **Blocked-state monitoring.** A blocking UI dialog flips the record to
+  `needs-attention` with the prompt kind and title in the event log, and
+  herdr shows `blocked` for the pane. Watch for it via `status --json` or
+  `log --follow`.
+- **Answering dialogs by keystroke.** Find the pane via `herdr agent list`
+  (the row's `pane_id`), then answer at the terminal level:
+  `herdr pane send-keys <pane> enter` (or `up`/`down` then `enter`), and
+  `herdr pane send-text <pane> "..."` for input dialogs. The close lands in
+  the event log and the state resumes.
 
 ## Monitoring
 
@@ -71,13 +104,16 @@ Uniform across every verb; branch on them, do not parse stderr:
   pids, herdr placement, last activity.
 - `specflo agent log <name> --follow` streams the event log when you need
   the play-by-play; the herdr pane shows the same feed human-readably.
-- `needs-attention` means the dialog auto-answer policy hit its flood
-  threshold and stopped answering - look at the log, then steer or stop.
+- `needs-attention` on an rpc agent means the dialog auto-answer policy hit
+  its flood threshold and stopped answering - look at the log, then steer or
+  stop. On a tui agent it means a blocking dialog is open right now - answer
+  it by keystroke (above) or let the human at the keyboard take it.
 
 ## Stopping
 
 Always `specflo agent stop <name>` when the work is done - it aborts any
-in-flight run, shuts pi and the host down cleanly, releases the herdr
-registration, and leaves `events.jsonl` and `status.json` on disk for the
-post-mortem. Killing pids by hand loses the graceful path; only fall back to
-that when `stop` itself reports the host unreachable.
+in-flight run, shuts pi (and, for rpc, the host) down cleanly, releases the
+herdr registration, and leaves the event log on disk for the post-mortem.
+On an adopted session stop only detaches (exit `13`) - the human's pi is
+never yours to kill. Killing pids by hand loses the graceful path; only
+fall back to that when `stop` itself reports the host unreachable.

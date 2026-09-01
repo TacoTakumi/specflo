@@ -34,6 +34,25 @@ latter. Release tags are of the form `vX.Y.Z`.
   `start --no-auto-answer`. The agent subsystem is structurally guarded to
   stay import-independent of the pipeline and content-agnostic about
   assistant text.
+- **The TUI transport - interactive pi agents (pi-interactive-transport).**
+  `specflo agent start --transport tui` runs a real interactive pi in a herdr
+  pane instead of a headless broker; the specflo pi extension itself serves
+  the v1 control-socket contract from inside the session, so the same CLI
+  verbs and the same Python client drive both transports (a shared contract
+  suite pins them together). The extension binds a per-session socket and
+  writes a discovery record in the same per-agent state layout the v1 host
+  uses (opt out with `SPECFLO_AGENT_SERVE=0|off` or a `serve.off` marker),
+  mirrors run events to `events.jsonl` and lifecycle to `status.json`, and
+  pushes working/idle/blocked into herdr for managed panes. Hand-started pi
+  sessions are discovered and adoptable: `list` shows transport (rpc/tui)
+  and ownership (managed/adopted) per row, and `stop` follows ownership -
+  a managed agent is terminated and cleaned up, an adopted session is
+  detached (record removed, pi left running) with the distinct exit code
+  `13`. A blocking UI prompt flips the agent to `needs-attention` with the
+  prompt kind and title in the event log and `blocked` in herdr; dialogs are
+  answerable remotely by pane keystrokes. Reloads leave exactly one live
+  server; stale sockets and dead records are probed and replaced
+  (connect-or-cleanup lifted from remote_pi, MIT, Jacob Moura).
 
 ## [0.12.0]
 
