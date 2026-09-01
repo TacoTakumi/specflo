@@ -7,12 +7,24 @@
  */
 
 import { strict as assert } from "node:assert";
-import { describe, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 
 import { registerControl } from "../src/control/mod.ts";
 import { createControlHarness } from "./harness.ts";
 
 describe("control module - lifecycle hooks under the harness (T-01)", () => {
+  // This suite is about hook wiring alone; the serve opt-out keeps the real
+  // server core (and its state-layout writes) out of these lifecycle emits.
+  let saved: string | undefined;
+  before(() => {
+    saved = process.env.SPECFLO_AGENT_SERVE;
+    process.env.SPECFLO_AGENT_SERVE = "0";
+  });
+  after(() => {
+    if (saved === undefined) delete process.env.SPECFLO_AGENT_SERVE;
+    else process.env.SPECFLO_AGENT_SERVE = saved;
+  });
+
   test("registers a session_start and a session_shutdown handler", () => {
     const harness = createControlHarness();
     registerControl(harness.api);

@@ -253,6 +253,16 @@ export function createFakeSpecflo(stdout = ""): FakeSpecflo {
  */
 export async function loadExtension(bin: string): Promise<(pi: any) => void> {
   process.env.SPECFLO_BIN = bin;
+  // The control surface (src/control/) serves by default: every emitted
+  // session_start binds a socket and writes a discovery record in the agent
+  // state layout. Point the layout at a throwaway base so no unit emit ever
+  // touches the developer's real ~/.specflo/agents; the end-to-end harness
+  // strips this variable from child environments like SPECFLO_BIN.
+  if (!process.env.SPECFLO_AGENT_STATE_DIR) {
+    process.env.SPECFLO_AGENT_STATE_DIR = fs.mkdtempSync(
+      path.join(os.tmpdir(), "specflo-unit-state-"),
+    );
+  }
   const module = await import("../src/index.ts");
   return module.default;
 }

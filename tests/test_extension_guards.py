@@ -13,7 +13,10 @@ module scans the shipped tree instead and fails on any of:
 Read access to the filesystem (and naming specflo paths) became sanctioned
 with pi-statusline, whose status segment parses the specflo artifacts
 directly rather than shelling out to the CLI; that supersedes the original
-no-fs-at-all rule (REQ-01). Writes stay banned.
+no-fs-at-all rule (REQ-01). Writes stay banned for the continuation-loop
+source; ``src/control/`` is exempt from the write ban alone, because the
+control surface's purpose is writing the per-agent state layout
+(pi-interactive-transport REQ-02) - every other rule still applies there.
 
 The scan runs over comment-stripped source. A raw substring scan cannot express
 "the code must not *do* this": it also flags the comments and docstrings that
@@ -151,6 +154,10 @@ def scan_extension(source: Path) -> list[Violation]:
         if file.suffix in _SOURCE_SUFFIXES:
             stripped = strip_comments(file.read_text())
             for kind, pattern in _SOURCE_RULES:
+                # The control surface writes the per-agent state layout
+                # (pi-interactive-transport REQ-02); only the write ban lifts.
+                if kind == "fs-write" and relpath.startswith("src/control/"):
+                    continue
                 match = pattern.search(stripped)
                 if match:
                     violations.append(Violation(kind, relpath, match.group(0)))
@@ -254,6 +261,22 @@ def test_injected_violation_is_caught(mutable_source, kind, inject):
     inject(mutable_source)
     found = {v.kind for v in scan_extension(mutable_source)}
     assert kind in found, f"guard missed an injected {kind} violation"
+
+
+def test_control_module_fs_writes_are_sanctioned(mutable_source):
+    # The exemption in both directions: a write under src/control/ is the
+    # control surface doing its job, while the same write in the continuation
+    # loop stays caught (the fs-write case above proves that side).
+    target = mutable_source / "src" / "control" / "sanctioned.ts"
+    target.write_text('import * as fs from "node:fs";\nfs.writeFileSync("x", "y");\n')
+    assert scan_extension(mutable_source) == []
+
+
+def test_other_rules_still_apply_inside_the_control_module(mutable_source):
+    target = mutable_source / "src" / "control" / "tool.ts"
+    target.write_text('pi.registerTool({ name: "x" });\n')
+    found = {v.kind for v in scan_extension(mutable_source)}
+    assert "register-tool" in found
 
 
 # --- the stripper itself ----------------------------------------------------

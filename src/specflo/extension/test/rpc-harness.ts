@@ -38,10 +38,17 @@ export const PI_BIN = process.env.SPECFLO_PI_BIN ?? "pi";
  */
 export const SPECFLO_BIN = "specflo";
 
-/** The inherited environment with the unit layer's fake-binary override removed. */
+/** The inherited environment with the unit layer's overrides removed. */
 function childEnv(extra: Record<string, string>): NodeJS.ProcessEnv {
   const env = { ...process.env, ...extra };
   delete env.SPECFLO_BIN;
+  // The unit layer redirects the agent state layout (and may set the serve
+  // opt-out or a handshake); none of that may reach a real pi, whose serving
+  // lands under the workspace HOME instead.
+  delete env.SPECFLO_AGENT_STATE_DIR;
+  delete env.SPECFLO_AGENT_SERVE;
+  delete env.SPECFLO_AGENT_NAME;
+  delete env.SPECFLO_AGENT_MANAGED;
   return env;
 }
 
