@@ -27,6 +27,7 @@ from typing import Optional
 
 import typer
 
+from specflo.agent import tui
 from specflo.agent.client import HostUnreachableError, connect
 from specflo.agent.herdr import HerdrAdapter, HerdrError
 from specflo.agent.statefiles import (
@@ -131,6 +132,12 @@ def start(
     cwd: Path = typer.Option(
         Path("."), "--cwd", help="Directory the pi agent runs in."
     ),
+    transport: str = typer.Option(
+        "rpc",
+        "--transport",
+        help="Agent transport: 'rpc' (v1 broker host, default) or 'tui' "
+        "(managed interactive pi in a herdr pane).",
+    ),
     pi_cmd: str = typer.Option(
         DEFAULT_PI_CMD,
         "--pi-cmd",
@@ -153,6 +160,12 @@ def start(
     ),
 ) -> None:
     """Start a detached agent host; it and its pi survive this invocation."""
+    if transport not in ("rpc", "tui"):
+        typer.echo(
+            f"Error: unknown transport '{transport}' (valid values: rpc, tui)",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_GENERIC)
     try:
         paths = AgentPaths.resolve(name)
     except ValueError as exc:
@@ -162,6 +175,12 @@ def start(
     if not cwd.is_dir():
         typer.echo(f"Error: --cwd {cwd} is not a directory", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
+
+    if transport == "tui":
+        # The managed TUI path (REQ-04): no host process - pi itself serves
+        # the control socket through the specflo extension.
+        _start_tui(name, cwd, workspace, pi_cmd, no_herdr)
+        return
 
     if paths.socket.exists():
         # NB: typer.Exit subclasses RuntimeError - never raise it inside
@@ -266,6 +285,45 @@ def start(
             time.sleep(0.1)
     typer.echo(f"Error: agent '{name}' did not become ready in {_START_DEADLINE}s", err=True)
     raise typer.Exit(code=EXIT_TIMEOUT)
+
+
+def _start_tui(
+    name: str,
+    cwd: Path,
+    workspace: Optional[str],
+    pi_cmd: str,
+    no_herdr: bool,
+) -> None:
+    """The tui branch of ``start``: place pi in a pane, wait for its socket."""
+    if no_herdr:
+        typer.echo(
+            "Error: --transport tui requires herdr; the pane is the transport",
+            err=True,
+        )
+        raise typer.Exit(code=EXIT_GENERIC)
+    adapter = HerdrAdapter()
+    if not adapter.available():
+        typer.echo("Error: --transport tui requires herdr, which is unavailable", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    # The rpc default names the broker's pi; the pane runs the interactive TUI.
+    command = tui.DEFAULT_TUI_PI_CMD if pi_cmd == DEFAULT_PI_CMD else pi_cmd
+    try:
+        placement = tui.start_tui_agent(
+            name,
+            cwd,
+            adapter,
+            workspace=workspace,
+            agent_space=_agent_space(),
+            pi_cmd=command,
+            timeout=tui.start_timeout(_START_DEADLINE),
+        )
+    except tui.TuiStartTimeout as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_TIMEOUT)
+    except (tui.TuiStartError, HerdrError) as exc:
+        typer.echo(f"Error: {exc}", err=True)
+        raise typer.Exit(code=EXIT_GENERIC)
+    typer.echo(f"started agent '{name}' (tui, pane {placement.pane_id})")
 
 
 @agent_app.command(epilog="Example: specflo agent status builder --json")
