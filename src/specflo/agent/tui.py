@@ -113,3 +113,60 @@ def _socket_live(name: str) -> bool:
             return True
     except (HostUnreachableError, OSError):
         return False
+
+
+# -- ownership-aware stop (T-09, REQ-06) ------------------------------------
+
+
+def pid_alive(pid: int) -> bool:
+    """Signal-0 probe; EPERM means the process exists but is not ours."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+
+
+def stop_managed_tui(name: str, snapshot: dict, *, timeout: float = 15.0) -> bool:
+    """SIGTERM the recorded pi; its extension shutdown removes socket+record.
+
+    Returns True once both are gone. A record whose pid is already dead is
+    stale - the extension cannot clean it, so this removes it directly. On
+    timeout with the process still alive, returns False.
+    """
+    paths = AgentPaths.resolve(name)
+    pid = snapshot.get("pid")
+    alive = isinstance(pid, int) and pid_alive(pid)
+    if alive:
+        try:
+            os.kill(pid, 15)  # SIGTERM: pi's graceful shutdown
+        except OSError:
+            alive = False
+    if not alive:
+        _remove_registration(paths)
+        return True
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not paths.socket.exists() and not paths.status.exists():
+            return True
+        if not pid_alive(pid):
+            # pi died without finishing its cleanup; finish it here.
+            _remove_registration(paths)
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def detach_session(name: str) -> None:
+    """Remove specflo's registration of an adopted session; never signal pi.
+
+    The retained events.jsonl is history, not registration - it stays.
+    """
+    _remove_registration(AgentPaths.resolve(name))
+
+
+def _remove_registration(paths: AgentPaths) -> None:
+    paths.socket.unlink(missing_ok=True)
+    paths.status.unlink(missing_ok=True)

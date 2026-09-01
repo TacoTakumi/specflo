@@ -42,6 +42,8 @@ EXIT_GENERIC = 1
 EXIT_BUSY = 10
 EXIT_TIMEOUT = 11
 EXIT_UNREACHABLE = 12
+#: stop on an adopted session: detached (pi left running), distinct from 0.
+EXIT_DETACHED = 13
 
 DEFAULT_PI_CMD = "pi --mode rpc"
 
@@ -543,6 +545,13 @@ def stop(
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
+    # Ownership-aware stop for tui-transport sessions (REQ-06): the record
+    # says what this is; the v1 broker path below stays untouched.
+    if paths.status.exists():
+        snapshot = read_status(paths.status)
+        if snapshot.get("transport") == "tui":
+            _stop_tui(name, snapshot, timeout)
+            return
     try:
         client = connect(name, connect_timeout=_PROBE_TIMEOUT)
     except HostUnreachableError as exc:
@@ -580,6 +589,33 @@ def stop(
         time.sleep(0.1)
     typer.echo(f"Error: agent '{name}' did not stop within {timeout}s", err=True)
     raise typer.Exit(code=EXIT_TIMEOUT)
+
+
+def _stop_tui(name: str, snapshot: dict, timeout: float) -> None:
+    """The tui branch of ``stop``: kill managed, detach adopted (REQ-06)."""
+    if snapshot.get("ownership") == "managed":
+        # Release the pane registration when one is recorded; best-effort -
+        # a herdr hiccup must not block ending the process.
+        pane = snapshot.get("herdr_pane")
+        if pane:
+            adapter = HerdrAdapter()
+            if adapter.available():
+                try:
+                    adapter.release(pane, name)
+                except HerdrError as exc:
+                    typer.echo(f"warning: herdr release failed: {exc}", err=True)
+        if not tui.stop_managed_tui(name, snapshot, timeout=timeout):
+            typer.echo(
+                f"Error: agent '{name}' did not stop within {timeout}s", err=True
+            )
+            raise typer.Exit(code=EXIT_TIMEOUT)
+        typer.echo(f"stopped agent '{name}'")
+        return
+    # Adopted: the user's own pi is never specflo's to kill. Detach - remove
+    # the registration - and say so distinctly.
+    tui.detach_session(name)
+    typer.echo(f"detached session '{name}' (pi left running)")
+    raise typer.Exit(code=EXIT_DETACHED)
 
 
 @agent_app.command(epilog=f"Example: specflo agent log builder --follow\n\n{EXIT_CODES_HELP}")

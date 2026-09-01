@@ -70,6 +70,12 @@ harness.api.sendUserMessage = (content, options) => {
 registerControl(harness.api);
 await harness.startSession();
 
+// pi shuts down gracefully on SIGTERM - session_shutdown fires and the
+// extension removes socket and record - and so does this stand-in.
+process.on("SIGTERM", () => {
+  void harness.shutdownSession("quit").then(() => process.exit(0));
+});
+
 // The control sockets are deliberately unref'd; this ref'd timer is what
 // keeps the runner alive until the parent kills it.
 setInterval(() => {}, 1 << 30);
