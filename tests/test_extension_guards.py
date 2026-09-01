@@ -174,11 +174,102 @@ def scan_extension(source: Path) -> list[Violation]:
     return violations
 
 
+# --- the control-surface boundary (pi-interactive-transport REQ-14) ---------
+
+#: Import specifiers a control-module file may use: Node built-ins, the pi
+#: extension API, and siblings inside src/control/ (shared transport
+#: utilities). Anything else - above all a relative path escaping control/
+#: toward the continuation loop - is a boundary violation.
+_CONTROL_ALLOWED_IMPORT = re.compile(
+    r"^(?:node:|@earendil-works/pi-coding-agent$|\./(?!\.))"
+)
+
+#: TS import specifiers in stripped source: static `from "x"`, bare
+#: `import "x"`, and dynamic `import("x")`.
+_IMPORT_SPECIFIER = re.compile(
+    r"""(?:from\s*|import\s*\(?\s*)["']([^"']+)["']"""
+)
+
+#: Tokens that would make the control surface pipeline-aware: the
+#: continuation loop's own CLI invocation machinery.
+_PIPELINE_TOKENS = ("reseed", "SPECFLO_BIN")
+
+#: Controller-side sentinel conventions (the same set the agent-host guard
+#: pins); the control surface must never parse assistant text for them.
+_SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
+
+
+def control_files(source: Path) -> list[Path]:
+    control = source / "src" / "control"
+    if not control.is_dir():
+        return []
+    return sorted(
+        p for p in control.rglob("*") if p.is_file() and p.suffix in _SOURCE_SUFFIXES
+    )
+
+
+def scan_control_boundary(source: Path) -> list[Violation]:
+    """REQ-14 violations in the control-surface module, mechanically."""
+    violations: list[Violation] = []
+    for file in control_files(source):
+        relpath = file.relative_to(source).as_posix()
+        stripped = strip_comments(file.read_text())
+        for spec in _IMPORT_SPECIFIER.findall(stripped):
+            if not _CONTROL_ALLOWED_IMPORT.match(spec):
+                violations.append(Violation("control-import", relpath, spec))
+        for token in _PIPELINE_TOKENS:
+            if token in stripped:
+                violations.append(Violation("control-pipeline", relpath, token))
+        for literal in _SENTINEL_LITERALS:
+            if literal in stripped:
+                violations.append(Violation("control-sentinel", relpath, literal))
+    return violations
+
+
+# --- lifted-code attribution (pi-interactive-transport REQ-16) --------------
+
+_ATTRIBUTION_NEEDLES = ("remote_pi", "Jacob Moura", "MIT")
+
+
+def scan_attribution(source: Path) -> list[Violation]:
+    """REQ-16 violations: lifted remote_pi code without full attribution."""
+    violations: list[Violation] = []
+    notice = source / "NOTICE"
+    if not notice.is_file():
+        violations.append(Violation("attribution-notice", "NOTICE", "missing"))
+    else:
+        text = notice.read_text()
+        for needle in _ATTRIBUTION_NEEDLES:
+            if needle not in text:
+                violations.append(Violation("attribution-notice", "NOTICE", needle))
+    for file in loadable_files(source):
+        if file.suffix not in _SOURCE_SUFFIXES:
+            continue
+        content = file.read_text()
+        if "remote_pi" not in content:
+            continue
+        relpath = file.relative_to(source).as_posix()
+        for needle in _ATTRIBUTION_NEEDLES:
+            if needle not in content:
+                violations.append(Violation("attribution-module", relpath, needle))
+    return violations
+
+
 # --- the shipped source is clean --------------------------------------------
 
 
 def test_shipped_extension_source_has_no_structural_violations():
     assert scan_extension(extension_install.extension_source()) == []
+
+
+def test_shipped_control_module_keeps_its_boundary():
+    source = extension_install.extension_source()
+    assert control_files(source), "control module sources not found"
+    assert scan_control_boundary(source) == []
+
+
+def test_shipped_lifted_code_is_attributed():
+    assert scan_attribution(extension_install.extension_source()) == []
 
 
 def test_scan_covers_every_entry_point_package_json_declares():
@@ -261,6 +352,56 @@ def test_injected_violation_is_caught(mutable_source, kind, inject):
     inject(mutable_source)
     found = {v.kind for v in scan_extension(mutable_source)}
     assert kind in found, f"guard missed an injected {kind} violation"
+
+
+CONTROL_VIOLATIONS = [
+    (
+        "control-import",
+        'import { resetChainForTests } from "../index.ts";\n',
+    ),
+    (
+        "control-pipeline",
+        'const payload = await runBinary(["hook", "reseed"]);\n',
+    ),
+    (
+        "control-sentinel",
+        'if (text.includes("QUESTION:")) notify(text);\n',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    "kind,code", CONTROL_VIOLATIONS, ids=[k for k, _ in CONTROL_VIOLATIONS]
+)
+def test_injected_control_boundary_violation_is_caught(mutable_source, kind, code):
+    assert scan_control_boundary(mutable_source) == []  # clean before
+    target = mutable_source / "src" / "control" / "mod.ts"
+    target.write_text(target.read_text() + code)
+    found = {v.kind for v in scan_control_boundary(mutable_source)}
+    assert kind in found, f"boundary guard missed an injected {kind} violation"
+
+
+def test_comments_do_not_trip_the_control_boundary(mutable_source):
+    target = mutable_source / "src" / "control" / "mod.ts"
+    target.write_text(
+        target.read_text()
+        + "\n// This module never imports ../index.ts, runs reseed, or greps QUESTION:.\n"
+    )
+    assert scan_control_boundary(mutable_source) == []
+
+
+def test_missing_module_attribution_is_caught(mutable_source):
+    assert scan_attribution(mutable_source) == []  # clean before
+    target = mutable_source / "src" / "control" / "borrowed.ts"
+    target.write_text("// pattern borrowed from remote_pi\nexport const x = 1;\n")
+    found = {v.kind for v in scan_attribution(mutable_source)}
+    assert "attribution-module" in found
+
+
+def test_missing_notice_is_caught(mutable_source):
+    (mutable_source / "NOTICE").unlink()
+    found = {v.kind for v in scan_attribution(mutable_source)}
+    assert "attribution-notice" in found
 
 
 def test_control_module_fs_writes_are_sanctioned(mutable_source):
