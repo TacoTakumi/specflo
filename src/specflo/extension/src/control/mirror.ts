@@ -16,6 +16,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { HerdrReporter } from "./herdr.ts";
 import type { ControlServer } from "./server.ts";
 
 export const MIRRORED_EVENTS = [
@@ -28,7 +29,11 @@ export const MIRRORED_EVENTS = [
   "tool_execution_end",
 ] as const;
 
-export function registerMirror(pi: ExtensionAPI, server: () => ControlServer | null): void {
+export function registerMirror(
+  pi: ExtensionAPI,
+  server: () => ControlServer | null,
+  reporter: () => HerdrReporter | null = () => null,
+): void {
   for (const type of MIRRORED_EVENTS) {
     (pi.on as (event: string, handler: (event: unknown) => void) => void)(
       type,
@@ -38,8 +43,13 @@ export function registerMirror(pi: ExtensionAPI, server: () => ControlServer | n
         try {
           // Log and broadcast first, then move state - the v1 pump's order.
           live.publish(event as Record<string, unknown>);
-          if (type === "agent_start") live.setLifecycle("working");
-          else if (type === "agent_settled") live.setLifecycle("idle");
+          if (type === "agent_start") {
+            live.setLifecycle("working");
+            reporter()?.report("working");
+          } else if (type === "agent_settled") {
+            live.setLifecycle("idle");
+            reporter()?.report("idle");
+          }
         } catch {
           // Best-effort by requirement: never disturb the run.
         }

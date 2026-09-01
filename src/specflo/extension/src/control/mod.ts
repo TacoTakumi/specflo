@@ -22,6 +22,7 @@ import type {
   SessionShutdownEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import { ENV_AGENT_PANE, createReporter, type HerdrReporter } from "./herdr.ts";
 import { deriveIdentity } from "./identity.ts";
 import { registerMirror } from "./mirror.ts";
 import { ControlServer, servingDisabled, stateBaseDir } from "./server.ts";
@@ -31,6 +32,9 @@ export function registerControl(pi: ExtensionAPI): void {
   // The one live server for this extension closure. pi rebuilds the closure
   // per session, so this is per-session state and dies with it.
   let server: ControlServer | null = null;
+  // The pane reporter beside it: non-null only under a managed handshake
+  // that carries a pane id (REQ-08).
+  let reporter: HerdrReporter | null = null;
 
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     try {
@@ -90,14 +94,31 @@ export function registerControl(pi: ExtensionAPI): void {
       });
       await next.start(event.reason);
       server = next;
+      // herdr failures are logged as event lines, exactly the v1 host's
+      // habit - never fatal, never surfaced into the session.
+      reporter = createReporter({
+        paneId: process.env[ENV_AGENT_PANE],
+        agent: identity.name,
+        onError: (message) => {
+          try {
+            server?.publish({ type: "host_error", error: message });
+          } catch {
+            // Even the error log is best-effort.
+          }
+        },
+      });
     } catch {
       server = null;
+      reporter = null;
     }
   });
 
   pi.on("session_shutdown", async (event: SessionShutdownEvent, _ctx: ExtensionContext) => {
     const current = server;
+    const currentReporter = reporter;
     server = null;
+    reporter = null;
+    if (currentReporter !== null) currentReporter.release();
     if (current === null) return; // idempotent: a second shutdown is a no-op
     try {
       await current.stop(event.reason);
@@ -107,7 +128,8 @@ export function registerControl(pi: ExtensionAPI): void {
   });
 
   // Run-event mirroring into events.jsonl and the working/idle lifecycle in
-  // status.json (REQ-07). The thunk hands each event the server that is live
-  // right then - null while serving is off, so the mirror writes nothing.
-  registerMirror(pi, () => server);
+  // status.json (REQ-07), plus herdr pushes for a known pane (REQ-08). The
+  // thunks hand each event whatever is live right then - null while serving
+  // is off, so the mirror writes nothing and herdr hears nothing.
+  registerMirror(pi, () => server, () => reporter);
 }
