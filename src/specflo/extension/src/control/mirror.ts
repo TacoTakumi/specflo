@@ -34,6 +34,7 @@ export function registerMirror(
   server: () => ControlServer | null,
   reporter: () => HerdrReporter | null = () => null,
 ): void {
+  registerPromptSurfacing(pi, server, reporter);
   for (const type of MIRRORED_EVENTS) {
     (pi.on as (event: string, handler: (event: unknown) => void) => void)(
       type,
@@ -56,4 +57,47 @@ export function registerMirror(
       },
     );
   }
+}
+
+/**
+ * Blocked-state surfacing (REQ-12): a blocking UI prompt opening lands its
+ * event line (kind, and title when pi supplied one), flips status.json to
+ * needs-attention, and reads blocked in herdr for a known pane; the close
+ * logs and restores the state the prompt interrupted.
+ */
+function registerPromptSurfacing(
+  pi: ExtensionAPI,
+  server: () => ControlServer | null,
+  reporter: () => HerdrReporter | null,
+): void {
+  // The state the open prompt interrupted; one slot, per extension closure.
+  let interrupted: string | null = null;
+  const on = pi.on as (event: string, handler: (event: unknown) => void) => void;
+
+  on("ui_prompt_start", (event: unknown) => {
+    const live = server();
+    if (live === null) return;
+    try {
+      interrupted = live.lifecycle;
+      live.publish(event as Record<string, unknown>);
+      live.writeStatus("needs-attention");
+      reporter()?.report("blocked");
+    } catch {
+      // Best-effort by requirement: never disturb the session.
+    }
+  });
+
+  on("ui_prompt_end", (event: unknown) => {
+    const live = server();
+    if (live === null) return;
+    try {
+      const restored = interrupted ?? "idle";
+      interrupted = null;
+      live.publish(event as Record<string, unknown>);
+      live.writeStatus(restored);
+      reporter()?.report(restored === "working" ? "working" : "idle");
+    } catch {
+      // Best-effort by requirement: never disturb the session.
+    }
+  });
 }

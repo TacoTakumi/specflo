@@ -125,8 +125,9 @@ describe("cold start", () => {
     // source. The one command is /specflo-continue (T-12); there is no tool and
     // no tool_call handler at all, and no event handler beyond the inventory
     // below: before_agent_start / session_start / turn_end are the continuation
-    // loop's, session_shutdown and the seven run-event mirrors the control
-    // surface's (pi-interactive-transport T-01/T-03).
+    // loop's; session_shutdown, the seven run-event mirrors, and the two UI
+    // prompt surfacers are the control surface's (pi-interactive-transport
+    // T-01/T-03/T-11).
     const { pi } = await setUp(PAYLOAD);
 
     assert.deepEqual(pi.tools, []);
@@ -145,6 +146,8 @@ describe("cold start", () => {
         "tool_execution_end",
         "tool_execution_start",
         "turn_end",
+        "ui_prompt_end",
+        "ui_prompt_start",
       ],
     );
   });

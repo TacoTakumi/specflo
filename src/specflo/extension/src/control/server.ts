@@ -78,6 +78,8 @@ export class ControlServer implements CommandHost {
   private readonly connections = new Set<net.Socket>();
   /** pi getLastAssistantText semantics, fed by the mirrored message stream. */
   private lastAssistant: string | undefined;
+  /** The last lifecycle state written, so a prompt close can restore it. */
+  lifecycle = "idle";
 
   constructor(options: ControlServerOptions) {
     this.options = options;
@@ -272,6 +274,7 @@ export class ControlServer implements CommandHost {
 
   /** Atomically replace status.json, the same tmp-then-rename dance as v1. */
   writeStatus(state: string): void {
+    this.lifecycle = state;
     const snapshot = {
       // v1 core fields, so the v1 reader parses this record unchanged.
       name: this.options.name,
