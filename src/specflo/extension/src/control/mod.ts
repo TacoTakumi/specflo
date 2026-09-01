@@ -25,14 +25,23 @@ import type {
 import { deriveIdentity } from "./identity.ts";
 import { registerMirror } from "./mirror.ts";
 import { ControlServer, servingDisabled, stateBaseDir } from "./server.ts";
+import { pidAlive } from "./stale.ts";
 
 export function registerControl(pi: ExtensionAPI): void {
   // The one live server for this extension closure. pi rebuilds the closure
   // per session, so this is per-session state and dies with it.
   let server: ControlServer | null = null;
 
-  pi.on("session_start", async (_event: SessionStartEvent, ctx: ExtensionContext) => {
+  pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
     try {
+      // A start on a closure that is already serving replaces its own server
+      // (REQ-15): tear down first, so the identity it held frees before the
+      // claim check below rather than colliding with itself.
+      if (server !== null) {
+        const previous = server;
+        server = null;
+        await previous.stop(event.reason);
+      }
       const base = stateBaseDir(process.env);
       if (servingDisabled(process.env, base)) return;
       const identity = deriveIdentity({
@@ -40,7 +49,19 @@ export function registerControl(pi: ExtensionAPI): void {
         sessionName: ctx.sessionManager?.getSessionName?.(),
         cwd: ctx.cwd,
         pid: process.pid,
-        claimed: (name) => fs.existsSync(path.join(base, name, "status.json")),
+        // Claimed means a record whose session is actually alive; a record
+        // left by a dead pid is stale and its identity is taken over - the
+        // new session overwrites it (REQ-18).
+        claimed: (name) => {
+          try {
+            const record = JSON.parse(
+              fs.readFileSync(path.join(base, name, "status.json"), "utf8"),
+            ) as { pid?: unknown };
+            return typeof record.pid === "number" ? pidAlive(record.pid) : true;
+          } catch {
+            return false;
+          }
+        },
       });
       const next = new ControlServer({
         baseDir: base,
@@ -67,19 +88,19 @@ export function registerControl(pi: ExtensionAPI): void {
           }),
         },
       });
-      await next.start();
+      await next.start(event.reason);
       server = next;
     } catch {
       server = null;
     }
   });
 
-  pi.on("session_shutdown", async (_event: SessionShutdownEvent, _ctx: ExtensionContext) => {
+  pi.on("session_shutdown", async (event: SessionShutdownEvent, _ctx: ExtensionContext) => {
     const current = server;
     server = null;
-    if (current === null) return;
+    if (current === null) return; // idempotent: a second shutdown is a no-op
     try {
-      await current.stop();
+      await current.stop(event.reason);
     } catch {
       // Teardown is best-effort; a failure must not disturb pi's shutdown.
     }

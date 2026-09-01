@@ -25,6 +25,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { translateCommand, type CommandHost } from "./commands.ts";
 import type { Ownership } from "./identity.ts";
+import { probeSocket } from "./stale.ts";
 import { appendEvent, nowIso, writeStatusFile } from "./statefiles.ts";
 
 export const ENV_STATE_DIR = "SPECFLO_AGENT_STATE_DIR";
@@ -87,17 +88,24 @@ export class ControlServer implements CommandHost {
   }
 
   /** Bind the socket and write the discovery record. */
-  async start(): Promise<void> {
+  async start(reason?: string): Promise<void> {
     fs.mkdirSync(this.root, { recursive: true });
     // The event log exists from the moment the session serves, as it does
     // the moment a v1 host starts: `agent log` on an idle agent prints an
     // empty log, not an unknown-agent error. Append mode, so a session
     // rejoining an existing identity extends the log rather than wiping it.
     fs.appendFileSync(this.eventsPath, "");
-    // A leftover socket file from an unclean death would fail the bind; v1's
-    // host unlinks before binding and so does this. (T-05 adds the probe that
-    // distinguishes a dead leftover from a live server.)
-    fs.rmSync(this.socketPath, { force: true });
+    // A leftover socket file from an unclean death would fail the bind. The
+    // guard is connect-or-cleanup, lifted from remote_pi's single-instance
+    // bind (MIT, Jacob Moura; see stale.ts): probe first, and only a socket
+    // nothing answers on is unlinked - a live listener is never stolen,
+    // because stealing it would orphan the session that owns it (REQ-18).
+    if (fs.existsSync(this.socketPath)) {
+      if (await probeSocket(this.socketPath)) {
+        throw new Error(`a live control server already owns ${this.socketPath}`);
+      }
+      fs.rmSync(this.socketPath, { force: true });
+    }
     const server = net.createServer((socket) => {
       // unref'd like the listener: an open control connection is no reason
       // for pi to stay alive either.
@@ -127,13 +135,17 @@ export class ControlServer implements CommandHost {
     });
     this.server = server;
     this.writeStatus("idle");
+    // The transition lands in the log (REQ-15): a reader of events.jsonl can
+    // see each server generation come up and go down across reloads.
+    this.publish(reason === undefined ? { type: "control_start" } : { type: "control_start", reason });
   }
 
   /** Close the socket and remove both it and the record (REQ-02). */
-  async stop(): Promise<void> {
+  async stop(reason?: string): Promise<void> {
     const server = this.server;
     this.server = null;
     if (server !== null) {
+      this.publish(reason === undefined ? { type: "control_stop" } : { type: "control_stop", reason });
       for (const socket of this.connections) socket.destroy();
       this.connections.clear();
       await new Promise<void>((resolve) => server.close(() => resolve()));

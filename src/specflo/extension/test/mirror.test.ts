@@ -71,7 +71,8 @@ describe("event mirroring and lifecycle (T-03)", () => {
       await harness.emit({ type: "agent_settled" });
       assert.equal(readState(), "idle");
       const types = readEvents().map((event) => event.type);
-      assert.deepEqual(types, ["agent_start", "agent_settled"]);
+      // control_start is the server's own T-05 transition note.
+      assert.deepEqual(types, ["control_start", "agent_start", "agent_settled"]);
     } finally {
       await harness.shutdownSession();
     }
@@ -93,6 +94,7 @@ describe("event mirroring and lifecycle (T-03)", () => {
       assert.deepEqual(
         events.map((event) => event.type),
         [
+          "control_start",
           "agent_start",
           "message_start",
           "tool_execution_start",
@@ -124,7 +126,7 @@ describe("event mirroring and lifecycle (T-03)", () => {
       await harness.emit({ type: "agent_settled" });
       assert.deepEqual(
         readEvents().map((event) => event.type),
-        ["agent_start", "agent_settled"],
+        ["control_start", "agent_start", "agent_settled"],
       );
     } finally {
       await harness.shutdownSession();
