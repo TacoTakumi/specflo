@@ -23,6 +23,7 @@ import type {
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
 import { deriveIdentity } from "./identity.ts";
+import { registerMirror } from "./mirror.ts";
 import { ControlServer, servingDisabled, stateBaseDir } from "./server.ts";
 
 export function registerControl(pi: ExtensionAPI): void {
@@ -65,4 +66,9 @@ export function registerControl(pi: ExtensionAPI): void {
       // Teardown is best-effort; a failure must not disturb pi's shutdown.
     }
   });
+
+  // Run-event mirroring into events.jsonl and the working/idle lifecycle in
+  // status.json (REQ-07). The thunk hands each event the server that is live
+  // right then - null while serving is off, so the mirror writes nothing.
+  registerMirror(pi, () => server);
 }

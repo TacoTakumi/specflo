@@ -24,6 +24,7 @@ import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Ownership } from "./identity.ts";
+import { appendEvent, nowIso, writeStatusFile } from "./statefiles.ts";
 
 export const ENV_STATE_DIR = "SPECFLO_AGENT_STATE_DIR";
 export const ENV_SERVE = "SPECFLO_AGENT_SERVE";
@@ -44,11 +45,6 @@ export function servingDisabled(
   return fs.existsSync(path.join(baseDir, "serve.off"));
 }
 
-/** UTC now in v1's wire format: ISO 8601, millisecond precision, +00:00. */
-export function nowIso(): string {
-  return new Date().toISOString().replace("Z", "+00:00");
-}
-
 export interface ControlServerOptions {
   baseDir: string;
   name: string;
@@ -61,6 +57,7 @@ export class ControlServer {
   readonly root: string;
   readonly socketPath: string;
   readonly statusPath: string;
+  readonly eventsPath: string;
 
   private readonly options: ControlServerOptions;
   private server: net.Server | null = null;
@@ -71,11 +68,17 @@ export class ControlServer {
     this.root = path.join(options.baseDir, options.name);
     this.socketPath = path.join(this.root, "sock");
     this.statusPath = path.join(this.root, "status.json");
+    this.eventsPath = path.join(this.root, "events.jsonl");
   }
 
   /** Bind the socket and write the discovery record. */
   async start(): Promise<void> {
     fs.mkdirSync(this.root, { recursive: true });
+    // The event log exists from the moment the session serves, as it does
+    // the moment a v1 host starts: `agent log` on an idle agent prints an
+    // empty log, not an unknown-agent error. Append mode, so a session
+    // rejoining an existing identity extends the log rather than wiping it.
+    fs.appendFileSync(this.eventsPath, "");
     // A leftover socket file from an unclean death would fail the bind; v1's
     // host unlinks before binding and so does this. (T-05 adds the probe that
     // distinguishes a dead leftover from a live server.)
@@ -112,6 +115,16 @@ export class ControlServer {
     fs.rmSync(this.statusPath, { force: true });
   }
 
+  /** Mirror one RPC-shaped event line into events.jsonl (REQ-07). */
+  appendEvent(event: Record<string, unknown>): void {
+    appendEvent(this.eventsPath, event);
+  }
+
+  /** Drive the v1 lifecycle in status.json: working at start, idle at settle. */
+  setLifecycle(state: "working" | "idle"): void {
+    this.writeStatus(state);
+  }
+
   /** Atomically replace status.json, the same tmp-then-rename dance as v1. */
   writeStatus(state: string): void {
     const snapshot = {
@@ -132,8 +145,6 @@ export class ControlServer {
       socket: this.socketPath,
       cwd: this.options.cwd,
     };
-    const tmp = `${this.statusPath}.tmp.${this.options.pid}`;
-    fs.writeFileSync(tmp, `${JSON.stringify(snapshot, null, 2)}\n`);
-    fs.renameSync(tmp, this.statusPath);
+    writeStatusFile(this.statusPath, snapshot);
   }
 }

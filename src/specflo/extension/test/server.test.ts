@@ -32,23 +32,6 @@ let saved: Record<string, string | undefined>;
 let base: string;
 let cwd: string;
 
-beforeEach(() => {
-  saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
-  for (const key of ENV_KEYS) delete process.env[key];
-  base = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-state-"));
-  cwd = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-cwd-"));
-  process.env.SPECFLO_AGENT_STATE_DIR = base;
-});
-
-afterEach(() => {
-  for (const key of ENV_KEYS) {
-    if (saved[key] === undefined) delete process.env[key];
-    else process.env[key] = saved[key];
-  }
-  fs.rmSync(base, { recursive: true, force: true });
-  fs.rmSync(cwd, { recursive: true, force: true });
-});
-
 function harnessInCwd(): ControlHarness {
   const harness = createControlHarness({ cwd });
   registerControl(harness.api);
@@ -78,6 +61,26 @@ function connectable(socketPath: string): Promise<boolean> {
 }
 
 describe("control server core (T-02)", () => {
+  // Scoped to this describe: the whole suite runs in one process under the
+  // test/index.js barrel, where a top-level hook would leak onto every other
+  // file's tests (and theirs onto these).
+  beforeEach(() => {
+    saved = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+    for (const key of ENV_KEYS) delete process.env[key];
+    base = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-state-"));
+    cwd = fs.mkdtempSync(path.join(os.tmpdir(), "specflo-cwd-"));
+    process.env.SPECFLO_AGENT_STATE_DIR = base;
+  });
+
+  afterEach(() => {
+    for (const key of ENV_KEYS) {
+      if (saved[key] === undefined) delete process.env[key];
+      else process.env[key] = saved[key];
+    }
+    fs.rmSync(base, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true });
+  });
+
   test("session_start binds a connectable socket and writes the discovery record", async () => {
     const harness = harnessInCwd();
     await harness.startSession();
