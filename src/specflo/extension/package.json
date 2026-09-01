@@ -7,6 +7,9 @@
   "keywords": ["pi-package"],
   "files": ["src"],
   "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
   "pi": {
     "extensions": ["./src/index.ts"]
   },

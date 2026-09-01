@@ -123,14 +123,16 @@ describe("cold start", () => {
   it("registers the continue command and no tool", async () => {
     // REQ-15 / REQ-03 at the registration level; the guard suite covers the
     // source. The one command is /specflo-continue (T-12); there is no tool and
-    // no tool_call handler at all, and no event handler beyond the three below.
+    // no tool_call handler at all, and no event handler beyond the four below -
+    // session_shutdown is the control-surface module's (pi-interactive-transport
+    // T-01), the other three the continuation loop's.
     const { pi } = await setUp(PAYLOAD);
 
     assert.deepEqual(pi.tools, []);
     assert.deepEqual([...pi.commands.keys()], ["specflo-continue"]);
     assert.deepEqual(
       [...pi.handlers.keys()].sort(),
-      ["before_agent_start", "session_start", "turn_end"],
+      ["before_agent_start", "session_shutdown", "session_start", "turn_end"],
     );
   });
 

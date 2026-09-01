@@ -23,6 +23,7 @@
 import { execFile } from "node:child_process";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { registerControl } from "./control/mod.ts";
 import type {
   BeforeAgentStartEventResult,
   ContextUsage,
@@ -665,4 +666,9 @@ export default function specflo(pi: ExtensionAPI): void {
   pi.on("turn_end", (_event, ctx) => {
     applySegment(ctx, false);
   });
+
+  // The control surface, registered last and wired through its own module so
+  // the continuation loop above never depends on it - and it never depends on
+  // the continuation loop (REQ-14).
+  registerControl(pi);
 }
