@@ -63,13 +63,28 @@ agent_app = typer.Typer(help="Run and control pi subagents (headless pi hosts)."
 # -- probing ----------------------------------------------------------------
 
 
+def _transport_fields(snapshot: dict | None) -> dict:
+    """Transport and ownership for a row (REQ-05).
+
+    v2 records carry both fields; a v1 broker record predates them, and a v1
+    agent is by definition the rpc transport under specflo's management.
+    """
+    if not snapshot:
+        return {"transport": None, "ownership": None}
+    return {
+        "transport": snapshot.get("transport", "rpc"),
+        "ownership": snapshot.get("ownership", "managed"),
+    }
+
+
 def _probe(name: str) -> dict:
     """One agent's live-checked view: socket answer first, disk as fallback.
 
-    Returns {"name", "state", "alive", "status", "paths"} where "state" is
-    the reported state: the live state when the host answers, "stopped" for
-    a cleanly stopped agent, "dead" for an unreachable host with non-terminal
-    disk state, and "unknown" when no state dir exists.
+    Returns {"name", "state", "alive", "transport", "ownership", "status",
+    "paths"} where "state" is the reported state: the live state when the
+    host answers, "stopped" for a cleanly stopped agent, "dead" for an
+    unreachable host with non-terminal disk state, and "unknown" when no
+    record exists.
     """
     paths = AgentPaths.resolve(name)
     path_strs = {
@@ -85,6 +100,7 @@ def _probe(name: str) -> dict:
             "name": name,
             "state": status["state"],
             "alive": True,
+            **_transport_fields(status),
             "status": status,
             "paths": data["paths"],
         }
@@ -95,6 +111,7 @@ def _probe(name: str) -> dict:
             "name": name,
             "state": "unknown",
             "alive": False,
+            **_transport_fields(None),
             "status": None,
             "paths": path_strs,
         }
@@ -104,6 +121,7 @@ def _probe(name: str) -> dict:
         "name": name,
         "state": state,
         "alive": False,
+        **_transport_fields(snapshot),
         "status": snapshot,
         "paths": path_strs,
     }
@@ -112,6 +130,8 @@ def _probe(name: str) -> dict:
 def _echo_probe(probe: dict) -> None:
     status = probe["status"] or {}
     parts = [probe["name"], probe["state"]]
+    if probe.get("transport"):
+        parts.append(f"{probe['transport']} {probe['ownership']}")
     if status.get("host_pid") is not None:
         parts.append(f"host_pid={status['host_pid']}")
     if status.get("pi_pid") is not None:
@@ -356,7 +376,10 @@ def list_agents(
     """Every known agent with its live-checked state."""
     base = default_base_dir()
     names = sorted(p.name for p in base.iterdir() if p.is_dir()) if base.is_dir() else []
-    probes = [_probe(name) for name in names]
+    # An "unknown" probe here is a husk: a cleanly exited v2 session retains
+    # its events.jsonl but removes socket and record, leaving nothing to
+    # attach to and nothing to report - pruned from the listing (REQ-18).
+    probes = [p for p in (_probe(name) for name in names) if p["state"] != "unknown"]
     if as_json:
         typer.echo(json.dumps(probes, indent=2))
         return
