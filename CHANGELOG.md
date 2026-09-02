@@ -8,6 +8,14 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.13.1]
+
+### Fixed
+- `status` and `checkpoint` no longer print the all-milestones-complete
+  boundary beat ("run `specflo advance` to proceed") on a complete project -
+  the advance it offers has already happened, so the beat contradicted the
+  Next line.
+
 ## [0.13.0]
 
 ### Added

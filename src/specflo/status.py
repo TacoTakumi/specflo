@@ -27,6 +27,8 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     progress = None
     milestone = None
     boundary = None
+    complete = project.status == projects.COMPLETE_STATUS
+    shelved = project.status == projects.SHELVED_STATUS
     if project.phase in ("plan", "execute") and plan.plan_path(root, cfg, project.slug).is_file():
         progress = plan.plan_progress(root, cfg, project.slug)
         # The current milestone (None when the plan has no milestones or all are
@@ -36,9 +38,10 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         # The soft milestone-boundary verify beat (None off a boundary): the
         # just-completed milestone's Exit checklist to verify before proceeding
         # (REQ-14). Never blocks — surfaced only, status still exits 0.
-        boundary = plan.milestone_boundary(root, cfg, project.slug)
-    complete = project.status == projects.COMPLETE_STATUS
-    shelved = project.status == projects.SHELVED_STATUS
+        # Suppressed on a complete project: the beat invites `specflo advance`,
+        # which has already happened, so it would contradict the Next line.
+        if not complete:
+            boundary = plan.milestone_boundary(root, cfg, project.slug)
     # Derived doneness (REQ-01/03): for brainstorm/spec/plan, run the current
     # phase's real validator inline (no memoization) so a validating artifact
     # reads as "offer advance" and a failing/missing one as work-in-progress.

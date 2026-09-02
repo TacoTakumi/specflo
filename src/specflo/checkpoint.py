@@ -84,7 +84,10 @@ def build_checkpoint(
         # The soft milestone-boundary verify beat (None off a boundary): the
         # just-completed milestone's Exit checklist to verify before proceeding
         # (REQ-14). Surfaced in the resume block; never a hard stop.
-        boundary = plan_module.milestone_boundary_from_doc(plan_doc)
+        # Suppressed on a complete project: the beat invites `specflo advance`,
+        # which has already happened, so it would contradict Do next.
+        if project.status != COMPLETE_STATUS:
+            boundary = plan_module.milestone_boundary_from_doc(plan_doc)
     if shelved:
         # Paused: don't direct to the phase's work step — resume (or start new),
         # while the recorded phase below is preserved so resume returns to it.

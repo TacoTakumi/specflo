@@ -2025,6 +2025,24 @@ def test_checkpoint_surfaces_the_milestone_boundary_beat(tmp_path, monkeypatch):
     assert "login flow ships" in r.output and "proceed" in r.output.lower()
 
 
+def test_no_boundary_beat_on_a_complete_project(tmp_path, monkeypatch):
+    # Every task done and the project advanced to complete: the all-complete
+    # beat would offer an advance that has already happened, so status and
+    # checkpoint suppress it instead of contradicting the Next line.
+    monkeypatch.chdir(tmp_path)
+    from specflo.cli import app
+    _execute_at_boundary(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-02"])
+    runner.invoke(app, ["task", "done", "T-02"])            # every task done
+    _review_passed(runner, app)
+    assert runner.invoke(app, ["advance"]).exit_code == 0   # completes the project
+    r = runner.invoke(app, ["status"])
+    assert "advance" not in r.output.lower()                # no stale proceed offer
+    data = _json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert data["status"] == "complete" and "boundary" not in data
+    assert "advance" not in runner.invoke(app, ["checkpoint"]).output.lower()
+
+
 def test_no_boundary_beat_off_a_boundary_and_none_for_milestone_free(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     from specflo.cli import app

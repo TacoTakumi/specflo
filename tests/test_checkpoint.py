@@ -207,6 +207,21 @@ def test_checkpoint_surfaces_boundary_beat_at_a_milestone_boundary(tmp_path):
     assert "proceed" in text.lower()        # user-gated proceed prompt
 
 
+def test_checkpoint_suppresses_boundary_beat_on_a_complete_project(tmp_path):
+    # All milestones done and the project completed: the all-complete beat would
+    # offer an advance that has already happened, so it is suppressed.
+    from specflo import plan
+    cfg, _project = _plan_at_boundary(tmp_path)
+    plan.start_task(tmp_path, cfg, "thing", "T-02", today="2026-07-02")
+    plan.done_task(tmp_path, cfg, "thing", "T-02", today="2026-07-02")
+    project = projects.complete_project(tmp_path, cfg, "thing")
+    payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
+    assert payload["boundary"] is None
+    text = checkpoint.render_checkpoint(payload)
+    assert "Milestone boundary" not in text
+    assert "advance" not in text.lower()
+
+
 def test_checkpoint_has_no_boundary_beat_for_a_milestone_free_plan(tmp_path):
     _cfg, project = _plan_at_execute(tmp_path, with_milestone=False)
     payload = checkpoint.build_checkpoint(tmp_path, project, today="2026-07-02")
