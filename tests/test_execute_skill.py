@@ -135,3 +135,24 @@ def test_skill_directs_corrections_to_task_edit_and_task_note():
 def test_skill_forbids_hand_editing_plan_md():
     text = SKILL.read_text().lower()
     assert "never hand-edit `plan.md`" in text or "never hand-edit plan.md" in text
+
+
+def _self_review_step():
+    # Step 2.4 of the per-task loop: from "4. **Self-review**" up to the commit step.
+    text = SKILL.read_text()
+    assert "4. **Self-review**" in text
+    return text.split("4. **Self-review**", 1)[1].split("5. **Commit**", 1)[0]
+
+
+def test_skill_keeps_record_keywords_out_of_shipped_work():
+    # The rule that record vocabulary never enters anything that ships, stated
+    # once in the self-review step, with task note as the place for traceability.
+    step = " ".join(_self_review_step().split())
+    for family in ("REQ-", "T-", "D-", "M-", "review round", "finding", "probe", "project slug"):
+        assert family in step, f"missing keyword family: {family}"
+    low = step.lower()
+    for surface in ("code", "comments", "docstrings", "tests", "string literals", "commit messages"):
+        assert surface in low, f"missing surface: {surface}"
+    assert "write the reason" in low and "leave it out" in low
+    assert "specflo task note" in step
+    assert "task done --note" in step

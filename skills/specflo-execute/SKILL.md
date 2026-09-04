@@ -46,6 +46,14 @@ superseding requirement — never silently mutate a task or drift off its
    3. Run the task's **Verify** step; capture the passing evidence.
    4. **Self-review**: the verify step actually ran and passed; the diff matches
       the acceptance criterion; only the task's files changed; no scope creep.
+      **No record keywords in anything that ships**: `REQ-`, `T-`, `D-`, `M-`
+      codes, review round, finding and probe numbers, and the project slug never
+      appear in code, comments, docstrings, tests, string literals or commit
+      messages — not even as identifiers (marker strings, env names, path
+      prefixes). Write the reason the citation stands for, or leave it out. A
+      reference you want to keep goes in the record: `specflo task note T-NN`
+      or `specflo task done --note`. The record cites commits, never the
+      reverse.
    5. **Commit** one atomic commit for the task — stage only the files it
       touched, never `git add -A`, so any point is a clean `git revert`.
    6. `specflo task done T-NN` (it refuses unless the task is in_progress).
