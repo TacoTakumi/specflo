@@ -10,6 +10,14 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ## [0.13.1]
 
+### Changed
+- The execute skill's self-review step now says that record keywords
+  (requirement, task, decision and milestone codes, review round, finding
+  and probe numbers, the project slug) never enter code, comments,
+  docstrings, tests, string literals or commit messages. Write the reason
+  the citation stands for, or leave it out; a reference worth keeping goes
+  in a task note. A skill test pins the rule.
+
 ### Fixed
 - `status` and `checkpoint` no longer print the all-milestones-complete
   boundary beat ("run `specflo advance` to proceed") on a complete project -
