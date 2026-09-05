@@ -8,6 +8,35 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.14.0]
+
+### Added
+- **`specflo leave`** - clear the active-project pointer without changing
+  any project. It takes no argument, is idempotent (`No active project.`
+  with nothing active), supports `--json` (`{"left": <slug or null>,
+  "active_project": null}`), and is listed in the `specflo guide` table.
+  Re-enter a left project with the existing `switch`, `new`, or `resume`
+  verbs; there is no new re-entry verb or flag.
+
+### Changed
+- `hook reseed` is silent for a complete or shelved active project in every
+  form (`--format text`, `--format claude`, `--continue`): nothing to
+  resume, so the session starts silent. Silence is derived from project
+  state alone; no enable/disable config key was added. In-flight projects
+  are unchanged.
+- `guide`, `status`, and the error from commands that need an active
+  project share one neutral message when none is active: it names both
+  `specflo new <name>` and `specflo switch <name>` and nudges toward
+  neither. `guide --json` reports `next_action: "none"` (was `"new"`) in
+  that state; the uninitialized case still reports `"init"`.
+- The pi extension's on-demand continue notice now reads "specflo has
+  nothing to continue here." when `hook reseed --continue` yields nothing.
+
+### Removed
+- The complete-project and shelved-project session-start directives and
+  their user-visible prompts, superseded by the silent reseed above. The
+  auto run's own complete stop is untouched.
+
 ## [0.13.1]
 
 ### Changed

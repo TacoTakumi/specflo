@@ -155,6 +155,7 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo status [--json]` - show the active project, its phase, and what's next.
 - `specflo shelve [<name>] [--reason ...]` - set a project aside: status `shelved`, phase untouched.
 - `specflo resume [<name>]` - pick a shelved project back up at the phase where it was paused.
+- `specflo leave [--json]` - clear the active-project pointer without changing any project. Nothing is written to the project; re-enter it later with `specflo switch <name>` (or `specflo resume <name>` if shelved). Idempotent: with no active project it prints `No active project.` and exits 0.
 
 ### Phase artifacts
 
@@ -186,7 +187,7 @@ See **[The config file](#the-config-file)** for the file itself.
 
 ### Session-start and unattended runs
 
-- `specflo hook reseed [--format text|claude] [--continue]` - emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Prints nothing for no active project. **Always exits 0, reads no stdin, makes no network calls** - safe to wire into a session-start hook unconditionally.
+- `specflo hook reseed [--format text|claude] [--continue]` - emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Prints nothing for no active project, or when the active project is complete or shelved (nothing to resume, so the session starts silent). **Always exits 0, reads no stdin, makes no network calls** - safe to wire into a session-start hook unconditionally.
   - `--format claude` wraps the payload as Claude Code `SessionStart` JSON: the payload as `additionalContext` (re-grounds the agent) plus a user-visible `systemMessage` that tells you **what to type** to kick it off (Claude can't make the agent take a turn on its own). The default `--format text` stays portable plain text for any harness.
   - `--continue` swaps the confirmation gate for a direct *carry out the next step now* directive, and inlines the current task's brief - for a caller that cleared context on purpose and has already answered "keep going".
 - `specflo hook install` - idempotently merge the `SessionStart` wiring into Claude Code's `.claude/settings.json`, preserving all existing content; a previously-installed (older) reseed entry is rewired in place rather than duplicated. The wiring calls `specflo hook reseed --format claude` on the `startup`, `clear`, and `resume` sources (`compact` excluded - its digest is retained).
