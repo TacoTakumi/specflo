@@ -2284,6 +2284,103 @@ def test_advance_refuses_a_shelved_project(cwd):
     assert "status: shelved" in text  # status unchanged
 
 
+# --- leave ---------------------------------------------------------------
+
+
+def test_leave_clears_the_pointer_and_touches_no_project(cwd):
+    project_md = _active_project_at_spec(cwd)
+    before = project_md.read_bytes()
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "Left my-thing."
+    assert config.load_config(cwd).active_project is None
+    assert project_md.read_bytes() == before  # status, phase, updated untouched
+
+
+def test_leave_on_a_complete_project_touches_nothing(cwd):
+    from specflo import projects
+    project_md = _active_project_at_spec(cwd)
+    projects.complete_project(cwd, config.load_config(cwd), "my-thing")
+    before = project_md.read_bytes()
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "Left my-thing."
+    assert config.load_config(cwd).active_project is None
+    assert project_md.read_bytes() == before
+
+
+def test_leave_on_a_shelved_project_touches_nothing(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    before = project_md.read_bytes()
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "Left my-thing."
+    assert config.load_config(cwd).active_project is None
+    assert project_md.read_bytes() == before
+    assert "status: shelved" in project_md.read_text()
+
+
+def test_leave_with_no_active_project_is_a_no_op(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "No active project."
+    assert config.load_config(cwd).active_project is None
+
+
+def test_leave_twice_is_idempotent(cwd):
+    _active_project_at_spec(cwd)
+    assert runner.invoke(app, ["leave"]).exit_code == 0
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "No active project."
+
+
+def test_leave_json_names_the_left_slug(cwd):
+    _active_project_at_spec(cwd)
+    data = json.loads(runner.invoke(app, ["leave", "--json"]).output)
+    assert data == {"left": "my-thing", "active_project": None}
+
+
+def test_leave_json_with_no_active_project(cwd):
+    runner.invoke(app, ["init"])
+    data = json.loads(runner.invoke(app, ["leave", "--json"]).output)
+    assert data == {"left": None, "active_project": None}
+
+
+def test_leave_without_init_fails(cwd):
+    result = runner.invoke(app, ["leave"])
+    assert result.exit_code != 0
+
+
+def test_leave_then_switch_reactivates_in_the_original_phase(cwd):
+    _active_project_at_spec(cwd)
+    runner.invoke(app, ["leave"])
+    result = runner.invoke(app, ["switch", "my-thing"])
+    assert result.exit_code == 0
+    assert config.load_config(cwd).active_project == "my-thing"
+    status = json.loads(runner.invoke(app, ["status", "--json"]).output)
+    assert status["active_project"] == "my-thing"
+    assert status["phase"] == "spec"
+
+
+def test_leave_then_resume_reactivates_a_shelved_project(cwd):
+    project_md = _active_project_at_spec(cwd)
+    runner.invoke(app, ["shelve", "--reason", "later"])
+    runner.invoke(app, ["leave"])
+    result = runner.invoke(app, ["resume", "my-thing"])
+    assert result.exit_code == 0
+    assert config.load_config(cwd).active_project == "my-thing"
+    assert "status: active" in project_md.read_text()
+
+
+def test_leave_help_exits_zero(cwd):
+    result = runner.invoke(app, ["leave", "--help"])
+    assert result.exit_code == 0
+    assert "active project" in result.output.lower()
+
+
 def test_switch_onto_a_shelved_project_keeps_it_shelved(cwd):
     # Regression lock: switch moves the pointer but must not un-shelve. Only
     # 'resume' un-shelves; switching to a shelved project leaves it shelved.

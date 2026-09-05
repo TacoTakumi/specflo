@@ -496,6 +496,30 @@ def switch(
     typer.echo(f"Switched to '{project.slug}' (phase: {project.phase}).")
 
 
+@app.command(epilog="Example: specflo leave")
+def leave(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Leave the active project: clear the pointer, change no project.
+
+    The project itself is untouched (status, phase, files). Re-enter it later
+    with `specflo switch <name>` (or `specflo resume <name>` if shelved).
+    Safe to run with no active project.
+    """
+    root = _require_root()
+    cfg = config.load_config(root)
+    left = cfg.active_project
+    if left is not None:
+        cfg.active_project = None
+        config.save_config(root, cfg)
+    if json_output:
+        typer.echo(json.dumps({"left": left, "active_project": None}))
+    elif left is None:
+        typer.echo("No active project.")
+    else:
+        typer.echo(f"Left {left}.")
+
+
 @app.command(epilog='Example: specflo shelve --reason "not worth it"')
 def shelve(
     name: str = typer.Argument(

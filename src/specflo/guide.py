@@ -57,6 +57,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Switch the active project's execution mode (any phase)."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
+    {"name": "leave", "group": "setup", "args": "",
+     "summary": "Leave the active project: clear the pointer, change nothing else."},
     {"name": "shelve", "group": "setup", "args": "[<name>]",
      "summary": "Shelve a project (pause it); status -> shelved, phase kept."},
     {"name": "resume", "group": "setup", "args": "[<name>]",
