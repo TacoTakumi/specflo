@@ -40,8 +40,6 @@ MEMORY_SNIPPET = (
     "the specflo CLI rather than editing its artifacts by hand."
 )
 
-# Curated command table. ``name`` is the canonical command path (matched against
-# the live CLI by the coverage guard); ``args`` is the metavar shown to humans.
 # No active project is a state, not a prompt: the same two lines serve `guide`,
 # `status`, and the error from any command that needs an active project. They
 # name both ways in - a new project or an existing one - and nudge toward
@@ -51,6 +49,9 @@ NO_ACTIVE_PROJECT_LINES = (
     "Enter one with `specflo new <name>` or `specflo switch <name>`.",
 )
 NO_ACTIVE_PROJECT_MESSAGE = " ".join(NO_ACTIVE_PROJECT_LINES)
+
+# Curated command table. ``name`` is the canonical command path (matched against
+# the live CLI by the coverage guard); ``args`` is the metavar shown to humans.
 
 COMMANDS: list[dict[str, str]] = [
     {"name": "init", "group": "setup", "args": "",

@@ -854,7 +854,8 @@ def hook_reseed(
     caller that just cleared context on purpose has already answered that.
     `--format claude` emits Claude Code SessionStart JSON: the same payload as
     `additionalContext` plus a visible `systemMessage` telling the user what to
-    type. Either way, prints nothing when there is no active project. Always exits
+    type. Either way, prints nothing when there is no active project, or when the
+    active one is complete or shelved (nothing to resume). Always exits
     0 (bar an invalid flag combination), reads no stdin, makes no network calls -
     safe to wire into SessionStart unconditionally.
     """

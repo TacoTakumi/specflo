@@ -96,9 +96,9 @@ def reseed_text(
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, a complete or shelved one, or an unreadable
-    project) — even resolving the
-    current directory happens inside the guard, so the session-start hook that
-    calls it can be wired unconditionally and cannot break startup.
+    project) — even resolving the current directory happens inside the guard,
+    so the session-start hook that calls it can be wired unconditionally and
+    cannot break startup.
     """
     try:
         if cwd is None:
