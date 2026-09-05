@@ -78,26 +78,6 @@ DIRECT_DIRECTIVE = (
     "nothing to confirm first."
 )
 
-# The complete-project directive: there is nothing to resume, so the agent must
-# not "continue" the finished work — it surfaces completion and offers the next
-# piece (`specflo new`) instead. Overrides both directives above.
-COMPLETE_DIRECTIVE = (
-    "The active specflo project is complete - there is nothing to resume. Do "
-    "NOT begin work or pick the finished project back up. Tell the user the "
-    "project is complete and ask whether they'd like to start a new project "
-    "(`specflo new`) or do something else, then wait for their answer."
-)
-
-# The shelved-project directive: the project is paused, so the agent must not
-# pick the work back up on its own — it surfaces the shelved state and offers
-# resume *or* a new project. Overrides both in-flight directives above.
-SHELVED_DIRECTIVE = (
-    "The active specflo project is shelved (paused). Do NOT begin work or pick "
-    "it back up on your own. Tell the user it is shelved and ask whether they'd "
-    "like to resume it (`specflo resume`), start a new project (`specflo new`), "
-    "or do something else, then wait for their answer."
-)
-
 
 # Heading the reseed payload files an inlined task brief under. Continuation
 # prose, so it lives here; the brief text itself is rendered by

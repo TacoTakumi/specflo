@@ -256,14 +256,12 @@ def test_direct_directive_carries_no_ask_first_text():
     assert continuation.CONFIRMATION_DIRECTIVE not in continuation.DIRECT_DIRECTIVE
 
 
-def test_the_four_reseed_directives_are_distinct():
+def test_the_two_reseed_directives_are_distinct():
     # Each addresses a different state (in flight, in flight after a deliberate
-    # clear, complete, shelved); a duplicate would mean one state is unhandled.
+    # clear); a duplicate would mean one state is unhandled.
     directives = [
         continuation.CONFIRMATION_DIRECTIVE,
         continuation.DIRECT_DIRECTIVE,
-        continuation.COMPLETE_DIRECTIVE,
-        continuation.SHELVED_DIRECTIVE,
     ]
     assert len(set(directives)) == len(directives)
 
@@ -275,8 +273,6 @@ def test_reseed_directive_prose_is_produced_only_by_continuation():
     directives = {
         "CONFIRMATION_DIRECTIVE": continuation.CONFIRMATION_DIRECTIVE,
         "DIRECT_DIRECTIVE": continuation.DIRECT_DIRECTIVE,
-        "COMPLETE_DIRECTIVE": continuation.COMPLETE_DIRECTIVE,
-        "SHELVED_DIRECTIVE": continuation.SHELVED_DIRECTIVE,
     }
     here = executable_identifiers(continuation)
     for name, text in directives.items():

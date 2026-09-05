@@ -55,8 +55,9 @@ COMPLETION_SIGNAL = "Completed project"
 
 # Emitted by `specflo auto` when the active project is already complete: there is
 # nothing to continue, so the run stops and hands off (never re-runs a finished
-# project). Counterpart to hook.COMPLETE_DIRECTIVE; deliberately free of the word
-# "continue" so it can never read as a continue directive.
+# project). The session-start hook is silent for a complete project; this is the
+# auto run's own stop. Deliberately free of the word "continue" so it can never
+# read as a continue directive.
 AUTO_COMPLETE_DIRECTIVE = (
     "The active specflo project is complete - the auto run is finished. Do NOT "
     "resume it or pick the project back up; stop and hand off to the human."

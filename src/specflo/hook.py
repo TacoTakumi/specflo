@@ -18,22 +18,15 @@ import os
 from pathlib import Path
 
 from . import checkpoint, config, continuation, plan, projects, status
-from .continuation import (
-    COMPLETE_DIRECTIVE,
-    CONFIRMATION_DIRECTIVE,
-    DIRECT_DIRECTIVE,
-    SHELVED_DIRECTIVE,
-)
+from .continuation import CONFIRMATION_DIRECTIVE, DIRECT_DIRECTIVE
 from .projects import COMPLETE_STATUS, SHELVED_STATUS
 
-# The four directives are re-exported, not defined here: `continuation.py` is the
-# single producer of payload prose (pi-extension REQ-21), so this module selects
-# a directive and assembles the payload but holds no copy of the wording.
+# The two directives are re-exported, not defined here: `continuation.py` is the
+# single producer of payload prose, so this module selects a directive and
+# assembles the payload but holds no copy of the wording.
 __all__ = [
-    "COMPLETE_DIRECTIVE",
     "CONFIRMATION_DIRECTIVE",
     "DIRECT_DIRECTIVE",
-    "SHELVED_DIRECTIVE",
     "claude_session_start_output",
     "install_hook",
     "reseed_text",
@@ -84,18 +77,17 @@ def reseed_text(
 
     The payload is a leading directive followed by the verbatim
     ``specflo checkpoint`` render (single source of truth). The directive is
-    :data:`CONFIRMATION_DIRECTIVE` for a project still in flight,
-    :data:`COMPLETE_DIRECTIVE` once it is complete (nothing to resume — offer a
-    new project instead), or :data:`SHELVED_DIRECTIVE` when it is shelved (paused
-    — offer resume or a new project). Resolves the specflo root and active
-    project from ``cwd`` (defaulting to the current directory).
+    :data:`CONFIRMATION_DIRECTIVE` for a project still in flight. A complete or
+    shelved active project has nothing to resume, so it emits nothing at all:
+    the session starts silent. Resolves the specflo root and active project
+    from ``cwd`` (defaulting to the current directory).
 
     With ``direct=True`` an in-flight project leads with :data:`DIRECT_DIRECTIVE`
     instead: an imperative "carry out the next step now" with no confirmation
     gate, for a caller that cleared context on purpose and has already answered
-    "do you want to continue" (REQ-18). The flag changes nothing else — same body,
-    same assembly — and it does **not** override the complete or shelved
-    directives, since neither state has a next step to carry out.
+    "do you want to continue". The flag changes nothing else — same body, same
+    assembly — and a complete or shelved project stays silent under it too,
+    since neither state has a next step to carry out.
 
     ``directory_source`` is the CLI's record of which override put the process
     where it is (``"flag"`` for ``-C``, ``"env"`` for ``SPECFLO_DIRECTORY``,
@@ -103,7 +95,8 @@ def reseed_text(
     credits the redirect (REQ-13).
 
     Returns ``""`` and never raises when there is nothing to emit (no specflo
-    root, no active project, or an unreadable project) — even resolving the
+    root, no active project, a complete or shelved one, or an unreadable
+    project) — even resolving the
     current directory happens inside the guard, so the session-start hook that
     calls it can be wired unconditionally and cannot break startup.
     """
@@ -114,15 +107,13 @@ def reseed_text(
         if found is None:
             return ""
         root, _cfg, project = found
+        if project.status in (COMPLETE_STATUS, SHELVED_STATUS):
+            return ""
         body = checkpoint.render_checkpoint(
             checkpoint.build_checkpoint(root, project, cfg=_cfg)
         )
         brief = None
-        if project.status == COMPLETE_STATUS:
-            directive = COMPLETE_DIRECTIVE
-        elif project.status == SHELVED_STATUS:
-            directive = SHELVED_DIRECTIVE
-        elif direct:
+        if direct:
             directive = DIRECT_DIRECTIVE
             brief = _task_brief_text(root, _cfg, project)
         else:
@@ -155,27 +146,16 @@ def _user_message(root: Path, cfg, project) -> str:
     A SessionStart hook can re-ground the *agent* (via injected context) but
     cannot make it take a turn — so this is surfaced to the *human* at startup.
     It leads with the verbatim ``specflo status`` render (so "what the user sees"
-    *is* status) and closes with the concrete next move: ``continue`` to resume a
-    project still in flight, ``specflo resume``/``specflo new`` when it is shelved,
-    or ``specflo new`` once it is complete (nothing to resume). Harness-neutral
+    *is* status) and closes with the concrete next move: ``continue`` to resume
+    the project in flight. Only in-flight projects reach here; a complete or
+    shelved one is silent upstream in :func:`reseed_text`. Harness-neutral
     wording.
     """
     status_block = status.render_status(root, status.build_status(root, cfg, project))
-    if project.status == COMPLETE_STATUS:
-        prompt = (
-            "This project is complete. Would you like to start a new project? "
-            "(`specflo new`) - or tell me what you'd like to do."
-        )
-    elif project.status == SHELVED_STATUS:
-        prompt = (
-            "This project is shelved. Tell me to resume it (`specflo resume`), "
-            "start a new project (`specflo new`), or what you'd like to do instead."
-        )
-    else:
-        prompt = (
-            "I won't pick up on my own - type `continue` and I'll surface the "
-            "checkpoint and resume from there, or tell me what you'd like to do."
-        )
+    prompt = (
+        "I won't pick up on my own - type `continue` and I'll surface the "
+        "checkpoint and resume from there, or tell me what you'd like to do."
+    )
     return f"{status_block}\n\n{prompt}"
 
 

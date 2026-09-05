@@ -43,16 +43,23 @@ def test_reseed_text_active_leads_with_directive_then_checkpoint(tmp_path):
     assert out.index(hook.CONFIRMATION_DIRECTIVE) < out.index(body)
 
 
-def test_reseed_text_complete_project_uses_complete_directive(tmp_path):
-    # a finished project has nothing to resume: the payload leads with the
-    # complete directive (offer a new project), never the resume one, and the
-    # whole payload is free of "continue".
+def test_reseed_text_complete_project_is_silent(tmp_path):
+    # a finished project has nothing to resume: the session starts silent, in
+    # both the confirmation and the direct form.
     _complete(tmp_path)
-    out = hook.reseed_text(tmp_path)
-    assert out.startswith(hook.COMPLETE_DIRECTIVE)
-    assert hook.CONFIRMATION_DIRECTIVE not in out
-    assert "continue" not in out.lower()
-    assert "specflo new" in out.lower()
+    assert hook.reseed_text(tmp_path) == ""
+    assert hook.reseed_text(tmp_path, direct=True) == ""
+
+
+def test_cli_hook_reseed_complete_project_is_silent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _complete(tmp_path)
+    for args in (["hook", "reseed"],
+                 ["hook", "reseed", "--continue"],
+                 ["hook", "reseed", "--format", "claude"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, args
+        assert result.output.strip() == "", args
 
 
 def test_reseed_text_noop_outside_specflo_repo(tmp_path):
@@ -131,22 +138,6 @@ def test_reseed_text_default_payload_is_byte_identical_to_the_ask_first_shape(tm
     expected = f"{hook.CONFIRMATION_DIRECTIVE}\n\n{_checkpoint_body(tmp_path, cfg)}"
     assert hook.reseed_text(tmp_path) == expected
     assert hook.reseed_text(tmp_path, direct=False) == expected
-
-
-def test_reseed_text_direct_does_not_override_a_complete_project(tmp_path):
-    # A complete project has nothing to carry out, so the flag cannot turn the
-    # payload into "continue now" - the complete directive still leads.
-    _complete(tmp_path)
-    out = hook.reseed_text(tmp_path, direct=True)
-    assert out.startswith(hook.COMPLETE_DIRECTIVE)
-    assert continuation.DIRECT_DIRECTIVE not in out
-
-
-def test_reseed_text_direct_does_not_override_a_shelved_project(tmp_path):
-    _shelved(tmp_path)
-    out = hook.reseed_text(tmp_path, direct=True)
-    assert out.startswith(hook.SHELVED_DIRECTIVE)
-    assert continuation.DIRECT_DIRECTIVE not in out
 
 
 def test_cli_hook_reseed_continue_prints_the_direct_payload(tmp_path, monkeypatch):
@@ -322,22 +313,11 @@ def test_claude_session_start_output_wraps_context_and_nudges_user(tmp_path):
     assert "continue" in msg.lower()               # in-progress: type continue
 
 
-def test_claude_session_start_output_complete_shows_status_and_offers_new(tmp_path):
-    # a complete project: the user-visible message still shows status (now marked
-    # complete) but offers a *new* project instead of suggesting `continue`, and
-    # the agent context uses the complete directive.
+def test_claude_session_start_output_complete_project_is_silent(tmp_path):
+    # a complete project shows nothing at session start: no status block, no
+    # new-project offer, no agent context.
     _complete(tmp_path)
-    payload = json.loads(hook.claude_session_start_output(tmp_path))
-
-    msg = payload["systemMessage"]
-    assert "Project: My Thing (my-thing)" in msg
-    assert "(complete)" in msg                      # status shows completion
-    assert "start a new project" in msg.lower()
-    assert "specflo new" in msg.lower()
-    assert "continue" not in msg.lower()            # nothing to resume
-
-    ctx = payload["hookSpecificOutput"]["additionalContext"]
-    assert ctx.startswith(hook.COMPLETE_DIRECTIVE)
+    assert hook.claude_session_start_output(tmp_path) == ""
 
 
 def test_claude_session_start_output_noop_no_active_project(tmp_path):
@@ -555,29 +535,28 @@ def _shelved(tmp_path, name="My Thing", reason="not now"):
     return cfg
 
 
-def test_reseed_text_shelved_project_uses_shelved_directive(tmp_path):
+def test_reseed_text_shelved_project_is_silent(tmp_path):
+    # a paused project is not picked back up at session start: silent, in both
+    # the confirmation and the direct form.
     _shelved(tmp_path)
-    out = hook.reseed_text(tmp_path)
-    # leads with a shelved-specific directive, distinct from the other two
-    assert out.startswith(hook.SHELVED_DIRECTIVE)
-    assert hook.SHELVED_DIRECTIVE not in (hook.CONFIRMATION_DIRECTIVE, hook.COMPLETE_DIRECTIVE)
-    assert hook.CONFIRMATION_DIRECTIVE not in out
-    assert hook.COMPLETE_DIRECTIVE not in out
-    low = hook.SHELVED_DIRECTIVE.lower()
-    assert "resume" in low                 # offers resume
-    assert "new" in low                    # ...or a new project
-    assert "continue" not in low           # does not nudge continuing the work
+    assert hook.reseed_text(tmp_path) == ""
+    assert hook.reseed_text(tmp_path, direct=True) == ""
 
 
-def test_claude_session_start_output_shelved_offers_resume_or_new(tmp_path):
+def test_cli_hook_reseed_shelved_project_is_silent(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
     _shelved(tmp_path)
-    payload = json.loads(hook.claude_session_start_output(tmp_path))
-    msg = payload["systemMessage"].lower()
-    assert "resume" in msg                  # offers resume
-    assert "specflo new" in msg             # ...or a new project
-    assert "type `continue`" not in msg     # not the in-flight nudge
-    ctx = payload["hookSpecificOutput"]["additionalContext"]
-    assert ctx.startswith(hook.SHELVED_DIRECTIVE)
+    for args in (["hook", "reseed"],
+                 ["hook", "reseed", "--continue"],
+                 ["hook", "reseed", "--format", "claude"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, args
+        assert result.output.strip() == "", args
+
+
+def test_claude_session_start_output_shelved_project_is_silent(tmp_path):
+    _shelved(tmp_path)
+    assert hook.claude_session_start_output(tmp_path) == ""
 
 
 def test_reseed_text_shelved_corrupt_project_is_silent(tmp_path):
