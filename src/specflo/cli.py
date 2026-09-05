@@ -231,7 +231,7 @@ def _require_root() -> Path:
 
 def _require_active(cfg: config.SpecfloConfig) -> str:
     if cfg.active_project is None:
-        raise _die("No active project. Create one with `specflo new <name>`.")
+        raise _die(guide_module.NO_ACTIVE_PROJECT_MESSAGE)
     return cfg.active_project
 
 
@@ -458,7 +458,7 @@ def list_(
         return
 
     if not items:
-        typer.echo("No projects yet. Create one with `specflo new <name>`.")
+        typer.echo("No projects yet. `specflo new <name>` starts the first.")
         return
 
     for p in items:
@@ -619,7 +619,7 @@ def status(
         if json_output:
             typer.echo(json.dumps({"initialized": True, "active_project": None}))
         else:
-            typer.echo("No active project. Create one with `specflo new <name>`.")
+            typer.echo(guide_module.NO_ACTIVE_PROJECT_MESSAGE)
         return
 
     try:
@@ -662,11 +662,9 @@ def _render_you_are_here(data: dict) -> list[str]:
             "specflo isn't set up in this repo yet.",
             "  Run `specflo init`, then `specflo new <name>` to start a project.",
         ]
-    if action == "new":
-        return [
-            "No active project.",
-            "  Run `specflo new <name>` to start one.",
-        ]
+    if action == "none":
+        first, second = guide_module.NO_ACTIVE_PROJECT_LINES
+        return [first, f"  {second}"]
     return [
         f"Project '{data['active_project']}' | phase: {data['phase']}",
         f"  Next: {data['next_step']}",

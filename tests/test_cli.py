@@ -316,11 +316,23 @@ def test_status_with_no_active_project(cwd):
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["status"])
     assert result.exit_code == 0
-    assert "new" in result.output.lower()
+    assert "No active project" in result.output
+    assert "specflo new" in result.output
+    assert "specflo switch" in result.output
+    assert "Create one with" not in result.output
 
     data = json.loads(runner.invoke(app, ["status", "--json"]).output)
-    assert data["initialized"] is True
-    assert data["active_project"] is None
+    assert data == {"initialized": True, "active_project": None}
+
+
+def test_require_active_error_uses_the_neutral_wording(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["advance"])  # needs an active project
+    assert result.exit_code != 0
+    assert "No active project" in result.output
+    assert "specflo new" in result.output
+    assert "specflo switch" in result.output
+    assert "Create one with" not in result.output
 
 
 def test_status_reports_the_active_project_for_humans(cwd):

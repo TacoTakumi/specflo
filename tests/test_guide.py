@@ -35,7 +35,7 @@ def test_build_guide_initialized_no_active(tmp_path):
     data = guide.build_guide(tmp_path, cfg)
     assert data["initialized"] is True
     assert data["active_project"] is None
-    assert data["next_action"] == "new"
+    assert data["next_action"] == "none"
     assert "phase" not in data
 
 
@@ -52,12 +52,12 @@ def test_build_guide_active_project(tmp_path):
 
 def test_build_guide_active_project_that_wont_load(tmp_path):
     # active_project set in config but the project dir is missing -> stays
-    # useful, falls back to the "new" guidance rather than blowing up.
+    # useful, falls back to the no-active guidance rather than blowing up.
     cfg = config.init_config(tmp_path)
     cfg.active_project = "ghost"
     data = guide.build_guide(tmp_path, cfg)
     assert data["initialized"] is True
-    assert data["next_action"] == "new"
+    assert data["next_action"] == "none"
 
 
 # --- coverage guard: the table must list every CLI command --------------
@@ -99,6 +99,27 @@ def test_guide_json_uninitialized(cwd):
     assert data["next_action"] == "init"
     assert data["pipeline"][0] == "brainstorm"
     assert any(c["name"] == "advance" for c in data["commands"])
+
+
+def test_guide_with_no_active_project_is_neutral(cwd):
+    # No active project is a state, not a prompt to create one: the guide names
+    # both ways in (new, switch) and nudges toward neither.
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["guide"])
+    assert result.exit_code == 0
+    assert "No active project" in result.output
+    assert "specflo new" in result.output
+    assert "specflo switch" in result.output
+    assert "to start one" not in result.output
+    assert "Create one" not in result.output
+
+
+def test_guide_json_no_active_project_next_action_is_none(cwd):
+    runner.invoke(app, ["init"])
+    data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert data["initialized"] is True
+    assert data["active_project"] is None
+    assert data["next_action"] == "none"
 
 
 def test_guide_offers_paste_ready_memory_snippet(cwd):

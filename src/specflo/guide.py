@@ -42,6 +42,16 @@ MEMORY_SNIPPET = (
 
 # Curated command table. ``name`` is the canonical command path (matched against
 # the live CLI by the coverage guard); ``args`` is the metavar shown to humans.
+# No active project is a state, not a prompt: the same two lines serve `guide`,
+# `status`, and the error from any command that needs an active project. They
+# name both ways in - a new project or an existing one - and nudge toward
+# neither. Add nothing here that reads as "create one".
+NO_ACTIVE_PROJECT_LINES = (
+    "No active project.",
+    "Enter one with `specflo new <name>` or `specflo switch <name>`.",
+)
+NO_ACTIVE_PROJECT_MESSAGE = " ".join(NO_ACTIVE_PROJECT_LINES)
+
 COMMANDS: list[dict[str, str]] = [
     {"name": "init", "group": "setup", "args": "",
      "summary": "Scaffold .specflo/ and the projects dir."},
@@ -187,7 +197,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
 
     if cfg.active_project is None:
         payload["active_project"] = None
-        payload["next_action"] = "new"
+        payload["next_action"] = "none"
         return payload
 
     try:
@@ -196,7 +206,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
         # Config names an active project that won't load — stay useful by
         # pointing at `new`/`switch` rather than failing.
         payload["active_project"] = None
-        payload["next_action"] = "new"
+        payload["next_action"] = "none"
         return payload
 
     payload["active_project"] = project.slug
