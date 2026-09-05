@@ -104,11 +104,13 @@ export function resetChainForTests(): void {
 /**
  * What the user is told when /specflo-continue has nothing to continue.
  *
- * The command's own prose, so it reaches ctx.ui and never model context
- * (REQ-27). Shown when `hook reseed --continue` yields nothing - no active
- * project, or no specflo here at all - which is also why nothing is cleared.
+ * The command's own prose, so it reaches ctx.ui and never model context.
+ * Shown when `hook reseed --continue` yields nothing - no active project, a
+ * complete or shelved one, or no specflo here at all - which is also why
+ * nothing is cleared. The CLI decides what "nothing" covers; the extension
+ * only relays that it was empty.
  */
-const NOTHING_TO_CONTINUE = "specflo has no active project to continue here.";
+const NOTHING_TO_CONTINUE = "specflo has nothing to continue here.";
 
 /** Generous ceiling for a reseed payload; a checkpoint plus a task brief is small. */
 const MAX_OUTPUT_BYTES = 8 * 1024 * 1024;

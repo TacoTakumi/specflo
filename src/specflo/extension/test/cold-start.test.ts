@@ -9,6 +9,7 @@
  */
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import { afterEach, describe, it } from "node:test";
 
 import {
@@ -76,6 +77,33 @@ describe("cold start", () => {
     await pi.emit({ type: "session_start", reason: "startup" }, ctx);
     const result = await pi.emit({ type: "before_agent_start", prompt: "hi" }, ctx);
 
+    assert.equal(result, undefined);
+  });
+
+  it("injects nothing when the active project is complete", async () => {
+    // A complete active project: the CLI prints an empty reseed while
+    // `status --json` still reports the project. The empty payload alone keeps
+    // the session silent; the extension reads no status to decide that.
+    const { fake, pi, ctx } = await setUp("");
+    const statusJson = JSON.stringify({
+      active_project: "demo",
+      phase: "execute",
+      status: "complete",
+      context_threshold_percent: 75,
+      auto_run: { under_way: false },
+    });
+    const log = `${fake.root}/argv.log`;
+    fs.writeFileSync(
+      fake.bin,
+      "#!/bin/sh\n" +
+        `printf '%s\\n' "$*" >> ${JSON.stringify(log)}\n` +
+        `case "$*" in "hook reseed") ;; *) printf '%s' ${JSON.stringify(statusJson)} ;; esac\n`,
+    );
+
+    await pi.emit({ type: "session_start", reason: "startup" }, ctx);
+    const result = await pi.emit({ type: "before_agent_start", prompt: "hi" }, ctx);
+
+    assert.deepEqual(fake.invocations(), ["hook reseed", "status --json"]);
     assert.equal(result, undefined);
   });
 

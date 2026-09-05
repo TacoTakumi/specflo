@@ -121,6 +121,7 @@ describe("the /specflo-continue command", () => {
     assert.deepEqual(fake.invocations(), ["hook reseed --continue"]);
     const notices = ctx.ui.calls.filter((call) => call.method === "notify");
     assert.equal(notices.length, 1, "a run with no project must say why");
+    assert.equal(notices[0].args[0], "specflo has nothing to continue here.");
   });
 
   it("reports why through ctx.ui only, never into model context", async () => {
