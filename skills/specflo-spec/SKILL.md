@@ -35,8 +35,9 @@ requirements with pass/fail acceptance — not merely "don't code yet".
 
 1. **Preflight.** Confirm an active project at the spec phase (`specflo status`).
    Run `specflo spec start` to create or locate `spec.md` (the command prints its
-   path — never build the path yourself). Read the project's `brainstorm.md`:
-   its Decisions (`D-NN`), Research, Current understanding, and Out of scope.
+   locator, `<project>/spec` — never build a path yourself). Read the brainstorm
+   with `specflo doc show brainstorm`: its Decisions (`D-NN`), Research, Current
+   understanding, and Out of scope.
 2. **Draft requirements — translate decisions, reframe vague → testable.** For
    each thing the system must do, write a falsifiable requirement. Two moves:
    - **Decision → behavior.** Brainstorm decisions are often *architecture or
@@ -64,15 +65,19 @@ requirements with pass/fail acceptance — not merely "don't code yet".
    at a time, never batched in parallel.** The CLI's advisory lock (D-01) makes
    concurrent adds safe but cannot fix ordering — minted `REQ-NN` IDs follow
    execution order, so parallel emission can record IDs out of authoring order.
-   Keep the prose sections (Objective, Boundaries In/Out,
-   Open questions, Canonical refs) current by editing `spec.md` directly.
+   Keep the prose sections (Objective, In scope, Out of scope, Open questions,
+   Canonical refs) current with `specflo section set spec "<section>" --file
+   <path>` (or `--stdin`): it replaces that one section's body and leaves every
+   requirement untouched. Never open `spec.md` in an editor — the CLI is the
+   only way in, and the Requirements section is refused there (it belongs to
+   `requirement add`).
 5. **Hold the scope boundary.** Fill **Boundaries** — In scope and Out of scope —
    carrying the brainstorm's Out of scope / Deferred forward. Both lists must be
    non-empty.
 6. **No stale specifics.** The spec is behavioral and durable: no file paths or
    code snippets that churn. One exception — a small prototype snippet that
    encodes a decision more precisely than prose can (a schema or type shape).
-7. **Self-review.** Re-read the spec with fresh eyes: placeholder scan; internal
+7. **Self-review.** Re-read the spec (`specflo doc show spec`) with fresh eyes: placeholder scan; internal
    consistency (do requirements contradict?); two-way ambiguity (pick one reading
    and make it explicit); scope (one plan, or should this decompose?).
 8. **Gate + validate.** Ask the user an explicit "ready?". On yes, run
@@ -109,7 +114,7 @@ reframe it.
 | "A tech-stack decision isn't a requirement." | It is — spec the *behaviors* it exists to enable. One decision usually fans out into several testable requirements, each `--from` it. |
 | "I'll write the acceptance after I code it." | That's a test report, not a specification. Decide pass/fail *before* building. |
 | "This requirement is obviously testable." | If you can't state the pass/fail check in one line, it isn't. Write the line. |
-| "I'll re-ask the user to be safe." | Re-interviewing is not synthesis. Read `brainstorm.md`; only ask about genuine gaps. |
+| "I'll re-ask the user to be safe." | Re-interviewing is not synthesis. Read the brainstorm (`specflo doc show brainstorm`); only ask about genuine gaps. |
 | "Boundaries are obvious." | Unwritten scope is where plans balloon. Write In and Out explicitly. |
 
 ## Red flags (stop and correct)
@@ -126,6 +131,7 @@ reframe it.
 
 - [ ] `specflo spec start` was run; `spec.md` exists for the active project.
 - [ ] Every requirement is in the Requirements section via `specflo requirement add`.
+- [ ] Every prose section was written with `specflo section set`, never by editing the file.
 - [ ] Every requirement has a pass/fail **Acceptance** criterion.
 - [ ] **Boundaries** — In scope and Out of scope — are both filled in.
 - [ ] **Open questions** is present (may say "none").

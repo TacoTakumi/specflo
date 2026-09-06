@@ -30,8 +30,8 @@ not planning.
 
 ## Process
 
-1. **Preflight** — confirm an active project at the plan phase; run `specflo plan start` to create/locate `plan.md`; **read `spec.md`** (the `REQ-NN`s + their
-   acceptance + boundaries) and the brainstorm's architecture decisions as input.
+1. **Preflight** — confirm an active project at the plan phase; run `specflo plan start` to create/locate `plan.md` (it prints the locator `<project>/plan`); **read the spec with `specflo doc show spec`** (the `REQ-NN`s + their
+   acceptance + boundaries) and the brainstorm's architecture decisions (`specflo doc show brainstorm`) as input.
    Treat `spec.md` as read-only.
 2. **Decompose into vertical slices** — each task is a thin, end-to-end,
    independently testable/reviewable deliverable. Reject horizontal layers.
@@ -67,8 +67,11 @@ not planning.
    time, never batched in parallel.** The CLI's advisory lock (D-01) makes
    concurrent adds safe but cannot fix ordering — minted `T-NN`/`M-NN` IDs follow
    execution order, so parallel emission can record IDs out of authoring order.
-   Keep Approach / Global constraints / Open questions /
-   Canonical refs updated as prose.
+   Keep Approach / Global constraints / Open questions / Canonical refs updated
+   with `specflo section set plan "<section>" --file <path>` (or `--stdin`): it
+   replaces that one section's body and leaves every task and milestone
+   untouched (Tasks, Milestones, and Pools are refused there — they belong to
+   their own verbs).
 5. **Scope-reduction guard** — the plan delivers what each `REQ-NN`/`D-NN`
    requires; never silently degrade to "v1 / simplified / for now / a stub." On
    genuine overflow, recommend a phase split or a superseding requirement. Clear
@@ -116,7 +119,9 @@ Never hand-edit `plan.md` — the CLI owns it. While a task is not yet done, fix
 wrong field with `specflo task edit T-NN` (`--title`, `--acceptance`,
 `--verify`, `--scope`, `--files`, `--needs`, `--implements`, and the repeatable
 `--add-depends-on` / `--drop-depends-on`), rather than rewriting the entry by
-hand or minting a near-duplicate task.
+hand or minting a near-duplicate task. Prose sections go through
+`specflo section set plan "<section>"`; entries go through the task, milestone,
+and pool verbs; nothing goes through an editor.
 
 Record the reasoning behind a change — why an approach was dropped, what a
 review resolved — with `specflo task note T-NN --text "…" --label Design`. The
@@ -156,6 +161,7 @@ than no plan.
 Before declaring the plan ready:
 
 - [ ] `specflo validate plan` exits 0 (bidirectional coverage holds; every task has acceptance + verification; dependencies resolve and are acyclic).
+- [ ] Every prose section was written with `specflo section set`, never by editing the file.
 - [ ] Any `specflo validate plan` warnings are addressed or justified.
 - [ ] The user has explicitly approved the plan.
 - [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` to the user.

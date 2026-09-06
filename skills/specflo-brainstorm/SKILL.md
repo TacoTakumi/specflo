@@ -35,9 +35,10 @@ explicitly approved. This applies regardless of how simple the work looks.
 1. **Preflight.** Confirm an active project (`specflo status`). A new project's
    `brainstorm.md` is already **scaffolded by `specflo new`**, so here
    `specflo brainstorm start` just **locates** it (creating it only if missing —
-   e.g. a pre-existing project) and prints its path — never build the path
-   yourself. If resuming, read the existing file to load prior decisions; do not
-   re-litigate them.
+   e.g. a pre-existing project) and prints its locator (`<project>/brainstorm`)
+   — never build a path yourself. If resuming, read it with
+   `specflo doc show brainstorm` to load prior decisions; do not re-litigate
+   them.
 2. **Decompose-first.** If the request spans multiple independent subsystems, say
    so now and split it; brainstorm one piece at a time. Don't refine details of
    something that should be decomposed.
@@ -63,8 +64,12 @@ explicitly approved. This applies regardless of how simple the work looks.
    an API's capability, a version), run an **opportunistic research check** (see
    *Researching*) and cite the source in the rationale; if it can't be verified,
    record the uncertainty under **Open questions** rather than asserting it. Keep
-   the prose sections (Current understanding, ## Research, Out of scope / Deferred,
-   Open questions, Canonical refs) current by editing `brainstorm.md` directly.
+   the prose sections (Current understanding, Research, Out of scope / Deferred,
+   Open questions, Canonical refs) current with
+   `specflo section set brainstorm "<section>" --file <path>` (or `--stdin`):
+   it replaces that one section's body and leaves every decision untouched.
+   Never open `brainstorm.md` in an editor — the CLI is the only way in, and
+   the Decisions section is refused there (it belongs to `decision add`).
 7. **Hold the scope boundary.** Scope is fixed: clarify HOW, not WHETHER to add
    new capabilities. Park scope-creep under **Out of scope / Deferred** — don't
    lose it, don't act on it.
@@ -73,8 +78,8 @@ explicitly approved. This applies regardless of how simple the work looks.
    confidence number. If after several rounds you still can't converge, say so —
    something foundational is missing; step back.
 9. **Gate + validate.** Ask the user an explicit "ready?". On yes, run
-   `specflo validate brainstorm`; fix any reported gaps inline (edit the prose
-   sections / add missing decisions) and re-run until it passes.
+   `specflo validate brainstorm`; fix any reported gaps inline (`section set`
+   the prose sections / add missing decisions) and re-run until it passes.
 10. **Hand off — pause at the phase boundary.** Surface the end of the phase as
     one clear beat, and **do not auto-advance**: the brainstorm is complete and
     validated, the **checkpoint is saved** (the project's `checkpoint.md`; resume
@@ -100,7 +105,8 @@ read/research-only tools and owns wiki search + save-back) — do **not** pass
 fails. Hand it one research question and fold the **digest** it returns into the
 artifact:
 
-- **Findings / Surprises** → `## Research` (and revise **Current understanding**).
+- **Findings / Surprises** → the Research section via `section set` (and revise
+  **Current understanding** the same way).
 - **Sources** → **Canonical refs**.
 - A fact that grounds a decision → cite it in that decision's `--rationale`.
 
@@ -147,6 +153,7 @@ the strongest version of the user's idea, not a strawman.
 
 - [ ] `brainstorm.md` exists for the active project (scaffolded by `specflo new`; `specflo brainstorm start` locates it).
 - [ ] Every decision reached is in the Decisions section via `specflo decision add`.
+- [ ] Every prose section was written with `specflo section set`, never by editing the file.
 - [ ] **Out of scope / Deferred** is filled in (not just the scaffold comment).
 - [ ] **Open questions** is present (may say "none").
 - [ ] `specflo validate brainstorm` passes.
