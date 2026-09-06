@@ -98,6 +98,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Emit the auto-mode handoff payload (opt-in unattended run)."},
     {"name": "extension install", "group": "setup", "args": "[--scope user|project]",
      "summary": "Install the bundled pi extension into pi's extension directory."},
+    {"name": "serve", "group": "setup", "args": "--root <dir>",
+     "summary": "Run the daemon that hosts projects for CLI clients (serve extra)."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",

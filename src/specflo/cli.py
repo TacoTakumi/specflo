@@ -27,6 +27,7 @@ from . import status as status_view
 from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
+from .daemon.cli import serve_app
 from .errors import SpecfloError
 from .service import ProjectService
 from .service.resolve import resolve_service
@@ -195,6 +196,11 @@ app.add_typer(extension_app, name="extension")
 
 config_app = typer.Typer(help="Read and change specflo's own settings.")
 app.add_typer(config_app, name="config")
+
+# The daemon: `specflo serve` hosts projects for CLI clients. Its module
+# imports no web framework, so registering it costs nothing without the
+# serve extra.
+app.add_typer(serve_app, name="serve")
 
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback

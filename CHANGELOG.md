@@ -17,6 +17,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   read artifacts through this verb instead of opening files, so the same
   command serves a project whose files live in the checkout and one held
   by a daemon.
+- **`specflo serve --root <dir>`** - run the specflo daemon: a FastAPI
+  process that owns a root of its own, with a `projects` directory for the
+  projects it hosts and a SQLite state store, both created on first start.
+  It binds `127.0.0.1` on port 8741 unless `--bind` and `--port` say
+  otherwise, and answers `200` on `/health`. The web stack ships as the
+  `serve` extra (`pip install 'specflo[serve]'`); `httpx`, the client side,
+  is a core dependency so every install can talk to a daemon.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is

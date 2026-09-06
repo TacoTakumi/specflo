@@ -26,6 +26,10 @@ dependencies = [
     # front matter stays on PyYAML, which is faster and needs no round trip.
     "ruamel.yaml>=0.18",
     "agentsquire>=0.5.0",
+    # The HTTP client behind the remote ProjectService: every CLI install can
+    # talk to a daemon, so it is a core dependency rather than part of the
+    # serve extra.
+    "httpx>=0.28.1",
 ]
 
 [project.urls]
@@ -41,6 +45,14 @@ specflo = "specflo.cli:main"
 # reads it); reserved for a future environment-wide listing of such packages.
 [project.entry-points.'agentsquire.skills']
 specflo = "specflo"
+
+# `specflo serve` runs the daemon; only a machine that hosts projects needs
+# the web stack, so it ships as an extra: pip install 'specflo[serve]'.
+[project.optional-dependencies]
+serve = [
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -65,6 +77,9 @@ path = "hatch_build.py"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    # The serve extra, so a plain `uv run pytest` exercises the daemon too.
+    "fastapi>=0.141.1",
+    "uvicorn>=0.52.4",
 ]
 
 [tool.pytest.ini_options]
