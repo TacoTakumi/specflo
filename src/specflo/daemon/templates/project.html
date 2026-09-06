@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}{{ view.project.name }} - specflo{% endblock %}
+{% block content %}
+<p class="crumbs">
+  <a href="{{ home_path }}">Products</a>
+  {% if view.product %} / <a href="{{ product_url(view.product.slug) }}">{{ view.product.name }}</a>{% endif %}
+</p>
+<h1>{{ view.project.name }}</h1>
+{% if view.project.summary %}
+<p class="summary">{{ view.project.summary }}</p>
+{% endif %}
+
+<dl class="facts">
+  <dt>Phase</dt>
+  <dd>{{ view.project.phase }}</dd>
+  <dt>Status</dt>
+  <dd>{{ view.project.status }}</dd>
+  <dt>Execution</dt>
+  <dd>{{ view.project.execution }}</dd>
+  <dt>Waiting on</dt>
+  <dd>{{ view.waiting_on or "nobody" }}</dd>
+</dl>
+
+{% for name, text in view.artifacts %}
+<section id="artifact-{{ name }}">
+  <h2>{{ name }}</h2>
+  {% if text is not none %}
+  <pre class="artifact">{{ text }}</pre>
+  {% else %}
+  <p>This project has no {{ name }}: not created yet.</p>
+  {% endif %}
+</section>
+{% endfor %}
+{% endblock %}

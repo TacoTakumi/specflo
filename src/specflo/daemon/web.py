@@ -28,8 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import load_config
+from ..doc import ARTIFACTS
+from ..errors import SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project
 from ..service.local import LocalProjectService
+from ..workflow import PHASES
 from .auth import IDENTITIES, identity_for
 from .products import Products
 from .store import Product, WorkItem, open_store
@@ -44,6 +47,10 @@ SESSION_COOKIE = "specflo_session"
 
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
+
+# The role each phase waits on. One table, so a later slice that hands a
+# phase to the requester changes this line and no template.
+WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
 
 SIGNIN_FAILED = "That token does not sign in the identity you chose."
 
@@ -211,6 +218,45 @@ def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView |
     )
 
 
+@dataclasses.dataclass(frozen=True)
+class ProjectView:
+    """One project as its page shows it.
+
+    ``artifacts`` pairs every artifact name, in pipeline order, with its
+    verbatim text, or None for one the project has not created yet.
+    ``waiting_on`` is the role the current phase waits on; a project that
+    is no longer active waits on nobody.
+    """
+
+    project: Project
+    product: Product | None
+    waiting_on: str | None
+    artifacts: list[tuple[str, str | None]]
+
+
+def project_view(root: Path, slug: str) -> ProjectView | None:
+    """The page's view of ``slug``, or None for a project the daemon does not hold."""
+    service = LocalProjectService(root, load_config(root))
+    try:
+        project = service.load_project(slug)
+    except SpecfloError:
+        return None
+    product = None
+    if project.work_item is not None:
+        with open_store(root) as store:
+            item = store.get_work_item(project.work_item)
+            product = store.get_product(item.product) if item is not None else None
+    return ProjectView(
+        project=project,
+        product=product,
+        waiting_on=WAITING_ROLES.get(project.phase) if project.status == INITIAL_STATUS else None,
+        artifacts=[
+            (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
+            for name in ARTIFACTS
+        ],
+    )
+
+
 # --- the pages ----------------------------------------------------------------
 
 # Each page takes the signed-in identity, so a browser without a session is
@@ -236,6 +282,16 @@ def product_page(
     if view is None:
         raise HTTPException(status_code=404, detail=f"No product {slug!r}.")
     return render("product.html", identity=identity, view=view)
+
+
+@pages.get(PROJECT_PATH, include_in_schema=False)
+def project_page(
+    request: Request, slug: str, identity: str = Depends(current_session)
+) -> Response:
+    view = project_view(request.app.state.root, slug)
+    if view is None:
+        raise HTTPException(status_code=404, detail=f"No project {slug!r}.")
+    return render("project.html", identity=identity, view=view)
 
 
 def install(app: FastAPI) -> None:
