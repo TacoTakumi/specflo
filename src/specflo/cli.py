@@ -30,7 +30,7 @@ from .agent.cli import agent_app
 from .daemon.cli import serve_app
 from .errors import SpecfloError
 from .service import ProjectService
-from .service.resolve import resolve_service
+from .service.resolve import local_service, remote_service, resolve_service
 from .validators import VALIDATORS
 
 
@@ -278,8 +278,11 @@ def _refresh_checkpoint(svc: ProjectService, slug: str) -> None:
         pass
 
 
-def _refresh_index(svc: ProjectService) -> None:
+def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
     """Best-effort: regenerate specflo-index.md after a state change (REQ-03).
+
+    The ledger is the checkout's own, listing the projects held here, so it is
+    always the local service that rewrites it.
 
     A no-op until a first `specflo index` has created the file - adopting the
     ledger is the user's call, not a side effect. Same failure posture as
@@ -287,8 +290,9 @@ def _refresh_index(svc: ProjectService) -> None:
     refresh error must never fail the command.
     """
     try:
-        if svc.index_exists():
-            svc.write_index()
+        local = local_service(root, cfg)
+        if local.index_exists():
+            local.write_index()
     except Exception:
         pass
 
@@ -341,13 +345,22 @@ def new(
         metavar="linear|fan-out",
         help="Execution mode recorded in project.md (default: linear).",
     ),
+    remote: str = typer.Option(
+        None,
+        "--remote",
+        metavar="<name>",
+        help="Create the project on this registered daemon instead of in the checkout.",
+    ),
 ) -> None:
     """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
     try:
+        slug = projects.slugify(name)
+        svc = _service_for_new_project(root, cfg, slug, remote)
         project = svc.create_project(name, summary=summary, execution=execution)
+        if remote is not None:
+            config.record_hosted_project(root, project.slug, remote)
         cfg.active_project = project.slug
         config.save_config(root, cfg)
     except SpecfloError as exc:
@@ -357,7 +370,7 @@ def new(
     # the scaffold is CLI orchestration over the idempotent helper.
     brainstorm_path, _ = svc.start_brainstorm(project.slug)
     _refresh_checkpoint(svc, project.slug)
-    _refresh_index(svc)
+    _refresh_index(root, cfg)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
@@ -366,6 +379,33 @@ def new(
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
         )
+
+
+def _service_for_new_project(
+    root: Path, cfg: config.SpecfloConfig, slug: str, remote: str | None
+) -> ProjectService:
+    """The service `new` creates ``slug`` through, refusing a second locality.
+
+    A slug lives in exactly one place: a project the hosted registry already
+    maps to a remote cannot be created here, and one held in the checkout
+    cannot be created again on a daemon.
+    """
+    hosting = config.hosting_remote(root, slug)
+    if hosting is not None:
+        raise SpecfloError(
+            f"Project {slug!r} is hosted on remote {hosting!r}; pick another name"
+            f" or `specflo switch {slug}`."
+        )
+    local = local_service(root, cfg)
+    if remote is None:
+        return local
+    try:
+        local.load_project(slug)
+    except SpecfloError:
+        return remote_service(root, remote)
+    raise SpecfloError(
+        f"Project {slug!r} already exists in this checkout; pick another name."
+    )
 
 
 @app.command(epilog='Example: specflo summary "One line on what this project does"')
@@ -380,7 +420,6 @@ def summary(
     """Set or update a project's one-line summary (active project by default)."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
     if second is None:
         slug, text = _require_active(cfg), first
     else:
@@ -388,11 +427,12 @@ def summary(
             slug, text = projects.slugify(first), second
         except SpecfloError as exc:
             raise _die(str(exc))
+    svc = resolve_service(root, cfg, slug)
     try:
         project = svc.set_summary(slug, text)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_index(svc)
+    _refresh_index(root, cfg)
     typer.echo(f"Summary for '{project.slug}': {project.summary}")
 
 
@@ -429,7 +469,7 @@ def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = local_service(root, cfg)
     # Placeholders are only ever written by the first-run backfill, so what it
     # will write is exactly the summary-less projects found before that run.
     first_run = not svc.index_exists()
@@ -466,35 +506,53 @@ def list_(
     """List all projects, marking the active one."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
-    items = svc.list_projects()
+    local = local_service(root, cfg)
+    rows = [
+        {"slug": p.slug, "project": p, "locality": "local", "remote": None, "error": None}
+        for p in local.list_projects()
+    ]
+    # A hosted project is listed from its daemon; one whose daemon cannot be
+    # reached is still listed, with the reason on stderr, so the listing never
+    # fails on account of one remote.
+    for slug, remote in config.hosted_projects(root).items():
+        row = {"slug": slug, "project": None, "locality": "hosted", "remote": remote, "error": None}
+        try:
+            row["project"] = remote_service(root, remote).load_project(slug)
+        except SpecfloError as exc:
+            row["error"] = str(exc)
+        rows.append(row)
+    rows.sort(key=lambda row: row["slug"])
 
     if json_output:
-        typer.echo(
-            json.dumps(
-                {
-                    "active_project": cfg.active_project,
-                    "projects": [
-                        {
-                            "slug": p.slug,
-                            "name": p.name,
-                            "phase": p.phase,
-                            "status": p.status,
-                            "active": p.slug == cfg.active_project,
-                        }
-                        for p in items
-                    ],
-                }
-            )
-        )
+        entries = []
+        for row in rows:
+            p = row["project"]
+            entry = {
+                "slug": row["slug"],
+                "name": p.name if p else None,
+                "phase": p.phase if p else None,
+                "status": p.status if p else None,
+                "active": row["slug"] == cfg.active_project,
+                "locality": row["locality"],
+                "remote": row["remote"],
+            }
+            if row["error"]:
+                entry["error"] = row["error"]
+            entries.append(entry)
+        typer.echo(json.dumps({"active_project": cfg.active_project, "projects": entries}))
         return
 
-    if not items:
+    if not rows:
         typer.echo("No projects yet. `specflo new <name>` starts the first.")
         return
 
-    for p in items:
-        marker = "*" if p.slug == cfg.active_project else " "
+    for row in rows:
+        marker = "*" if row["slug"] == cfg.active_project else " "
+        p = row["project"]
+        if p is None:
+            typer.secho(f"note: {row['error']}", fg=typer.colors.YELLOW, err=True)
+            typer.echo(f"{marker} {row['slug']}  (?)  [hosted: {row['remote']}, unreachable]")
+            continue
         if p.status == projects.COMPLETE_STATUS:
             suffix = "  [complete]"
         elif p.status == projects.SHELVED_STATUS:
@@ -503,8 +561,10 @@ def list_(
                 suffix += f": {p.shelved_reason}"
         else:
             suffix = ""
+        if row["locality"] == "hosted":
+            suffix += f"  [hosted: {row['remote']}]"
         typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
-    rule = svc.index_rule_line()
+    rule = local.index_rule_line()
     if rule:
         typer.echo("")
         typer.echo(rule)
@@ -521,11 +581,11 @@ def switch(
     """Make project <name> the active project."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
     try:
         slug = projects.slugify(name)
     except SpecfloError as exc:
         raise _die(str(exc))
+    svc = resolve_service(root, cfg, slug)
     try:
         project = svc.load_project(slug)
     except SpecfloError:
@@ -583,8 +643,8 @@ def shelve(
     """
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
     slug = projects.slugify(name) if name else _require_active(cfg)
+    svc = resolve_service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)
     except SpecfloError as exc:
@@ -596,7 +656,7 @@ def shelve(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    _refresh_index(svc)
+    _refresh_index(root, cfg)
     if json_output:
         typer.echo(json.dumps(
             {"slug": project.slug, "status": project.status,
@@ -624,8 +684,8 @@ def resume(
     """
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
     slug = projects.slugify(name) if name else _require_active(cfg)
+    svc = resolve_service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)
     except SpecfloError as exc:
@@ -639,7 +699,7 @@ def resume(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    _refresh_index(svc)
+    _refresh_index(root, cfg)
     if json_output:
         typer.echo(json.dumps({"slug": project.slug, "status": project.status}))
     else:
@@ -1136,7 +1196,7 @@ def advance(
             raise typer.Exit(code=1)
         updated = svc.complete_project(slug)
         svc.stamp_banners(slug)
-        _refresh_index(svc)
+        _refresh_index(root, cfg)
         cp_display = config.display_path(svc.write_checkpoint(slug), root)
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
@@ -1181,7 +1241,7 @@ def advance(
     except SpecfloError as exc:
         raise _die(str(exc))
 
-    _refresh_index(svc)
+    _refresh_index(root, cfg)
     cp_display = config.display_path(svc.write_checkpoint(slug), root)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
@@ -2102,7 +2162,7 @@ def _guard_set(root: Path, key: str, force: bool) -> None:
     if key != "projects_dir" or force:
         return
     cfg = config.load_config(root)
-    existing = resolve_service(root, cfg).list_projects()
+    existing = local_service(root, cfg).list_projects()
     if existing:
         # Changing the path strands them: specflo would look somewhere else and
         # report no projects, while the files sit where they always were. It

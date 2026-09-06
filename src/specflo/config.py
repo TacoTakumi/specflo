@@ -813,3 +813,57 @@ def remove_remote(root: Path, name: str) -> None:
     """Forget ``name``: its file, URL and token go; refuses an unknown one."""
     load_remote(root, name)
     _remote_path(root, name).unlink()
+
+
+# --- hosted projects: which registered daemon holds each one ---------------
+# The checkout's registry of the projects that live on a daemon rather than
+# under its projects dir: slug to remote name, one JSON file. A project is in
+# exactly one place; the resolver reads this to route each command.
+
+HOSTED_REGISTRY_FILENAME = "hosted.json"
+
+
+def hosted_registry_path(root: Path) -> Path:
+    return root / CONFIG_DIRNAME / HOSTED_REGISTRY_FILENAME
+
+
+def hosted_projects(root: Path) -> dict[str, str]:
+    """Every hosted project's remote name by slug, in slug order."""
+    path = hosted_registry_path(root)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(slug): str(remote) for slug, remote in sorted(data.items())}
+
+
+def _write_hosted(root: Path, registry: dict[str, str]) -> None:
+    path = hosted_registry_path(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(dict(sorted(registry.items())), indent=2) + "\n")
+
+
+def record_hosted_project(root: Path, slug: str, remote: str) -> None:
+    """Record that ``slug`` lives on the registered remote ``remote``."""
+    registry = hosted_projects(root)
+    registry[slug] = validate_remote_name(remote)
+    _write_hosted(root, registry)
+
+
+def forget_hosted_project(root: Path, slug: str) -> bool:
+    """Drop ``slug`` from the registry; True when it was there."""
+    registry = hosted_projects(root)
+    if slug not in registry:
+        return False
+    del registry[slug]
+    _write_hosted(root, registry)
+    return True
+
+
+def hosting_remote(root: Path, slug: str) -> str | None:
+    """The remote holding ``slug``, or None for a project in the checkout."""
+    return hosted_projects(root).get(slug)

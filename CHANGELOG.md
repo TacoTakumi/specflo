@@ -38,8 +38,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   prints names and URLs only, and neither `config list` nor `config.yaml`
   ever carries a token. Registering a remote changes nothing about local
   projects. The daemon now serves every project operation at
-  `POST /api/<operation>` and the CLI carries the matching HTTP client,
-  though no command routes to a remote yet.
+  `POST /api/<operation>` and the CLI carries the matching HTTP client.
+- **`specflo new --remote <name>`** - create a project on a registered
+  daemon instead of in the checkout. The checkout records which remote
+  holds it in `.specflo/hosted.json` and writes nothing else for it; the
+  project's artifacts exist only under the daemon root. Locality is per
+  project: `list` marks hosted projects `[hosted: <remote>]` (and carries
+  `locality` and `remote` per project in `--json`), `switch` and the
+  active pointer work across localities, and every command routes by the
+  project's locality, so `status`, `decision add`, `doc show` and the rest
+  run against the daemon for a hosted project with no change in usage. A
+  slug lives in one place: `new` refuses a name already held elsewhere.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is
