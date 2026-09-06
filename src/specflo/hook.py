@@ -133,27 +133,43 @@ def reseed_text(
     try:
         if cwd is None:
             cwd = Path.cwd()
-        try:
-            found = _active_project(cwd)
-        except SpecfloError as exc:
-            return _unreachable_note(cwd, exc)
-        if found is None:
-            return ""
-        root, _cfg, service, project = found
-        if project.status in (COMPLETE_STATUS, SHELVED_STATUS):
-            return ""
-        body = checkpoint.render_checkpoint(service.build_checkpoint(project.slug))
-        brief = None
-        if direct:
-            directive = DIRECT_DIRECTIVE
-            brief = _task_brief_text(service, project)
-        else:
-            directive = CONFIRMATION_DIRECTIVE
-        return _directory_override_line(root, directory_source) + continuation.build_reseed(
-            directive, body, brief
-        )
+        return _resume(cwd, direct=direct, directory_source=directory_source)[0]
     except Exception:
         return ""
+
+
+def _resume(cwd: Path, *, direct: bool, directory_source: str | None) -> tuple:
+    """The reseed payload and the resolved project behind it, in one resolution.
+
+    ``("", None)`` when there is nothing to emit; ``(note, None)`` when the
+    active project is hosted and its daemon did not answer. Raises on a
+    corrupt project; the callers guard. The daemon is asked once, so the
+    Claude Code shape, which needs the project for its status block too,
+    costs the same as the plain one.
+    """
+    try:
+        found = _active_project(cwd)
+    except SpecfloError as exc:
+        return _unreachable_note(cwd, exc), None
+    if found is None:
+        return "", None
+    root, _cfg, service, project = found
+    if project.status in (COMPLETE_STATUS, SHELVED_STATUS):
+        return "", None
+    payload = service.build_checkpoint(project.slug)
+    if config.hosting_remote(root, project.slug) is not None:
+        payload = checkpoint.hosted_view(payload)
+    body = checkpoint.render_checkpoint(payload)
+    brief = None
+    if direct:
+        directive = DIRECT_DIRECTIVE
+        brief = _task_brief_text(service, project)
+    else:
+        directive = CONFIRMATION_DIRECTIVE
+    text = _directory_override_line(root, directory_source) + continuation.build_reseed(
+        directive, body, brief
+    )
+    return text, found
 
 
 def _directory_override_line(root: Path, directory_source: str | None = None) -> str:
@@ -182,7 +198,11 @@ def _user_message(root: Path, service, project) -> str:
     shelved one is silent upstream in :func:`reseed_text`. Harness-neutral
     wording.
     """
-    status_block = status.render_status(root, service.build_status(project.slug))
+    info = service.build_status(project.slug)
+    remote = config.hosting_remote(root, project.slug)
+    if remote is not None:
+        info = status.hosted_view(info, remote)
+    status_block = status.render_status(root, info)
     prompt = (
         "I won't pick up on my own - type `continue` and I'll surface the "
         "checkpoint and resume from there, or tell me what you'd like to do."
@@ -207,13 +227,9 @@ def claude_session_start_output(
     try:
         if cwd is None:
             cwd = Path.cwd()
-        context = reseed_text(cwd, directory_source=directory_source)
+        context, found = _resume(cwd, direct=False, directory_source=directory_source)
         if not context:
             return ""
-        try:
-            found = _active_project(cwd)
-        except SpecfloError:
-            found = None
         if found is None:
             # The context is the note about a daemon that did not answer;
             # the human gets the same line, since there is no status to show.

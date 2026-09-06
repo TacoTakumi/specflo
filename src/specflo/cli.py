@@ -250,6 +250,41 @@ def _die(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
+# How long `list` waits on each daemon, in seconds: the listing never fails on
+# account of one remote, and it should not stall on one either.
+REMOTE_LIST_TIMEOUT = 5.0
+
+
+def _service(root: Path, cfg: config.SpecfloConfig, slug: str | None = None) -> ProjectService:
+    """The service holding ``slug`` (the active project by default), or a clean refusal.
+
+    A hosted project whose remote is no longer registered is a bad registry,
+    not a bug: the message names the remote and the command exits 1 like any
+    other refusal, instead of a traceback.
+    """
+    try:
+        return resolve_service(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+
+def _client_checkpoint(svc: ProjectService, root: Path, slug: str) -> dict:
+    """The checkpoint payload as this checkout reports it: locators for a hosted project."""
+    payload = svc.build_checkpoint(slug)
+    if config.hosting_remote(root, slug) is not None:
+        return checkpoint.hosted_view(payload)
+    return payload
+
+
+def _client_status(svc: ProjectService, root: Path, slug: str) -> dict:
+    """The status payload as this checkout reports it: the remote, not a directory, for a hosted project."""
+    info = svc.build_status(slug)
+    remote = config.hosting_remote(root, slug)
+    if remote is not None:
+        return status_view.hosted_view(info, remote)
+    return info
+
+
 def _locator(slug: str, path: Path) -> str:
     """The artifact locator ``<project>/<artifact>`` a command prints instead of a path.
 
@@ -457,7 +492,7 @@ def summary(
             slug, text = projects.slugify(first), second
         except SpecfloError as exc:
             raise _die(str(exc))
-    svc = resolve_service(root, cfg, slug)
+    svc = _service(root, cfg, slug)
     try:
         project = svc.set_summary(slug, text)
     except SpecfloError as exc:
@@ -478,7 +513,7 @@ def execution(
     """Switch the active project's execution mode (either direction, any phase)."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         mode, changed = svc.set_execution(slug, mode)
@@ -549,7 +584,7 @@ def list_(
         row = {"slug": slug, "project": None, "locality": "hosted", "remote": remote, "error": None}
         try:
             if remote not in services:
-                services[remote] = remote_service(root, remote)
+                services[remote] = remote_service(root, remote, timeout=REMOTE_LIST_TIMEOUT)
             row["project"] = services[remote].load_project(slug)
         except SpecfloError as exc:
             row["error"] = str(exc)
@@ -618,10 +653,14 @@ def switch(
         slug = projects.slugify(name)
     except SpecfloError as exc:
         raise _die(str(exc))
-    svc = resolve_service(root, cfg, slug)
+    svc = _service(root, cfg, slug)
     try:
         project = svc.load_project(slug)
-    except SpecfloError:
+    except SpecfloError as exc:
+        # A daemon's refusal (unreachable, token refused) is the reason; a
+        # project missing from this checkout is just not here.
+        if config.hosting_remote(root, slug) is not None:
+            raise _die(str(exc))
         raise _die(
             f"No project {slug!r}. Run `specflo list` to see available projects."
         )
@@ -677,7 +716,7 @@ def shelve(
     root = _require_root()
     cfg = config.load_config(root)
     slug = projects.slugify(name) if name else _require_active(cfg)
-    svc = resolve_service(root, cfg, slug)
+    svc = _service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)
     except SpecfloError as exc:
@@ -718,7 +757,7 @@ def resume(
     root = _require_root()
     cfg = config.load_config(root)
     slug = projects.slugify(name) if name else _require_active(cfg)
-    svc = resolve_service(root, cfg, slug)
+    svc = _service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)
     except SpecfloError as exc:
@@ -761,9 +800,9 @@ def status(
             typer.echo(guide_module.NO_ACTIVE_PROJECT_MESSAGE)
         return
 
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
-        info = svc.build_status(cfg.active_project)
+        info = _client_status(svc, root, cfg.active_project)
     except SpecfloError as exc:
         if json_output:
             typer.echo(
@@ -878,10 +917,10 @@ def checkpoint_(
     """Print the resume prompt (and refresh checkpoint.md) for the active project."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
-        payload = svc.build_checkpoint(slug)
+        payload = _client_checkpoint(svc, root, slug)
         svc.write_checkpoint(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -1090,7 +1129,7 @@ def brainstorm_start(
     """Create (or locate) the active project's brainstorm.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         path, created = svc.start_brainstorm(slug)
@@ -1120,7 +1159,7 @@ def decision_add(
     """Append a decision (D-NN) to the active project's brainstorm.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         decision = svc.add_decision(
@@ -1149,7 +1188,7 @@ def validate(
     """Lint an artifact; reports readiness and any issues."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     if artifact not in VALIDATORS:
         known = ", ".join(sorted(VALIDATORS))
@@ -1191,7 +1230,7 @@ def advance(
     """Validate the current phase's artifact, then move to the next phase."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         project = svc.load_project(slug)
@@ -1341,7 +1380,7 @@ def reopen(
     """
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         project = svc.load_project(slug)
@@ -1388,7 +1427,7 @@ def spec_start(
     """Create (or locate) the active project's spec.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         path, created = svc.start_spec(slug)
@@ -1423,7 +1462,7 @@ def requirement_add(
     """Append a requirement (REQ-NN) to the active project's spec.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         requirement = svc.add_requirement(
@@ -1458,7 +1497,7 @@ def plan_start(
     """Create (or locate) the active project's plan.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         path, created = svc.start_plan(slug)
@@ -1479,7 +1518,7 @@ def plan_graph(
 ) -> None:
     """Render the plan's execution graph: waves, one line per active task, and a mermaid block."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         data = svc.execution_graph(slug)
     except SpecfloError as exc:
@@ -1535,7 +1574,7 @@ def task_add(
     """Append a task (T-NN) to the active project's plan.md."""
     root = _require_root()
     cfg = config.load_config(root)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         task = svc.add_task(
@@ -1585,7 +1624,7 @@ def task_rewire(
 ) -> None:
     """Repoint every active task depending on --from to depend on --to instead."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         changed = svc.rewire_dependency(slug, from_, to)
     except SpecfloError as exc:
@@ -1607,7 +1646,7 @@ def task_set_milestone(
 ) -> None:
     """Assign (or reassign) a task's milestone in place."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         task = svc.set_milestone(slug, task_id, milestone_id)
     except SpecfloError as exc:
@@ -1648,7 +1687,7 @@ def task_edit(
 ) -> None:
     """Edit an active task's fields and dependencies in place."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         tid, changed = svc.edit_task(
             slug, task_id, title=title, acceptance=acceptance,
@@ -1683,7 +1722,7 @@ def task_note(
 ) -> None:
     """Append a dated note to a task, in any progress state."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         note = svc.add_note(slug, task_id, text, label=label)
     except SpecfloError as exc:
@@ -1728,14 +1767,13 @@ def _seam_continuation(svc: ProjectService, slug: str, root: Path) -> dict:
     project that simply had nothing to say.
     """
     try:
-        payload = svc.build_checkpoint(slug)
+        payload = _client_checkpoint(svc, root, slug)
         # Inside the guard: reading the payload and rendering must be covered too,
         # or the "never fail the caller" guarantee would be narrower than stated.
-        hosted = config.hosting_remote(root, slug) is not None
         return {
             "next_step": payload["do_next"],
-            "checkpoint": None if hosted else payload["path"],
-            "checkpoint_locator": _locator(slug, Path(payload["path"])),
+            "checkpoint": payload["path"],
+            "checkpoint_locator": payload["locator"],
             "continuation": continuation.build_continuation(
                 payload["phase"], payload["do_next"]
             ),
@@ -1780,7 +1818,7 @@ def task_start(
 ) -> None:
     """Mark a task in_progress."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         task = svc.start_task(slug, task_id)
     except SpecfloError as exc:
@@ -1799,7 +1837,7 @@ def task_done(
 ) -> None:
     """Mark a task done."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         task = svc.done_task(slug, task_id, note=note)
     except SpecfloError as exc:
@@ -1828,7 +1866,7 @@ def task_block(
 ) -> None:
     """Mark a task blocked (optionally recording a reason)."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         task = svc.block_task(slug, task_id, reason=reason)
     except SpecfloError as exc:
@@ -1847,7 +1885,7 @@ def task_reopen(
 ) -> None:
     """Return a task to pending (clears any block)."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         task = svc.reopen_task(slug, task_id, note=note)
     except SpecfloError as exc:
@@ -1863,7 +1901,7 @@ def task_list(
 ) -> None:
     """List tasks with progress and the deps-aware next-actionable marker."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         tasks = svc.list_tasks(slug, include_superseded=all_)
         progress = svc.plan_progress(slug)
@@ -1909,7 +1947,7 @@ def task_show(
 ) -> None:
     """Show a task's brief: acceptance, verify, its cited REQ-NN sections, and Global constraints."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         brief = svc.task_brief(slug, task_id)
     except SpecfloError as exc:
@@ -1948,7 +1986,7 @@ def milestone_add(
 ) -> None:
     """Append a milestone (M-NN) with its Exit checklist to the active plan.md."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         milestone = svc.add_milestone(slug, text, list(exit_))
     except SpecfloError as exc:
@@ -1969,7 +2007,7 @@ def milestone_list(
 ) -> None:
     """List milestones in order with done/total rollup, marking the current one."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     view = svc.milestone_progress(slug)
     if json_output:
         typer.echo(json.dumps(view))
@@ -1995,7 +2033,7 @@ def pool_add(
 ) -> None:
     """Declare a pool of N slots in plan.md's '## Pools' section, or resize it."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         name, size = svc.add_pool(slug, name, size)
     except SpecfloError as exc:
@@ -2012,7 +2050,7 @@ def pool_list(
 ) -> None:
     """List every declared pool and every pool an active task needs, with sizes."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         pools = svc.list_pools(slug)
     except SpecfloError as exc:
@@ -2034,7 +2072,7 @@ def milestone_show(
 ) -> None:
     """Show a milestone: its Exit checklist, member tasks, rollup, and derived REQ set."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     detail = svc.milestone_detail(slug, milestone_id)
     if detail is None:
         raise _die(f"No milestone {milestone_id} in this plan.")
@@ -2065,7 +2103,7 @@ def review_start(
 ) -> None:
     """Mint the active project's next review round and print its locator."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         path, created = svc.start_round(slug)
     except SpecfloError as exc:
@@ -2099,7 +2137,7 @@ def review_done(
 ) -> None:
     """Close the active project's open review round with a verdict."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         path = svc.close_round(slug, verdict, reason=reason, report=file)
     except SpecfloError as exc:
@@ -2121,7 +2159,7 @@ def doc_show(
 ) -> None:
     """Print the named artifact of the active project verbatim."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     try:
         text = svc.show_document(slug, artifact)
     except SpecfloError as exc:
@@ -2152,7 +2190,7 @@ def section_set(
     if (file is None) == (not stdin):
         raise _die("Give the new body with --file <path> or --stdin (exactly one).")
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    svc = resolve_service(root, cfg)
+    svc = _service(root, cfg)
     body = sys.stdin.read() if stdin else Path(file).read_text()
     try:
         title = svc.set_section(slug, artifact, section, body)
@@ -2367,9 +2405,18 @@ def promote(
 @remote_app.command("remove", epilog="Example: specflo remote remove home")
 def remote_remove(
     name: str = typer.Argument(..., metavar="<name>", help="The remote to forget."),
+    force: bool = typer.Option(
+        False, "--force", help="Forget it even while it hosts projects of this checkout."
+    ),
 ) -> None:
-    """Forget a registered daemon; the projects it hosts are untouched."""
+    """Forget a registered daemon; refused while it hosts projects, unless --force."""
     root = _require_root()
+    held = sorted(slug for slug, remote in config.hosted_projects(root).items() if remote == name)
+    if held and not force:
+        raise _die(
+            f"Remote {name!r} still hosts {', '.join(held)}; those projects would be"
+            " unreachable until it is registered again. Pass --force to forget it anyway."
+        )
     try:
         config.remove_remote(root, name)
     except SpecfloError as exc:
@@ -2824,6 +2871,11 @@ def main() -> None:
     cli = build_cli()
     try:
         cli()
+    except SpecfloError as exc:
+        # A refusal no command caught (a bad registry, say) is still a
+        # refusal: the message, exit 1, never a traceback.
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise SystemExit(1)
     except click.exceptions.Exit as exc:
         raise SystemExit(exc.exit_code)
     except click.exceptions.Abort:

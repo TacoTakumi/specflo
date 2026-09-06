@@ -70,6 +70,8 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "active_project": project.slug,
         "name": project.name,
         "dir": str(project.path),
+        # The registered daemon holding the project; None for one held here.
+        "remote": None,
         "phase": project.phase,
         "status": project.status,
         # The recorded execution mode (fan-out-plans REQ-03); a project.md
@@ -78,6 +80,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         "next_phase": workflow.next_phase(project.phase),
         "next_step": next_step,
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
+        "checkpoint_locator": f"{project.slug}/checkpoint",
         # Machine-only: the percent-of-window at which the pi extension arms its
         # clear-and-continue trigger (pi-extension REQ-28). Carried here so the
         # extension reads it from the cold-start `status --json` it already
@@ -131,6 +134,15 @@ def _review_line(state: dict) -> str:
     return f"{head} {state['verdict']}" + (f" ({stamp})" if stamp else "")
 
 
+def hosted_view(info: dict, remote: str) -> dict:
+    """``info`` as a client of the daemon ``remote`` reports it.
+
+    The project's directory and its checkpoint file are the daemon's, so
+    neither is a path here; the remote's name says where the project lives.
+    """
+    return {**info, "dir": None, "remote": remote, "checkpoint": None}
+
+
 def render_status(root: Path, info: dict) -> str:
     """Render the human-readable status block from a :func:`build_status` payload."""
     name, slug = info["name"], info["active_project"]
@@ -141,7 +153,11 @@ def render_status(root: Path, info: dict) -> str:
         lines.append(f"Root:    {info['root']} (via {via})")
     lines += [
         f"Project: {label}",
-        f"Dir:     {display_path(Path(info['dir']), root)}",
+        (
+            f"Remote:  {info['remote']}"
+            if info.get("dir") is None
+            else f"Dir:     {display_path(Path(info['dir']), root)}"
+        ),
     ]
     phase_line = f"Phase:   {info['phase']}"
     if info["status"] == projects.COMPLETE_STATUS:

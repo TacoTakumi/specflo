@@ -70,10 +70,17 @@ def _recorded_id(output: str) -> str:
 
 
 def _normalize(text: str, project_dirs: list[str]) -> str:
-    """Replace every spelling of the project's directory with one placeholder
-    and drop the Actor lines only a daemon-held entry carries."""
-    for spelling in sorted(project_dirs, key=len, reverse=True):
-        text = text.replace(spelling, "<project>")
+    """Fold what may differ by locality and nothing else.
+
+    A path to an artifact in the checkout (``docs/projects/x/spec.md``) reads
+    as the locator a hosted run prints for it (``x/spec``); the one line that
+    says where the project lives (``Dir:`` here, ``Remote:`` there) becomes a
+    placeholder; and the Actor lines only a daemon-held entry carries go.
+    Anything else that differs is a real difference and fails the comparison.
+    """
+    spellings = "|".join(re.escape(d) for d in sorted(project_dirs, key=len, reverse=True))
+    text = re.sub(rf"(?:{spellings})/([A-Za-z0-9_-]+)\.md", rf"{SLUG}/\1", text)
+    text = re.sub(r"^(Dir:     .*|Remote:  .*)$", "<where>", text, flags=re.MULTILINE)
     return re.sub(r"^- Actor: .*\n", "", text, flags=re.MULTILINE)
 
 
@@ -127,13 +134,13 @@ def hosted_run(tmp_path, monkeypatch, live_daemon):
     results = _run(checkout, [str(project_dir), f"projects/{SLUG}"], ["--remote", "home"], raw)
     assert not list((checkout / "docs" / "projects").glob(f"{SLUG}*"))
     assert (project_dir / "checkpoint.md").is_file()
-    # The daemon's directory layout is the daemon's business: no command names
-    # it on the client, the one exception being the Dir line of status, which
-    # says where the project lives on purpose. Everything else the normalizer
-    # above is allowed to fold is a locator already.
+    # The daemon's directory layout is the daemon's business: no command
+    # names it on the client, by its absolute path or by its spelling relative
+    # to the daemon root. What a hosted run prints for an artifact is its
+    # locator, and status says which remote holds the project.
     for args, stdout in raw:
-        if args[:1] != ["status"]:
-            assert str(project_dir) not in stdout, f"{' '.join(args)} names the daemon dir:\n{stdout}"
+        for spelling in (str(project_dir), f"projects/{SLUG}"):
+            assert spelling not in stdout, f"{' '.join(args)} names the daemon dir:\n{stdout}"
     return results
 
 
@@ -160,5 +167,7 @@ def test_the_scenario_reaches_completion_and_prints_every_seam(local_run):
         "parity-thing/review-1 closed ready-to-merge",
         "Completed project 'parity-thing'.",
         "Checkpoint saved: parity-thing/checkpoint",
+        "- parity-thing/brainstorm",
+        "<where>",
     ):
         assert expected in outputs, expected

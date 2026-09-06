@@ -286,8 +286,8 @@ _ARTIFACT_MODULE_ALLOWLIST = {
     "spec": {"SPEC_FILENAME"},
     "plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
     "review_module": set(),
-    "checkpoint": {"render_checkpoint"},
-    "status_view": {"render_status"},
+    "checkpoint": {"render_checkpoint", "hosted_view"},
+    "status_view": {"render_status", "hosted_view"},
     "doc_module": {"ARTIFACTS", "PROSE_ARTIFACTS"},
     "index_module": set(),
 }

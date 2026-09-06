@@ -157,7 +157,7 @@ def test_switch_and_status_work_across_localities(checkout, live_daemon):
     status = runner.invoke(app, ["status", "--json"])
     payload = json.loads(status.output)
     assert payload["active_project"] == "bravo" and payload["phase"] == "brainstorm"
-    assert payload["dir"].startswith(str(live_daemon["root"]))
+    assert payload["dir"] is None and payload["remote"] == "home"
 
 
 def test_commands_on_the_active_hosted_project_reach_the_daemon(checkout, live_daemon):
@@ -251,7 +251,7 @@ def test_list_opens_one_client_per_remote(checkout, live_daemon, monkeypatch):
     real = cli_module.remote_service
 
     def counting(root, name, **kwargs):
-        opened.append(name)
+        opened.append((name, kwargs.get("timeout")))
         return real(root, name, **kwargs)
 
     monkeypatch.setattr(cli_module, "remote_service", counting)
@@ -259,4 +259,117 @@ def test_list_opens_one_client_per_remote(checkout, live_daemon, monkeypatch):
     result = runner.invoke(app, ["list"])
 
     assert result.exit_code == 0, result.output
-    assert opened == ["home"]
+    assert opened == [("home", cli_module.REMOTE_LIST_TIMEOUT)]
+    assert 0 < cli_module.REMOTE_LIST_TIMEOUT <= 10
+
+
+def _hosted_in_spec(slug_name="Hosted Thing"):
+    runner.invoke(app, ["new", slug_name, "--remote", "home"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "one", "--rationale", "why"])
+    runner.invoke(
+        app, ["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], input="No auth.\n"
+    )
+    advanced = runner.invoke(app, ["advance"])
+    assert advanced.exit_code == 0, advanced.output
+    runner.invoke(app, ["spec", "start"])
+
+
+def test_status_of_a_hosted_project_names_the_remote_and_no_daemon_path(checkout, live_daemon):
+    _hosted_in_spec()
+    daemon_dir = str(live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing")
+
+    human = runner.invoke(app, ["status"]).output
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+
+    assert "Remote:  home" in human.splitlines()[1]
+    assert "Dir:" not in human and daemon_dir not in human and "projects/hosted-thing" not in human
+    assert data["dir"] is None and data["remote"] == "home"
+    assert data["checkpoint"] is None and data["checkpoint_locator"] == "hosted-thing/checkpoint"
+    assert daemon_dir not in json.dumps(data) and "projects/hosted-thing" not in json.dumps(data)
+
+
+def test_status_of_a_local_project_keeps_its_directory_and_paths(checkout):
+    runner.invoke(app, ["new", "Local Thing"])
+
+    human = runner.invoke(app, ["status"]).output
+    data = json.loads(runner.invoke(app, ["status", "--json"]).output)
+
+    assert human.splitlines()[1] == "Dir:     docs/projects/local-thing"
+    assert data["dir"].endswith("docs/projects/local-thing") and data["remote"] is None
+    assert data["checkpoint"] == "docs/projects/local-thing/checkpoint.md"
+    assert data["checkpoint_locator"] == "local-thing/checkpoint"
+
+
+def test_checkpoint_and_reseed_of_a_hosted_project_read_first_by_locator(checkout, live_daemon):
+    _hosted_in_spec()
+    daemon_dir = str(live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing")
+
+    human = runner.invoke(app, ["checkpoint"]).output
+    data = json.loads(runner.invoke(app, ["checkpoint", "--json"]).output)
+    reseed = runner.invoke(app, ["hook", "reseed"]).output
+
+    read_first = human.split("## Read first")[1].split("## Do next")[0]
+    assert "- hosted-thing/project" in read_first
+    assert "- hosted-thing/brainstorm" in read_first
+    assert "- hosted-thing/spec" in read_first
+    for text in (human, reseed, json.dumps(data)):
+        assert daemon_dir not in text and "projects/hosted-thing" not in text and ".md" not in text
+    assert data["read_first"][:2] == ["hosted-thing/project", "hosted-thing/brainstorm"]
+    assert data["path"] is None and data["locator"] == "hosted-thing/checkpoint"
+    assert "- hosted-thing/brainstorm" in reseed
+
+
+def test_checkpoint_of_a_local_project_keeps_its_paths_and_gains_the_locator(checkout):
+    runner.invoke(app, ["new", "Local Thing"])
+
+    human = runner.invoke(app, ["checkpoint"]).output
+    data = json.loads(runner.invoke(app, ["checkpoint", "--json"]).output)
+
+    assert "- docs/projects/local-thing/project.md" in human
+    assert data["path"] == "docs/projects/local-thing/checkpoint.md"
+    assert data["locator"] == "local-thing/checkpoint"
+
+
+def test_remote_remove_is_refused_while_it_hosts_projects_unless_forced(checkout):
+    runner.invoke(app, ["new", "Alpha", "--remote", "home"])
+    runner.invoke(app, ["new", "Bravo", "--remote", "home"])
+
+    refused = runner.invoke(app, ["remote", "remove", "home"])
+
+    assert refused.exit_code == 1
+    assert "still hosts alpha, bravo" in refused.stderr and "--force" in refused.stderr
+    assert config.load_remote(checkout, "home")
+
+    forced = runner.invoke(app, ["remote", "remove", "home", "--force"])
+
+    assert forced.exit_code == 0, forced.output
+    assert config.hosted_projects(checkout) == {"alpha": "bravo" and "home", "bravo": "home"}
+
+
+def test_a_hosted_project_whose_remote_is_gone_is_refused_cleanly_by_every_command(checkout):
+    runner.invoke(app, ["new", "Alpha", "--remote", "home"])
+    runner.invoke(app, ["remote", "remove", "home", "--force"])
+
+    for args in (["status"], ["doc", "show", "brainstorm"], ["switch", "alpha"], ["decision", "add", "--text", "x"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 1, args
+        assert "No remote 'home'" in result.stderr, (args, result.stderr)
+        assert "Traceback" not in result.stderr, args
+        assert result.stdout == "", args
+
+
+def test_switch_to_a_hosted_project_reports_the_remote_error_not_no_project(checkout):
+    config.add_remote(checkout, "dead", "http://127.0.0.1:9", "token")
+    config.record_hosted_project(checkout, "ghost", "dead")
+
+    result = runner.invoke(app, ["switch", "ghost"])
+
+    assert result.exit_code == 1
+    assert "Cannot reach the remote at http://127.0.0.1:9" in result.stderr
+    assert "No project" not in result.stderr
+
+    missing = runner.invoke(app, ["switch", "nothing"])
+
+    assert missing.exit_code == 1
+    assert "No project 'nothing'. Run `specflo list`" in missing.stderr

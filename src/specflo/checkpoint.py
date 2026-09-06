@@ -13,7 +13,7 @@ Mirrors ``guide.py``: pure derivation (``build_checkpoint``) + a renderer
 from __future__ import annotations
 
 import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from . import index as index_module, plan as plan_module, review, validators, workflow
 from .brainstorm import BRAINSTORM_FILENAME
@@ -137,6 +137,25 @@ def build_checkpoint(
         "milestone": milestone,
         "boundary": boundary,
         "path": display_path(directory / CHECKPOINT_FILENAME, root, posix=True),
+        # The checkpoint named the way every artifact is named on a command's
+        # human line: the same wherever its bytes live.
+        "locator": f"{project.slug}/checkpoint",
+    }
+
+
+def hosted_view(payload: dict) -> dict:
+    """``payload`` as a client of a daemon reports it: every path a locator.
+
+    A checkpoint built on a daemon names the daemon's files; on the client
+    those paths name nothing. Read first becomes locators, ``<slug>/<artifact>``,
+    which ``doc show`` resolves wherever the files live, and ``path`` is None
+    since the file is not here.
+    """
+    slug = payload["project"]
+    return {
+        **payload,
+        "read_first": [f"{slug}/{PurePosixPath(entry).stem}" for entry in payload["read_first"]],
+        "path": None,
     }
 
 

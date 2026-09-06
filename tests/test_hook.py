@@ -767,3 +767,20 @@ def test_the_hook_gives_a_daemon_a_few_seconds_not_the_default(tmp_path, monkeyp
     assert 0 < hook.REMOTE_TIMEOUT <= 5
     service = resolve.resolve_service(tmp_path, config.load_config(tmp_path), timeout=hook.REMOTE_TIMEOUT)
     assert service.client.timeout.connect == hook.REMOTE_TIMEOUT
+
+
+def test_the_claude_shape_asks_the_daemon_once(tmp_path, monkeypatch):
+    _hosted_active_on_a_dead_remote(tmp_path)
+    calls = []
+    real = hook.resolve_service
+
+    def recording(root, cfg, slug=None, **kwargs):
+        calls.append(kwargs.get("timeout"))
+        return real(root, cfg, slug, **kwargs)
+
+    monkeypatch.setattr(hook, "resolve_service", recording)
+
+    payload = json.loads(hook.claude_session_start_output(tmp_path))
+
+    assert "could not be reached" in payload["systemMessage"]
+    assert calls == [hook.REMOTE_TIMEOUT]
