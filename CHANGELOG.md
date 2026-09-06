@@ -153,6 +153,29 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **One audit record per user action.** The daemon no longer records the
   derived writes that follow a mutation (the checkpoint, the index, the
   banners), so `audit.jsonl` holds one line for one `decision add`.
+- **A hosted project never shows the daemon's paths.** `status` prints
+  `Remote:  <name>` where a local project prints `Dir:`, and its `--json`
+  carries `dir: null`, `remote`, `checkpoint: null` and `checkpoint_locator`
+  (a local project gains `remote: null` and `checkpoint_locator` beside
+  its unchanged fields). `checkpoint` and `hook reseed` list `Read first`
+  as locators (`my-thing/brainstorm`) for a hosted project, with `path:
+  null` and a `locator` in `checkpoint --json`; a local project keeps its
+  paths and gains the same `locator`.
+- **`remote remove` is refused while the remote hosts projects** of the
+  checkout, naming them; `--force` forgets it anyway. A hosted project
+  whose remote is gone makes every command exit 1 with the message, never
+  a traceback, and `switch` to a hosted project reports the daemon's own
+  refusal instead of "No project".
+- **The daemon serves no generated docs.** `/docs`, `/redoc` and
+  `/openapi.json` are off; they would have listed every route to a browser
+  without a token. A request whose argument has the wrong JSON type is a
+  `422` naming the argument, not a `500`.
+- **Web sessions expire** after twelve hours, on the daemon and in the
+  cookie's `Max-Age`; a page for an unknown product or project is a page of
+  the UI, not the API's JSON. `promote` records the hosted pointer before
+  removing the local copy and undoes it if the removal fails, and it
+  carries every file byte for byte. `list` waits at most five seconds on
+  each daemon.
 
 ## [0.14.0]
 
