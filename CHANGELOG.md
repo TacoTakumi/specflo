@@ -110,6 +110,23 @@ latter. Release tags are of the form `vX.Y.Z`.
   its status, kind, dev path, targeted piece, and spawned project. Nothing
   is written for it; adding an item changes the view on its own. Served at
   `/api/products/<slug>/roadmap` behind the token guard.
+- **The web UI.** With the `serve` extra the daemon serves a read-only web
+  UI beside its API. A browser signs in at `/signin` as `requester` or
+  `developer` with that identity's bearer token; the daemon answers with a
+  session cookie holding a fresh secret of its own, so the token never
+  reaches the browser and the cookie never unlocks the API. Without a
+  session every page redirects to sign-in; sessions live in the daemon
+  process, so a restart signs every browser out. The pages: `/` lists
+  every product with the first line of its vision, its open work items
+  (open or in progress) and its active projects; `/products/<slug>` shows
+  a product's vision, pieces, backlog and projects, with complete projects
+  hidden until `?archived=1`; `/projects/<slug>` shows a project's phase,
+  status, execution mode, the role its phase waits on (the developer, in
+  every phase, for now) and each artifact with the same text `doc show`
+  prints. No page carries a form or control that changes state. Pages are
+  Jinja2 templates in the package; the one browser script, htmx 2.0.10,
+  ships vendored from the package's `assets` directory and the repository
+  has no JavaScript build step. `jinja2` joins the `serve` extra.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

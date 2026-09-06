@@ -168,6 +168,8 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo pool add <name> --size N [--json]` / `pool list [--json]` - declare a pool of `N` slots (`N >= 1`) in the CLI-owned `## Pools` section of `plan.md`, updating the size in place on a repeated add; `pool list` shows every declared pool plus every pool an active task needs. A pool nobody declared has one slot. `user` is a reserved pool name meaning the task runs in the main session with the user; it needs no declaration.
 - `specflo plan graph [--json]` - render the plan's execution graph from its real data: waves by longest dependency path (wave 0 has no dependencies), one line per active task (id, title, progress, files, needs) and a mermaid `graph LR` block with one node per task, a subgraph per milestone and one edge per `Depends on` entry. `--json` emits `{waves, tasks, edges}`. Read-only: `plan.md` is byte-identical afterwards.
 - `specflo milestone add --text ... --exit ... [--exit ...]` - append a milestone (`M-NN`) with its Exit checklist to the plan; `milestone list` and `milestone show` report rollup and the current milestone.
+- `specflo doc show brainstorm|spec|plan|checkpoint|project` - print one artifact of the active project verbatim. Agents read artifacts through this verb rather than opening files, so the same command serves a project in the checkout and one held by a daemon. An unknown name is refused with the valid names listed.
+- `specflo section set brainstorm|spec|plan <section> --file <path>|--stdin` - replace one prose section's body (named with or without its `##`), keeping the header, every other section and every managed entry byte-identical and bumping `updated`. The managed sections (Decisions, Requirements, Tasks, Milestones, Pools) are refused with the verb that owns them.
 - `specflo validate brainstorm|spec|plan [--json]` - lint the phase's artifact and report readiness. The plan lint checks bidirectional REQ<->task coverage, that every task has acceptance + verification, and that dependencies resolve and are acyclic. It also warns (non-blocking) when two active tasks share a file with no direct or transitive `Depends on` edge between them, naming the pair and the path.
 
 ### Working the plan
@@ -202,6 +204,28 @@ See **[The config file](#the-config-file)** for the file itself.
 
 - `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` - install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)**.
 - `specflo extension install [--scope user|project]` - install the bundled pi extension into pi's extension directory: `~/.pi/agent/extensions/specflo` by default, `./.pi/extensions/specflo` with `--scope project`. A plain local copy with a version stamp - no npm, no network - and pi discovers the directory on its own, so no pi settings are read or written. Re-run to update. See **[The pi extension](#the-pi-extension)**.
+
+### Hosted projects: the daemon and remotes
+
+- `specflo serve --root <dir> [--bind <host>] [--port <port>]` - run the daemon on a root of its own, which holds a `projects` directory for the projects it hosts, a SQLite state store, its token hashes and its audit log. Binds `127.0.0.1:8741` unless told otherwise; `/health` answers without a token. Needs the `serve` extra (`pip install 'specflo[serve]'`).
+- `specflo serve --root <dir> token add requester|developer` - mint a bearer token bound to one of the daemon's two identities. The secret prints once; the daemon keeps only its hash. Every request but `/health` and the web UI's sign-in must carry a valid token, and every mutation records the identity behind it in `audit.jsonl`.
+- `specflo remote add <name> <url> --token <secret>` / `remote list` / `remote remove <name>` - register the daemons this checkout can reach. Each remote is one file under `.specflo/remotes/` holding its URL and token; `remote list` never prints tokens.
+- `specflo new <name> --remote <name>` - create a project on a registered daemon. The checkout records which remote holds it and writes nothing else for it; every command then routes to the daemon for that project with no change in usage, and `list` marks it `[hosted: <remote>]`.
+- `specflo promote <project> --remote <name>` - move a local project into a daemon: upload every file, verify the daemon's hashes against what was sent, and only then remove the local copy and record the project as hosted. A mismatch aborts with the local copy untouched.
+
+See **[Hosting projects on a daemon](#hosting-projects-on-a-daemon)** for the model.
+
+### Products and work items
+
+Products and their backlogs live in a daemon's state store, so these verbs take `--remote <name>`, or use the only remote registered.
+
+- `specflo product add <name> [--slug <slug>] [--repo <location>]` / `product list` / `product show <slug>` - a product: a name, a slug derived from the name unless given, and an optional repository location.
+- `specflo product set-vision <slug> [<text>|--stdin]` - replace the product's vision text.
+- `specflo product piece add|list|remove <product> [<piece>]` - the deployable pieces a product is made of (web, admin, mobile, ...). A work item may target a declared piece; a piece a work item targets stays until the item is retargeted.
+- `specflo product roadmap <slug> [--json]` - the vision, then the backlog in order with each item's status, kind, dev path, piece and spawned project. A view, never a write.
+- `specflo workitem add <product> <title> [--kind <kind>] [--issue <link>] [--dev-path full|one-prompt|cyclical] [--piece <piece>]` - add a work item to a product's backlog. Kind is free text (`fix`, the default, `roadmap`, `idea` and `issue` are the usual ones); the dev path says how the item gets built and anything outside the three is refused.
+- `specflo workitem list [--product <slug>] [--status open|in-progress|done|dropped] [--kind <kind>] [--json]` / `workitem show <id>` / `workitem set-status <id> <status>` - read and move the backlog.
+- `specflo workitem spawn <id> [--name <name>]` - the one specflo project a `full` work item gets, created as a hosted project on the daemon that holds the item and made active in the checkout. The project records the item and the item records the project; a second spawn is refused.
 
 ## Execution modes and fan-out
 
@@ -366,6 +390,24 @@ select gets the first policy-safe option, input/editor get a policy nudge, and
 a dialog matching the danger pattern is cancelled. Every dialog and answer is
 logged; past a per-run flood threshold the agent flips to `needs-attention`
 and auto-answering stops for that run.
+
+## Hosting projects on a daemon
+
+A project lives in one place: in a checkout under the projects directory, or on a daemon. `specflo serve` runs the daemon on a root of its own; a checkout registers it with `specflo remote add` and then creates projects there with `new --remote`, moves existing ones there with `promote`, and works them with the same commands as before. The daemon holds the only copy of a hosted project's artifacts; the checkout keeps a pointer and nothing else.
+
+The daemon knows two identities, `requester` and `developer`, each with its own bearer tokens minted by `serve token add`. Every request carries one, and every mutation is recorded with the identity behind it. There is no permission system beyond that yet: the two identities exist so the handoff between them can be built on.
+
+The daemon also holds products and their work items, the layer above projects: a product has a vision, declares the pieces it is made of, and carries a backlog; a `full` work item spawns exactly one project, cross-linked both ways. `product roadmap` reads the vision and the backlog back in order.
+
+### The web UI
+
+With the `serve` extra installed the daemon serves a read-only web UI beside its API. A browser signs in at `/signin` as one identity with that identity's token and receives a session cookie; the token never reaches the browser and the cookie never unlocks the API. Without a session every page redirects to sign-in. Sessions live in the daemon process, so a restart signs every browser out.
+
+- `/` - every product with the first line of its vision, its open work items and its active projects.
+- `/products/<slug>` - a product's vision, pieces, backlog and projects; complete projects are hidden until the archived filter (`?archived=1`) is on.
+- `/projects/<slug>` - a project's phase, status, execution mode, the role its phase waits on, and each artifact with the same text `doc show` prints.
+
+The pages are server-rendered Jinja2 templates shipped in the package. The one browser script, htmx, is vendored in the package's `assets` directory; there is no JavaScript build step, and no page carries a control that changes state.
 
 ## The config file
 
@@ -550,6 +592,8 @@ uv tool uninstall specflo      # remove
 ```
 
 `pipx install .` and `pip install .` work the same way if you prefer them.
+A machine that runs the daemon needs the web stack too: `uv tool install '.[serve]'`
+(or `pip install 'specflo[serve]'`).
 
 To build distributables instead, `uv build` writes the wheel and sdist into
 `dist/`; install the wheel anywhere with
