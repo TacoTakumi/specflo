@@ -1,0 +1,252 @@
+"""The service facade: one protocol naming every artifact operation the CLI
+performs, and the local implementation that performs each as an in-process
+call on files.
+
+The CLI resolves a ``ProjectService`` and reads or writes project artifacts
+only through it, so a project whose files live in the checkout and one held
+by a daemon are served by the same commands. The local service is the
+in-process half of that contract: every method hands the call to the module
+function that already owns the operation, on the checkout root and its
+config.
+"""
+
+import inspect
+
+import pytest
+
+from specflo import config
+from specflo.errors import SpecfloError
+from specflo.service import LocalProjectService, ProjectService
+
+
+def operations() -> list[str]:
+    """The public operations the protocol names, in declaration order."""
+    return [
+        name
+        for name, value in vars(ProjectService).items()
+        if callable(value) and not name.startswith("_")
+    ]
+
+
+class _Recorder:
+    """Delegates every call to a service and records which operations ran."""
+
+    def __init__(self, service):
+        self._service = service
+        self.called: set[str] = set()
+
+    def __getattr__(self, name):
+        attr = getattr(self._service, name)
+        if not callable(attr):
+            return attr
+
+        def call(*args, **kwargs):
+            self.called.add(name)
+            return attr(*args, **kwargs)
+
+        return call
+
+
+@pytest.fixture
+def local(tmp_path):
+    """A local service over a freshly initialised checkout."""
+    cfg = config.init_config(tmp_path)
+    return LocalProjectService(tmp_path, cfg)
+
+
+# --- the protocol ----------------------------------------------------------
+
+
+def test_local_service_satisfies_the_protocol(local):
+    assert isinstance(local, ProjectService)
+    for name in operations():
+        expected = inspect.signature(getattr(ProjectService, name))
+        actual = inspect.signature(getattr(LocalProjectService, name))
+        assert actual == expected, f"{name}: {actual} != {expected}"
+
+
+def test_local_service_protocol_names_every_operation_group():
+    named = set(operations())
+    for representative in (
+        "create_project",
+        "advance_project",
+        "validate_artifact",
+        "complete_artifact",
+        "add_decision",
+        "add_requirement",
+        "add_task",
+        "task_brief",
+        "add_milestone",
+        "add_pool",
+        "start_round",
+        "close_round",
+        "build_checkpoint",
+        "write_checkpoint",
+        "build_status",
+        "show_document",
+        "set_section",
+    ):
+        assert representative in named
+
+
+# --- the local implementation ---------------------------------------------
+
+
+def test_local_service_drives_a_project_through_every_operation(local, tmp_path):
+    svc = _Recorder(local)
+
+    project = svc.create_project("My Thing", summary="One line", execution="linear")
+    slug = project.slug
+    assert svc.load_project(slug).phase == "brainstorm"
+    assert [p.slug for p in svc.list_projects()] == [slug]
+    assert svc.has_artifact(slug, "project")
+    assert not svc.has_artifact(slug, "brainstorm")
+
+    # brainstorm: decisions, prose, the gate, the phase bump
+    path, created = svc.start_brainstorm(slug)
+    assert created and path == tmp_path / "docs" / "projects" / slug / "brainstorm.md"
+    assert svc.start_brainstorm(slug) == (path, False)
+    decision = svc.add_decision(slug, "Use one facade", rationale="one seam")
+    assert decision.text == "Use one facade"
+    assert decision.id in svc.show_document(slug, "brainstorm")
+    assert any("Out of scope" in issue for issue in svc.validate_artifact(slug, "brainstorm"))
+    title = svc.set_section(slug, "brainstorm", "Out of scope / Deferred", "No auth.\n")
+    assert title == "Out of scope / Deferred"
+    assert "No auth." in svc.show_document(slug, "brainstorm")
+    assert svc.validate_artifact(slug, "brainstorm") == []
+    svc.complete_artifact(slug, "brainstorm")
+    assert svc.advance_project(slug).phase == "spec"
+
+    # spec: requirements
+    path, created = svc.start_spec(slug)
+    assert created and path.name == "spec.md"
+    requirement = svc.add_requirement(
+        slug, "Prints help", "a no-arg run exits 0", derives_from=decision.id
+    )
+    assert requirement.derives_from == decision.id
+    svc.set_section(slug, "spec", "In scope", "- the CLI.\n")
+    svc.set_section(slug, "spec", "Out of scope", "- the GUI.\n")
+    assert svc.validate_artifact(slug, "spec") == []
+    svc.complete_artifact(slug, "spec")
+    assert svc.advance_project(slug).phase == "plan"
+
+    # plan: milestones, pools, tasks and their reads
+    path, created = svc.start_plan(slug)
+    assert created and path.name == "plan.md"
+    milestone = svc.add_milestone(slug, "Help works", ["help prints"])
+    assert milestone.exit_items == ["help prints"]
+    assert svc.add_pool(slug, "gpu", 2) == ("gpu", 2)
+    assert svc.list_pools(slug) == {"gpu": 2}
+    first = svc.add_task(
+        slug, "Build help", "help prints", "uv run pytest", [requirement.id],
+        files="src/help.py", needs=["gpu"], milestone=milestone.id,
+    )
+    second = svc.add_task(
+        slug, "Polish help", "help is tidy", "uv run pytest", [requirement.id],
+        depends_on=[first.id],
+    )
+    third = svc.add_task(
+        slug, "Document help", "help is documented", "uv run pytest", [requirement.id],
+        depends_on=[second.id], milestone=milestone.id,
+    )
+    assert svc.set_milestone(slug, second.id, milestone.id).milestone == milestone.id
+    assert svc.edit_task(slug, second.id, scope="Small") == (second.id, ["scope"])
+    note = svc.add_note(slug, first.id, "why this shape", label="Design")
+    assert note["label"] == "Design"
+    assert [t.id for t in svc.list_tasks(slug)] == [first.id, second.id, third.id]
+    assert svc.plan_progress(slug)["total"] == 3
+    assert svc.frontier(slug)["pools"]["gpu"]["size"] == 2
+    graph = svc.execution_graph(slug)
+    assert [m.id for m in graph["milestones"]] == [milestone.id]
+    assert svc.task_brief(slug)["task"]["id"] == first.id
+    assert svc.milestone_progress(slug)["current"] == milestone.id
+    assert svc.milestone_detail(slug, milestone.id)["total"] == 3
+    assert svc.plan_warnings(slug) == []
+    assert svc.resolution_notes(slug) == []
+    assert svc.validate_artifact(slug, "plan") == []
+    svc.complete_artifact(slug, "plan")
+    assert svc.advance_project(slug).phase == "execute"
+
+    # execute: task transitions and supersession
+    assert svc.start_task(slug, first.id).progress == "in_progress"
+    assert svc.block_task(slug, first.id, reason="waiting").blocked == "waiting"
+    assert svc.reopen_task(slug, first.id, note="unblocked").progress == "pending"
+    svc.start_task(slug, first.id)
+    assert svc.done_task(slug, first.id, note="shipped").progress == "done"
+    replacement = svc.add_task(
+        slug, "Polish help again", "help is tidy", "uv run pytest", [requirement.id],
+        depends_on=[first.id], supersedes=second.id, milestone=milestone.id,
+    )
+    assert svc.active_dependents(slug, second.id) == [third.id]
+    assert svc.rewire_dependency(slug, second.id, replacement.id) == [third.id]
+    for task_id in (replacement.id, third.id):
+        svc.start_task(slug, task_id)
+        svc.done_task(slug, task_id)
+    assert svc.task_brief(slug)["task"] is None
+
+    # review: the execute gate reads the round
+    round_path, created = svc.start_round(slug)
+    assert created and round_path.name == "review-1.md"
+    assert svc.validate_artifact(slug, "execute") != []
+    assert svc.close_round(slug, "ready-to-merge") == round_path
+    assert svc.validate_artifact(slug, "execute") == []
+
+    # checkpoint and status are derived from the artifacts
+    assert svc.build_checkpoint(slug)["phase"] == "execute"
+    checkpoint = svc.write_checkpoint(slug)
+    assert checkpoint.name == "checkpoint.md"
+    assert svc.has_artifact(slug, "checkpoint")
+    assert svc.show_document(slug, "checkpoint") == checkpoint.read_text()
+    status = svc.build_status(slug)
+    assert status["active_project"] == slug and status["phase"] == "execute"
+
+    # the rest of the project lifecycle
+    assert svc.set_summary(slug, "Ships help").summary == "Ships help"
+    assert svc.set_execution(slug, "fan-out") == ("fan-out", True)
+    assert svc.set_execution(slug, "fan-out") == ("fan-out", False)
+    assert svc.shelve_project(slug, reason="later").shelved_reason == "later"
+    assert svc.resume_project(slug).status == "active"
+    assert svc.reopen_project(slug).phase == "plan"
+    assert svc.reopen_project(slug, "brainstorm").phase == "brainstorm"
+    assert svc.complete_project(slug).status == "complete"
+    assert [p.name for p in svc.stamp_banners(slug)] == ["brainstorm.md", "spec.md"]
+
+    # the ledger over every project
+    assert not svc.index_exists()
+    index = svc.write_index()
+    assert index == tmp_path / "docs" / "projects" / "specflo-index.md"
+    assert svc.index_exists()
+    assert "Ships help" in index.read_text()
+    assert svc.index_rule_line()
+
+    assert svc.called == set(operations())
+
+
+def test_local_service_raises_the_module_errors_unchanged(local):
+    with pytest.raises(SpecfloError, match="No project 'nope'"):
+        local.load_project("nope")
+    with pytest.raises(SpecfloError, match="brainstorm, execute, plan, spec"):
+        local.validate_artifact("nope", "notes")
+    with pytest.raises(SpecfloError, match="brainstorm, spec, plan"):
+        local.complete_artifact("nope", "execute")
+    with pytest.raises(SpecfloError, match="No plan yet"):
+        local.list_tasks("nope")
+
+
+def test_local_service_keeps_every_write_under_its_root(local, tmp_path):
+    project = local.create_project("Thing")
+    local.start_brainstorm(project.slug)
+    local.write_checkpoint(project.slug)
+    local.write_index()
+
+    written = sorted(
+        str(p.relative_to(tmp_path))
+        for p in (tmp_path / "docs").rglob("*")
+        if p.is_file()
+    )
+    assert written == [
+        "docs/projects/specflo-index.md",
+        "docs/projects/thing/brainstorm.md",
+        "docs/projects/thing/checkpoint.md",
+        "docs/projects/thing/project.md",
+    ]
