@@ -682,6 +682,7 @@ def add_task(
     milestone: str | None = None,
     needs: list[str] | None = None,
     today: str | None = None,
+    actor: str | None = None,
 ) -> Task:
     """Append a task to the Tasks section and return it.
 
@@ -689,7 +690,8 @@ def add_task(
     must name ≥1 active requirement in ``spec.md``. ``depends_on`` and
     ``supersedes`` must reference existing tasks. ``milestone``, when given, must
     name a milestone present in ``## Milestones`` and is written as the task's
-    single ``- Milestone:`` field.
+    single ``- Milestone:`` field. ``actor`` names the identity adding it,
+    written as an ``Actor`` line; a local add passes none and writes none.
     """
     needs = [validate_pool_name(n) for n in (needs or [])]
     path = plan_path(root, cfg, slug)
@@ -747,6 +749,8 @@ def add_task(
             entry_lines.append(f"- Supersedes: {supersedes}")
         if milestone is not None:
             entry_lines.append(f"- Milestone: {milestone}")
+        if actor:
+            entry_lines.append(f"- Actor: {actor}")
         entry_lines.append("- Progress: pending")
         entry_lines.append("- Status: active")
         entry = "\n".join(entry_lines) + "\n"
@@ -769,6 +773,7 @@ def add_milestone(
     text: str,
     exit_items: list[str],
     today: str | None = None,
+    actor: str | None = None,
 ) -> Milestone:
     """Append a milestone (``M-NN``) to the plan and return it.
 
@@ -776,6 +781,9 @@ def add_milestone(
     ``## Tasks``) so a zero-milestone plan stays byte-identical to today's. The
     ``exit_items`` list must contain at least one non-blank authored string
     (REQ-05). Touches only ``plan.md`` — never ``spec.md`` (REQ-01).
+
+    ``actor`` names the identity adding it, written as an ``Actor`` line after
+    the checklist; a local add passes none and writes none.
     """
     path = plan_path(root, cfg, slug)
     if not path.is_file():
@@ -793,6 +801,8 @@ def add_milestone(
         new_id = markdown.next_id(doc, "M-")
         entry_lines = [f"### {new_id} — {text}", "- Exit:"]
         entry_lines += [f"  - {item}" for item in exit_items]
+        if actor:
+            entry_lines.append(f"- Actor: {actor}")
         entry = "\n".join(entry_lines) + "\n"
 
         doc = markdown.append_to_section(doc, "## Milestones", entry)

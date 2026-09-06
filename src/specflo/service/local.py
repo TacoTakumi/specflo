@@ -30,11 +30,17 @@ _COMPLETERS = {
 
 
 class LocalProjectService:
-    """A ``ProjectService`` over the projects under ``root``."""
+    """A ``ProjectService`` over the projects under ``root``.
 
-    def __init__(self, root: Path, cfg: SpecfloConfig) -> None:
+    ``actor`` is the identity every add is stamped with. A checkout runs the
+    service without one, so local entries carry no Actor line; the daemon
+    runs it as the identity behind each request's token.
+    """
+
+    def __init__(self, root: Path, cfg: SpecfloConfig, *, actor: str | None = None) -> None:
         self.root = root
         self.cfg = cfg
+        self.actor = actor
 
     # --- project lifecycle --------------------------------------------------
 
@@ -122,7 +128,8 @@ class LocalProjectService:
         supersedes: str | None = None,
     ) -> Decision:
         return brainstorm.add_decision(
-            self.root, self.cfg, slug, text, rationale=rationale, supersedes=supersedes
+            self.root, self.cfg, slug, text, rationale=rationale, supersedes=supersedes,
+            actor=self.actor,
         )
 
     # --- spec: requirements -----------------------------------------------
@@ -141,7 +148,7 @@ class LocalProjectService:
     ) -> Requirement:
         return spec.add_requirement(
             self.root, self.cfg, slug, text, acceptance,
-            derives_from=derives_from, supersedes=supersedes,
+            derives_from=derives_from, supersedes=supersedes, actor=self.actor,
         )
 
     # --- plan: tasks -------------------------------------------------------
@@ -177,6 +184,7 @@ class LocalProjectService:
             self.root, self.cfg, slug, text, acceptance, verify,
             implements=implements, depends_on=depends_on, files=files,
             scope=scope, supersedes=supersedes, milestone=milestone, needs=needs,
+            actor=self.actor,
         )
 
     def active_dependents(self, slug: str, task_id: str) -> list[str]:
@@ -248,7 +256,9 @@ class LocalProjectService:
     # --- plan: milestones --------------------------------------------------
 
     def add_milestone(self, slug: str, text: str, exit_items: list[str]) -> Milestone:
-        return plan.add_milestone(self.root, self.cfg, slug, text, exit_items=exit_items)
+        return plan.add_milestone(
+            self.root, self.cfg, slug, text, exit_items=exit_items, actor=self.actor
+        )
 
     def milestone_progress(self, slug: str) -> dict:
         return plan.milestone_progress(self.root, self.cfg, slug)

@@ -2,12 +2,15 @@
 
 One scenario drives the whole pipeline twice: once against a project in the
 checkout, once against a project on a daemon. Every command must exit the
-same way and print the same stdout, once the one thing that legitimately
-differs is normalized away: where the project's files live. A command that
-prints a project directory prints the checkout's for a local project and
-the daemon's for a hosted one; everything else is identical.
+same way and print the same stdout, once the two things that legitimately
+differ are normalized away: where the project's files live (a command that
+prints a project directory prints the checkout's for a local project and the
+daemon's for a hosted one) and the Actor line the daemon records on every
+entry it adds, which a local add does not carry. Everything else is
+identical.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -67,10 +70,11 @@ def _recorded_id(output: str) -> str:
 
 
 def _normalize(text: str, project_dirs: list[str]) -> str:
-    """Replace every spelling of the project's directory with one placeholder."""
+    """Replace every spelling of the project's directory with one placeholder
+    and drop the Actor lines only a daemon-held entry carries."""
     for spelling in sorted(project_dirs, key=len, reverse=True):
         text = text.replace(spelling, "<project>")
-    return text
+    return re.sub(r"^- Actor: .*\n", "", text, flags=re.MULTILINE)
 
 
 def _run(checkout: Path, project_dirs: list[str], new_args: list[str]):

@@ -95,11 +95,14 @@ def add_decision(
     rationale: str | None = None,
     supersedes: str | None = None,
     today: str | None = None,
+    actor: str | None = None,
 ) -> Decision:
     """Append a decision to the Decisions section and return it.
 
     Assigns the next ``D-NN`` id. If ``supersedes`` is given, the named decision
     is marked superseded (kept in place) and linked from the new entry.
+    ``actor`` names the identity adding it, written as an ``Actor`` line; a
+    local add passes none and writes none.
     """
     path = brainstorm_path(root, cfg, slug)
     if not path.is_file():
@@ -123,6 +126,8 @@ def add_decision(
         entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
         if supersedes is not None:
             entry_lines.append(f"- Supersedes: {supersedes}")
+        if actor:
+            entry_lines.append(f"- Actor: {actor}")
         entry_lines.append("- Status: active")
         entry = "\n".join(entry_lines) + "\n"
 

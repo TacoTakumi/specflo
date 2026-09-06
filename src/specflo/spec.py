@@ -99,13 +99,16 @@ def add_requirement(
     derives_from: str | None = None,
     supersedes: str | None = None,
     today: str | None = None,
+    actor: str | None = None,
 ) -> Requirement:
     """Append a requirement to the Requirements section and return it.
 
     Assigns the next ``REQ-NN`` id. ``acceptance`` is mandatory. If
     ``derives_from`` is given it must name a decision present in the project's
     ``brainstorm.md``. If ``supersedes`` is given, the named requirement is
-    marked superseded (kept in place) and linked from the new entry.
+    marked superseded (kept in place) and linked from the new entry. ``actor``
+    names the identity adding it, written as an ``Actor`` line; a local add
+    passes none and writes none.
     """
     path = spec_path(root, cfg, slug)
     if not path.is_file():
@@ -133,6 +136,8 @@ def add_requirement(
             entry_lines.append(f"- Derives from: {derives_from}")
         if supersedes is not None:
             entry_lines.append(f"- Supersedes: {supersedes}")
+        if actor:
+            entry_lines.append(f"- Actor: {actor}")
         entry_lines.append("- Status: active")
         entry = "\n".join(entry_lines) + "\n"
 

@@ -49,6 +49,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   project's locality, so `status`, `decision add`, `doc show` and the rest
   run against the daemon for a hosted project with no change in usage. A
   slug lives in one place: `new` refuses a name already held elsewhere.
+- **The actor on hosted mutations.** A decision, requirement, task or
+  milestone added through the daemon carries an `Actor` line naming the
+  identity behind the request's token (`requester` or `developer`); the
+  same add on a local project carries none. The daemon appends one record
+  per mutation to `audit.jsonl` under its root: time, identity, project,
+  operation, and the id minted or acted on. Reads leave no record.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is
