@@ -62,7 +62,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   removed and the project recorded as hosted, so `list` shows it
   `[hosted: <name>]` and `doc show` returns the same content as before. A
   mismatch aborts with the local copy untouched. A project already hosted,
-  or a slug the daemon already holds, is refused.
+  or a slug the daemon already holds, is refused, and so is a project
+  directory holding anything but plain UTF-8 files (a subdirectory, a
+  symlink, a binary file), by name, before anything is sent. On the daemon
+  the files land in a staging directory and move into place in one rename,
+  so a failed upload leaves no half-written project behind.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is
@@ -84,8 +88,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   show <id>`, and `workitem set-status <id> <status>`** - a product's
   backlog. A work item carries a kind (free text; `fix`, `roadmap`, `idea`,
   and `issue` are the usual ones and `fix` the default), an optional
-  `--issue` link, a dev path (`full`, `one-prompt`, or `cyclical`; `full`
-  the default, anything else refused), and a status (`open`,
+  `--issue` link (an http or https URL; anything else is refused, since the
+  web UI renders it as a link), a dev path (`full`, `one-prompt`, or
+  `cyclical`; `full` the default, anything else refused), and a status (`open`,
   `in-progress`, `done`, or `dropped`; `open` to start). `list` filters by
   `--product`, `--status`, and `--kind`. The daemon serves the same data
   at `/api/workitems` behind the token guard and records the actor of
@@ -135,7 +140,19 @@ latter. Release tags are of the form `vX.Y.Z`.
   `my-thing/brainstorm`, `my-thing/review-1`) instead of a filesystem path.
   `--json` output carries the new `locator` field and keeps `path` for a
   project in the checkout. Anything that scraped the path off the human
-  line should read `path` from `--json` instead.
+  line should read `path` from `--json` instead. The `Checkpoint saved:`
+  line of `advance`, `reopen`, and `task done` names the checkpoint the
+  same way (`my-thing/checkpoint`); their `--json` keeps `checkpoint` as
+  the path for a project in the checkout (`null` for a hosted one) and
+  adds `checkpoint_locator`.
+- **Session start with a daemon that does not answer.** The session-start
+  hook gives a hosted active project's daemon three seconds, then prints
+  one line naming the project and the remote that could not be reached
+  instead of stalling or starting silent. A project in the checkout that
+  cannot be read stays silent, as before.
+- **One audit record per user action.** The daemon no longer records the
+  derived writes that follow a mutation (the checkpoint, the index, the
+  banners), so `audit.jsonl` holds one line for one `decision add`.
 
 ## [0.14.0]
 
