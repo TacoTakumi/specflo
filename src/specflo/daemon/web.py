@@ -8,7 +8,8 @@ the Authorization header. Sessions live in the daemon process, so a restart
 signs every browser out.
 
 Every page renders a Jinja2 template from the package's ``templates``
-directory. The browser scripts a page needs ship from the package's
+directory, from what the store and the project index hold at that moment;
+nothing is cached, so a change through the CLI shows on the next request. The browser scripts a page needs ship from the package's
 ``assets`` directory, which is the one thing served without a session besides
 the sign-in page itself: it holds a vendored htmx (2.0.10, from the htmx.org
 npm package, Zero-Clause BSD) and nothing is built.
@@ -16,6 +17,7 @@ npm package, Zero-Clause BSD) and nothing is built.
 
 from __future__ import annotations
 
+import dataclasses
 import secrets
 from pathlib import Path
 from urllib.parse import parse_qs
@@ -25,12 +27,22 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from ..config import load_config
+from ..projects import INITIAL_STATUS
+from ..service.local import LocalProjectService
 from .auth import IDENTITIES, identity_for
+from .products import Products
+from .store import Product, open_store
+from .workitems import WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
 ASSETS_PATH = "/assets"
+PRODUCT_PATH = "/products/{slug}"
 SESSION_COOKIE = "specflo_session"
+
+# A work item still counts as open work until it is done or dropped.
+OPEN_STATUSES = ("open", "in-progress")
 
 SIGNIN_FAILED = "That token does not sign in the identity you chose."
 
@@ -46,6 +58,7 @@ _templates.globals.update(
     signin_path=SIGNIN_PATH,
     assets_path=ASSETS_PATH,
     identities=IDENTITIES,
+    product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
 )
 
 
@@ -103,14 +116,65 @@ async def sign_in(request: Request) -> Response:
     return response
 
 
-# The pages; each takes the signed-in identity, so a browser without a
-# session is sent to sign in before any page renders.
+# --- what the pages show ------------------------------------------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class ProductCard:
+    """One product as the products page lists it."""
+
+    product: Product
+    open_items: int
+    active_projects: int
+
+    @property
+    def summary(self) -> str:
+        """The first line of the vision; a product without one has no summary."""
+        return self.product.vision.strip().splitlines()[0] if self.product.vision.strip() else ""
+
+
+def product_cards(root: Path) -> list[ProductCard]:
+    """Every product in slug order with its open work and active project counts.
+
+    A project belongs to the product of the work item it was spawned from;
+    one made outside any work item belongs to no product and counts for none.
+    """
+    with open_store(root) as store:
+        products = Products(store).list()
+        items = WorkItems(store).list()
+    projects = LocalProjectService(root, load_config(root)).list_projects()
+    product_of_item = {item.id: item.product for item in items}
+    active_by_product: dict[str, int] = {}
+    for project in projects:
+        owner = product_of_item.get(project.work_item)
+        if owner is not None and project.status == INITIAL_STATUS:
+            active_by_product[owner] = active_by_product.get(owner, 0) + 1
+    return [
+        ProductCard(
+            product=product,
+            open_items=sum(
+                1
+                for item in items
+                if item.product == product.slug and item.status in OPEN_STATUSES
+            ),
+            active_projects=active_by_product.get(product.slug, 0),
+        )
+        for product in products
+    ]
+
+
+# --- the pages ----------------------------------------------------------------
+
+# Each page takes the signed-in identity, so a browser without a session is
+# sent to sign in before any page renders.
 pages = APIRouter()
 
 
 @pages.get(HOME_PATH, include_in_schema=False)
-def home(identity: str = Depends(current_session)) -> Response:
-    return render("base.html", identity=identity)
+def products_page(request: Request, identity: str = Depends(current_session)) -> Response:
+    return render(
+        "products.html", identity=identity, cards=product_cards(request.app.state.root)
+    )
 
 
 def install(app: FastAPI) -> None:

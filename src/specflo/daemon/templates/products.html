@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Products - specflo{% endblock %}
+{% block content %}
+<h1>Products</h1>
+{% if cards %}
+<table>
+  <thead>
+    <tr>
+      <th scope="col">Product</th>
+      <th scope="col">Summary</th>
+      <th scope="col">Open work</th>
+      <th scope="col">Active projects</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for card in cards %}
+    <tr data-product="{{ card.product.slug }}">
+      <td><a href="{{ product_url(card.product.slug) }}">{{ card.product.name }}</a></td>
+      <td>{{ card.summary }}</td>
+      <td class="count">{{ card.open_items }}</td>
+      <td class="count">{{ card.active_projects }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>No products yet. Add one with <code>specflo product add</code>.</p>
+{% endif %}
+{% endblock %}
