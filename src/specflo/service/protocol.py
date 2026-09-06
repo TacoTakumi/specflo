@@ -109,6 +109,14 @@ class ProjectService(Protocol):
         """Regenerate the project ledger from every project."""
         ...
 
+    def export_project(self, slug: str) -> dict[str, str]:
+        """Every file of the project directory, by name."""
+        ...
+
+    def import_project(self, slug: str, files: dict[str, str]) -> dict[str, str]:
+        """Create ``slug`` from ``files``; the SHA-256 of each file as written."""
+        ...
+
     # --- brainstorm: decisions --------------------------------------------
 
     def start_brainstorm(self, slug: str) -> tuple[Path, bool]:

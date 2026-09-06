@@ -30,6 +30,7 @@ from .agent.cli import agent_app
 from .daemon.cli import serve_app
 from .errors import SpecfloError
 from .service import ProjectService
+from .service import promote as promote_module
 from .service.resolve import local_service, remote_service, resolve_service
 from .validators import VALIDATORS
 
@@ -2302,6 +2303,30 @@ def remote_list(
         return
     for name, url in remotes.items():
         typer.echo(f"{name}  {url}")
+
+
+@app.command(epilog="Example: specflo promote my-thing --remote home")
+def promote(
+    name: str = typer.Argument(
+        ..., metavar="<project>", help="The local project to move (its slug or name)."
+    ),
+    remote: str = typer.Option(
+        ..., "--remote", metavar="<name>", help="The registered daemon to move it to."
+    ),
+) -> None:
+    """Move a local project into a daemon: upload, verify, then remove the local copy."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    try:
+        slug = projects.slugify(name)
+        done = promote_module.promote_project(root, cfg, slug, remote)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_index(root, cfg)
+    typer.echo(
+        f"Promoted '{done.slug}' to remote '{done.remote}': {len(done.files)} files"
+        " verified, the local copy removed."
+    )
 
 
 @remote_app.command("remove", epilog="Example: specflo remote remove home")

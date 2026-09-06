@@ -8,6 +8,7 @@ project is served by the same code on the far side of the wire.
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 from .. import brainstorm, checkpoint, doc, index, plan, projects, review, spec, status
@@ -113,6 +114,32 @@ class LocalProjectService:
 
     def write_index(self) -> Path:
         return index.write_index(self.root, self.cfg)
+
+    def export_project(self, slug: str) -> dict[str, str]:
+        directory = projects.load_project(self.root, self.cfg, slug).path
+        return {
+            path.name: path.read_text()
+            for path in sorted(directory.iterdir())
+            if path.is_file()
+        }
+
+    def import_project(self, slug: str, files: dict[str, str]) -> dict[str, str]:
+        directory = projects.project_dir(self.root, self.cfg, slug)
+        if directory.exists():
+            raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
+        for name in files:
+            if not name or name.startswith(".") or "/" in name or "\\" in name:
+                raise SpecfloError(f"Invalid file name {name!r}: expected a plain file name.")
+        if projects.PROJECT_FILENAME not in files:
+            raise SpecfloError(
+                f"A project needs its {projects.PROJECT_FILENAME}; none was given."
+            )
+        directory.mkdir(parents=True)
+        hashes = {}
+        for name, text in files.items():
+            (directory / name).write_text(text)
+            hashes[name] = hashlib.sha256(text.encode()).hexdigest()
+        return hashes
 
     # --- brainstorm: decisions --------------------------------------------
 

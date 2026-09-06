@@ -10,6 +10,7 @@ function that already owns the operation, on the checkout root and its
 config.
 """
 
+import hashlib
 import inspect
 
 import pytest
@@ -227,6 +228,14 @@ def _drive_every_operation(service, projects_root):
     assert svc.index_exists()
     assert "Ships help" in index.read_text()
     assert svc.index_rule_line()
+
+    # the project as a set of files, and a second project made from them
+    files = svc.export_project(slug)
+    assert set(files) >= {"project.md", "brainstorm.md", "spec.md", "plan.md", "checkpoint.md", "review-1.md"}
+    assert svc.import_project("copy", files) == {
+        name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()
+    }
+    assert svc.show_document("copy", "spec") == files["spec.md"]
 
     assert svc.called == set(operations())
 

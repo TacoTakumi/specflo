@@ -55,6 +55,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   same add on a local project carries none. The daemon appends one record
   per mutation to `audit.jsonl` under its root: time, identity, project,
   operation, and the id minted or acted on. Reads leave no record.
+- **`specflo promote <project> --remote <name>`** - move a local project
+  into a daemon. Every file of the project directory is uploaded, the
+  daemon reports the SHA-256 of each file as written, and the client
+  verifies them against what it sent; only then is the local directory
+  removed and the project recorded as hosted, so `list` shows it
+  `[hosted: <name>]` and `doc show` returns the same content as before. A
+  mismatch aborts with the local copy untouched. A project already hosted,
+  or a slug the daemon already holds, is refused.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is

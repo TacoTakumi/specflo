@@ -108,6 +108,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "List the registered daemons: names and URLs, never tokens."},
     {"name": "remote remove", "group": "setup", "args": "<name>",
      "summary": "Forget a registered daemon."},
+    {"name": "promote", "group": "setup", "args": "<project> --remote <name>",
+     "summary": "Move a local project into a daemon: upload, verify, remove the local copy."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",
