@@ -3,7 +3,9 @@
 A product has a name, a slug, an optional repo location, a vision text, and
 zero or more declared pieces: the deployable parts it is made of (web,
 admin, mobile, ...). A work item may target a declared piece and nothing
-else; a product that declares none takes items with no target.
+else; a product that declares none takes items with no target. The
+roadmap is a read view over all of it: the vision, then the backlog in
+order; nothing is ever written for it.
 It lives in the daemon's state store, never under a checkout, so the verbs
 here run where the store is. The daemon runs :class:`Products` on its own
 store, in-process, behind the product routes; a CLI client runs
@@ -15,6 +17,7 @@ ProjectService apart.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import re
 
@@ -24,11 +27,19 @@ from ..errors import SpecfloError
 from ..projects import slugify
 from ..service import wire
 from ..service.remote import response_detail
-from .store import Conflict, Product, Store
+from .store import Conflict, Product, Store, WorkItem
 
 PRODUCTS_PATH = "/api/products"
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+@dataclasses.dataclass(frozen=True)
+class Roadmap:
+    """A read view over one product: its vision, then its backlog in order."""
+
+    product: Product
+    items: list[WorkItem]
 
 
 def validate_piece_name(name: str) -> str:
@@ -136,6 +147,11 @@ class Products:
         self.store.remove_piece(slug, name)
         return self.store.list_pieces(slug)
 
+    def roadmap(self, slug: str) -> Roadmap:
+        """The product's vision, then its work items in backlog order; read, never written."""
+        product = self.show(slug)
+        return Roadmap(product=product, items=self.store.list_work_items(product=slug))
+
 
 def _unknown(slug: str) -> str:
     return f"No product {slug!r}. Run `specflo product list` to see the ones there are."
@@ -214,6 +230,9 @@ class RemoteProducts(DaemonClient):
 
     def remove_piece(self, slug: str, name: str) -> list[str]:
         return self._request("DELETE", f"{PRODUCTS_PATH}/{slug}/pieces/{name}")
+
+    def roadmap(self, slug: str) -> Roadmap:
+        return wire.decode(self._request("GET", f"{PRODUCTS_PATH}/{slug}/roadmap"), Roadmap)
 
     @staticmethod
     def _product(encoded) -> Product:

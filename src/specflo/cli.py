@@ -2490,6 +2490,42 @@ def product_set_vision(
     typer.echo(f"Set the vision of '{slug}' on remote '{remote}'.")
 
 
+@product_app.command("roadmap", epilog="Example: specflo product roadmap my-thing")
+def product_roadmap(
+    slug: str = typer.Argument(..., metavar="<slug>", help="The product's slug."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Print a product's roadmap: its vision, then its backlog in order. A view, never a write."""
+    root = _require_root()
+    try:
+        _, products = _products(root, remote)
+        roadmap = products.roadmap(slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(wire.encode(roadmap)))
+        return
+    product = roadmap.product
+    typer.echo(f"Roadmap: {product.name} ({product.slug})")
+    if product.vision:
+        typer.echo("Vision:")
+        typer.echo(product.vision.rstrip("\n"))
+    else:
+        typer.echo("Vision:  (none)")
+    if not roadmap.items:
+        typer.echo("Backlog:  (empty)")
+        return
+    typer.echo("Backlog:")
+    for item in roadmap.items:
+        line = f"{item.id}  {item.status}  {item.kind}  {item.dev_path}  {item.title}"
+        if item.piece:
+            line += f" [{item.piece}]"
+        if item.project:
+            line += f" -> {item.project}"
+        typer.echo(line)
+
+
 @piece_app.command("add", epilog="Example: specflo product piece add my-thing web")
 def product_piece_add(
     product: str = typer.Argument(..., metavar="<product>", help="The product's slug."),

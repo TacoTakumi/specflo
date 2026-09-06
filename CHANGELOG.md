@@ -105,6 +105,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   targets one) and the item records the project's slug; `--name` picks the
   project's name, the item's title otherwise. A second spawn is refused
   naming the project, and an item on any other dev path is refused.
+- **`specflo product roadmap <slug>`** - the roadmap as a read view: the
+  product's vision text, then its work items in backlog order, each with
+  its status, kind, dev path, targeted piece, and spawned project. Nothing
+  is written for it; adding an item changes the view on its own. Served at
+  `/api/products/<slug>/roadmap` behind the token guard.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

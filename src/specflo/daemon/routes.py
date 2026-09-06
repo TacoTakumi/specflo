@@ -225,6 +225,16 @@ def product_set_vision(
     return {"result": wire.encode(product)}
 
 
+@router.get(PRODUCTS_PATH + "/{slug}/roadmap")
+def product_roadmap(request: Request, slug: str) -> dict:
+    with open_store(request.app.state.root) as store:
+        try:
+            roadmap = Products(store).roadmap(slug)
+        except SpecfloError as exc:
+            raise _refused(exc)
+    return {"result": wire.encode(roadmap)}
+
+
 PIECES_PATH = PRODUCTS_PATH + "/{slug}/pieces"
 
 

@@ -118,6 +118,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show one product: name, slug, repo location, created date, and vision."},
     {"name": "product set-vision", "group": "setup", "args": "<slug> [<text>] [--stdin] [--remote <name>]",
      "summary": "Replace a product's vision text, given inline or on stdin."},
+    {"name": "product roadmap", "group": "setup", "args": "<slug> [--remote <name>] [--json]",
+     "summary": "Print a product's roadmap: the vision, then its backlog in order."},
     {"name": "product piece add", "group": "setup", "args": "<product> <piece> [--remote <name>]",
      "summary": "Declare a piece (web, admin, ...) on a product; its work items may target it."},
     {"name": "product piece list", "group": "setup", "args": "<product> [--remote <name>] [--json]",
