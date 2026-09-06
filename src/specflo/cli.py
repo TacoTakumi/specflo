@@ -19,6 +19,7 @@ from agentsquire.sources import default_source
 from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
+from . import doc as doc_module
 from . import graph as graph_module
 from . import index as index_module
 from . import review as review_module
@@ -178,6 +179,9 @@ app.add_typer(pool_app, name="pool")
 
 review_app = typer.Typer(help="Record end-of-execute review rounds.")
 app.add_typer(review_app, name="review")
+
+doc_app = typer.Typer(help="Read the active project's artifacts by name.")
+app.add_typer(doc_app, name="doc")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
@@ -1945,6 +1949,23 @@ def review_done(
         typer.echo(json.dumps({"path": str(path), "verdict": verdict}))
     else:
         typer.echo(f"{path} closed {verdict}")
+
+
+@doc_app.command("show", epilog="Example: specflo doc show brainstorm")
+def doc_show(
+    artifact: str = typer.Argument(
+        ..., metavar="<artifact>",
+        help="One of: " + ", ".join(doc_module.ARTIFACTS) + ".",
+    ),
+) -> None:
+    """Print the named artifact of the active project verbatim."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    try:
+        text = doc_module.show_document(root, cfg, slug, artifact)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    # Verbatim: the document's own bytes, no added trailing newline.
+    typer.echo(text, nl=False)
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")

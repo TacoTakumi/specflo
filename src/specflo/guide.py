@@ -152,6 +152,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mint the next review round (review-N.md) and print its path."},
     {"name": "review done", "group": "workflow", "args": "",
      "summary": "Close the open review round with a verdict (--verdict)."},
+    {"name": "doc show", "group": "workflow", "args": "<artifact>",
+     "summary": "Print an artifact of the active project verbatim "
+                "(brainstorm|spec|plan|checkpoint|project)."},
     {"name": "agent start", "group": "agents", "args": "<name>",
      "summary": "Start a detached pi agent host in a herdr tab when available "
                 "(--cwd, --pi-cmd, --workspace, --no-herdr)."},
