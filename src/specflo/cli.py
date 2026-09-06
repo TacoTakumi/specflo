@@ -224,6 +224,17 @@ def _die(message: str) -> typer.Exit:
     return typer.Exit(code=1)
 
 
+def _locator(slug: str, path: Path) -> str:
+    """The artifact locator ``<project>/<artifact>`` a command prints instead of a path.
+
+    A locator names the artifact the same way wherever its bytes live, so the
+    human-readable line is identical for a project in this checkout and one
+    held by a daemon. ``--json`` output carries the locator and, for a local
+    project, the path as a separate field.
+    """
+    return f"{slug}/{path.stem}"
+
+
 def _directory_override(ctx: click.Context) -> dict | None:
     """The ``-C``/``SPECFLO_DIRECTORY`` override recorded by the app callback, if any."""
     obj = ctx.find_root().obj
@@ -341,7 +352,7 @@ def new(
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
-    typer.echo(f"Scaffolded {brainstorm_path} (ready to work).")
+    typer.echo(f"Scaffolded {_locator(project.slug, brainstorm_path)} (ready to work).")
     if summary is None:
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
@@ -965,11 +976,12 @@ def brainstorm_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    locator = _locator(slug, path)
     if json_output:
-        typer.echo(json.dumps({"path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
     else:
         note = "" if created else " (already started)"
-        typer.echo(f"{path}{note}")
+        typer.echo(f"{locator}{note}")
 
 
 @decision_app.command(
@@ -1261,11 +1273,12 @@ def spec_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    locator = _locator(slug, path)
     if json_output:
-        typer.echo(json.dumps({"path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
     else:
         note = "" if created else " (already started)"
-        typer.echo(f"{path}{note}")
+        typer.echo(f"{locator}{note}")
 
 
 @requirement_app.command(
@@ -1328,11 +1341,12 @@ def plan_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    locator = _locator(slug, path)
     if json_output:
-        typer.echo(json.dumps({"path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
     else:
         note = "" if created else " (already started)"
-        typer.echo(f"{path}{note}")
+        typer.echo(f"{locator}{note}")
 
 
 @plan_app.command("graph", epilog="Example: specflo plan graph --json")
@@ -1908,18 +1922,19 @@ def milestone_show(
 def review_start(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Mint the active project's next review round and print its path."""
+    """Mint the active project's next review round and print its locator."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     try:
         path, created = review_module.start_round(root, cfg, slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    locator = _locator(slug, path)
     if json_output:
-        typer.echo(json.dumps({"path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
     else:
         note = "" if created else " (already open)"
-        typer.echo(f"{path}{note}")
+        typer.echo(f"{locator}{note}")
 
 
 @review_app.command(
@@ -1949,10 +1964,11 @@ def review_done(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(root, cfg, slug)
+    locator = _locator(slug, path)
     if json_output:
-        typer.echo(json.dumps({"path": str(path), "verdict": verdict}))
+        typer.echo(json.dumps({"locator": locator, "path": str(path), "verdict": verdict}))
     else:
-        typer.echo(f"{path} closed {verdict}")
+        typer.echo(f"{locator} closed {verdict}")
 
 
 @doc_app.command("show", epilog="Example: specflo doc show brainstorm")

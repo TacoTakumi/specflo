@@ -108,16 +108,16 @@ def test_new_scaffolds_brainstorm(cwd):
         assert header in text
 
 
-def test_new_output_names_brainstorm_path(cwd):
-    """`new`'s output is self-sufficient: it names the scaffolded brainstorm.md (REQ-04)."""
+def test_new_output_names_brainstorm_locator(cwd):
+    """`new`'s output is self-sufficient: it names the scaffolded brainstorm (REQ-04)."""
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code == 0
     out = result.output
     assert "my-thing" in out  # the slug
     assert "now active" in out  # the existing line is retained
-    assert "brainstorm" in out
-    assert "my-thing/brainstorm.md" in out  # the scaffolded artifact, by path
+    assert "my-thing/brainstorm" in out  # the scaffolded artifact, by locator
+    assert "brainstorm.md" not in out  # never by path
 
 
 def test_advance_does_not_scaffold(cwd):
@@ -526,7 +526,25 @@ def test_brainstorm_start_creates_the_artifact(cwd):
     result = runner.invoke(app, ["brainstorm", "start"])
     assert result.exit_code == 0
     assert (cwd / "docs" / "projects" / "my-thing" / "brainstorm.md").is_file()
-    assert "brainstorm.md" in result.output
+    assert "my-thing/brainstorm" in result.output
+
+
+def test_brainstorm_start_prints_a_locator_not_a_path(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["brainstorm", "start"])
+    assert result.output.strip() == "my-thing/brainstorm (already started)"
+    assert str(cwd) not in result.output
+    assert ".md" not in result.output
+
+
+def test_new_prints_the_scaffolded_brainstorm_as_a_locator(cwd):
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "My Thing"])
+    assert result.exit_code == 0
+    assert "Scaffolded my-thing/brainstorm" in result.output
+    assert str(cwd) not in result.output
+    assert ".md" not in result.output
 
 
 def test_brainstorm_start_is_resume_friendly(cwd):
@@ -553,6 +571,8 @@ def test_brainstorm_start_json(cwd):
     assert result.exit_code == 0
     data = json.loads(result.output)
     assert data["created"] is True
+    assert data["locator"] == "my-thing/brainstorm"
+    # a project in the checkout keeps its path as a separate field
     assert data["path"].endswith("brainstorm.md")
 
 
@@ -767,7 +787,21 @@ def test_spec_start_creates_the_artifact(cwd):
     result = runner.invoke(app, ["spec", "start"])
     assert result.exit_code == 0
     assert (cwd / "docs" / "projects" / "my-thing" / "spec.md").is_file()
-    assert "spec.md" in result.output
+    assert result.output.strip() == "my-thing/spec"
+    assert str(cwd) not in result.output
+
+
+def test_plan_start_prints_a_locator_not_a_path(cwd):
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "My Thing"])
+    result = runner.invoke(app, ["plan", "start"])
+    assert result.exit_code == 0
+    assert result.output.strip() == "my-thing/plan"
+    assert str(cwd) not in result.output
+    data = json.loads(runner.invoke(app, ["plan", "start", "--json"]).output)
+    assert data["locator"] == "my-thing/plan"
+    assert data["created"] is False
+    assert data["path"].endswith("plan.md")
 
 
 def test_spec_start_is_resume_friendly(cwd):
@@ -790,6 +824,7 @@ def test_spec_start_json(cwd):
     runner.invoke(app, ["new", "My Thing"])
     data = json.loads(runner.invoke(app, ["spec", "start", "--json"]).output)
     assert data["created"] is True
+    assert data["locator"] == "my-thing/spec"
     assert data["path"].endswith("spec.md")
 
 

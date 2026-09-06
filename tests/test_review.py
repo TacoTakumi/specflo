@@ -44,7 +44,21 @@ def test_mint_creates_the_first_round_and_prints_its_path(tmp_path, monkeypatch)
     assert result.exit_code == 0, result.output
     minted = project_dir / "review-1.md"
     assert minted.is_file()
-    assert str(minted) in result.output
+    # The human line carries the round's locator, never its path.
+    assert result.output.strip() == "thing/review-1"
+    assert str(minted) not in result.output
+
+
+def test_mint_json_carries_the_locator_and_the_local_path(tmp_path, monkeypatch):
+    import json
+
+    project_dir = _project(tmp_path, monkeypatch)
+
+    data = json.loads(runner.invoke(app, ["review", "start", "--json"]).output)
+
+    assert data["locator"] == "thing/review-1"
+    assert data["created"] is True
+    assert data["path"] == str(project_dir / "review-1.md")
 
 
 def test_mint_writes_the_skeleton_frontmatter_and_headings(tmp_path, monkeypatch):
@@ -98,12 +112,10 @@ def test_start_with_an_open_round_reuses_it_and_mints_nothing(tmp_path, monkeypa
     result = runner.invoke(app, ["review", "start"])
 
     assert result.exit_code == 0, result.output
-    assert str(still_open) in result.output
-    # REQ-03 wants the path carried with a note that the round is already open.
-    # Strip the path before looking for the note: pytest's tmp_path is named
-    # after this test, so it contains "open" itself and a bare substring check
-    # would pass on the path alone, with or without the note.
-    assert "already open" in result.output.replace(str(still_open), "")
+    # REQ-03 wants the round carried with a note that it is already open. The
+    # line is the locator plus the note, so no path can smuggle "open" in.
+    assert result.output.strip() == "thing/review-2 (already open)"
+    assert str(still_open) not in result.output
     assert not (project_dir / "review-3.md").exists()
     assert still_open.read_text() == before          # reused, not rewritten
 
@@ -129,6 +141,24 @@ def test_close_writes_the_verdict_into_the_open_round(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert _frontmatter(minted)["verdict"] == "ready-to-merge"
     assert "## Findings" in minted.read_text()       # the body survives the close
+    assert result.output.strip() == "thing/review-1 closed ready-to-merge"
+    assert str(minted) not in result.output
+
+
+def test_close_json_carries_the_locator_and_the_local_path(tmp_path, monkeypatch):
+    import json
+
+    project_dir = _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    data = json.loads(
+        runner.invoke(app, ["review", "done", "--verdict", "waived",
+                            "--reason", "nothing to review", "--json"]).output
+    )
+
+    assert data["locator"] == "thing/review-1"
+    assert data["verdict"] == "waived"
+    assert data["path"] == str(project_dir / "review-1.md")
 
 
 def test_close_accepts_each_of_the_three_verdicts(tmp_path, monkeypatch):

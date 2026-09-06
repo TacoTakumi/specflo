@@ -8,6 +8,32 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.15.0]
+
+### Added
+- **`specflo doc show <artifact>`** - print one artifact of the active
+  project verbatim: `brainstorm`, `spec`, `plan`, `checkpoint`, or
+  `project`. An unknown name is refused with the valid names listed. Agents
+  read artifacts through this verb instead of opening files, so the same
+  command serves a project whose files live in the checkout and one held
+  by a daemon.
+- **`specflo section set <artifact> <section>`** - replace one prose
+  section's body from `--file <path>` or `--stdin`. The header, every other
+  section, and every managed entry stay byte-identical and `updated` is
+  bumped. The managed sections (Decisions, Requirements, Tasks, Milestones,
+  Pools) are refused with the verb that owns them; `checkpoint` (derived)
+  and `project` (no prose sections) are refused too. The section may be
+  named with or without its `##` prefix.
+
+### Changed
+- **Artifact locators replace paths on the human line.** `new`,
+  `brainstorm start`, `spec start`, `plan start`, `review start`, and
+  `review done` now print `<project>/<artifact>` (for example
+  `my-thing/brainstorm`, `my-thing/review-1`) instead of a filesystem path.
+  `--json` output carries the new `locator` field and keeps `path` for a
+  project in the checkout. Anything that scraped the path off the human
+  line should read `path` from `--json` instead.
+
 ## [0.14.0]
 
 ### Added
