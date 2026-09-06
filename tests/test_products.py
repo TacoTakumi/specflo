@@ -339,3 +339,12 @@ def test_product_verbs_need_exactly_one_remote_unless_one_is_named(tmp_path, mon
 
     unknown = runner.invoke(app, ["product", "list", "--remote", "nowhere"])
     assert unknown.exit_code == 1 and "No remote 'nowhere'" in unknown.stderr
+
+
+def test_a_remote_verb_quotes_its_path_parameters(root, token):
+    remote = RemoteProducts("http://testserver", token, client=TestClient(create_app(root)))
+
+    with pytest.raises(SpecfloError, match=r"No product 'what\?'"):
+        remote.show("what?")
+    with pytest.raises(SpecfloError, match=r"No product 'a b#c'"):
+        remote.list_pieces("a b#c")

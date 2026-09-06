@@ -47,6 +47,22 @@ READ_OPERATIONS = frozenset({
     "show_document", "export_project",
 })
 MUTATING_OPERATIONS = frozenset(wire.OPERATIONS) - READ_OPERATIONS
+# Derived writes render what a mutation already recorded (the checkpoint,
+# the index, the banners), so they leave no audit record of their own: one
+# user action is one record.
+DERIVED_OPERATIONS = frozenset({"write_checkpoint", "write_index", "stamp_banners"})
+AUDITED_OPERATIONS = MUTATING_OPERATIONS - DERIVED_OPERATIONS
+# Operations that create a project directory run under the root lock whatever
+# they are scoped to, so two creations of one slug cannot both pass the
+# existence check.
+CREATING_OPERATIONS = frozenset({"create_project", "import_project"})
+
+
+def lock_slug(operation: wire.Operation, kwargs: dict) -> str | None:
+    """The project whose lock ``operation`` runs under; None for the root lock."""
+    if not operation.slug_scoped or operation.name in CREATING_OPERATIONS:
+        return None
+    return kwargs.get("slug")
 
 
 def current_identity(request: Request) -> str:
@@ -122,12 +138,12 @@ def _handler(operation: wire.Operation):
         root = request.app.state.root
         service = LocalProjectService(root, load_config(root), actor=identity)
         slug = kwargs.get("slug") if operation.slug_scoped else None
-        with project_lock(root, slug):
+        with project_lock(root, lock_slug(operation, kwargs)):
             try:
                 result = getattr(service, operation.name)(**kwargs)
             except SpecfloError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
-            if operation.name in MUTATING_OPERATIONS:
+            if operation.name in AUDITED_OPERATIONS:
                 project = slug or getattr(result, "slug", None)
                 _audit(root, identity, operation.name, project, _minted(result, kwargs))
         return {"result": wire.encode(result)}

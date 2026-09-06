@@ -22,6 +22,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 from pathlib import Path
+from urllib.parse import urlparse
 
 from ..errors import SpecfloError
 from ..projects import Project
@@ -57,6 +58,24 @@ def validate_dev_path(dev_path: str) -> str:
             f"Invalid dev path {dev_path!r}: expected one of " + ", ".join(DEV_PATHS) + "."
         )
     return dev_path
+
+
+def validate_issue_link(issue: str | None) -> str | None:
+    """``issue`` as a link, None for no link, or a refusal.
+
+    Only http and https links are kept: the link is rendered as one on the
+    product page, and any other scheme would run in the browser of whoever
+    follows it rather than open an issue.
+    """
+    if issue is None:
+        return None
+    issue = issue.strip()
+    if not issue:
+        return None
+    parts = urlparse(issue)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise SpecfloError(f"Invalid issue link {issue!r}: expected an http or https URL.")
+    return issue
 
 
 def validate_status(status: str) -> str:
@@ -100,7 +119,7 @@ class WorkItems:
             product=product,
             title=title,
             kind=kind,
-            issue=(issue.strip() or None) if issue is not None else None,
+            issue=validate_issue_link(issue),
             dev_path=validate_dev_path(DEFAULT_DEV_PATH if dev_path is None else dev_path),
             status=DEFAULT_STATUS,
             created=today or datetime.date.today().isoformat(),

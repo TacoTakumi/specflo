@@ -7,7 +7,9 @@ to loopback unless told otherwise.
 """
 
 import sqlite3
+import subprocess
 import sys
+import textwrap
 import tomllib
 from pathlib import Path
 
@@ -148,3 +150,25 @@ def test_pyproject_declares_the_serve_extra_and_the_client_dependency():
     assert "httpx" in core
     assert "fastapi" in serve and "uvicorn" in serve
     assert "fastapi" not in core and "uvicorn" not in core
+
+
+def test_ordinary_commands_import_none_of_the_web_stack():
+    # A plain `pip install specflo` has no fastapi, jinja2, uvicorn or
+    # starlette; every command but `serve` must still load. The daemon's
+    # application, routes and web modules are the ones that need the extra,
+    # so importing the CLI must not pull them in.
+    code = textwrap.dedent(
+        """
+        import sys
+        for name in ("fastapi", "jinja2", "uvicorn", "starlette"):
+            sys.modules[name] = None
+        import specflo.cli
+        print(" ".join(sorted(n for n in sys.modules if n.startswith("specflo.daemon"))))
+        """
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+
+    assert done.returncode == 0, done.stderr
+    loaded = set(done.stdout.split())
+    assert "specflo.daemon" in loaded
+    assert not {"specflo.daemon.app", "specflo.daemon.routes", "specflo.daemon.web"} & loaded

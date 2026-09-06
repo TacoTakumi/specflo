@@ -54,7 +54,7 @@
         <td>{{ item.dev_path }}</td>
         <td>{{ item.piece or "" }}</td>
         <td>{{ item.status }}</td>
-        <td>{% if item.issue %}<a href="{{ item.issue }}">{{ item.issue }}</a>{% endif %}</td>
+        <td>{% if item.issue and item.issue.startswith(("http://", "https://")) %}<a href="{{ item.issue }}">{{ item.issue }}</a>{% elif item.issue %}{{ item.issue }}{% endif %}</td>
         <td>{% if item.project %}<a href="{{ project_url(item.project) }}">{{ view.project_names.get(item.project, item.project) }}</a>{% endif %}</td>
       </tr>
       {% endfor %}

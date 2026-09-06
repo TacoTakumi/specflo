@@ -190,3 +190,27 @@ def test_the_product_page_needs_a_session(root):
 
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+def test_a_backlog_row_names_its_project_even_while_the_archive_is_folded_away(client, root):
+    seed(root)
+
+    backlog = rows(page(client, "thing").text, "backlog")
+
+    assert backlog[2][1] == "Old work" and backlog[2][7] == "Old work"
+
+
+def test_an_issue_that_is_not_a_web_link_is_shown_as_text_not_a_link(client, root):
+    seed(root)
+    from specflo.daemon.store import WorkItem
+
+    with store_module.open_store(root) as store:
+        store.add_work_item(WorkItem(
+            id=0, product="thing", title="Planted", kind="fix", issue="javascript:alert(1)",
+            dev_path="full", status="open", created="2026-09-06",
+        ))
+
+    html = section_html(page(client, "thing").text, "backlog")
+
+    assert "javascript:alert(1)" in html
+    assert 'href="javascript:alert(1)"' not in html

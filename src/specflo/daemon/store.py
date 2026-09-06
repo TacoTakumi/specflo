@@ -19,7 +19,7 @@ from __future__ import annotations
 import dataclasses
 import sqlite3
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, Self
 
 from . import STATE_STORE_FILENAME
 
@@ -103,7 +103,7 @@ class Store(Protocol):
     def close(self) -> None:
         """Release the backend's resources."""
 
-    def __enter__(self) -> Store: ...
+    def __enter__(self) -> Self: ...
 
     def __exit__(self, *exc_info) -> None: ...
 
@@ -264,7 +264,7 @@ class SqliteStore:
     def close(self) -> None:
         self.connection.close()
 
-    def __enter__(self) -> SqliteStore:
+    def __enter__(self) -> Self:
         return self
 
     def __exit__(self, *exc_info) -> None:

@@ -189,3 +189,14 @@ def test_a_restarted_daemon_knows_no_earlier_session(client, root):
 
     assert client.get(web.HOME_PATH).status_code == 200
     assert restarted.get(web.HOME_PATH).status_code == 303
+
+
+def test_the_cookie_is_marked_secure_only_when_the_page_came_over_https(root):
+    token = auth.mint_token(root, "developer")
+    form = {"identity": "developer", "token": token}
+
+    plain = TestClient(create_app(root), follow_redirects=False)
+    assert "Secure" not in plain.post(web.SIGNIN_PATH, data=form).headers["set-cookie"]
+
+    tls = TestClient(create_app(root), base_url="https://testserver", follow_redirects=False)
+    assert "Secure" in tls.post(web.SIGNIN_PATH, data=form).headers["set-cookie"]

@@ -199,6 +199,9 @@ def test_daemon_appends_one_audit_record_per_mutation(daemon_root):
     _call(client, "show_document", slug="thing", name="brainstorm")
     _call(client, "list_projects")
     _call(client, "has_artifact", slug="thing", name="spec")
+    # Derived writes render what the adds above already recorded: no record.
+    _call(client, "write_checkpoint", slug="thing")
+    _call(client, "write_index")
 
     records = [
         json.loads(line)
@@ -219,6 +222,19 @@ def test_reads_and_mutations_are_classified_for_every_operation():
     assert {"add_decision", "add_task", "start_task", "close_round", "set_section"} <= routes.MUTATING_OPERATIONS
     assert {"show_document", "list_tasks", "build_status", "validate_artifact"} <= routes.READ_OPERATIONS
     assert routes.READ_OPERATIONS | routes.MUTATING_OPERATIONS == set(wire.OPERATIONS)
+    assert routes.DERIVED_OPERATIONS <= routes.MUTATING_OPERATIONS
+    assert routes.AUDITED_OPERATIONS | routes.DERIVED_OPERATIONS == routes.MUTATING_OPERATIONS
+    assert "write_checkpoint" not in routes.AUDITED_OPERATIONS
+
+
+def test_creating_a_project_runs_under_the_root_lock_whatever_its_scope():
+    # `import_project` names its slug, but it creates a directory the same way
+    # `create_project` does; both take the root lock so two creations of one
+    # slug cannot both pass the existence check.
+    assert routes.lock_slug(wire.OPERATIONS["import_project"], {"slug": "x", "files": {}}) is None
+    assert routes.lock_slug(wire.OPERATIONS["create_project"], {"name": "X"}) is None
+    assert routes.lock_slug(wire.OPERATIONS["add_decision"], {"slug": "x", "text": "t"}) == "x"
+    assert routes.lock_slug(wire.OPERATIONS["list_projects"], {}) is None
 
 
 def test_a_refused_mutation_leaves_no_audit_record(daemon_root):

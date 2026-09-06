@@ -121,7 +121,14 @@ async def sign_in(request: Request) -> Response:
     secret = secrets.token_urlsafe(32)
     request.app.state.sessions[secret] = identity
     response = RedirectResponse(HOME_PATH, status_code=303)
-    response.set_cookie(SESSION_COOKIE, secret, httponly=True, samesite="lax", path="/")
+    response.set_cookie(
+        SESSION_COOKIE,
+        secret,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=request.url.scheme == "https",
+    )
     return response
 
 
@@ -187,10 +194,9 @@ class ProductView:
     projects: list[Project]
     archived_count: int
     show_archived: bool
-
-    @property
-    def project_names(self) -> dict[str, str]:
-        return {project.slug: project.name for project in self.projects}
+    # Every owned project's name by slug, archived ones included, so a
+    # backlog row names its project even while the archive is folded away.
+    project_names: dict[str, str]
 
 
 def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView | None:
@@ -215,6 +221,7 @@ def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView |
         projects=owned if show_archived else [p for p in owned if p not in archived],
         archived_count=len(archived),
         show_archived=show_archived,
+        project_names={project.slug: project.name for project in owned},
     )
 
 

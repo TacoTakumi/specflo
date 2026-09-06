@@ -20,6 +20,7 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import re
+from urllib.parse import quote
 
 import httpx
 
@@ -215,24 +216,28 @@ class RemoteProducts(DaemonClient):
         return [self._product(item) for item in self._request("GET", PRODUCTS_PATH)]
 
     def show(self, slug: str) -> Product:
-        return self._product(self._request("GET", f"{PRODUCTS_PATH}/{slug}"))
+        return self._product(self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}"))
 
     def set_vision(self, slug: str, vision: str) -> Product:
         return self._product(
-            self._request("PUT", f"{PRODUCTS_PATH}/{slug}/vision", json={"vision": vision})
+            self._request("PUT", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/vision", json={"vision": vision})
         )
 
     def list_pieces(self, slug: str) -> list[str]:
-        return self._request("GET", f"{PRODUCTS_PATH}/{slug}/pieces")
+        return self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces")
 
     def add_piece(self, slug: str, name: str) -> list[str]:
-        return self._request("POST", f"{PRODUCTS_PATH}/{slug}/pieces", json={"name": name})
+        return self._request("POST", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces", json={"name": name})
 
     def remove_piece(self, slug: str, name: str) -> list[str]:
-        return self._request("DELETE", f"{PRODUCTS_PATH}/{slug}/pieces/{name}")
+        return self._request(
+            "DELETE", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces/{quote(name, safe='')}"
+        )
 
     def roadmap(self, slug: str) -> Roadmap:
-        return wire.decode(self._request("GET", f"{PRODUCTS_PATH}/{slug}/roadmap"), Roadmap)
+        return wire.decode(
+            self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/roadmap"), Roadmap
+        )
 
     @staticmethod
     def _product(encoded) -> Product:

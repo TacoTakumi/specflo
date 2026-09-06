@@ -366,3 +366,20 @@ def test_workitem_verbs_show_an_empty_backlog_and_refuse_what_the_daemon_refuses
 
     no_remote = runner.invoke(app, ["workitem", "list", "--remote", "nowhere"])
     assert no_remote.exit_code == 1 and "No remote 'nowhere'" in no_remote.stderr
+
+
+# --- the issue link -------------------------------------------------------------
+
+
+def test_an_issue_link_must_be_http_or_https(root):
+    with store_module.open_store(root) as store:
+        Products(store).add("Thing", slug="thing", today="2026-09-06")
+        items = WorkItems(store)
+        kept = items.add("thing", "Linked", issue="  https://issues.example/1 ", today="2026-09-06")
+        blank = items.add("thing", "Blank", issue="   ", today="2026-09-06")
+        assert kept.issue == "https://issues.example/1"
+        assert blank.issue is None
+        for bad in ("javascript:alert(1)", "ftp://host/x", "issues/1", "https:"):
+            with pytest.raises(SpecfloError, match="Invalid issue link"):
+                items.add("thing", "Bad", issue=bad, today="2026-09-06")
+        assert [item.title for item in items.list()] == ["Linked", "Blank"]
