@@ -171,7 +171,7 @@ def test_work_item_routes_round_trip_and_record_the_actor(client, root):
     assert created.status_code == 200, created.text
     assert created.json()["result"] == {
         "id": 1, "product": "thing", "title": "Fix the login", "kind": "fix", "issue": None,
-        "dev_path": "full", "status": "open", "created": today, "piece": None,
+        "dev_path": "full", "status": "open", "created": today, "piece": None, "project": None,
     }
     second = client.post(WORK_ITEMS_PATH, json={
         "product": "thing", "title": "Offline mode", "kind": "roadmap",
@@ -306,6 +306,7 @@ def test_workitem_verbs_round_trip_through_the_registered_remote(checkout, live_
         "Kind:      roadmap\n"
         "Dev path:  cyclical\n"
         "Piece:     -\n"
+        "Project:   -\n"
         "Status:    open\n"
         f"Issue:     {ISSUE}\n"
         f"Created:   {today}\n"
@@ -332,7 +333,7 @@ def test_workitem_verbs_round_trip_through_the_registered_remote(checkout, live_
     as_json = runner.invoke(app, ["workitem", "show", "2", "--json"])
     assert json.loads(as_json.output) == {
         "id": 2, "product": "thing", "title": "Offline mode", "kind": "roadmap",
-        "issue": ISSUE, "dev_path": "cyclical", "status": "open", "created": today, "piece": None,
+        "issue": ISSUE, "dev_path": "cyclical", "status": "open", "created": today, "piece": None, "project": None,
     }
     as_json = runner.invoke(app, ["workitem", "list", "--json", "--status", "open"])
     assert [i["id"] for i in json.loads(as_json.output)["work_items"]] == [2]

@@ -132,6 +132,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show one work item: product, kind, dev path, status, issue link, created date."},
     {"name": "workitem set-status", "group": "setup", "args": "<id> open|in-progress|done|dropped [--remote <name>]",
      "summary": "Move a work item to another status."},
+    {"name": "workitem spawn", "group": "setup", "args": "<id> [--name <name>] [--remote <name>]",
+     "summary": "Spawn the one project a full-path work item gets, hosted beside it; it becomes active."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",

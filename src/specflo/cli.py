@@ -2653,6 +2653,7 @@ def workitem_show(
     typer.echo(f"Kind:      {item.kind}")
     typer.echo(f"Dev path:  {item.dev_path}")
     typer.echo(f"Piece:     {item.piece or '-'}")
+    typer.echo(f"Project:   {item.project or '-'}")
     typer.echo(f"Status:    {item.status}")
     typer.echo(f"Issue:     {item.issue or '-'}")
     typer.echo(f"Created:   {item.created}")
@@ -2674,6 +2675,44 @@ def workitem_set_status(
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Set work item {item.id} to '{item.status}' on remote '{remote}'.")
+
+
+@workitem_app.command("spawn", epilog="Example: specflo workitem spawn 3")
+def workitem_spawn(
+    item_id: int = typer.Argument(
+        ..., metavar="<id>", help="The work item's number; its dev path must be full."
+    ),
+    name: str = typer.Option(
+        None, "--name", metavar="<name>",
+        help="The project's name; the work item's title otherwise.",
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Spawn the one project a full-path work item gets, hosted beside it; it becomes active."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    try:
+        remote, items = _workitems(root, remote)
+        item = items.show(item_id)
+        if item.project is None:
+            # The slug must be free here too, so the checkout can record it
+            # hosted; an item that has its project is the daemon's to refuse.
+            slug = projects.slugify(item.title if name is None else name)
+            _service_for_new_project(root, cfg, slug, remote)
+        spawned = items.spawn(item_id, name=name)
+        config.record_hosted_project(root, spawned.project.slug, remote)
+        cfg.active_project = spawned.project.slug
+        config.save_config(root, cfg)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_index(root, cfg)
+    typer.echo(
+        f"Spawned project '{spawned.project.slug}' from work item {item_id} on remote"
+        f" '{remote}' (now active). Phase: {spawned.project.phase}."
+    )
+    typer.echo(
+        f"Scaffolded {_locator(spawned.project.slug, spawned.brainstorm)} (ready to work)."
+    )
 
 
 def build_cli():

@@ -47,6 +47,10 @@ class Project:
     summary: str = ""
     completed: str = ""
     execution: str = LINEAR_EXECUTION
+    # Set on a project spawned from a work item: the item, and the product
+    # piece it targets. A project made with `new` has neither.
+    work_item: int | None = None
+    piece: str = ""
 
 
 def slugify(name: str) -> str:
@@ -77,6 +81,8 @@ def create_project(
     created: str | None = None,
     summary: str | None = None,
     execution: str = LINEAR_EXECUTION,
+    work_item: int | None = None,
+    piece: str | None = None,
 ) -> Project:
     execution = validate_execution(execution)
     slug = slugify(name)
@@ -93,6 +99,8 @@ def create_project(
         path=directory,
         summary=summary or NEEDS_SUMMARY,
         execution=execution,
+        work_item=work_item,
+        piece=piece or "",
     )
     directory.mkdir(parents=True)
     (directory / PROJECT_FILENAME).write_text(_render(project))
@@ -115,6 +123,8 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         summary=str(fields.get("summary", "") or ""),
         completed=str(fields.get("completed", "") or ""),
         execution=str(fields.get("execution") or LINEAR_EXECUTION),
+        work_item=int(fields["work_item"]) if fields.get("work_item") is not None else None,
+        piece=str(fields.get("piece", "") or ""),
     )
 
 
@@ -297,6 +307,10 @@ def _render(project: Project) -> str:
     }
     # Optional fields appear only once they hold something, so a project file
     # written before they existed does not sprout empty keys on rewrite.
+    if project.work_item is not None:
+        fields["work_item"] = project.work_item
+    if project.piece:
+        fields["piece"] = project.piece
     if project.summary:
         fields["summary"] = project.summary
     if project.completed:

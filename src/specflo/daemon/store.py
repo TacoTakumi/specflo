@@ -48,6 +48,7 @@ class WorkItem:
     status: str
     created: str
     piece: str | None = None
+    project: str | None = None
 
 
 class Conflict(Exception):
@@ -87,6 +88,9 @@ class Store(Protocol):
     def set_work_item_status(self, item_id: int, status: str) -> WorkItem | None:
         """Replace the status of ``item_id``; the updated item, or None if unknown."""
 
+    def set_work_item_project(self, item_id: int, slug: str) -> WorkItem | None:
+        """Record ``slug`` as the project of ``item_id``; the updated item, or None if unknown."""
+
     def add_piece(self, product: str, name: str) -> None:
         """Declare piece ``name`` on ``product``; raises :class:`Conflict` if declared."""
 
@@ -121,7 +125,8 @@ CREATE TABLE IF NOT EXISTS work_items (
     dev_path TEXT NOT NULL,
     status   TEXT NOT NULL,
     created  TEXT NOT NULL,
-    piece    TEXT
+    piece    TEXT,
+    project  TEXT
 );
 CREATE TABLE IF NOT EXISTS pieces (
     product TEXT NOT NULL REFERENCES products(slug),
@@ -133,9 +138,9 @@ CREATE TABLE IF NOT EXISTS pieces (
 # Columns added after their table's first shape, as (table, column, type):
 # CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a store
 # opened from before the column gains it here.
-ADDED_COLUMNS = (("work_items", "piece", "TEXT"),)
+ADDED_COLUMNS = (("work_items", "piece", "TEXT"), ("work_items", "project", "TEXT"))
 
-_WORK_ITEM_COLUMNS = "id, product, title, kind, issue, dev_path, status, created, piece"
+_WORK_ITEM_COLUMNS = "id, product, title, kind, issue, dev_path, status, created, piece, project"
 
 
 class SqliteStore:
@@ -187,11 +192,11 @@ class SqliteStore:
         with self.connection:
             cursor = self.connection.execute(
                 "INSERT INTO work_items"
-                " (product, title, kind, issue, dev_path, status, created, piece)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                " (product, title, kind, issue, dev_path, status, created, piece, project)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.product, item.title, item.kind, item.issue,
-                    item.dev_path, item.status, item.created, item.piece,
+                    item.dev_path, item.status, item.created, item.piece, item.project,
                 ),
             )
         return dataclasses.replace(item, id=cursor.lastrowid)
@@ -224,6 +229,13 @@ class SqliteStore:
         with self.connection:
             changed = self.connection.execute(
                 "UPDATE work_items SET status = ? WHERE id = ?", (status, item_id)
+            ).rowcount
+        return self.get_work_item(item_id) if changed else None
+
+    def set_work_item_project(self, item_id: int, slug: str) -> WorkItem | None:
+        with self.connection:
+            changed = self.connection.execute(
+                "UPDATE work_items SET project = ? WHERE id = ?", (slug, item_id)
             ).rowcount
         return self.get_work_item(item_id) if changed else None
 

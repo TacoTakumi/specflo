@@ -8,6 +8,10 @@ its work is its own business. The dev path is not: it names how the item gets bu
 full specflo project, one prompt, or a cyclical handoff) and anything else
 is refused. Status is a fixed set too, so a backlog can be filtered by it.
 
+A full-path item spawns exactly one specflo project, hosted on the daemon
+beside it: the project's front matter records the item, and the item
+records the project's slug, so a second spawn is refused by name.
+
 Like products, work items live in the daemon's state store and the verbs
 run where the store is: :class:`WorkItems` in-process behind the daemon's
 routes, :class:`RemoteWorkItems` over HTTP from a CLI client.
@@ -15,10 +19,14 @@ routes, :class:`RemoteWorkItems` over HTTP from a CLI client.
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
+from pathlib import Path
 
 from ..errors import SpecfloError
+from ..projects import Project
 from ..service import wire
+from ..service.protocol import ProjectService
 from .products import DaemonClient, Products
 from .store import Store, WorkItem
 
@@ -28,8 +36,18 @@ KINDS = ("fix", "roadmap", "idea", "issue")
 DEV_PATHS = ("full", "one-prompt", "cyclical")
 STATUSES = ("open", "in-progress", "done", "dropped")
 DEFAULT_KIND = KINDS[0]
-DEFAULT_DEV_PATH = DEV_PATHS[0]
+FULL_DEV_PATH = DEV_PATHS[0]
+DEFAULT_DEV_PATH = FULL_DEV_PATH
 DEFAULT_STATUS = STATUSES[0]
+
+
+@dataclasses.dataclass(frozen=True)
+class Spawned:
+    """What a spawn made: the item as it now reads, the project, and its first artifact."""
+
+    item: WorkItem
+    project: Project
+    brainstorm: Path
 
 
 def validate_dev_path(dev_path: str) -> str:
@@ -131,6 +149,39 @@ class WorkItems:
             raise SpecfloError(_unknown(item_id))
         return item
 
+    def spawn(
+        self, item_id: int, service: ProjectService, *, name: str | None = None
+    ) -> Spawned:
+        """Create the one project a full-path item gets, on ``service``, linked both ways.
+
+        The project takes the item's title as its name unless ``name`` says
+        otherwise and as its summary either way, and records the item and the
+        piece it targets; the item records the project's slug. Refuses an
+        item on another dev path and one that already has its project.
+        """
+        item = self.show(item_id)
+        if item.dev_path != FULL_DEV_PATH:
+            raise SpecfloError(
+                f"Work item {item.id} has dev path {item.dev_path!r}; only a"
+                f" {FULL_DEV_PATH!r} item spawns a project."
+            )
+        if item.project is not None:
+            raise SpecfloError(
+                f"Work item {item.id} already spawned project {item.project!r}."
+            )
+        project = service.create_project(
+            item.title if name is None else name,
+            summary=item.title,
+            work_item=item.id,
+            piece=item.piece,
+        )
+        brainstorm, _ = service.start_brainstorm(project.slug)
+        service.write_checkpoint(project.slug)
+        item = self.store.set_work_item_project(item.id, project.slug)
+        if item is None:
+            raise SpecfloError(_unknown(item_id))
+        return Spawned(item=item, project=project, brainstorm=brainstorm)
+
 
 def _unknown(item_id: int) -> str:
     return f"No work item {item_id}. Run `specflo workitem list` to see the ones there are."
@@ -178,6 +229,11 @@ class RemoteWorkItems(DaemonClient):
         return self._item(
             self._request("PUT", f"{WORK_ITEMS_PATH}/{item_id}/status", json={"status": status})
         )
+
+    def spawn(self, item_id: int, *, name: str | None = None) -> Spawned:
+        body = {} if name is None else {"name": name}
+        encoded = self._request("POST", f"{WORK_ITEMS_PATH}/{item_id}/spawn", json=body)
+        return wire.decode(encoded, Spawned)
 
     @staticmethod
     def _item(encoded) -> WorkItem:

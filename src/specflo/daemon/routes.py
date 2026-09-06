@@ -340,3 +340,22 @@ def workitem_set_status(
             raise _refused(exc)
         _audit(root, identity, "workitem_set_status", None, str(item_id))
     return {"result": wire.encode(item)}
+
+
+@router.post(WORK_ITEMS_PATH + "/{item_id}/spawn")
+def workitem_spawn(
+    request: Request,
+    item_id: int,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=(), optional=("name",))
+    root = request.app.state.root
+    service = LocalProjectService(root, load_config(root), actor=identity)
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            spawned = WorkItems(store).spawn(item_id, service, name=fields.get("name"))
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
+    return {"result": wire.encode(spawned)}

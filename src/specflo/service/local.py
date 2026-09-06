@@ -51,9 +51,12 @@ class LocalProjectService:
         *,
         summary: str | None = None,
         execution: str = LINEAR_EXECUTION,
+        work_item: int | None = None,
+        piece: str | None = None,
     ) -> Project:
         return projects.create_project(
-            self.root, self.cfg, name, summary=summary, execution=execution
+            self.root, self.cfg, name, summary=summary, execution=execution,
+            work_item=work_item, piece=piece,
         )
 
     def load_project(self, slug: str) -> Project:

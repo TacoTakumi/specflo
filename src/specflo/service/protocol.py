@@ -41,8 +41,13 @@ class ProjectService(Protocol):
         *,
         summary: str | None = None,
         execution: str = LINEAR_EXECUTION,
+        work_item: int | None = None,
+        piece: str | None = None,
     ) -> Project:
-        """Create the project container; the caller moves the active pointer."""
+        """Create the project container; the caller moves the active pointer.
+
+        ``work_item`` and ``piece`` record what a spawned project came from.
+        """
         ...
 
     def load_project(self, slug: str) -> Project:

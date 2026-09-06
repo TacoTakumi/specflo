@@ -98,6 +98,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   piece a work item targets cannot be removed until the item is
   retargeted. Served at `/api/products/<slug>/pieces` behind the token
   guard, with the actor of every declaration and removal recorded.
+- **`specflo workitem spawn <id>`** - the one specflo project a full-path
+  work item gets, created as a hosted project on the daemon that holds the
+  item and made active in the checkout, as `new --remote` would. The
+  project's front matter records `work_item` (and `piece` when the item
+  targets one) and the item records the project's slug; `--name` picks the
+  project's name, the item's title otherwise. A second spawn is refused
+  naming the project, and an item on any other dev path is refused.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,
