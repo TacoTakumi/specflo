@@ -112,8 +112,8 @@ def test_start_with_an_open_round_reuses_it_and_mints_nothing(tmp_path, monkeypa
     result = runner.invoke(app, ["review", "start"])
 
     assert result.exit_code == 0, result.output
-    # REQ-03 wants the round carried with a note that it is already open. The
-    # line is the locator plus the note, so no path can smuggle "open" in.
+    # The round is carried with a note that it is already open. The line is
+    # the locator plus the note, so no path can smuggle "open" in.
     assert result.output.strip() == "thing/review-2 (already open)"
     assert str(still_open) not in result.output
     assert not (project_dir / "review-3.md").exists()

@@ -109,7 +109,7 @@ def test_new_scaffolds_brainstorm(cwd):
 
 
 def test_new_output_names_brainstorm_locator(cwd):
-    """`new`'s output is self-sufficient: it names the scaffolded brainstorm (REQ-04)."""
+    """`new`'s output is self-sufficient: it names the scaffolded brainstorm."""
     runner.invoke(app, ["init"])
     result = runner.invoke(app, ["new", "My Thing"])
     assert result.exit_code == 0
@@ -1046,6 +1046,25 @@ def test_advance_json_includes_the_checkpoint_path(cwd):
     data = json.loads(runner.invoke(app, ["advance", "--json"]).output)
     assert data["advanced"] is True
     assert data["checkpoint"].endswith("checkpoint.md")
+    assert data["checkpoint_locator"] == "my-thing/checkpoint"
+
+
+def test_advance_and_reopen_name_the_checkpoint_by_locator_not_path(cwd):
+    # The human line reads the same wherever the project's files live; the
+    # path stays a --json field for a project in this checkout.
+    _ready_brainstorm(cwd)
+    advanced = runner.invoke(app, ["advance"]).output
+    assert "Checkpoint saved: my-thing/checkpoint" in advanced
+    assert "checkpoint.md" not in advanced
+
+    reopened = runner.invoke(app, ["reopen"])
+    assert reopened.exit_code == 0, reopened.output
+    assert "Checkpoint saved: my-thing/checkpoint" in reopened.output
+    assert "checkpoint.md" not in reopened.output
+    data = json.loads(runner.invoke(app, ["advance", "--json"]).output)
+    reopened_data = json.loads(runner.invoke(app, ["reopen", "--json"]).output)
+    assert reopened_data["checkpoint"].endswith("checkpoint.md")
+    assert reopened_data["checkpoint_locator"] == data["checkpoint_locator"] == "my-thing/checkpoint"
 
 
 def test_status_points_to_the_checkpoint_for_humans(cwd):

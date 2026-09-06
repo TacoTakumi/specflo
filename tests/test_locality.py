@@ -219,3 +219,44 @@ def test_index_and_the_projects_dir_guard_read_the_checkout_only(checkout, live_
     assert result.exit_code == 0, result.output
     assert "(1 project)" in result.output
     assert not (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "specflo-index.md").exists()
+
+
+def test_a_hosted_advance_names_the_checkpoint_by_locator_and_carries_no_path(
+    checkout, live_daemon
+):
+    runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
+    runner.invoke(app, ["brainstorm", "start"])
+    runner.invoke(app, ["decision", "add", "--text", "one", "--rationale", "why"])
+    runner.invoke(
+        app, ["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], input="No auth.\n"
+    )
+
+    advanced = runner.invoke(app, ["advance"])
+
+    assert advanced.exit_code == 0, advanced.output
+    assert "Checkpoint saved: hosted-thing/checkpoint" in advanced.output
+    assert str(live_daemon["root"]) not in advanced.output
+    reopened = json.loads(runner.invoke(app, ["reopen", "--json"]).output)
+    assert reopened["checkpoint"] is None
+    assert reopened["checkpoint_locator"] == "hosted-thing/checkpoint"
+    assert str(live_daemon["root"]) not in json.dumps(reopened)
+
+
+def test_list_opens_one_client_per_remote(checkout, live_daemon, monkeypatch):
+    from specflo import cli as cli_module
+
+    runner.invoke(app, ["new", "Alpha", "--remote", "home"])
+    runner.invoke(app, ["new", "Bravo", "--remote", "home"])
+    opened = []
+    real = cli_module.remote_service
+
+    def counting(root, name, **kwargs):
+        opened.append(name)
+        return real(root, name, **kwargs)
+
+    monkeypatch.setattr(cli_module, "remote_service", counting)
+
+    result = runner.invoke(app, ["list"])
+
+    assert result.exit_code == 0, result.output
+    assert opened == ["home"]

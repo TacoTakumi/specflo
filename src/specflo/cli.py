@@ -261,6 +261,19 @@ def _locator(slug: str, path: Path) -> str:
     return f"{slug}/{path.stem}"
 
 
+def _checkpoint_report(root: Path, slug: str, path: Path) -> tuple[str, str | None]:
+    """How a command reports the checkpoint it just wrote: its locator, then its path.
+
+    The human line carries the locator, so it reads the same for a project in
+    this checkout and one held by a daemon. ``--json`` keeps the display path
+    for a project in this checkout; a hosted project's files are the daemon's,
+    so its path is None rather than a directory on another machine.
+    """
+    if config.hosting_remote(root, slug) is not None:
+        return _locator(slug, path), None
+    return _locator(slug, path), config.display_path(path, root)
+
+
 def _directory_override(ctx: click.Context) -> dict | None:
     """The ``-C``/``SPECFLO_DIRECTORY`` override recorded by the app callback, if any."""
     obj = ctx.find_root().obj
@@ -531,10 +544,13 @@ def list_(
     # A hosted project is listed from its daemon; one whose daemon cannot be
     # reached is still listed, with the reason on stderr, so the listing never
     # fails on account of one remote.
+    services: dict[str, ProjectService] = {}
     for slug, remote in config.hosted_projects(root).items():
         row = {"slug": slug, "project": None, "locality": "hosted", "remote": remote, "error": None}
         try:
-            row["project"] = remote_service(root, remote).load_project(slug)
+            if remote not in services:
+                services[remote] = remote_service(root, remote)
+            row["project"] = services[remote].load_project(slug)
         except SpecfloError as exc:
             row["error"] = str(exc)
         rows.append(row)
@@ -1214,7 +1230,7 @@ def advance(
         updated = svc.complete_project(slug)
         svc.stamp_banners(slug)
         _refresh_index(root, cfg)
-        cp_display = config.display_path(svc.write_checkpoint(slug), root)
+        cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
         # and the prose carry the identical text (REQ-12).
@@ -1226,14 +1242,15 @@ def advance(
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
-                 "complete": True, "checkpoint": cp_display, "continuation": cont}))
+                 "complete": True, "checkpoint": cp_path,
+                 "checkpoint_locator": cp_locator, "continuation": cont}))
         else:
             typer.echo(f"Completed project '{slug}'.")
             typer.echo(
                 'Revise the summary to describe what shipped:'
                 ' `specflo summary "<one line>"`.'
             )
-            typer.echo(f"Checkpoint saved: {cp_display}")
+            typer.echo(f"Checkpoint saved: {cp_locator}")
             typer.echo(cont)
         return
 
@@ -1259,7 +1276,7 @@ def advance(
         raise _die(str(exc))
 
     _refresh_index(root, cfg)
-    cp_display = config.display_path(svc.write_checkpoint(slug), root)
+    cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
     # execute names the first actionable task). Non-task targets keep the static
@@ -1276,11 +1293,11 @@ def advance(
     if json_output:
         typer.echo(json.dumps(
             {"advanced": True, "from": from_phase, "to": updated.phase,
-             "next_step": next_step, "checkpoint": cp_display,
-             "continuation": cont}))
+             "next_step": next_step, "checkpoint": cp_path,
+             "checkpoint_locator": cp_locator, "continuation": cont}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
-        typer.echo(f"Checkpoint saved: {cp_display}")
+        typer.echo(f"Checkpoint saved: {cp_locator}")
         typer.echo(cont)
 
 
@@ -1343,24 +1360,24 @@ def reopen(
         raise _die(str(exc))
 
     stale = _stale_downstream_artifacts(svc, updated)
-    cp_display = config.display_path(svc.write_checkpoint(slug), root)
+    cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
     if json_output:
         typer.echo(json.dumps(
             {"reopened": True, "from": from_phase, "to": updated.phase,
-             "stale": stale, "checkpoint": cp_display}))
+             "stale": stale, "checkpoint": cp_path, "checkpoint_locator": cp_locator}))
     else:
         typer.echo(f"Reopened '{slug}' from {from_phase} to {updated.phase}.")
         if stale:
             typer.echo("Possibly stale downstream artifacts (unchanged on disk):")
             for name in stale:
                 typer.echo(f"  - {name}")
-        typer.echo(f"Checkpoint saved: {cp_display}")
+        typer.echo(f"Checkpoint saved: {cp_locator}")
         # Reopening is a clear-point too, and has been since before the shared
         # builder existed. It routes through the builder so no seam keeps its own
         # copy of the wording (REQ-04, D-06). The clear-point stays unconditional,
         # as it was before that rewiring: if the next step can't be derived, fall
         # back to the clear-point alone rather than emitting nothing (REQ-10).
-        cont = _seam_continuation(svc, slug)
+        cont = _seam_continuation(svc, slug, root)
         typer.echo(cont["continuation"] or continuation.clear_point_only())
 
 
@@ -1681,10 +1698,10 @@ def task_note(
 # The continuation fields a seam contributes to its `--json`. Always present, so
 # a harness can rely on the keys existing even when the values could not be
 # derived (REQ-12); `None` says "underivable", never "absent".
-_CONTINUATION_KEYS = ("next_step", "checkpoint", "continuation")
+_CONTINUATION_KEYS = ("next_step", "checkpoint", "checkpoint_locator", "continuation")
 
 
-def _seam_continuation(svc: ProjectService, slug: str) -> dict:
+def _seam_continuation(svc: ProjectService, slug: str, root: Path) -> dict:
     """The continuation fields for a seam that has already mutated state.
 
     Used by `task done` and `reopen` — the seams whose next step is best derived
@@ -1714,9 +1731,11 @@ def _seam_continuation(svc: ProjectService, slug: str) -> dict:
         payload = svc.build_checkpoint(slug)
         # Inside the guard: reading the payload and rendering must be covered too,
         # or the "never fail the caller" guarantee would be narrower than stated.
+        hosted = config.hosting_remote(root, slug) is not None
         return {
             "next_step": payload["do_next"],
-            "checkpoint": payload["path"],
+            "checkpoint": None if hosted else payload["path"],
+            "checkpoint_locator": _locator(slug, Path(payload["path"])),
             "continuation": continuation.build_continuation(
                 payload["phase"], payload["do_next"]
             ),
@@ -1788,7 +1807,7 @@ def task_done(
     _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
-    cont = _seam_continuation(svc, slug)
+    cont = _seam_continuation(svc, slug, root)
     _report_transition(task, json_output, extra=cont)
     if not json_output:
         if cont["continuation"] is None:
@@ -1797,7 +1816,7 @@ def task_done(
             # prose for the marker never silently stops resuming (REQ-01).
             typer.echo(continuation.clear_point_only())
         else:
-            typer.echo(f"Checkpoint saved: {cont['checkpoint']}")
+            typer.echo(f"Checkpoint saved: {cont['checkpoint_locator']}")
             typer.echo(cont["continuation"])
 
 

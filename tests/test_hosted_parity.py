@@ -77,13 +77,16 @@ def _normalize(text: str, project_dirs: list[str]) -> str:
     return re.sub(r"^- Actor: .*\n", "", text, flags=re.MULTILINE)
 
 
-def _run(checkout: Path, project_dirs: list[str], new_args: list[str]):
+def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list | None = None):
     """Create the project with ``new_args`` and drive the pipeline; returns the
-    exit code and normalized stdout of every step, the creation first."""
+    exit code and normalized stdout of every step, the creation first.
+    ``raw`` collects each step's stdout before normalization when given."""
     ids = {}
     results = []
     result = runner.invoke(app, ["new", "Parity Thing", "--summary", "One line", *new_args])
     results.append((result.exit_code, _normalize(result.stdout, project_dirs)))
+    if raw is not None:
+        raw.append((["new"], result.stdout))
     for args, stdin in _pipeline():
         resolved = [arg(ids) if callable(arg) else arg for arg in args]
         result = runner.invoke(app, resolved, input=stdin)
@@ -94,6 +97,8 @@ def _run(checkout: Path, project_dirs: list[str], new_args: list[str]):
         elif resolved[:2] == ["task", "add"]:
             ids["task"] = _recorded_id(result.stdout)
         results.append((resolved, result.exit_code, _normalize(result.stdout, project_dirs)))
+        if raw is not None:
+            raw.append((resolved, result.stdout))
     return results
 
 
@@ -118,9 +123,17 @@ def hosted_run(tmp_path, monkeypatch, live_daemon):
     )
     assert registered.exit_code == 0, registered.output
     project_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG
-    results = _run(checkout, [str(project_dir), f"projects/{SLUG}"], ["--remote", "home"])
+    raw = []
+    results = _run(checkout, [str(project_dir), f"projects/{SLUG}"], ["--remote", "home"], raw)
     assert not list((checkout / "docs" / "projects").glob(f"{SLUG}*"))
     assert (project_dir / "checkpoint.md").is_file()
+    # The daemon's directory layout is the daemon's business: no command names
+    # it on the client, the one exception being the Dir line of status, which
+    # says where the project lives on purpose. Everything else the normalizer
+    # above is allowed to fold is a locator already.
+    for args, stdout in raw:
+        if args[:1] != ["status"]:
+            assert str(project_dir) not in stdout, f"{' '.join(args)} names the daemon dir:\n{stdout}"
     return results
 
 
@@ -146,6 +159,6 @@ def test_the_scenario_reaches_completion_and_prints_every_seam(local_run):
         "Advanced 'parity-thing' from plan to execute.",
         "parity-thing/review-1 closed ready-to-merge",
         "Completed project 'parity-thing'.",
-        "Checkpoint saved: <project>/checkpoint.md",
+        "Checkpoint saved: parity-thing/checkpoint",
     ):
         assert expected in outputs, expected
