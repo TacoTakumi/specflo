@@ -24,6 +24,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   otherwise, and answers `200` on `/health`. The web stack ships as the
   `serve` extra (`pip install 'specflo[serve]'`); `httpx`, the client side,
   is a core dependency so every install can talk to a daemon.
+- **`specflo serve --root <dir> token add <requester|developer>`** - mint
+  a bearer token bound to one of the daemon's two identities. The secret
+  prints once on stdout; the daemon keeps only its SHA-256 hash in
+  `tokens.json` under its root. Every daemon request except `/health`
+  must carry a valid token: none or an unknown one gets `401`, a valid one
+  reaches the route as its identity (`/whoami` reports it). Any identity
+  other than the two is refused.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is

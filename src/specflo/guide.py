@@ -100,6 +100,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Install the bundled pi extension into pi's extension directory."},
     {"name": "serve", "group": "setup", "args": "--root <dir>",
      "summary": "Run the daemon that hosts projects for CLI clients (serve extra)."},
+    {"name": "serve token add", "group": "setup", "args": "--root <dir> ... <requester|developer>",
+     "summary": "Mint a daemon bearer token for one identity; the secret prints once."},
     {"name": "brainstorm start", "group": "workflow", "args": "",
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",

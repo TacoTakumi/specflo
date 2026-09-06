@@ -10,7 +10,8 @@ from pathlib import Path
 
 import typer
 
-from . import DEFAULT_BIND, DEFAULT_PORT
+from ..errors import SpecfloError
+from . import DEFAULT_BIND, DEFAULT_PORT, auth, prepare_root
 
 SERVE_EXTRA_HINT = (
     "specflo serve needs the web stack: install the serve extra with"
@@ -21,6 +22,9 @@ serve_app = typer.Typer(
     invoke_without_command=True,
     help="Run the specflo daemon: host projects for CLI clients over HTTP.",
 )
+
+token_app = typer.Typer(help="Mint the bearer tokens clients present to the daemon.")
+serve_app.add_typer(token_app, name="token")
 
 
 @serve_app.callback(epilog="Example: specflo serve --root ~/specflo-daemon --port 8741")
@@ -53,3 +57,29 @@ def serve(
     application = create_app(root)
     typer.echo(f"specflo daemon: root {root}, listening on http://{bind}:{port}")
     uvicorn.run(application, host=bind, port=port)
+
+
+@token_app.command(
+    "add",
+    epilog="Example: specflo serve --root ~/specflo-daemon token add requester",
+)
+def token_add(
+    ctx: typer.Context,
+    identity: str = typer.Argument(
+        ...,
+        metavar="<requester|developer>",
+        help="The identity the token is bound to.",
+    ),
+) -> None:
+    """Mint a token for <identity>: the secret prints once, only its hash is kept."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        secret = auth.mint_token(root, identity)
+    except SpecfloError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    typer.echo(secret)
+    typer.secho(
+        f"Minted a {identity} token for {root}; it is shown once, store it now.",
+        err=True,
+    )
