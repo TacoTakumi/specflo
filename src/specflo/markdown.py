@@ -32,13 +32,14 @@ def strip_comments(text: str) -> str:
     return re.sub(r"<!--.*?-->", "", text, flags=re.DOTALL)
 
 
-def section_body(doc: str, header: str) -> str | None:
-    """Return the text under *header*, or None if the header is absent.
+def _section_span(doc: str, header: str) -> tuple[int, int] | None:
+    """The ``(header_line, end_line)`` span of *header*'s section, or None.
 
     Level-aware: the section ends at the next ATX header whose level is less than
     or equal to *header*'s level (so an ``## H2`` section spans its ``### H3``
     children, while an ``### H3`` stops at a sibling ``### H3`` or the next
-    ``## H2``). Fence-aware: headers inside code fences are ignored.
+    ``## H2``). Fence-aware: headers inside code fences are ignored. ``end_line``
+    is the index of the next header line, or the line count at end of document.
     """
     header = header.strip()
     level = len(header) - len(header.lstrip("#"))
@@ -60,7 +61,49 @@ def section_body(doc: str, header: str) -> str | None:
             if hashes <= level and stripped[hashes : hashes + 1] == " ":
                 end = i
                 break
-    return "".join(lines[start + 1 : end])
+    return start, end
+
+
+def section_body(doc: str, header: str) -> str | None:
+    """Return the text under *header*, or None if the header is absent.
+
+    Level- and fence-aware; see :func:`_section_span` for the section's extent.
+    """
+    span = _section_span(doc, header)
+    if span is None:
+        return None
+    start, end = span
+    return "".join(doc.splitlines(keepends=True)[start + 1 : end])
+
+
+def replace_section_body(doc: str, header: str, body: str) -> str:
+    """Return *doc* with the text under *header* replaced by *body*.
+
+    The header line stays; every byte outside the section stays. The new body
+    is laid out as one blank line, the text, and a blank line before the next
+    header (none at end of document). Level- and fence-aware like
+    :func:`section_body`. Raises ValueError if *header* is absent.
+    """
+    span = _section_span(doc, header)
+    if span is None:
+        raise ValueError(f"section {header.strip()!r} not found")
+    start, end = span
+    lines = doc.splitlines(keepends=True)
+    header_line = lines[start]
+    if not header_line.endswith("\n"):
+        header_line += "\n"
+    separator = "\n" if end < len(lines) else ""
+    new_section = header_line + "\n" + body.strip("\n") + "\n" + separator
+    return "".join(lines[:start]) + new_section + "".join(lines[end:])
+
+
+def section_headers(doc: str) -> list[str]:
+    """Every ATX header line outside code fences, in document order, stripped."""
+    return [
+        line.strip()
+        for _, line, in_fence in iter_lines_with_fence(doc)
+        if not in_fence and line.startswith("#")
+    ]
 
 
 def append_to_section(doc: str, header: str, entry: str) -> str:

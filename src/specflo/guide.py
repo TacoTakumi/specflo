@@ -155,6 +155,9 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "doc show", "group": "workflow", "args": "<artifact>",
      "summary": "Print an artifact of the active project verbatim "
                 "(brainstorm|spec|plan|checkpoint|project)."},
+    {"name": "section set", "group": "workflow", "args": "<artifact> <section>",
+     "summary": "Replace one prose section's body from --file or --stdin "
+                "(managed sections refused)."},
     {"name": "agent start", "group": "agents", "args": "<name>",
      "summary": "Start a detached pi agent host in a herdr tab when available "
                 "(--cwd, --pi-cmd, --workspace, --no-herdr)."},

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import sys
 from pathlib import Path
 
 import click
@@ -182,6 +183,9 @@ app.add_typer(review_app, name="review")
 
 doc_app = typer.Typer(help="Read the active project's artifacts by name.")
 app.add_typer(doc_app, name="doc")
+
+section_app = typer.Typer(help="Write one prose section of an artifact.")
+app.add_typer(section_app, name="section")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
@@ -1966,6 +1970,37 @@ def doc_show(
         raise _die(str(exc))
     # Verbatim: the document's own bytes, no added trailing newline.
     typer.echo(text, nl=False)
+
+
+@section_app.command(
+    "set",
+    epilog='Example: specflo section set brainstorm "Current understanding" --file synthesis.md',
+)
+def section_set(
+    artifact: str = typer.Argument(
+        ..., metavar="<artifact>",
+        help="One of: " + ", ".join(doc_module.PROSE_ARTIFACTS) + ".",
+    ),
+    section: str = typer.Argument(
+        ..., metavar="<section>",
+        help='The section title, e.g. "Current understanding" or "In scope".',
+    ),
+    file: str = typer.Option(
+        None, "--file", metavar="<path>", help="Read the new body from this file."
+    ),
+    stdin: bool = typer.Option(False, "--stdin", help="Read the new body from stdin."),
+) -> None:
+    """Replace one prose section's body; managed sections keep their own verbs."""
+    if (file is None) == (not stdin):
+        raise _die("Give the new body with --file <path> or --stdin (exactly one).")
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    body = sys.stdin.read() if stdin else Path(file).read_text()
+    try:
+        title = doc_module.set_section(root, cfg, slug, artifact, section, body)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(root, cfg, slug)
+    typer.echo(f"Set '{title}' in {slug}/{artifact}.")
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")

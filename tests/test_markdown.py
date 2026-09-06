@@ -179,3 +179,54 @@ def test_set_entry_title_rewrites_the_real_heading_not_a_fenced_one():
 def test_set_entry_title_raises_for_an_unknown_entry():
     with pytest.raises(StopIteration):
         markdown.set_entry_title(_ENTRY, "T-99", "x")
+
+
+_PROSE = (
+    "---\nupdated: 2026-01-01\n---\n\n"
+    "## Current understanding\n"
+    "<!-- rewritten as it converges -->\n\n"
+    "old text\n\n"
+    "## Research\n\n"
+    "```\n## Decisions\nfenced, not a header\n```\n\n"
+    "## Decisions\n\n"
+    "### D-01 — keep it\n- Status: active\n"
+)
+
+
+def test_replace_section_body_swaps_one_body_and_keeps_the_rest_byte_identical():
+    out = markdown.replace_section_body(_PROSE, "## Current understanding", "new text\n")
+    assert markdown.section_body(out, "## Current understanding") == "\nnew text\n\n"
+    # the header itself survives, and everything from the next header on is untouched
+    assert out.startswith("---\nupdated: 2026-01-01\n---\n\n## Current understanding\n")
+    tail = out[out.index("## Research"):]
+    assert tail == _PROSE[_PROSE.index("## Research"):]
+
+
+def test_replace_section_body_is_fence_aware():
+    # the fenced '## Decisions' line is not a header: the real section is the later one
+    out = markdown.replace_section_body(_PROSE, "## Research", "found things\n")
+    assert "```\n## Decisions\nfenced, not a header\n```" not in out
+    assert markdown.section_body(out, "## Decisions") == "\n### D-01 — keep it\n- Status: active\n"
+
+
+def test_replace_section_body_is_level_aware():
+    doc = (
+        "## Boundaries\n"
+        "### In scope\n- the CLI\n"
+        "### Out of scope\n- the GUI\n"
+        "## Open questions\nnone\n"
+    )
+    out = markdown.replace_section_body(doc, "### In scope", "- everything\n")
+    assert markdown.section_body(out, "### In scope") == "\n- everything\n\n"
+    assert markdown.section_body(out, "### Out of scope") == "- the GUI\n"
+    assert out.endswith("## Open questions\nnone\n")
+
+
+def test_replace_section_body_at_end_of_document_adds_no_trailing_blank():
+    doc = "## Only\nold\n"
+    assert markdown.replace_section_body(doc, "## Only", "new") == "## Only\n\nnew\n"
+
+
+def test_replace_section_body_raises_for_an_absent_header():
+    with pytest.raises(ValueError):
+        markdown.replace_section_body(_PROSE, "## Missing", "x")

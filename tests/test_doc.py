@@ -129,3 +129,185 @@ def test_doc_show_needs_an_active_project(tmp_path, monkeypatch):
     result = runner.invoke(app, ["doc", "show", "project"])
 
     assert result.exit_code != 0
+
+
+# --- section set ---------------------------------------------------------
+
+
+def _brainstorm_with_decisions(tmp_path, monkeypatch):
+    """An active 'Thing' whose brainstorm carries three decisions."""
+    from specflo import brainstorm
+
+    _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    brainstorm.start_brainstorm(tmp_path, cfg, "thing", today="2026-09-06")
+    for text in ("first", "second", "third"):
+        brainstorm.add_decision(tmp_path, cfg, "thing", text, today="2026-09-06")
+    return cfg, tmp_path / "docs" / "projects" / "thing" / "brainstorm.md"
+
+
+def test_set_section_replaces_one_body_and_keeps_every_decision(tmp_path, monkeypatch):
+    from specflo import markdown
+
+    cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+
+    doc.set_section(tmp_path, cfg, "thing", "brainstorm", "Current understanding",
+                    "The converged synthesis.\n", today="2026-09-07")
+
+    after = path.read_text()
+    assert "## Current understanding\n" in after
+    assert markdown.section_body(after, "## Current understanding") == "\nThe converged synthesis.\n\n"
+    assert markdown.section_body(after, "## Decisions") == markdown.section_body(before, "## Decisions")
+    # everything from the next header on is byte-identical
+    assert after[after.index("## Research"):] == before[before.index("## Research"):]
+    assert "updated: 2026-09-07" in after
+    assert "updated: 2026-09-06" not in after
+
+
+def test_set_section_accepts_the_header_with_its_hashes(tmp_path, monkeypatch):
+    cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+
+    doc.set_section(tmp_path, cfg, "thing", "brainstorm", "## Open questions", "none\n")
+
+    assert "## Open questions\n\nnone\n" in path.read_text()
+
+
+def test_set_section_targets_a_subsection_without_touching_its_sibling(tmp_path, monkeypatch):
+    from specflo import markdown, spec
+
+    _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    spec.start_spec(tmp_path, cfg, "thing", today="2026-09-06")
+    path = tmp_path / "docs" / "projects" / "thing" / "spec.md"
+    before = path.read_text()
+
+    doc.set_section(tmp_path, cfg, "thing", "spec", "In scope", "- the CLI\n")
+
+    after = path.read_text()
+    assert markdown.section_body(after, "### In scope") == "\n- the CLI\n\n"
+    assert markdown.section_body(after, "### Out of scope") == markdown.section_body(before, "### Out of scope")
+
+
+@pytest.mark.parametrize(
+    "section, verb",
+    [
+        ("Decisions", "decision add"),
+        ("Requirements", "requirement add"),
+        ("Tasks", "task add"),
+        ("Milestones", "milestone add"),
+        ("Pools", "pool add"),
+    ],
+)
+def test_set_section_refuses_managed_sections_naming_the_verb(tmp_path, monkeypatch, section, verb):
+    cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+
+    with pytest.raises(SpecfloError) as excinfo:
+        doc.set_section(tmp_path, cfg, "thing", "brainstorm", section, "x\n")
+
+    assert verb in str(excinfo.value)
+    assert path.read_text() == before
+
+
+def test_set_section_refuses_an_unknown_section_listing_the_prose_ones(tmp_path, monkeypatch):
+    cfg, _path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+
+    with pytest.raises(SpecfloError) as excinfo:
+        doc.set_section(tmp_path, cfg, "thing", "brainstorm", "Synthesis", "x\n")
+
+    message = str(excinfo.value)
+    assert "Synthesis" in message
+    assert "Current understanding" in message and "Open questions" in message
+    assert "Decisions" not in message
+
+
+@pytest.mark.parametrize("name", ["checkpoint", "project"])
+def test_set_section_refuses_artifacts_without_prose_sections(tmp_path, monkeypatch, name):
+    cfg, _path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+
+    with pytest.raises(SpecfloError) as excinfo:
+        doc.set_section(tmp_path, cfg, "thing", name, "Anything", "x\n")
+
+    assert name in str(excinfo.value)
+
+
+def test_set_section_refuses_a_missing_artifact(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+
+    with pytest.raises(SpecfloError):
+        doc.set_section(tmp_path, cfg, "thing", "spec", "Objective", "x\n")
+
+
+def test_section_set_from_a_file(tmp_path, monkeypatch):
+    from specflo import markdown
+
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    body = tmp_path / "synthesis.md"
+    body.write_text("From a file.\n")
+
+    result = runner.invoke(
+        app, ["section", "set", "brainstorm", "Current understanding", "--file", str(body)]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert markdown.section_body(path.read_text(), "## Current understanding") == "\nFrom a file.\n\n"
+    assert "thing/brainstorm" in result.output
+    assert str(path) not in result.output
+
+
+def test_section_set_from_stdin(tmp_path, monkeypatch):
+    from specflo import markdown
+
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+
+    result = runner.invoke(
+        app, ["section", "set", "brainstorm", "Research", "--stdin"], input="From stdin.\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert markdown.section_body(path.read_text(), "## Research") == "\nFrom stdin.\n\n"
+
+
+def test_section_set_needs_exactly_one_source(tmp_path, monkeypatch):
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+    body = tmp_path / "b.md"
+    body.write_text("x\n")
+
+    neither = runner.invoke(app, ["section", "set", "brainstorm", "Research"])
+    both = runner.invoke(
+        app, ["section", "set", "brainstorm", "Research", "--stdin", "--file", str(body)],
+        input="y\n",
+    )
+
+    assert neither.exit_code != 0
+    assert both.exit_code != 0
+    assert path.read_text() == before
+
+
+def test_section_set_refuses_a_managed_section_on_the_cli(tmp_path, monkeypatch):
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+
+    result = runner.invoke(
+        app, ["section", "set", "brainstorm", "Decisions", "--stdin"], input="x\n"
+    )
+
+    assert result.exit_code != 0
+    assert "decision add" in result.output
+    assert path.read_text() == before
+
+
+def test_section_set_refreshes_the_checkpoint(tmp_path, monkeypatch):
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    checkpoint_md = path.parent / "checkpoint.md"
+    checkpoint_md.unlink(missing_ok=True)
+
+    result = runner.invoke(
+        app, ["section", "set", "brainstorm", "Research", "--stdin"], input="x\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert checkpoint_md.is_file()
