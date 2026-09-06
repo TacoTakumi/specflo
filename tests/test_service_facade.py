@@ -250,3 +250,120 @@ def test_local_service_keeps_every_write_under_its_root(local, tmp_path):
         "docs/projects/thing/checkpoint.md",
         "docs/projects/thing/project.md",
     ]
+
+
+# --- the CLI performs artifact I/O only through the facade -----------------
+
+# The artifact modules, by the name the CLI imports each under, and the
+# members the CLI may still reach in them: constants, types, and pure
+# renderers that never touch a file. Everything else goes through the
+# service.
+_ARTIFACT_MODULE_ALLOWLIST = {
+    "projects": {"slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS"},
+    "brainstorm": {"BRAINSTORM_FILENAME"},
+    "spec": {"SPEC_FILENAME"},
+    "plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
+    "review_module": set(),
+    "checkpoint": {"render_checkpoint"},
+    "status_view": {"render_status"},
+    "doc_module": {"ARTIFACTS", "PROSE_ARTIFACTS"},
+    "index_module": set(),
+}
+
+# File primitives a command may not call on anything: an artifact path is
+# never in a command's hands, so there is nothing for these to act on.
+_FILE_PRIMITIVES = {"open", "write_text", "read_bytes", "write_bytes", "is_file", "exists", "mkdir", "unlink"}
+
+
+def _cli_tree():
+    import ast
+    import inspect
+
+    from specflo import cli
+
+    return ast.parse(inspect.getsource(cli)), cli
+
+
+def _locally_bound(fn) -> set[str]:
+    """The names a function binds itself: its parameters and every assignment
+    target. A local that shadows a module name is not that module."""
+    import ast
+
+    args = fn.args
+    bound = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+    bound |= {a.arg for a in (args.vararg, args.kwarg) if a is not None}
+    bound |= {
+        node.id
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store)
+    }
+    return bound
+
+
+def test_structural_cli_reaches_artifact_modules_only_for_pure_members():
+    import ast
+
+    tree, _ = _cli_tree()
+    offenders = []
+    for scope in ast.walk(tree):
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            shadowed = _locally_bound(scope)
+            nodes = ast.walk(scope)
+        elif scope is tree:
+            shadowed = set()
+            nodes = [n for n in ast.iter_child_nodes(tree)
+                     if not isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))]
+            nodes = [n for top in nodes for n in ast.walk(top)]
+        else:
+            continue
+        for node in nodes:
+            if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+                continue
+            base = node.value.id
+            if base in shadowed:
+                continue
+            allowed = _ARTIFACT_MODULE_ALLOWLIST.get(base)
+            if allowed is not None and node.attr not in allowed:
+                offenders.append(f"{base}.{node.attr} (line {node.lineno})")
+    assert offenders == []
+
+
+def test_structural_cli_never_touches_a_file_itself():
+    import ast
+
+    tree, _ = _cli_tree()
+    offenders = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and node.attr in _FILE_PRIMITIVES:
+            offenders.append(f".{node.attr} (line {node.lineno})")
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in _FILE_PRIMITIVES:
+            offenders.append(f"{node.func.id}() (line {node.lineno})")
+    assert offenders == []
+
+
+def test_structural_cli_reads_text_only_from_the_callers_own_file():
+    """``section set --file`` reads the caller's input file, never an artifact;
+    no other command reads text at all."""
+    import ast
+
+    tree, _ = _cli_tree()
+    readers = sorted({
+        fn.name
+        for fn in ast.walk(tree)
+        if isinstance(fn, ast.FunctionDef)
+        for node in ast.walk(fn)
+        if isinstance(node, ast.Attribute) and node.attr == "read_text"
+    })
+    assert readers == ["section_set"]
+
+
+def test_structural_cli_obtains_its_service_from_the_one_resolver():
+    from conftest import executable_identifiers
+
+    from specflo import cli
+    from specflo.service import resolve
+
+    code = executable_identifiers(cli)
+    assert "resolve_service" in code
+    assert "localprojectservice" not in code
+    assert "localprojectservice" in executable_identifiers(resolve)

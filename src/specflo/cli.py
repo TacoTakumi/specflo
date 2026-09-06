@@ -22,14 +22,14 @@ from . import auto as auto_module
 from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import doc as doc_module
 from . import graph as graph_module
-from . import index as index_module
-from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
 from .errors import SpecfloError
+from .service import ProjectService
+from .service.resolve import resolve_service
 from .validators import VALIDATORS
 
 
@@ -254,7 +254,7 @@ def _require_active(cfg: config.SpecfloConfig) -> str:
     return cfg.active_project
 
 
-def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
+def _refresh_checkpoint(svc: ProjectService, slug: str) -> None:
     """Best-effort: rewrite the active project's checkpoint.md after a mutation.
 
     The checkpoint is fully derived, so this is cheap and always current. It runs
@@ -264,13 +264,12 @@ def _refresh_checkpoint(root: Path, cfg: config.SpecfloConfig, slug: str) -> Non
     or a clobbered path) and move on.
     """
     try:
-        project = projects.load_project(root, cfg, slug)
-        checkpoint.write_checkpoint(root, project, cfg=cfg)
+        svc.write_checkpoint(slug)
     except Exception:
         pass
 
 
-def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
+def _refresh_index(svc: ProjectService) -> None:
     """Best-effort: regenerate specflo-index.md after a state change (REQ-03).
 
     A no-op until a first `specflo index` has created the file - adopting the
@@ -279,22 +278,24 @@ def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
     refresh error must never fail the command.
     """
     try:
-        if index_module.index_path(root, cfg).is_file():
-            index_module.write_index(root, cfg)
+        if svc.index_exists():
+            svc.write_index()
     except Exception:
         pass
 
 
 # Phase/artifact registries. The phase->validator map is shared (`validators`)
 # so `validate`, `advance`, and the read-path doneness derivation all agree;
-# GATES pairs each shared validator with its completer for `advance`.
-WARNERS = {"plan": plan.plan_warnings}
-NOTES = {"plan": plan.resolution_notes, "execute": plan.resolution_notes}
-GATES = {
-    "brainstorm": (VALIDATORS["brainstorm"], brainstorm.complete_brainstorm),
-    "spec": (VALIDATORS["spec"], spec.complete_spec),
-    "plan": (VALIDATORS["plan"], plan.complete_plan),
+# the service runs it, and `validate` consults it only to name the known
+# artifacts. WARNERS and NOTES name the service reads that add non-blocking
+# lines to `validate`; GATED_PHASES are the phases `advance` validates and
+# completes on the way out.
+WARNERS = {"plan": lambda svc, slug: svc.plan_warnings(slug)}
+NOTES = {
+    "plan": lambda svc, slug: svc.resolution_notes(slug),
+    "execute": lambda svc, slug: svc.resolution_notes(slug),
 }
+GATED_PHASES = ("brainstorm", "spec", "plan")
 
 
 @app.command(epilog="Example: specflo init --projects-dir docs/projects")
@@ -335,10 +336,9 @@ def new(
     """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     try:
-        project = projects.create_project(
-            root, cfg, name, summary=summary, execution=execution
-        )
+        project = svc.create_project(name, summary=summary, execution=execution)
         cfg.active_project = project.slug
         config.save_config(root, cfg)
     except SpecfloError as exc:
@@ -346,9 +346,9 @@ def new(
     # Scaffold the first artifact so a new project is immediately ready to work
     # (no separate `brainstorm start`). create_project stays container-only;
     # the scaffold is CLI orchestration over the idempotent helper.
-    brainstorm_path, _ = brainstorm.start_brainstorm(root, cfg, project.slug)
-    _refresh_checkpoint(root, cfg, project.slug)
-    _refresh_index(root, cfg)
+    brainstorm_path, _ = svc.start_brainstorm(project.slug)
+    _refresh_checkpoint(svc, project.slug)
+    _refresh_index(svc)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
@@ -371,6 +371,7 @@ def summary(
     """Set or update a project's one-line summary (active project by default)."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     if second is None:
         slug, text = _require_active(cfg), first
     else:
@@ -379,10 +380,10 @@ def summary(
         except SpecfloError as exc:
             raise _die(str(exc))
     try:
-        project = projects.set_summary(root, cfg, slug, text)
+        project = svc.set_summary(slug, text)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_index(root, cfg)
+    _refresh_index(svc)
     typer.echo(f"Summary for '{project.slug}': {project.summary}")
 
 
@@ -398,13 +399,14 @@ def execution(
     """Switch the active project's execution mode (either direction, any phase)."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        mode, changed = projects.set_execution(root, cfg, slug, mode)
+        mode, changed = svc.set_execution(slug, mode)
     except SpecfloError as exc:
         raise _die(str(exc))
     if changed:
-        _refresh_checkpoint(root, cfg, slug)
+        _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"execution": mode, "changed": changed}))
     elif changed:
@@ -418,19 +420,20 @@ def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     # Placeholders are only ever written by the first-run backfill, so what it
     # will write is exactly the summary-less projects found before that run.
-    first_run = not index_module.index_path(root, cfg).is_file()
+    first_run = not svc.index_exists()
     try:
         placeholdered = (
-            [p.slug for p in projects.list_projects(root, cfg) if not p.summary]
+            [p.slug for p in svc.list_projects() if not p.summary]
             if first_run
             else []
         )
-        path = index_module.write_index(root, cfg)
+        path = svc.write_index()
     except SpecfloError as exc:
         raise _die(str(exc))
-    count = len(projects.list_projects(root, cfg))
+    count = len(svc.list_projects())
     typer.echo(
         f"Wrote {config.display_path(path, root)}"
         f" ({count} project{'' if count == 1 else 's'})."
@@ -454,7 +457,8 @@ def list_(
     """List all projects, marking the active one."""
     root = _require_root()
     cfg = config.load_config(root)
-    items = projects.list_projects(root, cfg)
+    svc = resolve_service(root, cfg)
+    items = svc.list_projects()
 
     if json_output:
         typer.echo(
@@ -491,7 +495,7 @@ def list_(
         else:
             suffix = ""
         typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
-    rule = index_module.rule_line(root, cfg)
+    rule = svc.index_rule_line()
     if rule:
         typer.echo("")
         typer.echo(rule)
@@ -508,8 +512,20 @@ def switch(
     """Make project <name> the active project."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     try:
-        project = projects.switch_project(root, cfg, name)
+        slug = projects.slugify(name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    try:
+        project = svc.load_project(slug)
+    except SpecfloError:
+        raise _die(
+            f"No project {slug!r}. Run `specflo list` to see available projects."
+        )
+    cfg.active_project = project.slug
+    try:
+        config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Switched to '{project.slug}' (phase: {project.phase}).")
@@ -558,19 +574,20 @@ def shelve(
     """
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = projects.slugify(name) if name else _require_active(cfg)
     try:
-        existing = projects.load_project(root, cfg, slug)
+        existing = svc.load_project(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     if existing.status == projects.COMPLETE_STATUS:
         raise _die(f"Project '{slug}' is complete (terminal) - cannot shelve it.")
     try:
-        project = projects.shelve_project(root, cfg, slug, reason=reason)
+        project = svc.shelve_project(slug, reason=reason)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
-    _refresh_index(root, cfg)
+    _refresh_checkpoint(svc, slug)
+    _refresh_index(svc)
     if json_output:
         typer.echo(json.dumps(
             {"slug": project.slug, "status": project.status,
@@ -598,21 +615,22 @@ def resume(
     """
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = projects.slugify(name) if name else _require_active(cfg)
     try:
-        existing = projects.load_project(root, cfg, slug)
+        existing = svc.load_project(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     if existing.status != projects.SHELVED_STATUS:
         raise _die(f"Project '{slug}' is not shelved - nothing to resume.")
     try:
-        project = projects.resume_project(root, cfg, slug)
+        project = svc.resume_project(slug)
         cfg.active_project = project.slug
         config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
-    _refresh_index(root, cfg)
+    _refresh_checkpoint(svc, slug)
+    _refresh_index(svc)
     if json_output:
         typer.echo(json.dumps({"slug": project.slug, "status": project.status}))
     else:
@@ -641,8 +659,9 @@ def status(
             typer.echo(guide_module.NO_ACTIVE_PROJECT_MESSAGE)
         return
 
+    svc = resolve_service(root, cfg)
     try:
-        project = projects.load_project(root, cfg, cfg.active_project)
+        info = svc.build_status(cfg.active_project)
     except SpecfloError as exc:
         if json_output:
             typer.echo(
@@ -657,7 +676,6 @@ def status(
             return
         raise _die(str(exc))
 
-    info = status_view.build_status(root, cfg, project)
     override = _directory_override(ctx)
     if override is not None:
         info["root"] = str(root)
@@ -758,13 +776,13 @@ def checkpoint_(
     """Print the resume prompt (and refresh checkpoint.md) for the active project."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        project = projects.load_project(root, cfg, slug)
+        payload = svc.build_checkpoint(slug)
+        svc.write_checkpoint(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
-    checkpoint.write_checkpoint(root, project, cfg=cfg)
     if json_output:
         typer.echo(json.dumps(payload))
     else:
@@ -970,12 +988,13 @@ def brainstorm_start(
     """Create (or locate) the active project's brainstorm.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        path, created = brainstorm.start_brainstorm(root, cfg, slug)
+        path, created = svc.start_brainstorm(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     locator = _locator(slug, path)
     if json_output:
         typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
@@ -999,14 +1018,15 @@ def decision_add(
     """Append a decision (D-NN) to the active project's brainstorm.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        decision = brainstorm.add_decision(
-            root, cfg, slug, text, rationale=rationale, supersedes=supersedes
+        decision = svc.add_decision(
+            slug, text, rationale=rationale, supersedes=supersedes
         )
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"id": decision.id, "supersedes": decision.supersedes}))
     else:
@@ -1027,16 +1047,16 @@ def validate(
     """Lint an artifact; reports readiness and any issues."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
-    validator = VALIDATORS.get(artifact)
-    if validator is None:
+    if artifact not in VALIDATORS:
         known = ", ".join(sorted(VALIDATORS))
         raise _die(f"Unknown artifact {artifact!r}. Known: {known}.")
-    issues = validator(root, cfg, slug)
+    issues = svc.validate_artifact(slug, artifact)
     warner = WARNERS.get(artifact)
-    warnings = warner(root, cfg, slug) if warner is not None else []
+    warnings = warner(svc, slug) if warner is not None else []
     noter = NOTES.get(artifact)
-    notes = noter(root, cfg, slug) if noter is not None else []
+    notes = noter(svc, slug) if noter is not None else []
     if json_output:
         payload = {"ready": not issues, "issues": issues}
         if warner is not None:
@@ -1069,9 +1089,10 @@ def advance(
     """Validate the current phase's artifact, then move to the next phase."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        project = projects.load_project(root, cfg, slug)
+        project = svc.load_project(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
 
@@ -1092,24 +1113,22 @@ def advance(
             else:
                 typer.echo(f"Project '{slug}' is already complete.")
             return
-        validator = VALIDATORS.get(from_phase)
-        if validator is not None:
-            issues = validator(root, cfg, slug)
-            if issues:
-                if json_output:
-                    typer.echo(json.dumps(
-                        {"advanced": False, "from": from_phase, "to": None, "issues": issues}))
-                    raise typer.Exit(code=1)
-                typer.secho(f"cannot complete - {from_phase} is not ready:",
-                            fg=typer.colors.YELLOW, err=True)
-                for issue in issues:
-                    typer.echo(f"  - {issue}", err=True)
-                typer.echo("Fix these, then run `specflo advance` again.", err=True)
+        issues = svc.validate_artifact(slug, from_phase)
+        if issues:
+            if json_output:
+                typer.echo(json.dumps(
+                    {"advanced": False, "from": from_phase, "to": None, "issues": issues}))
                 raise typer.Exit(code=1)
-        updated = projects.complete_project(root, cfg, slug)
-        index_module.stamp_banners(root, cfg, updated)
-        _refresh_index(root, cfg)
-        cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
+            typer.secho(f"cannot complete - {from_phase} is not ready:",
+                        fg=typer.colors.YELLOW, err=True)
+            for issue in issues:
+                typer.echo(f"  - {issue}", err=True)
+            typer.echo("Fix these, then run `specflo advance` again.", err=True)
+            raise typer.Exit(code=1)
+        updated = svc.complete_project(slug)
+        svc.stamp_banners(slug)
+        _refresh_index(svc)
+        cp_display = config.display_path(svc.write_checkpoint(slug), root)
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
         # and the prose carry the identical text (REQ-12).
@@ -1133,10 +1152,8 @@ def advance(
         return
 
     # Non-terminal: gate the leaving artifact, complete it, then bump the phase.
-    gate = GATES.get(from_phase)
-    if gate is not None:
-        validator, completer = gate
-        issues = validator(root, cfg, slug)
+    if from_phase in GATED_PHASES:
+        issues = svc.validate_artifact(slug, from_phase)
         if issues:
             if json_output:
                 typer.echo(json.dumps(
@@ -1148,22 +1165,22 @@ def advance(
                 typer.echo(f"  - {issue}", err=True)
             typer.echo("Fix these, then run `specflo advance` again.", err=True)
             raise typer.Exit(code=1)
-        completer(root, cfg, slug)
+        svc.complete_artifact(slug, from_phase)
 
     try:
-        updated = projects.advance_project(root, cfg, slug)
+        updated = svc.advance_project(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
 
-    _refresh_index(root, cfg)
-    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
+    _refresh_index(svc)
+    cp_display = config.display_path(svc.write_checkpoint(slug), root)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
     # execute names the first actionable task). Non-task targets keep the static
     # hint (progress stays None), so other advances are unchanged.
     progress = None
-    if updated.phase in ("plan", "execute") and plan.plan_path(root, cfg, slug).is_file():
-        progress = plan.plan_progress(root, cfg, slug)
+    if updated.phase in ("plan", "execute") and svc.has_artifact(slug, "plan"):
+        progress = svc.plan_progress(slug)
     next_step = workflow.next_step(updated.phase, progress=progress)
     # The shared continuation: the entered phase's next action, the phase skill
     # carrying it, and the clear-point naming both resume paths. Rendered once so
@@ -1191,8 +1208,8 @@ _PHASE_ARTIFACT = {
 }
 
 
-def _stale_downstream_artifacts(project: projects.Project) -> list[str]:
-    """Names of artifacts for phases *after* ``project.phase`` that exist on disk.
+def _stale_downstream_artifacts(svc: ProjectService, project: projects.Project) -> list[str]:
+    """Names of artifacts for phases *after* ``project.phase`` the project has created.
 
     A pure read of what already exists beyond the reopened phase, so `reopen` can
     warn which files may now be stale without touching any of them (REQ-10).
@@ -1201,7 +1218,7 @@ def _stale_downstream_artifacts(project: projects.Project) -> list[str]:
     return [
         _PHASE_ARTIFACT[ph]
         for ph in downstream
-        if ph in _PHASE_ARTIFACT and (project.path / _PHASE_ARTIFACT[ph]).is_file()
+        if ph in _PHASE_ARTIFACT and svc.has_artifact(project.slug, ph)
     ]
 
 
@@ -1221,9 +1238,10 @@ def reopen(
     """
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        project = projects.load_project(root, cfg, slug)
+        project = svc.load_project(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
 
@@ -1234,12 +1252,12 @@ def reopen(
 
     from_phase = project.phase
     try:
-        updated = projects.reopen_project(root, cfg, slug, phase)
+        updated = svc.reopen_project(slug, phase)
     except SpecfloError as exc:
         raise _die(str(exc))
 
-    stale = _stale_downstream_artifacts(updated)
-    cp_display = config.display_path(checkpoint.write_checkpoint(root, updated, cfg=cfg), root)
+    stale = _stale_downstream_artifacts(svc, updated)
+    cp_display = config.display_path(svc.write_checkpoint(slug), root)
     if json_output:
         typer.echo(json.dumps(
             {"reopened": True, "from": from_phase, "to": updated.phase,
@@ -1256,7 +1274,7 @@ def reopen(
         # copy of the wording (REQ-04, D-06). The clear-point stays unconditional,
         # as it was before that rewiring: if the next step can't be derived, fall
         # back to the clear-point alone rather than emitting nothing (REQ-10).
-        cont = _seam_continuation(root, cfg, slug)
+        cont = _seam_continuation(svc, slug)
         typer.echo(cont["continuation"] or continuation.clear_point_only())
 
 
@@ -1267,12 +1285,13 @@ def spec_start(
     """Create (or locate) the active project's spec.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        path, created = spec.start_spec(root, cfg, slug)
+        path, created = svc.start_spec(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     locator = _locator(slug, path)
     if json_output:
         typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
@@ -1301,14 +1320,15 @@ def requirement_add(
     """Append a requirement (REQ-NN) to the active project's spec.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        requirement = spec.add_requirement(
-            root, cfg, slug, text, acceptance, derives_from=from_, supersedes=supersedes
+        requirement = svc.add_requirement(
+            slug, text, acceptance, derives_from=from_, supersedes=supersedes
         )
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(
             json.dumps(
@@ -1335,12 +1355,13 @@ def plan_start(
     """Create (or locate) the active project's plan.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        path, created = plan.start_plan(root, cfg, slug)
+        path, created = svc.start_plan(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     locator = _locator(slug, path)
     if json_output:
         typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
@@ -1355,8 +1376,9 @@ def plan_graph(
 ) -> None:
     """Render the plan's execution graph: waves, one line per active task, and a mermaid block."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        data = plan.execution_graph(root, cfg, slug)
+        data = svc.execution_graph(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     tasks, milestones = data["tasks"], data["milestones"]
@@ -1410,22 +1432,22 @@ def task_add(
     """Append a task (T-NN) to the active project's plan.md."""
     root = _require_root()
     cfg = config.load_config(root)
+    svc = resolve_service(root, cfg)
     slug = _require_active(cfg)
     try:
-        task = plan.add_task(
-            root, cfg, slug, text, acceptance, verify,
-            implements=list(from_), depends_on=list(depends_on or []),
-            files=files, scope=scope, supersedes=supersedes, milestone=milestone,
-            needs=list(needs or []),
+        task = svc.add_task(
+            slug, text, acceptance, verify, list(from_),
+            depends_on=list(depends_on or []), files=files, scope=scope,
+            supersedes=supersedes, milestone=milestone, needs=list(needs or []),
         )
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     # Detect-and-offer: when this task supersedes another, surface any active
     # tasks still depending on the superseded one and the literal rewire command
     # to repoint them. We never modify those dependents here (that is `task rewire`).
     dependents = (
-        plan.active_dependents(root, cfg, slug, task.supersedes) if task.supersedes else []
+        svc.active_dependents(slug, task.supersedes) if task.supersedes else []
     )
     if json_output:
         typer.echo(json.dumps({
@@ -1460,11 +1482,12 @@ def task_rewire(
 ) -> None:
     """Repoint every active task depending on --from to depend on --to instead."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        changed = plan.rewire_dependency(root, cfg, slug, from_, to)
+        changed = svc.rewire_dependency(slug, from_, to)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"from": from_, "to": to, "rewired": changed}))
     elif changed:
@@ -1481,11 +1504,12 @@ def task_set_milestone(
 ) -> None:
     """Assign (or reassign) a task's milestone in place."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        task = plan.set_milestone(root, cfg, slug, task_id, milestone_id)
+        task = svc.set_milestone(slug, task_id, milestone_id)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"id": task.id, "milestone": task.milestone}))
     else:
@@ -1521,16 +1545,17 @@ def task_edit(
 ) -> None:
     """Edit an active task's fields and dependencies in place."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        tid, changed = plan.edit_task(
-            root, cfg, slug, task_id, title=title, acceptance=acceptance,
+        tid, changed = svc.edit_task(
+            slug, task_id, title=title, acceptance=acceptance,
             verify=verify, scope=scope, files=files, needs=needs,
             implements=implements, add_depends_on=list(add_depends_on or []),
             drop_depends_on=list(drop_depends_on or []), force=force,
         )
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"id": tid, "changed": changed}))
     elif changed:
@@ -1555,11 +1580,12 @@ def task_note(
 ) -> None:
     """Append a dated note to a task, in any progress state."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        note = plan.add_note(root, cfg, slug, task_id, text, label=label)
+        note = svc.add_note(slug, task_id, text, label=label)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({"id": task_id, "note": note}))
     else:
@@ -1572,7 +1598,7 @@ def task_note(
 _CONTINUATION_KEYS = ("next_step", "checkpoint", "continuation")
 
 
-def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
+def _seam_continuation(svc: ProjectService, slug: str) -> dict:
     """The continuation fields for a seam that has already mutated state.
 
     Used by `task done` and `reopen` — the seams whose next step is best derived
@@ -1599,8 +1625,7 @@ def _seam_continuation(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict
     project that simply had nothing to say.
     """
     try:
-        project = projects.load_project(root, cfg, slug)
-        payload = checkpoint.build_checkpoint(root, project, cfg=cfg)
+        payload = svc.build_checkpoint(slug)
         # Inside the guard: reading the payload and rendering must be covered too,
         # or the "never fail the caller" guarantee would be narrower than stated.
         return {
@@ -1650,11 +1675,12 @@ def task_start(
 ) -> None:
     """Mark a task in_progress."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        task = plan.start_task(root, cfg, slug, task_id)
+        task = svc.start_task(slug, task_id)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     _report_transition(task, json_output)
 
 
@@ -1668,14 +1694,15 @@ def task_done(
 ) -> None:
     """Mark a task done."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        task = plan.done_task(root, cfg, slug, task_id, note=note)
+        task = svc.done_task(slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
-    cont = _seam_continuation(root, cfg, slug)
+    cont = _seam_continuation(svc, slug)
     _report_transition(task, json_output, extra=cont)
     if not json_output:
         if cont["continuation"] is None:
@@ -1696,11 +1723,12 @@ def task_block(
 ) -> None:
     """Mark a task blocked (optionally recording a reason)."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        task = plan.block_task(root, cfg, slug, task_id, reason=reason)
+        task = svc.block_task(slug, task_id, reason=reason)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     _report_transition(task, json_output)
 
 
@@ -1714,11 +1742,12 @@ def task_reopen(
 ) -> None:
     """Return a task to pending (clears any block)."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        task = plan.reopen_task(root, cfg, slug, task_id, note=note)
+        task = svc.reopen_task(slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     _report_transition(task, json_output)
 
 
@@ -1729,16 +1758,17 @@ def task_list(
 ) -> None:
     """List tasks with progress and the deps-aware next-actionable marker."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        tasks = plan.list_tasks(root, cfg, slug, include_superseded=all_)
-        progress = plan.plan_progress(root, cfg, slug)
+        tasks = svc.list_tasks(slug, include_superseded=all_)
+        progress = svc.plan_progress(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     nexts = set(progress["next_actionable"])
     if json_output:
         # The orchestrator frontier (fan-out-plans REQ-10): files, needs and
         # ready per task plus the pools map, alongside the unchanged keys.
-        fr = plan.frontier(root, cfg, slug)
+        fr = svc.frontier(slug)
         ready = {t["id"] for t in fr["tasks"] if t["ready"]}
         typer.echo(json.dumps({
             "tasks": [
@@ -1774,8 +1804,9 @@ def task_show(
 ) -> None:
     """Show a task's brief: acceptance, verify, its cited REQ-NN sections, and Global constraints."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        brief = plan.task_brief(root, cfg, slug, task_id)
+        brief = svc.task_brief(slug, task_id)
     except SpecfloError as exc:
         raise _die(str(exc))
     if json_output:
@@ -1812,11 +1843,12 @@ def milestone_add(
 ) -> None:
     """Append a milestone (M-NN) with its Exit checklist to the active plan.md."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        milestone = plan.add_milestone(root, cfg, slug, text, exit_items=list(exit_))
+        milestone = svc.add_milestone(slug, text, list(exit_))
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps(
             {"id": milestone.id, "title": milestone.title, "exit": milestone.exit_items}))
@@ -1832,7 +1864,8 @@ def milestone_list(
 ) -> None:
     """List milestones in order with done/total rollup, marking the current one."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    view = plan.milestone_progress(root, cfg, slug)
+    svc = resolve_service(root, cfg)
+    view = svc.milestone_progress(slug)
     if json_output:
         typer.echo(json.dumps(view))
         return
@@ -1857,8 +1890,9 @@ def pool_add(
 ) -> None:
     """Declare a pool of N slots in plan.md's '## Pools' section, or resize it."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        name, size = plan.add_pool(root, cfg, slug, name, size)
+        name, size = svc.add_pool(slug, name, size)
     except SpecfloError as exc:
         raise _die(str(exc))
     if json_output:
@@ -1873,8 +1907,9 @@ def pool_list(
 ) -> None:
     """List every declared pool and every pool an active task needs, with sizes."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        pools = plan.list_pools(root, cfg, slug)
+        pools = svc.list_pools(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     if json_output:
@@ -1894,7 +1929,8 @@ def milestone_show(
 ) -> None:
     """Show a milestone: its Exit checklist, member tasks, rollup, and derived REQ set."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
-    detail = plan.milestone_detail(root, cfg, slug, milestone_id)
+    svc = resolve_service(root, cfg)
+    detail = svc.milestone_detail(slug, milestone_id)
     if detail is None:
         raise _die(f"No milestone {milestone_id} in this plan.")
     if json_output:
@@ -1924,11 +1960,12 @@ def review_start(
 ) -> None:
     """Mint the active project's next review round and print its locator."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        path, created = review_module.start_round(root, cfg, slug)
+        path, created = svc.start_round(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     locator = _locator(slug, path)
     if json_output:
         typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
@@ -1957,13 +1994,12 @@ def review_done(
 ) -> None:
     """Close the active project's open review round with a verdict."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        path = review_module.close_round(
-            root, cfg, slug, verdict, reason=reason, report=file
-        )
+        path = svc.close_round(slug, verdict, reason=reason, report=file)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     locator = _locator(slug, path)
     if json_output:
         typer.echo(json.dumps({"locator": locator, "path": str(path), "verdict": verdict}))
@@ -1980,8 +2016,9 @@ def doc_show(
 ) -> None:
     """Print the named artifact of the active project verbatim."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     try:
-        text = doc_module.show_document(root, cfg, slug, artifact)
+        text = svc.show_document(slug, artifact)
     except SpecfloError as exc:
         raise _die(str(exc))
     # Verbatim: the document's own bytes, no added trailing newline.
@@ -2010,12 +2047,13 @@ def section_set(
     if (file is None) == (not stdin):
         raise _die("Give the new body with --file <path> or --stdin (exactly one).")
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = resolve_service(root, cfg)
     body = sys.stdin.read() if stdin else Path(file).read_text()
     try:
-        title = doc_module.set_section(root, cfg, slug, artifact, section, body)
+        title = svc.set_section(slug, artifact, section, body)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(root, cfg, slug)
+    _refresh_checkpoint(svc, slug)
     typer.echo(f"Set '{title}' in {slug}/{artifact}.")
 
 
@@ -2055,7 +2093,7 @@ def _guard_set(root: Path, key: str, force: bool) -> None:
     if key != "projects_dir" or force:
         return
     cfg = config.load_config(root)
-    existing = projects.list_projects(root, cfg)
+    existing = resolve_service(root, cfg).list_projects()
     if existing:
         # Changing the path strands them: specflo would look somewhere else and
         # report no projects, while the files sit where they always were. It
