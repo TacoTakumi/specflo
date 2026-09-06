@@ -17,9 +17,10 @@ import json
 import os
 from pathlib import Path
 
-from . import checkpoint, config, continuation, plan, projects, status
+from . import checkpoint, config, continuation, plan, status
 from .continuation import CONFIRMATION_DIRECTIVE, DIRECT_DIRECTIVE
 from .projects import COMPLETE_STATUS, SHELVED_STATUS
+from .service.resolve import resolve_service
 
 # The two directives are re-exported, not defined here: `continuation.py` is the
 # single producer of payload prose, so this module selects a directive and
@@ -35,10 +36,14 @@ __all__ = [
 
 
 def _active_project(cwd: Path):
-    """``(root, cfg, project)`` for the active project found from ``cwd``, or ``None``.
+    """``(root, cfg, service, project)`` for the active project found from
+    ``cwd``, or ``None``.
 
-    Shared resolver for the reseed entrypoints. May raise on a corrupt project;
-    callers run it inside their own never-errors guard.
+    Shared resolver for the reseed entrypoints. The service is the one the
+    active project's locality resolves to, so a hosted project reseeds from
+    its daemon exactly as a local one does from the checkout. May raise on a
+    corrupt or unreachable project; callers run it inside their own
+    never-errors guard.
     """
     root = config.find_root(cwd)
     if root is None:
@@ -46,10 +51,11 @@ def _active_project(cwd: Path):
     cfg = config.load_config(root)
     if cfg.active_project is None:
         return None
-    return root, cfg, projects.load_project(root, cfg, cfg.active_project)
+    service = resolve_service(root, cfg)
+    return root, cfg, service, service.load_project(cfg.active_project)
 
 
-def _task_brief_text(root: Path, cfg, project) -> str | None:
+def _task_brief_text(service, project) -> str | None:
     """The current task's brief, rendered — or ``None`` when there is none to give.
 
     Only the execute phase has a task to carry out, so the earlier phases return
@@ -60,12 +66,10 @@ def _task_brief_text(root: Path, cfg, project) -> str | None:
     if project.phase != "execute":
         return None
     try:
-        task_id = plan.current_task_id(root, cfg, project.slug)
+        task_id = service.current_task_id(project.slug)
         if task_id is None:
             return None
-        return plan.render_task_brief(
-            plan.task_brief(root, cfg, project.slug, task_id)
-        ) or None
+        return plan.render_task_brief(service.task_brief(project.slug, task_id)) or None
     except Exception:
         return None
 
@@ -106,16 +110,14 @@ def reseed_text(
         found = _active_project(cwd)
         if found is None:
             return ""
-        root, _cfg, project = found
+        root, _cfg, service, project = found
         if project.status in (COMPLETE_STATUS, SHELVED_STATUS):
             return ""
-        body = checkpoint.render_checkpoint(
-            checkpoint.build_checkpoint(root, project, cfg=_cfg)
-        )
+        body = checkpoint.render_checkpoint(service.build_checkpoint(project.slug))
         brief = None
         if direct:
             directive = DIRECT_DIRECTIVE
-            brief = _task_brief_text(root, _cfg, project)
+            brief = _task_brief_text(service, project)
         else:
             directive = CONFIRMATION_DIRECTIVE
         return _directory_override_line(root, directory_source) + continuation.build_reseed(
@@ -140,7 +142,7 @@ def _directory_override_line(root: Path, directory_source: str | None = None) ->
     return f"Directory override: specflo commands act on {root} (via {via}).\n"
 
 
-def _user_message(root: Path, cfg, project) -> str:
+def _user_message(root: Path, service, project) -> str:
     """The user-visible session-start message: the ``specflo status`` block + a prompt.
 
     A SessionStart hook can re-ground the *agent* (via injected context) but
@@ -151,7 +153,7 @@ def _user_message(root: Path, cfg, project) -> str:
     shelved one is silent upstream in :func:`reseed_text`. Harness-neutral
     wording.
     """
-    status_block = status.render_status(root, status.build_status(root, cfg, project))
+    status_block = status.render_status(root, service.build_status(project.slug))
     prompt = (
         "I won't pick up on my own - type `continue` and I'll surface the "
         "checkpoint and resume from there, or tell me what you'd like to do."
@@ -182,13 +184,13 @@ def claude_session_start_output(
         found = _active_project(cwd)
         if found is None:
             return ""
-        root, cfg, project = found
+        root, cfg, service, project = found
         payload = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": context,
             },
-            "systemMessage": _user_message(root, cfg, project),
+            "systemMessage": _user_message(root, service, project),
         }
         return json.dumps(payload)
     except Exception:

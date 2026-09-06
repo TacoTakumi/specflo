@@ -242,6 +242,9 @@ class LocalProjectService:
     def task_brief(self, slug: str, task_id: str | None = None) -> dict:
         return plan.task_brief(self.root, self.cfg, slug, task_id)
 
+    def current_task_id(self, slug: str) -> str | None:
+        return plan.current_task_id(self.root, self.cfg, slug)
+
     # --- plan: milestones --------------------------------------------------
 
     def add_milestone(self, slug: str, text: str, exit_items: list[str]) -> Milestone:

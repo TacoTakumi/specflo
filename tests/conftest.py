@@ -107,3 +107,39 @@ def fixture_roots(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENTSQUIRE_HOME", str(home))
     monkeypatch.setenv("AGENTSQUIRE_PROJECT", str(project))
     return home, project
+
+
+@pytest.fixture
+def live_daemon(tmp_path):
+    """A real specflo daemon on a free loopback port, with a root of its own.
+
+    Yields the daemon's root, its URL, and a developer token. Requests reach
+    it over a real socket, so what a test sees is what a client sees.
+    """
+    import threading
+    import time
+
+    import uvicorn
+
+    from specflo import daemon
+    from specflo.daemon import auth
+    from specflo.daemon.app import create_app
+
+    root = daemon.prepare_root(tmp_path / "daemon")
+    server = uvicorn.Server(
+        uvicorn.Config(create_app(root), host="127.0.0.1", port=0, log_level="warning")
+    )
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert server.started, "the daemon did not start"
+    port = server.servers[0].sockets[0].getsockname()[1]
+    yield {
+        "root": root,
+        "url": f"http://127.0.0.1:{port}",
+        "token": auth.mint_token(root, "developer"),
+    }
+    server.should_exit = True
+    thread.join(timeout=10)

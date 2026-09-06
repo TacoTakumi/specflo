@@ -167,6 +167,7 @@ def _drive_every_operation(service, projects_root):
     graph = svc.execution_graph(slug)
     assert [m.id for m in graph["milestones"]] == [milestone.id]
     assert svc.task_brief(slug)["task"]["id"] == first.id
+    assert svc.current_task_id(slug) == first.id
     assert svc.milestone_progress(slug)["current"] == milestone.id
     assert svc.milestone_detail(slug, milestone.id)["total"] == 3
     assert svc.plan_warnings(slug) == []

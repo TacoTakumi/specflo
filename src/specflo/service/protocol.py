@@ -249,6 +249,10 @@ class ProjectService(Protocol):
         """One task's brief; the next actionable task when no id is given."""
         ...
 
+    def current_task_id(self, slug: str) -> str | None:
+        """The task the project is on: the first in progress, else the next actionable."""
+        ...
+
     # --- plan: milestones --------------------------------------------------
 
     def add_milestone(self, slug: str, text: str, exit_items: list[str]) -> Milestone:
