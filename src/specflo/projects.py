@@ -132,7 +132,8 @@ def list_projects(root: Path, cfg: SpecfloConfig) -> list[Project]:
     """Return every project under the configured projects dir, sorted by slug.
 
     Directories without a ``project.md`` are skipped, so stray folders under the
-    projects dir don't break the listing.
+    projects dir don't break the listing; so are dot-directories, which a slug
+    can never name (an import stages its files in one).
     """
     base = root / cfg.projects_dir
     if not base.is_dir():
@@ -140,7 +141,7 @@ def list_projects(root: Path, cfg: SpecfloConfig) -> list[Project]:
     return [
         load_project(root, cfg, entry.name)
         for entry in sorted(base.iterdir())
-        if (entry / PROJECT_FILENAME).is_file()
+        if not entry.name.startswith(".") and (entry / PROJECT_FILENAME).is_file()
     ]
 
 

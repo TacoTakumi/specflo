@@ -137,7 +137,9 @@ class LocalProjectService:
                     " files travel."
                 )
             try:
-                files[path.name] = path.read_text(encoding="utf-8")
+                # The bytes as they are, not newline-translated text: what is
+                # hashed and compared is what the file holds.
+                files[path.name] = path.read_bytes().decode("utf-8")
             except UnicodeDecodeError:
                 raise SpecfloError(
                     f"Project {slug!r} holds {path.name!r}, which is not UTF-8 text;"

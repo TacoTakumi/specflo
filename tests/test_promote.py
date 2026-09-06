@@ -257,3 +257,69 @@ def test_a_failed_import_leaves_nothing_behind_and_the_retry_is_not_refused(tmp_
     assert set(hashes) == set(files)
     assert hashes["spec.md"] == hashlib.sha256((projects_dir / "thing" / "spec.md").read_bytes()).hexdigest()
     assert [p.name for p in projects_dir.iterdir()] == ["thing"]
+
+
+def test_the_pointer_is_recorded_before_the_local_copy_goes_and_undone_if_it_cannot(tmp_path, monkeypatch, live_daemon):
+    import shutil
+
+    config.init_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    project = _local_project(tmp_path)
+    runner.invoke(app, ["remote", "add", "home", live_daemon["url"], "--token", live_daemon["token"]])
+    before = _snapshot(project.path)
+    order = []
+    real_record = promote.record_hosted_project
+
+    def recording(root, slug, remote):
+        order.append("record")
+        return real_record(root, slug, remote)
+
+    def failing(path, *args, **kwargs):
+        order.append("remove")
+        raise OSError("busy")
+
+    monkeypatch.setattr(promote, "record_hosted_project", recording)
+    monkeypatch.setattr(shutil, "rmtree", failing)
+
+    result = runner.invoke(app, ["promote", "thing", "--remote", "home"])
+
+    assert result.exit_code == 1
+    assert "holds a verified copy of 'thing'" in result.stderr and "busy" in result.stderr
+    assert order == ["record", "remove"]
+    assert config.hosting_remote(tmp_path, "thing") is None
+    assert _snapshot(project.path) == before
+
+
+def test_export_carries_a_file_byte_for_byte(tmp_path):
+    config.init_config(tmp_path)
+    project = _local_project(tmp_path)
+    (project.path / "notes.md").write_bytes(b"line one\r\nline two\r\n")
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+
+    files = service.export_project("thing")
+
+    assert files["notes.md"] == "line one\r\nline two\r\n"
+    assert hashlib.sha256(files["notes.md"].encode()).hexdigest() == hashlib.sha256(
+        (project.path / "notes.md").read_bytes()
+    ).hexdigest()
+
+
+def test_a_staging_directory_left_by_a_killed_import_is_never_listed_and_is_swept(tmp_path):
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    service.create_project("Real")
+    elsewhere = tmp_path / "elsewhere"
+    config.init_config(elsewhere)
+    other = LocalProjectService(elsewhere, config.load_config(elsewhere))
+    other.create_project("Thing")
+    files = other.export_project("thing")
+    leftover = tmp_path / "docs" / "projects" / ".thing.importing"
+    leftover.mkdir()
+    (leftover / "project.md").write_text(files["project.md"])
+
+    assert [p.slug for p in service.list_projects()] == ["real"]
+
+    service.import_project("thing", files)
+
+    assert not leftover.exists()
+    assert [p.slug for p in service.list_projects()] == ["real", "thing"]

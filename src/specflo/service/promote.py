@@ -14,7 +14,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..config import SpecfloConfig, hosting_remote, record_hosted_project
+from ..config import SpecfloConfig, forget_hosted_project, hosting_remote, record_hosted_project
 from ..errors import SpecfloError
 from .resolve import local_service, remote_service
 
@@ -52,6 +52,16 @@ def promote_project(root: Path, cfg: SpecfloConfig, slug: str, remote: str) -> P
             f" was left untouched. Inspect the copy on remote {remote!r} before retrying."
         )
 
-    shutil.rmtree(directory)
+    # The pointer first: with the daemon's copy verified, the checkout must
+    # never be left knowing nothing about a project that is no longer here.
     record_hosted_project(root, slug, remote)
+    try:
+        shutil.rmtree(directory)
+    except OSError as exc:
+        forget_hosted_project(root, slug)
+        raise SpecfloError(
+            f"Remote {remote!r} holds a verified copy of {slug!r}, but the local copy"
+            f" could not be removed: {exc}. The local copy stays the one this"
+            " checkout uses; remove it by hand and run `specflo promote` again."
+        ) from exc
     return Promotion(slug=slug, remote=remote, files=tuple(files))
