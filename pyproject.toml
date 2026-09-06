@@ -52,6 +52,8 @@ specflo = "specflo"
 serve = [
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
+    # The web UI's templates; a daemon serves pages, so it rides with serve.
+    "jinja2>=3.1",
 ]
 
 [build-system]
@@ -80,6 +82,7 @@ dev = [
     # The serve extra, so a plain `uv run pytest` exercises the daemon too.
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
+    "jinja2>=3.1",
 ]
 
 [tool.pytest.ini_options]

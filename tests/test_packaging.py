@@ -159,6 +159,46 @@ def test_wheel_requires_agentsquire_floor(dist):
     assert "Requires-Dist: agentsquire>=0.5.0" in requires
 
 
+# The daemon's web UI is server-rendered: its templates and the assets
+# directory holding the vendored browser script are package data, so a wheel
+# carries them beside the daemon's Python. Hardcoded like the skill names so a
+# dropped file fails loudly instead of shrinking the set.
+WEB_FILES = [
+    "templates/base.html",
+    "templates/signin.html",
+    "assets/htmx.min.js",
+]
+
+
+@pytest.mark.parametrize("relpath", WEB_FILES)
+def test_wheel_ships_the_web_templates_and_assets(dist, relpath):
+    # Built from the sdist, so this proves both artifacts carry the web UI.
+    assert f"specflo/daemon/{relpath}" in dist["wheel_names"]
+
+
+@pytest.mark.parametrize("relpath", WEB_FILES)
+def test_sdist_carries_the_web_templates_and_assets(dist, relpath):
+    assert f"{dist['sdist_root']}/src/specflo/daemon/{relpath}" in dist["sdist_names"]
+
+
+def _requires_dist(dist):
+    with zipfile.ZipFile(dist["wheel"]) as zf:
+        meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
+        return [
+            line.removeprefix("Requires-Dist:").strip()
+            for line in zf.read(meta_name).decode().splitlines()
+            if line.startswith("Requires-Dist:")
+        ]
+
+
+def test_the_serve_extra_declares_the_template_engine(dist):
+    # The web UI renders Jinja2 templates, so a daemon install pulls it in
+    # with the serve extra; a plain install stays free of the web stack.
+    jinja = [req for req in _requires_dist(dist) if req.startswith("jinja2")]
+    assert jinja, "jinja2 is not declared at all"
+    assert all("extra ==" in req and "serve" in req for req in jinja), jinja
+
+
 @pytest.mark.parametrize("name", SKILL_NAMES)
 def test_repo_root_skill_is_present_on_disk(name):
     assert (REPO_ROOT / "skills" / name / "SKILL.md").is_file()
