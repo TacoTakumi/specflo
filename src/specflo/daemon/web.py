@@ -22,23 +22,24 @@ import secrets
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import load_config
-from ..projects import INITIAL_STATUS
+from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project
 from ..service.local import LocalProjectService
 from .auth import IDENTITIES, identity_for
 from .products import Products
-from .store import Product, open_store
+from .store import Product, WorkItem, open_store
 from .workitems import WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
 ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
+PROJECT_PATH = "/projects/{slug}"
 SESSION_COOKIE = "specflo_session"
 
 # A work item still counts as open work until it is done or dropped.
@@ -59,6 +60,7 @@ _templates.globals.update(
     assets_path=ASSETS_PATH,
     identities=IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
+    project_url=lambda slug: PROJECT_PATH.format(slug=slug),
 )
 
 
@@ -163,6 +165,52 @@ def product_cards(root: Path) -> list[ProductCard]:
     ]
 
 
+@dataclasses.dataclass(frozen=True)
+class ProductView:
+    """One product as its page shows it.
+
+    ``projects`` are the ones spawned from the product's work items, minus
+    the complete ones unless ``show_archived``; ``archived_count`` says how
+    many the archive holds either way.
+    """
+
+    product: Product
+    pieces: list[str]
+    items: list[WorkItem]
+    projects: list[Project]
+    archived_count: int
+    show_archived: bool
+
+    @property
+    def project_names(self) -> dict[str, str]:
+        return {project.slug: project.name for project in self.projects}
+
+
+def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView | None:
+    """The page's view of ``slug``, or None for a product the store does not hold."""
+    with open_store(root) as store:
+        product = store.get_product(slug)
+        if product is None:
+            return None
+        pieces = store.list_pieces(slug)
+        items = WorkItems(store).list(product=slug)
+    spawned = {item.project for item in items if item.project is not None}
+    owned = [
+        project
+        for project in LocalProjectService(root, load_config(root)).list_projects()
+        if project.slug in spawned
+    ]
+    archived = [project for project in owned if project.status == COMPLETE_STATUS]
+    return ProductView(
+        product=product,
+        pieces=pieces,
+        items=items,
+        projects=owned if show_archived else [p for p in owned if p not in archived],
+        archived_count=len(archived),
+        show_archived=show_archived,
+    )
+
+
 # --- the pages ----------------------------------------------------------------
 
 # Each page takes the signed-in identity, so a browser without a session is
@@ -175,6 +223,19 @@ def products_page(request: Request, identity: str = Depends(current_session)) ->
     return render(
         "products.html", identity=identity, cards=product_cards(request.app.state.root)
     )
+
+
+@pages.get(PRODUCT_PATH, include_in_schema=False)
+def product_page(
+    request: Request,
+    slug: str,
+    archived: str = "",
+    identity: str = Depends(current_session),
+) -> Response:
+    view = product_view(request.app.state.root, slug, show_archived=archived == "1")
+    if view is None:
+        raise HTTPException(status_code=404, detail=f"No product {slug!r}.")
+    return render("product.html", identity=identity, view=view)
 
 
 def install(app: FastAPI) -> None:

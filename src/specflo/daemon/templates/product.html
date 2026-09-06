@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}{{ view.product.name }} - specflo{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a></p>
+<h1>{{ view.product.name }}</h1>
+{% if view.product.repo %}
+<p class="repo">Repo: <code>{{ view.product.repo }}</code></p>
+{% endif %}
+
+<section id="vision">
+  <h2>Vision</h2>
+  {% if view.product.vision.strip() %}
+  <pre class="vision">{{ view.product.vision }}</pre>
+  {% else %}
+  <p>No vision yet. Set one with <code>specflo product vision set</code>.</p>
+  {% endif %}
+</section>
+
+<section id="pieces">
+  <h2>Pieces</h2>
+  {% if view.pieces %}
+  <ul class="pieces">
+    {% for piece in view.pieces %}
+    <li>{{ piece }}</li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p>No pieces declared. Work items target the product as a whole.</p>
+  {% endif %}
+</section>
+
+<section id="backlog">
+  <h2>Backlog</h2>
+  {% if view.items %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">#</th>
+        <th scope="col">Title</th>
+        <th scope="col">Kind</th>
+        <th scope="col">Dev path</th>
+        <th scope="col">Piece</th>
+        <th scope="col">Status</th>
+        <th scope="col">Issue</th>
+        <th scope="col">Project</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in view.items %}
+      <tr data-item="{{ item.id }}">
+        <td class="count">{{ item.id }}</td>
+        <td>{{ item.title }}</td>
+        <td>{{ item.kind }}</td>
+        <td>{{ item.dev_path }}</td>
+        <td>{{ item.piece or "" }}</td>
+        <td>{{ item.status }}</td>
+        <td>{% if item.issue %}<a href="{{ item.issue }}">{{ item.issue }}</a>{% endif %}</td>
+        <td>{% if item.project %}<a href="{{ project_url(item.project) }}">{{ view.project_names.get(item.project, item.project) }}</a>{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p>No work items. Add one with <code>specflo workitem add</code>.</p>
+  {% endif %}
+</section>
+
+<section id="projects">
+  <h2>Projects</h2>
+  {% if view.projects %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Project</th>
+        <th scope="col">Phase</th>
+        <th scope="col">Status</th>
+        <th scope="col">Execution</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for project in view.projects %}
+      <tr data-project="{{ project.slug }}">
+        <td><a href="{{ project_url(project.slug) }}">{{ project.name }}</a></td>
+        <td>{{ project.phase }}</td>
+        <td>{{ project.status }}</td>
+        <td>{{ project.execution }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% elif not view.archived_count %}
+  <p>No projects. A full-path work item spawns one with <code>specflo workitem spawn</code>.</p>
+  {% endif %}
+  <p class="filter">
+    {% if view.show_archived %}
+    Showing {{ view.archived_count }} archived. <a href="{{ product_url(view.product.slug) }}">Hide archived</a>
+    {% elif view.archived_count %}
+    {{ view.archived_count }} archived hidden. <a href="{{ product_url(view.product.slug) }}?archived=1">Show archived</a>
+    {% endif %}
+  </p>
+</section>
+{% endblock %}
