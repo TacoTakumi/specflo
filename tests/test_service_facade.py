@@ -14,9 +14,11 @@ import inspect
 
 import pytest
 
-from specflo import config
+from specflo import config, daemon
+from specflo.daemon import auth
 from specflo.errors import SpecfloError
 from specflo.service import LocalProjectService, ProjectService
+from specflo.service.remote import RemoteProjectService
 
 
 def operations() -> list[str]:
@@ -57,12 +59,16 @@ def local(tmp_path):
 # --- the protocol ----------------------------------------------------------
 
 
-def test_local_service_satisfies_the_protocol(local):
-    assert isinstance(local, ProjectService)
+def _assert_satisfies_the_protocol(service, implementation):
+    assert isinstance(service, ProjectService)
     for name in operations():
         expected = inspect.signature(getattr(ProjectService, name))
-        actual = inspect.signature(getattr(LocalProjectService, name))
+        actual = inspect.signature(getattr(implementation, name))
         assert actual == expected, f"{name}: {actual} != {expected}"
+
+
+def test_local_service_satisfies_the_protocol(local):
+    _assert_satisfies_the_protocol(local, LocalProjectService)
 
 
 def test_local_service_protocol_names_every_operation_group():
@@ -92,8 +98,10 @@ def test_local_service_protocol_names_every_operation_group():
 # --- the local implementation ---------------------------------------------
 
 
-def test_local_service_drives_a_project_through_every_operation(local, tmp_path):
-    svc = _Recorder(local)
+def _drive_every_operation(service, projects_root):
+    """Drive one project through every operation; ``projects_root`` is where
+    the service keeps its project directories and its ledger."""
+    svc = _Recorder(service)
 
     project = svc.create_project("My Thing", summary="One line", execution="linear")
     slug = project.slug
@@ -104,7 +112,7 @@ def test_local_service_drives_a_project_through_every_operation(local, tmp_path)
 
     # brainstorm: decisions, prose, the gate, the phase bump
     path, created = svc.start_brainstorm(slug)
-    assert created and path == tmp_path / "docs" / "projects" / slug / "brainstorm.md"
+    assert created and path == projects_root / slug / "brainstorm.md"
     assert svc.start_brainstorm(slug) == (path, False)
     decision = svc.add_decision(slug, "Use one facade", rationale="one seam")
     assert decision.text == "Use one facade"
@@ -214,12 +222,16 @@ def test_local_service_drives_a_project_through_every_operation(local, tmp_path)
     # the ledger over every project
     assert not svc.index_exists()
     index = svc.write_index()
-    assert index == tmp_path / "docs" / "projects" / "specflo-index.md"
+    assert index == projects_root / "specflo-index.md"
     assert svc.index_exists()
     assert "Ships help" in index.read_text()
     assert svc.index_rule_line()
 
     assert svc.called == set(operations())
+
+
+def test_local_service_drives_a_project_through_every_operation(local, tmp_path):
+    _drive_every_operation(local, tmp_path / "docs" / "projects")
 
 
 def test_local_service_raises_the_module_errors_unchanged(local):
@@ -367,3 +379,75 @@ def test_structural_cli_obtains_its_service_from_the_one_resolver():
     assert "resolve_service" in code
     assert "localprojectservice" not in code
     assert "localprojectservice" in executable_identifiers(resolve)
+
+
+# --- the remote implementation --------------------------------------------
+
+
+@pytest.fixture
+def daemon_root(tmp_path):
+    return daemon.prepare_root(tmp_path / "daemon")
+
+
+@pytest.fixture
+def remote(daemon_root):
+    """A remote service whose HTTP client runs the daemon in-process."""
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon.app import create_app
+
+    token = auth.mint_token(daemon_root, "developer")
+    return RemoteProjectService(
+        "http://testserver", token, client=TestClient(create_app(daemon_root))
+    )
+
+
+def test_remote_service_satisfies_the_protocol(remote):
+    _assert_satisfies_the_protocol(remote, RemoteProjectService)
+
+
+def test_remote_service_drives_a_project_through_every_operation(remote, daemon_root):
+    _drive_every_operation(remote, daemon_root / daemon.PROJECTS_DIRNAME)
+
+
+def test_remote_service_raises_the_daemons_refusals_as_specflo_errors(remote):
+    with pytest.raises(SpecfloError, match="No project 'nope'"):
+        remote.load_project("nope")
+    with pytest.raises(SpecfloError, match="brainstorm, execute, plan, spec"):
+        remote.validate_artifact("nope", "notes")
+    with pytest.raises(TypeError):
+        remote.add_decision("nope")
+
+
+def test_remote_service_reports_a_refused_token_naming_the_remote(daemon_root):
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon.app import create_app
+
+    service = RemoteProjectService(
+        "http://testserver", "not-a-token", client=TestClient(create_app(daemon_root))
+    )
+
+    with pytest.raises(SpecfloError, match="http://testserver.*token"):
+        service.list_projects()
+
+
+def test_remote_service_reports_an_unreachable_daemon_naming_the_remote():
+    service = RemoteProjectService("http://127.0.0.1:9", "token", timeout=0.5)
+
+    with pytest.raises(SpecfloError, match="http://127.0.0.1:9"):
+        service.list_projects()
+
+
+def test_remote_service_sends_the_bearer_token_on_every_request(daemon_root):
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon.app import create_app
+
+    token = auth.mint_token(daemon_root, "requester")
+    service = RemoteProjectService(
+        "http://testserver", token, client=TestClient(create_app(daemon_root))
+    )
+
+    assert service.list_projects() == []
+    assert service.client.headers["Authorization"] == f"Bearer {token}"

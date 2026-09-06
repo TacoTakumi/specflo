@@ -202,6 +202,9 @@ app.add_typer(config_app, name="config")
 # serve extra.
 app.add_typer(serve_app, name="serve")
 
+remote_app = typer.Typer(help="Register the daemons this checkout can reach.")
+app.add_typer(remote_app, name="remote")
+
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback
 # bridges the pipeline `agent_space` config value into the env var the agent
@@ -2191,6 +2194,67 @@ def config_list(
         typer.echo("\nNot recognized (left as they are):")
         for name in report["unknown"]:
             typer.echo(f"  {name}")
+
+
+@remote_app.command(
+    "add",
+    epilog="Example: specflo remote add home http://127.0.0.1:8741 --token <secret>",
+)
+def remote_add(
+    name: str = typer.Argument(
+        ..., metavar="<name>",
+        help="A short name for the daemon: lowercase letters, digits, - and _.",
+    ),
+    url: str = typer.Argument(
+        ..., metavar="<url>", help="Where the daemon listens, e.g. http://127.0.0.1:8741."
+    ),
+    token: str = typer.Option(
+        ..., "--token", metavar="<secret>",
+        help="The bearer token minted by `specflo serve token add`.",
+    ),
+) -> None:
+    """Register a daemon by name, or update one; local projects are untouched."""
+    root = _require_root()
+    url = url.strip()
+    try:
+        created = config.add_remote(root, name, url, token)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"{'Registered' if created else 'Updated'} remote '{name}' -> {url}")
+
+
+@remote_app.command("list", epilog="Example: specflo remote list --json")
+def remote_list(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List the registered daemons: names and URLs, never tokens."""
+    root = _require_root()
+    remotes = config.list_remotes(root)
+    if json_output:
+        typer.echo(json.dumps(
+            {"remotes": [{"name": name, "url": url} for name, url in remotes.items()]}
+        ))
+        return
+    if not remotes:
+        typer.echo(
+            "No remotes. Register one with `specflo remote add <name> <url> --token <secret>`."
+        )
+        return
+    for name, url in remotes.items():
+        typer.echo(f"{name}  {url}")
+
+
+@remote_app.command("remove", epilog="Example: specflo remote remove home")
+def remote_remove(
+    name: str = typer.Argument(..., metavar="<name>", help="The remote to forget."),
+) -> None:
+    """Forget a registered daemon; the projects it hosts are untouched."""
+    root = _require_root()
+    try:
+        config.remove_remote(root, name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Removed remote '{name}'.")
 
 
 def build_cli():

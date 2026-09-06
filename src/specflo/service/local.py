@@ -18,6 +18,7 @@ from ..plan import Milestone, Task
 from ..projects import LINEAR_EXECUTION, Project
 from ..spec import Requirement
 from ..validators import VALIDATORS
+from .protocol import ExecutionGraph
 
 # Phase artifact -> the function that marks it complete when its phase is
 # left. Execute has no artifact of its own, so it has no completer.
@@ -154,7 +155,7 @@ class LocalProjectService:
     def resolution_notes(self, slug: str) -> list[str]:
         return plan.resolution_notes(self.root, self.cfg, slug)
 
-    def execution_graph(self, slug: str) -> dict:
+    def execution_graph(self, slug: str) -> ExecutionGraph:
         return plan.execution_graph(self.root, self.cfg, slug)
 
     def add_task(

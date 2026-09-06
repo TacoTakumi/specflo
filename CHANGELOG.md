@@ -31,6 +31,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   must carry a valid token: none or an unknown one gets `401`, a valid one
   reaches the route as its identity (`/whoami` reports it). Any identity
   other than the two is refused.
+- **`specflo remote add <name> <url> --token <secret>`, `remote list`,
+  and `remote remove <name>`** - register the daemons a checkout can reach.
+  Each remote is one file under `.specflo/remotes/` (mode 0600, in a
+  directory that ignores itself) holding its URL and token; `remote list`
+  prints names and URLs only, and neither `config list` nor `config.yaml`
+  ever carries a token. Registering a remote changes nothing about local
+  projects. The daemon now serves every project operation at
+  `POST /api/<operation>` and the CLI carries the matching HTTP client,
+  though no command routes to a remote yet.
 - **`specflo section set <artifact> <section>`** - replace one prose
   section's body from `--file <path>` or `--stdin`. The header, every other
   section, and every managed entry stay byte-identical and `updated` is

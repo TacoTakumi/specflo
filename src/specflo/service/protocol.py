@@ -14,12 +14,19 @@ itself, so no operation takes a date from the caller.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, TypedDict, runtime_checkable
 
 from ..brainstorm import Decision
 from ..plan import Milestone, Task
 from ..projects import LINEAR_EXECUTION, Project
 from ..spec import Requirement
+
+
+class ExecutionGraph(TypedDict):
+    """The plan's active tasks and its milestones, as the graph view reads them."""
+
+    tasks: list[Task]
+    milestones: list[Milestone]
 
 
 @runtime_checkable
@@ -151,7 +158,7 @@ class ProjectService(Protocol):
         """Citations resolved through a supersession chain."""
         ...
 
-    def execution_graph(self, slug: str) -> dict:
+    def execution_graph(self, slug: str) -> ExecutionGraph:
         """The active tasks and the milestones for the graph view."""
         ...
 

@@ -130,6 +130,12 @@ def decode(value, hint):
     if origin is list:
         (item_hint,) = typing.get_args(hint) or (typing.Any,)
         return [decode(item, item_hint) for item in value]
+    if typing.is_typeddict(hint):
+        key_hints = typing.get_type_hints(hint)
+        return {
+            key: decode(item, key_hints[key]) if key in key_hints else item
+            for key, item in value.items()
+        }
     if isinstance(hint, type) and dataclasses.is_dataclass(hint):
         field_hints = typing.get_type_hints(hint)
         return hint(**{

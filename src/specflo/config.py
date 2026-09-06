@@ -8,7 +8,10 @@ works from anywhere inside a project tree.
 from __future__ import annotations
 
 import io
+import json
+import re
 import sys
+from urllib.parse import urlparse
 from collections.abc import Callable
 from dataclasses import dataclass, field, make_dataclass
 from pathlib import Path
@@ -706,3 +709,107 @@ def init_config(
     save_config(root, cfg)
     (root / projects_dir).mkdir(parents=True, exist_ok=True)
     return cfg
+
+
+# --- remotes: the daemons a checkout can reach ---------------------------
+# One file per remote under .specflo/remotes/, holding the URL the CLI reaches
+# the daemon at and the bearer token it presents. The directory ignores itself
+# so a token never lands in git, and no listing prints one: `remote list` and
+# `config list` show names and URLs, the token stays in its file (mode 0600).
+
+REMOTES_DIRNAME = "remotes"
+_REMOTE_NAME = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+
+
+@dataclass(frozen=True)
+class Remote:
+    """A registered daemon: how it is named here, where it is, what it takes."""
+
+    name: str
+    url: str
+    token: str
+
+
+def remotes_dir(root: Path) -> Path:
+    return root / CONFIG_DIRNAME / REMOTES_DIRNAME
+
+
+def _remote_path(root: Path, name: str) -> Path:
+    return remotes_dir(root) / f"{name}.json"
+
+
+def validate_remote_name(name: str) -> str:
+    """``name`` as a file-safe slug: lowercase letters, digits, - and _."""
+    if not isinstance(name, str) or not _REMOTE_NAME.match(name):
+        raise SpecfloError(
+            f"Invalid remote name {name!r}: use lowercase letters, digits, - and _."
+        )
+    return name
+
+
+def validate_remote_url(url: str) -> str:
+    """``url`` with an http or https scheme and a host, as the CLI will use it."""
+    url = (url or "").strip()
+    parts = urlparse(url)
+    if parts.scheme not in ("http", "https") or not parts.netloc:
+        raise SpecfloError(
+            f"Invalid remote URL {url!r}: expected http://host[:port] or https://host[:port]."
+        )
+    return url
+
+
+def add_remote(root: Path, name: str, url: str, token: str) -> bool:
+    """Register ``name`` at ``url`` with ``token``, or update an existing one.
+
+    Returns True when the remote is new. Refuses a bad name or URL and an
+    empty token before anything is written.
+    """
+    name = validate_remote_name(name)
+    url = validate_remote_url(url)
+    token = (token or "").strip()
+    if not token:
+        raise SpecfloError(
+            "A remote needs a token: pass the secret minted by `specflo serve token add`."
+        )
+    directory = remotes_dir(root)
+    directory.mkdir(parents=True, exist_ok=True)
+    gitignore = directory / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("*\n", encoding="utf-8")
+    path = _remote_path(root, name)
+    created = not path.is_file()
+    path.touch(mode=0o600, exist_ok=True)
+    path.write_text(json.dumps({"url": url, "token": token}, indent=2) + "\n")
+    return created
+
+
+def load_remote(root: Path, name: str) -> Remote:
+    """The registered remote called ``name``; refuses an unknown one."""
+    path = _remote_path(root, name) if _REMOTE_NAME.match(name or "") else None
+    if path is None or not path.is_file():
+        raise SpecfloError(
+            f"No remote {name!r}. Run `specflo remote list` to see the registered ones."
+        )
+    try:
+        data = json.loads(path.read_text())
+    except ValueError:
+        data = {}
+    data = data if isinstance(data, dict) else {}
+    return Remote(name, str(data.get("url") or ""), str(data.get("token") or ""))
+
+
+def list_remotes(root: Path) -> dict[str, str]:
+    """Every registered remote's URL by name, in name order. Never a token."""
+    directory = remotes_dir(root)
+    if not directory.is_dir():
+        return {}
+    return {
+        path.stem: load_remote(root, path.stem).url
+        for path in sorted(directory.glob("*.json"))
+    }
+
+
+def remove_remote(root: Path, name: str) -> None:
+    """Forget ``name``: its file, URL and token go; refuses an unknown one."""
+    load_remote(root, name)
+    _remote_path(root, name).unlink()
