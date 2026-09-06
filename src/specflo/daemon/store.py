@@ -47,6 +47,7 @@ class WorkItem:
     dev_path: str
     status: str
     created: str
+    piece: str | None = None
 
 
 class Conflict(Exception):
@@ -86,6 +87,15 @@ class Store(Protocol):
     def set_work_item_status(self, item_id: int, status: str) -> WorkItem | None:
         """Replace the status of ``item_id``; the updated item, or None if unknown."""
 
+    def add_piece(self, product: str, name: str) -> None:
+        """Declare piece ``name`` on ``product``; raises :class:`Conflict` if declared."""
+
+    def list_pieces(self, product: str) -> list[str]:
+        """The pieces declared on ``product``, in declaration order."""
+
+    def remove_piece(self, product: str, name: str) -> bool:
+        """Drop piece ``name`` from ``product``; whether there was one."""
+
     def close(self) -> None:
         """Release the backend's resources."""
 
@@ -110,11 +120,22 @@ CREATE TABLE IF NOT EXISTS work_items (
     issue    TEXT,
     dev_path TEXT NOT NULL,
     status   TEXT NOT NULL,
-    created  TEXT NOT NULL
+    created  TEXT NOT NULL,
+    piece    TEXT
+);
+CREATE TABLE IF NOT EXISTS pieces (
+    product TEXT NOT NULL REFERENCES products(slug),
+    name    TEXT NOT NULL,
+    PRIMARY KEY (product, name)
 );
 """
 
-_WORK_ITEM_COLUMNS = "id, product, title, kind, issue, dev_path, status, created"
+# Columns added after their table's first shape, as (table, column, type):
+# CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a store
+# opened from before the column gains it here.
+ADDED_COLUMNS = (("work_items", "piece", "TEXT"),)
+
+_WORK_ITEM_COLUMNS = "id, product, title, kind, issue, dev_path, status, created, piece"
 
 
 class SqliteStore:
@@ -127,6 +148,10 @@ class SqliteStore:
         self.connection.execute("PRAGMA foreign_keys = ON")
         with self.connection:
             self.connection.executescript(SCHEMA)
+            for table, column, kind in ADDED_COLUMNS:
+                present = {row["name"] for row in self.connection.execute(f"PRAGMA table_info({table})")}
+                if column not in present:
+                    self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
     def add_product(self, product: Product) -> None:
         try:
@@ -161,11 +186,12 @@ class SqliteStore:
     def add_work_item(self, item: WorkItem) -> WorkItem:
         with self.connection:
             cursor = self.connection.execute(
-                "INSERT INTO work_items (product, title, kind, issue, dev_path, status, created)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO work_items"
+                " (product, title, kind, issue, dev_path, status, created, piece)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     item.product, item.title, item.kind, item.issue,
-                    item.dev_path, item.status, item.created,
+                    item.dev_path, item.status, item.created, item.piece,
                 ),
             )
         return dataclasses.replace(item, id=cursor.lastrowid)
@@ -200,6 +226,28 @@ class SqliteStore:
                 "UPDATE work_items SET status = ? WHERE id = ?", (status, item_id)
             ).rowcount
         return self.get_work_item(item_id) if changed else None
+
+    def add_piece(self, product: str, name: str) -> None:
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO pieces (product, name) VALUES (?, ?)", (product, name)
+                )
+        except sqlite3.IntegrityError as exc:
+            raise Conflict(name) from exc
+
+    def list_pieces(self, product: str) -> list[str]:
+        rows = self.connection.execute(
+            "SELECT name FROM pieces WHERE product = ? ORDER BY rowid", (product,)
+        ).fetchall()
+        return [row["name"] for row in rows]
+
+    def remove_piece(self, product: str, name: str) -> bool:
+        with self.connection:
+            changed = self.connection.execute(
+                "DELETE FROM pieces WHERE product = ? AND name = ?", (product, name)
+            ).rowcount
+        return bool(changed)
 
     def close(self) -> None:
         self.connection.close()

@@ -212,6 +212,10 @@ app.add_typer(remote_app, name="remote")
 
 product_app = typer.Typer(help="Manage products: the things work items and projects belong to.")
 app.add_typer(product_app, name="product")
+piece_app = typer.Typer(
+    help="Declare the pieces a product is made of (web, admin, mobile, ...); work items may target them."
+)
+product_app.add_typer(piece_app, name="piece")
 
 workitem_app = typer.Typer(
     help="Manage work items: a product's backlog entries, each with a kind, a dev path, and a status."
@@ -2486,6 +2490,63 @@ def product_set_vision(
     typer.echo(f"Set the vision of '{slug}' on remote '{remote}'.")
 
 
+@piece_app.command("add", epilog="Example: specflo product piece add my-thing web")
+def product_piece_add(
+    product: str = typer.Argument(..., metavar="<product>", help="The product's slug."),
+    name: str = typer.Argument(
+        ..., metavar="<piece>", help="The piece to declare, e.g. web, admin, mobile."
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Declare a piece on a product; its work items may then target it."""
+    root = _require_root()
+    try:
+        remote, products = _products(root, remote)
+        products.add_piece(product, name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Declared piece '{name}' for product '{product}' on remote '{remote}'.")
+
+
+@piece_app.command("list", epilog="Example: specflo product piece list my-thing")
+def product_piece_list(
+    product: str = typer.Argument(..., metavar="<product>", help="The product's slug."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List a product's declared pieces in declaration order."""
+    root = _require_root()
+    try:
+        _, products = _products(root, remote)
+        pieces = products.list_pieces(product)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"product": product, "pieces": pieces}))
+        return
+    if not pieces:
+        typer.echo(f"No pieces on product '{product}'; its work items carry no target.")
+        return
+    for piece in pieces:
+        typer.echo(piece)
+
+
+@piece_app.command("remove", epilog="Example: specflo product piece remove my-thing admin")
+def product_piece_remove(
+    product: str = typer.Argument(..., metavar="<product>", help="The product's slug."),
+    name: str = typer.Argument(..., metavar="<piece>", help="The piece to drop."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Drop a declared piece; one a work item targets stays until the item is retargeted."""
+    root = _require_root()
+    try:
+        remote, products = _products(root, remote)
+        products.remove_piece(product, name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Removed piece '{name}' from product '{product}' on remote '{remote}'.")
+
+
 # --- work items: a product's backlog, held by the same daemon ----------------
 
 
@@ -2513,13 +2574,16 @@ def workitem_add(
         None, "--dev-path", metavar="|".join(workitems_module.DEV_PATHS),
         help=f"How the item gets built (default: {workitems_module.DEFAULT_DEV_PATH}).",
     ),
+    piece: str = typer.Option(
+        None, "--piece", metavar="<piece>", help="Target one of the product's declared pieces."
+    ),
     remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
 ) -> None:
     """Add a work item to a product's backlog; a dev path outside the three is refused."""
     root = _require_root()
     try:
         remote, items = _workitems(root, remote)
-        item = items.add(product, title, kind=kind, issue=issue, dev_path=dev_path)
+        item = items.add(product, title, kind=kind, issue=issue, dev_path=dev_path, piece=piece)
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(
@@ -2588,6 +2652,7 @@ def workitem_show(
     typer.echo(f"Product:   {item.product}")
     typer.echo(f"Kind:      {item.kind}")
     typer.echo(f"Dev path:  {item.dev_path}")
+    typer.echo(f"Piece:     {item.piece or '-'}")
     typer.echo(f"Status:    {item.status}")
     typer.echo(f"Issue:     {item.issue or '-'}")
     typer.echo(f"Created:   {item.created}")

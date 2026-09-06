@@ -1,6 +1,9 @@
 """Products: the things work items and projects belong to.
 
-A product has a name, a slug, an optional repo location, and a vision text.
+A product has a name, a slug, an optional repo location, a vision text, and
+zero or more declared pieces: the deployable parts it is made of (web,
+admin, mobile, ...). A work item may target a declared piece and nothing
+else; a product that declares none takes items with no target.
 It lives in the daemon's state store, never under a checkout, so the verbs
 here run where the store is. The daemon runs :class:`Products` on its own
 store, in-process, behind the product routes; a CLI client runs
@@ -26,6 +29,15 @@ from .store import Conflict, Product, Store
 PRODUCTS_PATH = "/api/products"
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def validate_piece_name(name: str) -> str:
+    """``name``, or a refusal: a piece is named like a slug."""
+    if not _SLUG.match(name or ""):
+        raise SpecfloError(
+            f"Invalid piece name {name!r}: use lowercase letters, digits and -, e.g. web."
+        )
+    return name
 
 
 def product_slug(name: str, slug: str | None) -> str:
@@ -91,6 +103,38 @@ class Products:
         if product is None:
             raise SpecfloError(_unknown(slug))
         return product
+
+    def list_pieces(self, slug: str) -> list[str]:
+        """The pieces declared on ``slug``, in declaration order."""
+        self.show(slug)
+        return self.store.list_pieces(slug)
+
+    def add_piece(self, slug: str, name: str) -> list[str]:
+        """Declare ``name`` on ``slug``; the pieces declared after. Refuses a repeat."""
+        self.show(slug)
+        name = validate_piece_name(name)
+        try:
+            self.store.add_piece(slug, name)
+        except Conflict:
+            raise SpecfloError(f"Piece {name!r} is already declared on {slug!r}.")
+        return self.store.list_pieces(slug)
+
+    def remove_piece(self, slug: str, name: str) -> list[str]:
+        """Drop ``name`` from ``slug``; the pieces left. A targeted piece stays."""
+        self.show(slug)
+        if name not in self.store.list_pieces(slug):
+            raise SpecfloError(f"No piece {name!r} on {slug!r}.")
+        targeting = [
+            item.id for item in self.store.list_work_items(product=slug) if item.piece == name
+        ]
+        if targeting:
+            raise SpecfloError(
+                f"Piece {name!r} is targeted by work item "
+                + ", ".join(str(item_id) for item_id in targeting)
+                + "; retarget them first."
+            )
+        self.store.remove_piece(slug, name)
+        return self.store.list_pieces(slug)
 
 
 def _unknown(slug: str) -> str:
@@ -161,6 +205,15 @@ class RemoteProducts(DaemonClient):
         return self._product(
             self._request("PUT", f"{PRODUCTS_PATH}/{slug}/vision", json={"vision": vision})
         )
+
+    def list_pieces(self, slug: str) -> list[str]:
+        return self._request("GET", f"{PRODUCTS_PATH}/{slug}/pieces")
+
+    def add_piece(self, slug: str, name: str) -> list[str]:
+        return self._request("POST", f"{PRODUCTS_PATH}/{slug}/pieces", json={"name": name})
+
+    def remove_piece(self, slug: str, name: str) -> list[str]:
+        return self._request("DELETE", f"{PRODUCTS_PATH}/{slug}/pieces/{name}")
 
     @staticmethod
     def _product(encoded) -> Product:

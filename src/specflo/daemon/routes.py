@@ -225,6 +225,51 @@ def product_set_vision(
     return {"result": wire.encode(product)}
 
 
+PIECES_PATH = PRODUCTS_PATH + "/{slug}/pieces"
+
+
+@router.get(PIECES_PATH)
+def product_pieces(request: Request, slug: str) -> dict:
+    with open_store(request.app.state.root) as store:
+        try:
+            pieces = Products(store).list_pieces(slug)
+        except SpecfloError as exc:
+            raise _refused(exc)
+    return {"result": pieces}
+
+
+@router.post(PIECES_PATH)
+def product_piece_add(
+    request: Request,
+    slug: str,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=("name",))
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            pieces = Products(store).add_piece(slug, fields["name"])
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "product_piece_add", None, f"{slug}/{fields['name']}")
+    return {"result": pieces}
+
+
+@router.delete(PIECES_PATH + "/{name}")
+def product_piece_remove(
+    request: Request, slug: str, name: str, identity: str = Depends(current_identity)
+) -> dict:
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            pieces = Products(store).remove_piece(slug, name)
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "product_piece_remove", None, f"{slug}/{name}")
+    return {"result": pieces}
+
+
 # --- work items: a product's backlog, rows beside the products ---------------
 
 
@@ -234,7 +279,9 @@ def workitem_add(
     body: dict = Body(default_factory=dict),
     identity: str = Depends(current_identity),
 ) -> dict:
-    fields = _fields(body, required=("product", "title"), optional=("kind", "issue", "dev_path"))
+    fields = _fields(
+        body, required=("product", "title"), optional=("kind", "issue", "dev_path", "piece")
+    )
     root = request.app.state.root
     with project_lock(root, None), open_store(root) as store:
         try:
@@ -244,6 +291,7 @@ def workitem_add(
                 kind=fields.get("kind"),
                 issue=fields.get("issue"),
                 dev_path=fields.get("dev_path"),
+                piece=fields.get("piece"),
             )
         except SpecfloError as exc:
             raise _refused(exc)

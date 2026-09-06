@@ -90,6 +90,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   `--product`, `--status`, and `--kind`. The daemon serves the same data
   at `/api/workitems` behind the token guard and records the actor of
   every add and status change.
+- **`specflo product piece add <product> <piece>`, `product piece list
+  <product>`, and `product piece remove <product> <piece>`** - the
+  deployable pieces a product declares (web, admin, mobile, ...). A work
+  item may target one with `workitem add --piece`; an undeclared piece is
+  refused, and a product with no pieces takes items with no target. A
+  piece a work item targets cannot be removed until the item is
+  retargeted. Served at `/api/products/<slug>/pieces` behind the token
+  guard, with the actor of every declaration and removal recorded.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

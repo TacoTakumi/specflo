@@ -1,9 +1,10 @@
 """Work items: the product-level entries a backlog is made of.
 
 A work item belongs to one product and carries a title, a kind, an optional
-issue link, a dev path, and a status. Kind is free text: four values are
-offered and any other is accepted, since what a product calls its work is
-its own business. The dev path is not: it names how the item gets built (a
+issue link, a dev path, a status, and optionally the product piece it
+targets, which must be one the product declares. Kind is free text: four
+values are offered and any other is accepted, since what a product calls
+its work is its own business. The dev path is not: it names how the item gets built (a
 full specflo project, one prompt, or a cyclical handoff) and anything else
 is refused. Status is a fixed set too, so a backlog can be filtered by it.
 
@@ -63,9 +64,10 @@ class WorkItems:
         kind: str | None = None,
         issue: str | None = None,
         dev_path: str | None = None,
+        piece: str | None = None,
         today: str | None = None,
     ) -> WorkItem:
-        """Add a work item to ``product``'s backlog; refuses an unknown product or dev path."""
+        """Add a work item to ``product``'s backlog; refuses an unknown product, dev path, or piece."""
         Products(self.store).show(product)
         title = title.strip()
         if not title:
@@ -84,8 +86,22 @@ class WorkItems:
             dev_path=validate_dev_path(DEFAULT_DEV_PATH if dev_path is None else dev_path),
             status=DEFAULT_STATUS,
             created=today or datetime.date.today().isoformat(),
+            piece=self._target(product, piece),
         )
         return self.store.add_work_item(item)
+
+    def _target(self, product: str, piece: str | None) -> str | None:
+        """``piece`` if ``product`` declares it; None for no target; a refusal otherwise."""
+        if piece is None:
+            return None
+        declared = self.store.list_pieces(product)
+        if not declared:
+            raise SpecfloError(f"Product {product!r} declares no pieces; drop --piece.")
+        if piece not in declared:
+            raise SpecfloError(
+                f"No piece {piece!r} on {product!r}; declared: " + ", ".join(declared) + "."
+            )
+        return piece
 
     def list(
         self,
@@ -131,9 +147,12 @@ class RemoteWorkItems(DaemonClient):
         kind: str | None = None,
         issue: str | None = None,
         dev_path: str | None = None,
+        piece: str | None = None,
     ) -> WorkItem:
         body = {"product": product, "title": title}
-        for key, value in (("kind", kind), ("issue", issue), ("dev_path", dev_path)):
+        for key, value in (
+            ("kind", kind), ("issue", issue), ("dev_path", dev_path), ("piece", piece),
+        ):
             if value is not None:
                 body[key] = value
         return self._item(self._request("POST", WORK_ITEMS_PATH, json=body))
