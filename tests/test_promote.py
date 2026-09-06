@@ -180,3 +180,80 @@ def test_promote_refuses_what_it_cannot_move(checkout, live_daemon):
     assert clash.exit_code == 1 and "already exists" in clash.stderr
     assert project.path.is_dir()
     assert config.hosted_projects(checkout) == {"other": "home"}
+
+
+# --- what may travel ------------------------------------------------------------
+
+
+def test_export_refuses_anything_but_plain_utf8_files(tmp_path):
+    config.init_config(tmp_path)
+    project = _local_project(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    before = _snapshot(project.path)
+
+    (project.path / "attachments").mkdir()
+    with pytest.raises(SpecfloError, match="'attachments', which is not a plain file"):
+        service.export_project("thing")
+    (project.path / "attachments").rmdir()
+
+    (project.path / "alias.md").symlink_to(project.path / "notes.md")
+    with pytest.raises(SpecfloError, match="'alias.md', which is not a plain file"):
+        service.export_project("thing")
+    (project.path / "alias.md").unlink()
+
+    (project.path / "diagram.png").write_bytes(b"\x89PNG\r\n\x1a\n\xff\xfe")
+    with pytest.raises(SpecfloError, match="'diagram.png', which is not UTF-8 text"):
+        service.export_project("thing")
+    (project.path / "diagram.png").unlink()
+
+    assert service.export_project("thing") == before
+
+
+def test_promote_refuses_before_sending_and_leaves_the_project_in_place(tmp_path, monkeypatch, live_daemon):
+    config.init_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    project = _local_project(tmp_path)
+    (project.path / "attachments").mkdir()
+    (project.path / "attachments" / "sketch.txt").write_text("keep me\n")
+    runner.invoke(app, ["remote", "add", "home", live_daemon["url"], "--token", live_daemon["token"]])
+    before = _snapshot(project.path)
+
+    result = runner.invoke(app, ["promote", "thing", "--remote", "home"])
+
+    assert result.exit_code == 1
+    assert "'attachments', which is not a plain file" in result.stderr
+    assert _snapshot(project.path) == before
+    assert (project.path / "attachments" / "sketch.txt").read_text() == "keep me\n"
+    assert config.hosting_remote(tmp_path, "thing") is None
+    assert not (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "thing").exists()
+
+
+def test_a_failed_import_leaves_nothing_behind_and_the_retry_is_not_refused(tmp_path, monkeypatch):
+    from pathlib import Path as _Path
+
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    files = {"project.md": "---\nname: Thing\nslug: thing\n---\n", "brainstorm.md": "# b\n", "spec.md": "# s\n"}
+    real = _Path.write_bytes
+    written = []
+
+    def failing(self, data):
+        written.append(self.name)
+        if len(written) == 2:
+            raise OSError("disk full")
+        return real(self, data)
+
+    monkeypatch.setattr(_Path, "write_bytes", failing)
+    with pytest.raises(OSError, match="disk full"):
+        service.import_project("thing", files)
+    monkeypatch.setattr(_Path, "write_bytes", real)
+
+    projects_dir = tmp_path / "docs" / "projects"
+    assert not (projects_dir / "thing").exists()
+    assert [p.name for p in projects_dir.iterdir()] == []
+
+    hashes = service.import_project("thing", files)
+
+    assert set(hashes) == set(files)
+    assert hashes["spec.md"] == hashlib.sha256((projects_dir / "thing" / "spec.md").read_bytes()).hexdigest()
+    assert [p.name for p in projects_dir.iterdir()] == ["thing"]

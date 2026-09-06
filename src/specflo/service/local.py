@@ -9,6 +9,7 @@ project is served by the same code on the far side of the wire.
 from __future__ import annotations
 
 import hashlib
+import shutil
 from pathlib import Path
 
 from .. import brainstorm, checkpoint, doc, index, plan, projects, review, spec, status
@@ -119,14 +120,39 @@ class LocalProjectService:
         return index.write_index(self.root, self.cfg)
 
     def export_project(self, slug: str) -> dict[str, str]:
+        """Every file of the project directory as text, or a refusal.
+
+        Only plain UTF-8 files travel. A subdirectory, a symlink, or a file
+        that is not UTF-8 text is refused by name before anything is sent,
+        because a promotion removes the whole directory once the daemon has
+        confirmed what it received, and nothing may be lost on the way.
+        """
         directory = projects.load_project(self.root, self.cfg, slug).path
-        return {
-            path.name: path.read_text()
-            for path in sorted(directory.iterdir())
-            if path.is_file()
-        }
+        files = {}
+        for path in sorted(directory.iterdir()):
+            if path.is_symlink() or not path.is_file():
+                raise SpecfloError(
+                    f"Project {slug!r} holds {path.name!r}, which is not a plain file;"
+                    " move it out of the project directory first, since only plain"
+                    " files travel."
+                )
+            try:
+                files[path.name] = path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                raise SpecfloError(
+                    f"Project {slug!r} holds {path.name!r}, which is not UTF-8 text;"
+                    " move it out of the project directory first, since only text"
+                    " files travel."
+                ) from None
+        return files
 
     def import_project(self, slug: str, files: dict[str, str]) -> dict[str, str]:
+        """Create ``slug`` from ``files``; the SHA-256 of each file as it is on disk.
+
+        The files are written into a staging directory beside the project's
+        and moved into place in one rename at the end, so a failure part way
+        leaves no project behind and a retry is not refused as existing.
+        """
         directory = projects.project_dir(self.root, self.cfg, slug)
         if directory.exists():
             raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
@@ -137,11 +163,20 @@ class LocalProjectService:
             raise SpecfloError(
                 f"A project needs its {projects.PROJECT_FILENAME}; none was given."
             )
-        directory.mkdir(parents=True)
-        hashes = {}
-        for name, text in files.items():
-            (directory / name).write_text(text)
-            hashes[name] = hashlib.sha256(text.encode()).hexdigest()
+        staging = directory.with_name(f".{directory.name}.importing")
+        if staging.exists():
+            shutil.rmtree(staging)
+        staging.mkdir(parents=True)
+        try:
+            hashes = {}
+            for name, text in files.items():
+                target = staging / name
+                target.write_bytes(text.encode("utf-8"))
+                hashes[name] = hashlib.sha256(target.read_bytes()).hexdigest()
+            staging.rename(directory)
+        except BaseException:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise
         return hashes
 
     # --- brainstorm: decisions --------------------------------------------
