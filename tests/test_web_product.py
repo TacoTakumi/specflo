@@ -214,3 +214,19 @@ def test_an_issue_that_is_not_a_web_link_is_shown_as_text_not_a_link(client, roo
 
     assert "javascript:alert(1)" in html
     assert 'href="javascript:alert(1)"' not in html
+
+
+def test_an_unknown_product_is_a_page_of_the_ui_not_json(client, root):
+    seed(root)
+
+    response = page(client, "nothing")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    assert "No product 'nothing'." in unescape(response.text) and "signed in as" in response.text
+
+
+def test_a_bare_product_names_the_verb_that_sets_a_vision(client, root):
+    seed(root)
+
+    assert "specflo product set-vision" in section(page(client, "other").text, "vision")

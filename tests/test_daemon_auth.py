@@ -145,3 +145,12 @@ def test_a_valid_token_attaches_its_identity_to_the_request(root, client):
 
 def test_the_health_endpoint_needs_no_token(client):
     assert client.get(daemon.HEALTH_PATH).status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/docs", "/redoc", "/openapi.json"])
+def test_the_generated_docs_and_schema_are_not_served(client, root, path):
+    # They would hand every API path to a browser without a token; the
+    # token guard is the contract, so the daemon does not generate them.
+    assert client.get(path).status_code == 404
+    secret = auth.mint_token(root, "developer")
+    assert client.get(path, headers=_bearer(secret)).status_code == 404

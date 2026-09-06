@@ -96,7 +96,62 @@ def decode_args(operation: Operation, body: dict) -> dict:
         raise WireError(
             f"{operation.name}: missing argument(s) {', '.join(missing)}."
         )
+    for name, value in body.items():
+        hint = operation.hints.get(name)
+        if not _accepts(hint, value):
+            raise WireError(
+                f"{operation.name}: argument {name!r} must be {_describe(hint)}."
+            )
     return dict(body)
+
+
+def _accepts(hint, value) -> bool:
+    """Whether a JSON value can stand for a parameter typed ``hint``.
+
+    Plain types and unions of them are checked; anything richer is let
+    through, so a hint the wire does not model never refuses a valid call.
+    """
+    if hint is None:
+        return True
+    origin = typing.get_origin(hint)
+    if origin is types.UnionType or origin is typing.Union:
+        return any(_accepts(arg, value) for arg in typing.get_args(hint))
+    if hint is type(None):
+        return value is None
+    if hint is bool:
+        return isinstance(value, bool)
+    if hint is int:
+        return isinstance(value, int) and not isinstance(value, bool)
+    if hint is float:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if hint is str or hint is Path:
+        return isinstance(value, str)
+    if hint is dict or origin is dict:
+        return isinstance(value, dict)
+    if hint in (list, tuple) or origin in (list, tuple):
+        return isinstance(value, list)
+    return True
+
+
+def _describe(hint) -> str:
+    origin = typing.get_origin(hint)
+    if origin is types.UnionType or origin is typing.Union:
+        return " or ".join(_describe(arg) for arg in typing.get_args(hint))
+    if hint is type(None):
+        return "null"
+    if hint is str or hint is Path:
+        return "a string"
+    if hint is bool:
+        return "true or false"
+    if hint is int:
+        return "an integer"
+    if hint is float:
+        return "a number"
+    if hint is dict or origin is dict:
+        return "an object"
+    if hint in (list, tuple) or origin in (list, tuple):
+        return "a list"
+    return getattr(hint, "__name__", str(hint))
 
 
 def encode(value):

@@ -166,10 +166,14 @@ def test_a_project_made_outside_any_product_still_has_a_page(client, root):
     assert "no product" in response.text
 
 
-def test_an_unknown_project_is_a_404(client, root):
+def test_an_unknown_project_is_a_404_page(client, root):
     seed(root)
 
-    assert page(client, "nothing").status_code == 404
+    response = page(client, "nothing")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    assert "No project 'nothing'." in unescape(response.text)
 
 
 def test_the_project_page_needs_a_session(root):

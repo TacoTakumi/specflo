@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import dataclasses
 import secrets
+import time
 from pathlib import Path
 from urllib.parse import parse_qs
 
-from fastapi import APIRouter, Depends, FastAPI, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -44,6 +45,8 @@ ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
 SESSION_COOKIE = "specflo_session"
+# How long a session lives, in seconds; the cookie carries the same limit.
+SESSION_TTL = 12 * 60 * 60
 
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
@@ -75,13 +78,25 @@ class SignInRequired(Exception):
     """A page was asked for by a browser with no live session."""
 
 
+def _now() -> float:
+    return time.time()
+
+
 def current_session(request: Request) -> str:
-    """The identity signed in on the request's cookie; sends to sign-in without one."""
+    """The identity signed in on the request's cookie; sends to sign-in without one.
+
+    A session is the identity and the moment it expires; an expired one is
+    dropped on sight and counts as none.
+    """
     secret = request.cookies.get(SESSION_COOKIE, "")
-    identity = request.app.state.sessions.get(secret) if secret else None
-    if identity is None:
+    sessions = request.app.state.sessions
+    entry = sessions.get(secret) if secret else None
+    if entry is not None and entry[1] <= _now():
+        sessions.pop(secret, None)
+        entry = None
+    if entry is None:
         raise SignInRequired()
-    return identity
+    return entry[0]
 
 
 def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
@@ -118,12 +133,17 @@ async def sign_in(request: Request) -> Response:
         return render(
             "signin.html", status_code=400, identity=None, error=SIGNIN_FAILED, chosen=identity
         )
+    sessions = request.app.state.sessions
+    now = _now()
+    for stale in [key for key, (_, expires) in sessions.items() if expires <= now]:
+        del sessions[stale]
     secret = secrets.token_urlsafe(32)
-    request.app.state.sessions[secret] = identity
+    sessions[secret] = (identity, now + SESSION_TTL)
     response = RedirectResponse(HOME_PATH, status_code=303)
     response.set_cookie(
         SESSION_COOKIE,
         secret,
+        max_age=SESSION_TTL,
         httponly=True,
         samesite="lax",
         path="/",
@@ -287,7 +307,7 @@ def product_page(
 ) -> Response:
     view = product_view(request.app.state.root, slug, show_archived=archived == "1")
     if view is None:
-        raise HTTPException(status_code=404, detail=f"No product {slug!r}.")
+        return _missing(identity, f"No product {slug!r}.")
     return render("product.html", identity=identity, view=view)
 
 
@@ -297,8 +317,13 @@ def project_page(
 ) -> Response:
     view = project_view(request.app.state.root, slug)
     if view is None:
-        raise HTTPException(status_code=404, detail=f"No project {slug!r}.")
+        return _missing(identity, f"No project {slug!r}.")
     return render("project.html", identity=identity, view=view)
+
+
+def _missing(identity: str, message: str) -> HTMLResponse:
+    """A 404 as a page of the UI, not the API's JSON."""
+    return render("missing.html", status_code=404, identity=identity, message=message)
 
 
 def install(app: FastAPI) -> None:

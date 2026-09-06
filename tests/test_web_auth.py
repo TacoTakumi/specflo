@@ -200,3 +200,16 @@ def test_the_cookie_is_marked_secure_only_when_the_page_came_over_https(root):
 
     tls = TestClient(create_app(root), base_url="https://testserver", follow_redirects=False)
     assert "Secure" in tls.post(web.SIGNIN_PATH, data=form).headers["set-cookie"]
+
+
+def test_a_session_expires_and_the_cookie_says_when(client, root, monkeypatch):
+    response = sign_in(client, root, "developer")
+
+    assert f"Max-Age={web.SESSION_TTL}" in response.headers["set-cookie"]
+    assert client.get(web.HOME_PATH).status_code == 200
+
+    started = web._now()
+    monkeypatch.setattr(web, "_now", lambda: started + web.SESSION_TTL + 1)
+
+    assert client.get(web.HOME_PATH).status_code == 303
+    assert client.app.state.sessions == {}

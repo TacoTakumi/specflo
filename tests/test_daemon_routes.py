@@ -216,3 +216,17 @@ def test_concurrent_decision_adds_mint_distinct_sequential_ids(root, token, live
     assert numbers == list(range(1, 21))
     document = (root / daemon.PROJECTS_DIRNAME / "busy" / "brainstorm.md").read_text()
     assert all(f"### {identifier} " in document for identifier in ids)
+
+
+def test_an_argument_of_the_wrong_type_is_a_422_not_a_500(client):
+    call(client, "create_project", name="Thing")
+
+    for operation, body, expected in (
+        ("add_decision", {"slug": 5, "text": "x"}, "'slug' must be a string"),
+        ("add_decision", {"slug": "thing", "text": ["x"]}, "'text' must be a string"),
+        ("add_milestone", {"slug": "thing", "text": "m", "exit_items": "x"}, "'exit_items' must be a list"),
+        ("import_project", {"slug": "other", "files": "nope"}, "'files' must be an object"),
+    ):
+        response = client.post(wire.route_path(operation), json=body)
+        assert response.status_code == 422, (operation, response.text)
+        assert expected in response.json()["detail"], (operation, response.text)
