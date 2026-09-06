@@ -29,6 +29,8 @@ from ..errors import SpecfloError
 from ..service import wire
 from ..service.local import LocalProjectService
 from .auth import IDENTITIES, identity_for
+from .products import PRODUCTS_PATH, Products
+from .store import open_store
 
 WHOAMI_PATH = "/whoami"
 AUDIT_FILENAME = "audit.jsonl"
@@ -141,3 +143,82 @@ for _operation in wire.OPERATIONS.values():
         methods=["POST"],
         name=_operation.name,
     )
+
+
+# --- products: rows in the state store, not artifacts of a project -----------
+# The product routes are written out rather than generated: products are not
+# a ProjectService operation, and their store is opened per request because a
+# SQLite connection belongs to the thread that opened it.
+
+
+def _fields(body, *, required: tuple[str, ...], optional: tuple[str, ...] = ()) -> dict:
+    """The request body's fields; 422 for an unknown field, a missing one, or a wrong type."""
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=422, detail="The request body must be a JSON object.")
+    unknown = sorted(set(body) - set(required) - set(optional))
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown field(s) {', '.join(unknown)}.")
+    missing = [name for name in required if name not in body]
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Missing field(s) {', '.join(missing)}.")
+    for name, value in body.items():
+        if not isinstance(value, str) and not (value is None and name in optional):
+            raise HTTPException(status_code=422, detail=f"Field {name!r} must be a string.")
+    return dict(body)
+
+
+def _refused(exc: SpecfloError) -> HTTPException:
+    return HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post(PRODUCTS_PATH)
+def product_add(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=("name",), optional=("slug", "repo"))
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            product = Products(store).add(
+                fields["name"], slug=fields.get("slug"), repo=fields.get("repo")
+            )
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "product_add", None, product.slug)
+    return {"result": wire.encode(product)}
+
+
+@router.get(PRODUCTS_PATH)
+def product_list(request: Request) -> dict:
+    with open_store(request.app.state.root) as store:
+        return {"result": wire.encode(Products(store).list())}
+
+
+@router.get(PRODUCTS_PATH + "/{slug}")
+def product_show(request: Request, slug: str) -> dict:
+    with open_store(request.app.state.root) as store:
+        try:
+            product = Products(store).show(slug)
+        except SpecfloError as exc:
+            raise _refused(exc)
+    return {"result": wire.encode(product)}
+
+
+@router.put(PRODUCTS_PATH + "/{slug}/vision")
+def product_set_vision(
+    request: Request,
+    slug: str,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=("vision",))
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            product = Products(store).set_vision(slug, fields["vision"])
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "product_set_vision", None, slug)
+    return {"result": wire.encode(product)}

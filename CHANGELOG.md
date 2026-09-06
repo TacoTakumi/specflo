@@ -70,6 +70,16 @@ latter. Release tags are of the form `vX.Y.Z`.
   Pools) are refused with the verb that owns them; `checkpoint` (derived)
   and `project` (no prose sections) are refused too. The section may be
   named with or without its `##` prefix.
+- **`specflo product add <name>`, `product list`, `product show <slug>`,
+  and `product set-vision <slug>`** - products, held by a daemon in the
+  SQLite state store under its root. A product has a name, a slug
+  (derived from the name unless `--slug` says otherwise), an optional
+  `--repo` location, and a vision text given inline or on `--stdin`. The
+  verbs run on the daemon named by `--remote`, or on the only remote
+  registered; with none registered, or several and none named, they
+  refuse. A taken slug is refused. The daemon serves the same data at
+  `/api/products` behind the token guard and records the actor of every
+  add and vision change in its audit log.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

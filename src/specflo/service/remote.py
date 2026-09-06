@@ -54,7 +54,7 @@ class RemoteProjectService:
             raise SpecfloError(f"Cannot reach the remote at {self.url}: {exc}") from exc
         if response.status_code == 200:
             return wire.decode(response.json()["result"], wire.OPERATIONS[operation].returns)
-        detail = _detail(response)
+        detail = response_detail(response)
         if response.status_code == 401:
             raise SpecfloError(f"The remote at {self.url} refused the token: {detail}")
         if response.status_code in (400, 422):
@@ -64,7 +64,7 @@ class RemoteProjectService:
         )
 
 
-def _detail(response: httpx.Response) -> str:
+def response_detail(response: httpx.Response) -> str:
     """The message a daemon response carries, whatever shape it came in."""
     try:
         body = response.json()

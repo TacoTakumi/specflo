@@ -1,0 +1,138 @@
+"""The daemon's state store: one interface, SQLite behind it.
+
+Products (and, in time, work items) are rows, not artifacts: they belong to
+the daemon rather than to one project, so they live in the state store
+under the daemon root instead of in a markdown file. Everything that reads
+or writes them does so through the :class:`Store` interface below and
+nothing else. SQLite is the first backend and the one every daemon root
+holds; another backend (PostgreSQL, say) implements the same interface and
+the product verbs, the work item verbs, and the routes are none the wiser.
+
+Standard library only: sqlite3 ships with Python, so the store works
+wherever the daemon root does, with or without the serve extra. A store is
+opened per unit of work and closed after it; a SQLite connection belongs to
+the thread that opened it, and the daemon answers requests on several.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import sqlite3
+from pathlib import Path
+from typing import Protocol
+
+from . import STATE_STORE_FILENAME
+
+
+@dataclasses.dataclass(frozen=True)
+class Product:
+    """One product as the store holds it."""
+
+    name: str
+    slug: str
+    repo: str | None
+    vision: str
+    created: str
+
+
+class Conflict(Exception):
+    """A write that would duplicate a key the store keeps unique."""
+
+
+class Store(Protocol):
+    """What a state store backend provides; every backend implements all of it."""
+
+    def add_product(self, product: Product) -> None:
+        """Insert ``product``; raises :class:`Conflict` on a taken slug."""
+
+    def get_product(self, slug: str) -> Product | None:
+        """The product called ``slug``, or None."""
+
+    def list_products(self) -> list[Product]:
+        """Every product, in slug order."""
+
+    def set_product_vision(self, slug: str, vision: str) -> Product | None:
+        """Replace the vision of ``slug``; the updated product, or None if unknown."""
+
+    def close(self) -> None:
+        """Release the backend's resources."""
+
+    def __enter__(self) -> Store: ...
+
+    def __exit__(self, *exc_info) -> None: ...
+
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS products (
+    slug    TEXT PRIMARY KEY,
+    name    TEXT NOT NULL,
+    repo    TEXT,
+    vision  TEXT NOT NULL DEFAULT '',
+    created TEXT NOT NULL
+);
+"""
+
+
+class SqliteStore:
+    """The :class:`Store` on a SQLite file; the schema is created on open."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = Path(path)
+        self.connection = sqlite3.connect(self.path)
+        self.connection.row_factory = sqlite3.Row
+        with self.connection:
+            self.connection.executescript(SCHEMA)
+
+    def add_product(self, product: Product) -> None:
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO products (slug, name, repo, vision, created)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (product.slug, product.name, product.repo, product.vision, product.created),
+                )
+        except sqlite3.IntegrityError as exc:
+            raise Conflict(product.slug) from exc
+
+    def get_product(self, slug: str) -> Product | None:
+        row = self.connection.execute(
+            "SELECT name, slug, repo, vision, created FROM products WHERE slug = ?", (slug,)
+        ).fetchone()
+        return _product(row) if row is not None else None
+
+    def list_products(self) -> list[Product]:
+        rows = self.connection.execute(
+            "SELECT name, slug, repo, vision, created FROM products ORDER BY slug"
+        ).fetchall()
+        return [_product(row) for row in rows]
+
+    def set_product_vision(self, slug: str, vision: str) -> Product | None:
+        with self.connection:
+            changed = self.connection.execute(
+                "UPDATE products SET vision = ? WHERE slug = ?", (vision, slug)
+            ).rowcount
+        return self.get_product(slug) if changed else None
+
+    def close(self) -> None:
+        self.connection.close()
+
+    def __enter__(self) -> SqliteStore:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+
+def _product(row: sqlite3.Row) -> Product:
+    return Product(
+        name=row["name"],
+        slug=row["slug"],
+        repo=row["repo"],
+        vision=row["vision"],
+        created=row["created"],
+    )
+
+
+def open_store(root: Path) -> Store:
+    """The store a daemon root holds, opened for one unit of work."""
+    return SqliteStore(Path(root) / STATE_STORE_FILENAME)

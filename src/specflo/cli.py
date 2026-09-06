@@ -28,9 +28,11 @@ from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
 from .daemon.cli import serve_app
+from .daemon.products import RemoteProducts
 from .errors import SpecfloError
 from .service import ProjectService
 from .service import promote as promote_module
+from .service import wire
 from .service.resolve import local_service, remote_service, resolve_service
 from .validators import VALIDATORS
 
@@ -205,6 +207,9 @@ app.add_typer(serve_app, name="serve")
 
 remote_app = typer.Typer(help="Register the daemons this checkout can reach.")
 app.add_typer(remote_app, name="remote")
+
+product_app = typer.Typer(help="Manage products: the things work items and projects belong to.")
+app.add_typer(product_app, name="product")
 
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback
@@ -2340,6 +2345,134 @@ def remote_remove(
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Removed remote '{name}'.")
+
+
+# --- products: held by a daemon, reached through a registered remote ---------
+
+
+def _products(root: Path, remote: str | None) -> tuple[str, RemoteProducts]:
+    """The remote a product verb runs on, by name, and the client for it.
+
+    Products live on a daemon, so a verb needs one: the remote named by
+    ``--remote``, or the only one registered. With several registered and
+    none named, the verb refuses rather than guess.
+    """
+    if remote is None:
+        remotes = config.list_remotes(root)
+        if not remotes:
+            raise SpecfloError(
+                "No remotes. Register the daemon that holds products with"
+                " `specflo remote add <name> <url> --token <secret>`."
+            )
+        if len(remotes) > 1:
+            raise SpecfloError(
+                "More than one remote is registered (" + ", ".join(remotes)
+                + "); pass --remote <name>."
+            )
+        (remote,) = remotes
+    registered = config.load_remote(root, remote)
+    return remote, RemoteProducts(registered.url, registered.token)
+
+
+PRODUCT_REMOTE_HELP = "The registered daemon to use; the only one registered otherwise."
+
+
+@product_app.command(
+    "add", epilog='Example: specflo product add "My Thing" --repo git@host:me/thing.git'
+)
+def product_add(
+    name: str = typer.Argument(..., metavar="<name>", help="The product's name."),
+    slug: str = typer.Option(
+        None, "--slug", metavar="<slug>",
+        help="File it under this slug instead of one derived from the name.",
+    ),
+    repo: str = typer.Option(
+        None, "--repo", metavar="<location>", help="Where the product's repository lives."
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Add a product to a daemon; a taken slug is refused."""
+    root = _require_root()
+    try:
+        remote, products = _products(root, remote)
+        product = products.add(name, slug=slug, repo=repo)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Added product '{product.slug}' ({product.name}) on remote '{remote}'.")
+
+
+@product_app.command("list", epilog="Example: specflo product list --json")
+def product_list(
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List a daemon's products: slug, name, and repo location."""
+    root = _require_root()
+    try:
+        remote, products = _products(root, remote)
+        listed = products.list()
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"remote": remote, "products": wire.encode(listed)}))
+        return
+    if not listed:
+        typer.echo(
+            f"No products on remote '{remote}'. Add one with `specflo product add <name>`."
+        )
+        return
+    for product in listed:
+        typer.echo(
+            f"{product.slug}  {product.name}" + (f"  {product.repo}" if product.repo else "")
+        )
+
+
+@product_app.command("show", epilog="Example: specflo product show my-thing")
+def product_show(
+    slug: str = typer.Argument(..., metavar="<slug>", help="The product's slug."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show one product: name, slug, repo location, created date, and vision."""
+    root = _require_root()
+    try:
+        _, products = _products(root, remote)
+        product = products.show(slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(wire.encode(product)))
+        return
+    typer.echo(f"Product: {product.name} ({product.slug})")
+    typer.echo(f"Repo:    {product.repo or '-'}")
+    typer.echo(f"Created: {product.created}")
+    if product.vision:
+        typer.echo("Vision:")
+        typer.echo(product.vision.rstrip("\n"))
+    else:
+        typer.echo("Vision:  (none)")
+
+
+@product_app.command(
+    "set-vision", epilog='Example: specflo product set-vision my-thing "Ship the thing."'
+)
+def product_set_vision(
+    slug: str = typer.Argument(..., metavar="<slug>", help="The product's slug."),
+    text: str = typer.Argument(None, metavar="[<text>]", help="The vision; or pass --stdin."),
+    stdin: bool = typer.Option(False, "--stdin", help="Read the vision from stdin."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Replace a product's vision text, given inline or on stdin."""
+    if (text is None) == (not stdin):
+        raise _die("Give the vision as <text> or with --stdin (exactly one).")
+    root = _require_root()
+    vision = sys.stdin.read() if stdin else text
+    try:
+        remote, products = _products(root, remote)
+        products.set_vision(slug, vision)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Set the vision of '{slug}' on remote '{remote}'.")
 
 
 def build_cli():
