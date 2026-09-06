@@ -97,11 +97,13 @@ def _unknown(slug: str) -> str:
     return f"No product {slug!r}. Run `specflo product list` to see the ones there are."
 
 
-class RemoteProducts:
-    """The product verbs over HTTP to the daemon at ``url``.
+class DaemonClient:
+    """What a client of the daemon's row routes shares: URL, token, one request shape.
 
     ``client`` lets a caller supply the HTTP client (a test drives the daemon
-    in-process through one); otherwise one is opened against ``url``.
+    in-process through one); otherwise one is opened against ``url``. A 200
+    carries the result; a refusal comes back as the ``SpecfloError`` the
+    daemon's verb raised, so a command cannot tell remote from in-process.
     """
 
     def __init__(
@@ -117,6 +119,27 @@ class RemoteProducts:
             client if client is not None else httpx.Client(base_url=self.url, timeout=timeout)
         )
         self.client.headers["Authorization"] = f"Bearer {token}"
+
+    def _request(self, method: str, path: str, **kwargs):
+        try:
+            response = self.client.request(method, path, **kwargs)
+        except httpx.HTTPError as exc:
+            raise SpecfloError(f"Cannot reach the remote at {self.url}: {exc}") from exc
+        if response.status_code == 200:
+            return response.json()["result"]
+        detail = response_detail(response)
+        if response.status_code == 401:
+            raise SpecfloError(f"The remote at {self.url} refused the token: {detail}")
+        if response.status_code in (400, 422):
+            raise SpecfloError(detail)
+        raise SpecfloError(
+            f"The remote at {self.url} answered {response.status_code}"
+            f" to {method} {path}: {detail}"
+        )
+
+
+class RemoteProducts(DaemonClient):
+    """The product verbs over HTTP to the daemon at ``url``."""
 
     def add(
         self, name: str, *, slug: str | None = None, repo: str | None = None
@@ -142,20 +165,3 @@ class RemoteProducts:
     @staticmethod
     def _product(encoded) -> Product:
         return wire.decode(encoded, Product)
-
-    def _request(self, method: str, path: str, **kwargs):
-        try:
-            response = self.client.request(method, path, **kwargs)
-        except httpx.HTTPError as exc:
-            raise SpecfloError(f"Cannot reach the remote at {self.url}: {exc}") from exc
-        if response.status_code == 200:
-            return response.json()["result"]
-        detail = response_detail(response)
-        if response.status_code == 401:
-            raise SpecfloError(f"The remote at {self.url} refused the token: {detail}")
-        if response.status_code in (400, 422):
-            raise SpecfloError(detail)
-        raise SpecfloError(
-            f"The remote at {self.url} answered {response.status_code}"
-            f" to {method} {path}: {detail}"
-        )

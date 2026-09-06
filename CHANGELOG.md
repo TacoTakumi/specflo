@@ -80,6 +80,16 @@ latter. Release tags are of the form `vX.Y.Z`.
   refuse. A taken slug is refused. The daemon serves the same data at
   `/api/products` behind the token guard and records the actor of every
   add and vision change in its audit log.
+- **`specflo workitem add <product> <title>`, `workitem list`, `workitem
+  show <id>`, and `workitem set-status <id> <status>`** - a product's
+  backlog. A work item carries a kind (free text; `fix`, `roadmap`, `idea`,
+  and `issue` are the usual ones and `fix` the default), an optional
+  `--issue` link, a dev path (`full`, `one-prompt`, or `cyclical`; `full`
+  the default, anything else refused), and a status (`open`,
+  `in-progress`, `done`, or `dropped`; `open` to start). `list` filters by
+  `--product`, `--status`, and `--kind`. The daemon serves the same data
+  at `/api/workitems` behind the token guard and records the actor of
+  every add and status change.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

@@ -31,6 +31,7 @@ from ..service.local import LocalProjectService
 from .auth import IDENTITIES, identity_for
 from .products import PRODUCTS_PATH, Products
 from .store import open_store
+from .workitems import WORK_ITEMS_PATH, WorkItems
 
 WHOAMI_PATH = "/whoami"
 AUDIT_FILENAME = "audit.jsonl"
@@ -222,3 +223,72 @@ def product_set_vision(
             raise _refused(exc)
         _audit(root, identity, "product_set_vision", None, slug)
     return {"result": wire.encode(product)}
+
+
+# --- work items: a product's backlog, rows beside the products ---------------
+
+
+@router.post(WORK_ITEMS_PATH)
+def workitem_add(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=("product", "title"), optional=("kind", "issue", "dev_path"))
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            item = WorkItems(store).add(
+                fields["product"],
+                fields["title"],
+                kind=fields.get("kind"),
+                issue=fields.get("issue"),
+                dev_path=fields.get("dev_path"),
+            )
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "workitem_add", None, str(item.id))
+    return {"result": wire.encode(item)}
+
+
+@router.get(WORK_ITEMS_PATH)
+def workitem_list(
+    request: Request,
+    product: str | None = None,
+    status: str | None = None,
+    kind: str | None = None,
+) -> dict:
+    with open_store(request.app.state.root) as store:
+        try:
+            items = WorkItems(store).list(product=product, status=status, kind=kind)
+        except SpecfloError as exc:
+            raise _refused(exc)
+    return {"result": wire.encode(items)}
+
+
+@router.get(WORK_ITEMS_PATH + "/{item_id}")
+def workitem_show(request: Request, item_id: int) -> dict:
+    with open_store(request.app.state.root) as store:
+        try:
+            item = WorkItems(store).show(item_id)
+        except SpecfloError as exc:
+            raise _refused(exc)
+    return {"result": wire.encode(item)}
+
+
+@router.put(WORK_ITEMS_PATH + "/{item_id}/status")
+def workitem_set_status(
+    request: Request,
+    item_id: int,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    fields = _fields(body, required=("status",))
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        try:
+            item = WorkItems(store).set_status(item_id, fields["status"])
+        except SpecfloError as exc:
+            raise _refused(exc)
+        _audit(root, identity, "workitem_set_status", None, str(item_id))
+    return {"result": wire.encode(item)}

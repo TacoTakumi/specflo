@@ -28,7 +28,9 @@ from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
 from .daemon.cli import serve_app
+from .daemon import workitems as workitems_module
 from .daemon.products import RemoteProducts
+from .daemon.workitems import RemoteWorkItems
 from .errors import SpecfloError
 from .service import ProjectService
 from .service import promote as promote_module
@@ -210,6 +212,11 @@ app.add_typer(remote_app, name="remote")
 
 product_app = typer.Typer(help="Manage products: the things work items and projects belong to.")
 app.add_typer(product_app, name="product")
+
+workitem_app = typer.Typer(
+    help="Manage work items: a product's backlog entries, each with a kind, a dev path, and a status."
+)
+app.add_typer(workitem_app, name="workitem")
 
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback
@@ -2350,12 +2357,12 @@ def remote_remove(
 # --- products: held by a daemon, reached through a registered remote ---------
 
 
-def _products(root: Path, remote: str | None) -> tuple[str, RemoteProducts]:
-    """The remote a product verb runs on, by name, and the client for it.
+def _pick_remote(root: Path, remote: str | None) -> config.Remote:
+    """The remote a daemon-held verb runs on: the one named, or the only one registered.
 
-    Products live on a daemon, so a verb needs one: the remote named by
-    ``--remote``, or the only one registered. With several registered and
-    none named, the verb refuses rather than guess.
+    Products and their work items live on a daemon, so a verb on them needs
+    one. With several registered and none named, the verb refuses rather
+    than guess.
     """
     if remote is None:
         remotes = config.list_remotes(root)
@@ -2370,8 +2377,12 @@ def _products(root: Path, remote: str | None) -> tuple[str, RemoteProducts]:
                 + "); pass --remote <name>."
             )
         (remote,) = remotes
-    registered = config.load_remote(root, remote)
-    return remote, RemoteProducts(registered.url, registered.token)
+    return config.load_remote(root, remote)
+
+
+def _products(root: Path, remote: str | None) -> tuple[str, RemoteProducts]:
+    registered = _pick_remote(root, remote)
+    return registered.name, RemoteProducts(registered.url, registered.token)
 
 
 PRODUCT_REMOTE_HELP = "The registered daemon to use; the only one registered otherwise."
@@ -2473,6 +2484,131 @@ def product_set_vision(
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Set the vision of '{slug}' on remote '{remote}'.")
+
+
+# --- work items: a product's backlog, held by the same daemon ----------------
+
+
+def _workitems(root: Path, remote: str | None) -> tuple[str, RemoteWorkItems]:
+    registered = _pick_remote(root, remote)
+    return registered.name, RemoteWorkItems(registered.url, registered.token)
+
+
+@workitem_app.command(
+    "add",
+    epilog='Example: specflo workitem add my-thing "Fix the login" --kind fix --dev-path one-prompt',
+)
+def workitem_add(
+    product: str = typer.Argument(..., metavar="<product>", help="The product's slug."),
+    title: str = typer.Argument(..., metavar="<title>", help="What the work is."),
+    kind: str = typer.Option(
+        None, "--kind", metavar="<kind>",
+        help="Free text; the usual ones are " + ", ".join(workitems_module.KINDS)
+        + f" (default: {workitems_module.DEFAULT_KIND}).",
+    ),
+    issue: str = typer.Option(
+        None, "--issue", metavar="<link>", help="The issue this item tracks, if any."
+    ),
+    dev_path: str = typer.Option(
+        None, "--dev-path", metavar="|".join(workitems_module.DEV_PATHS),
+        help=f"How the item gets built (default: {workitems_module.DEFAULT_DEV_PATH}).",
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Add a work item to a product's backlog; a dev path outside the three is refused."""
+    root = _require_root()
+    try:
+        remote, items = _workitems(root, remote)
+        item = items.add(product, title, kind=kind, issue=issue, dev_path=dev_path)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(
+        f"Added work item {item.id} ({item.title}) to product '{item.product}'"
+        f" on remote '{remote}'."
+    )
+
+
+@workitem_app.command(
+    "list", epilog="Example: specflo workitem list --product my-thing --status open"
+)
+def workitem_list(
+    product: str = typer.Option(
+        None, "--product", metavar="<slug>", help="Only this product's items."
+    ),
+    status: str = typer.Option(
+        None, "--status", metavar="|".join(workitems_module.STATUSES),
+        help="Only items in this status.",
+    ),
+    kind: str = typer.Option(None, "--kind", metavar="<kind>", help="Only items of this kind."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List work items in backlog order: id, product, status, kind, dev path, title."""
+    root = _require_root()
+    try:
+        remote, items = _workitems(root, remote)
+        listed = items.list(product=product, status=status, kind=kind)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"remote": remote, "work_items": wire.encode(listed)}))
+        return
+    if not listed:
+        if any(value is not None for value in (product, status, kind)):
+            typer.echo(f"No work items match on remote '{remote}'.")
+        else:
+            typer.echo(
+                f"No work items on remote '{remote}'. Add one with"
+                " `specflo workitem add <product> <title>`."
+            )
+        return
+    for item in listed:
+        typer.echo(
+            f"{item.id}  {item.product}  {item.status}  {item.kind}  {item.dev_path}  {item.title}"
+        )
+
+
+@workitem_app.command("show", epilog="Example: specflo workitem show 3")
+def workitem_show(
+    item_id: int = typer.Argument(..., metavar="<id>", help="The work item's number."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show one work item: product, kind, dev path, status, issue link, and created date."""
+    root = _require_root()
+    try:
+        _, items = _workitems(root, remote)
+        item = items.show(item_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(wire.encode(item)))
+        return
+    typer.echo(f"Work item: {item.id} - {item.title}")
+    typer.echo(f"Product:   {item.product}")
+    typer.echo(f"Kind:      {item.kind}")
+    typer.echo(f"Dev path:  {item.dev_path}")
+    typer.echo(f"Status:    {item.status}")
+    typer.echo(f"Issue:     {item.issue or '-'}")
+    typer.echo(f"Created:   {item.created}")
+
+
+@workitem_app.command("set-status", epilog="Example: specflo workitem set-status 3 done")
+def workitem_set_status(
+    item_id: int = typer.Argument(..., metavar="<id>", help="The work item's number."),
+    status: str = typer.Argument(
+        ..., metavar="|".join(workitems_module.STATUSES), help="The status to move it to."
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+) -> None:
+    """Move a work item to another status."""
+    root = _require_root()
+    try:
+        remote, items = _workitems(root, remote)
+        item = items.set_status(item_id, status)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Set work item {item.id} to '{item.status}' on remote '{remote}'.")
 
 
 def build_cli():

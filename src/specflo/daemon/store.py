@@ -1,8 +1,8 @@
 """The daemon's state store: one interface, SQLite behind it.
 
-Products (and, in time, work items) are rows, not artifacts: they belong to
-the daemon rather than to one project, so they live in the state store
-under the daemon root instead of in a markdown file. Everything that reads
+Products and their work items are rows, not artifacts: they belong to the
+daemon rather than to one project, so they live in the state store under
+the daemon root instead of in a markdown file. Everything that reads
 or writes them does so through the :class:`Store` interface below and
 nothing else. SQLite is the first backend and the one every daemon root
 holds; another backend (PostgreSQL, say) implements the same interface and
@@ -35,6 +35,20 @@ class Product:
     created: str
 
 
+@dataclasses.dataclass(frozen=True)
+class WorkItem:
+    """One work item as the store holds it; ``id`` is minted by the store."""
+
+    id: int
+    product: str
+    title: str
+    kind: str
+    issue: str | None
+    dev_path: str
+    status: str
+    created: str
+
+
 class Conflict(Exception):
     """A write that would duplicate a key the store keeps unique."""
 
@@ -54,6 +68,24 @@ class Store(Protocol):
     def set_product_vision(self, slug: str, vision: str) -> Product | None:
         """Replace the vision of ``slug``; the updated product, or None if unknown."""
 
+    def add_work_item(self, item: WorkItem) -> WorkItem:
+        """Insert ``item`` under a minted id, whatever id it carries; the item as stored."""
+
+    def get_work_item(self, item_id: int) -> WorkItem | None:
+        """The work item numbered ``item_id``, or None."""
+
+    def list_work_items(
+        self,
+        *,
+        product: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+    ) -> list[WorkItem]:
+        """Every work item matching the filters given, in id order."""
+
+    def set_work_item_status(self, item_id: int, status: str) -> WorkItem | None:
+        """Replace the status of ``item_id``; the updated item, or None if unknown."""
+
     def close(self) -> None:
         """Release the backend's resources."""
 
@@ -70,7 +102,19 @@ CREATE TABLE IF NOT EXISTS products (
     vision  TEXT NOT NULL DEFAULT '',
     created TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS work_items (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    product  TEXT NOT NULL REFERENCES products(slug),
+    title    TEXT NOT NULL,
+    kind     TEXT NOT NULL,
+    issue    TEXT,
+    dev_path TEXT NOT NULL,
+    status   TEXT NOT NULL,
+    created  TEXT NOT NULL
+);
 """
+
+_WORK_ITEM_COLUMNS = "id, product, title, kind, issue, dev_path, status, created"
 
 
 class SqliteStore:
@@ -80,6 +124,7 @@ class SqliteStore:
         self.path = Path(path)
         self.connection = sqlite3.connect(self.path)
         self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA foreign_keys = ON")
         with self.connection:
             self.connection.executescript(SCHEMA)
 
@@ -113,6 +158,49 @@ class SqliteStore:
             ).rowcount
         return self.get_product(slug) if changed else None
 
+    def add_work_item(self, item: WorkItem) -> WorkItem:
+        with self.connection:
+            cursor = self.connection.execute(
+                "INSERT INTO work_items (product, title, kind, issue, dev_path, status, created)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    item.product, item.title, item.kind, item.issue,
+                    item.dev_path, item.status, item.created,
+                ),
+            )
+        return dataclasses.replace(item, id=cursor.lastrowid)
+
+    def get_work_item(self, item_id: int) -> WorkItem | None:
+        row = self.connection.execute(
+            f"SELECT {_WORK_ITEM_COLUMNS} FROM work_items WHERE id = ?", (item_id,)
+        ).fetchone()
+        return _work_item(row) if row is not None else None
+
+    def list_work_items(
+        self,
+        *,
+        product: str | None = None,
+        status: str | None = None,
+        kind: str | None = None,
+    ) -> list[WorkItem]:
+        clauses, values = [], []
+        for column, value in (("product", product), ("status", status), ("kind", kind)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                values.append(value)
+        where = " WHERE " + " AND ".join(clauses) if clauses else ""
+        rows = self.connection.execute(
+            f"SELECT {_WORK_ITEM_COLUMNS} FROM work_items{where} ORDER BY id", values
+        ).fetchall()
+        return [_work_item(row) for row in rows]
+
+    def set_work_item_status(self, item_id: int, status: str) -> WorkItem | None:
+        with self.connection:
+            changed = self.connection.execute(
+                "UPDATE work_items SET status = ? WHERE id = ?", (status, item_id)
+            ).rowcount
+        return self.get_work_item(item_id) if changed else None
+
     def close(self) -> None:
         self.connection.close()
 
@@ -131,6 +219,10 @@ def _product(row: sqlite3.Row) -> Product:
         vision=row["vision"],
         created=row["created"],
     )
+
+
+def _work_item(row: sqlite3.Row) -> WorkItem:
+    return WorkItem(**{column: row[column] for column in _WORK_ITEM_COLUMNS.split(", ")})
 
 
 def open_store(root: Path) -> Store:
