@@ -699,3 +699,71 @@ def test_cli_hook_reseed_directory_line_credits_the_flag_when_it_wins(tmp_path, 
         assert "via -C" in first
         assert "via SPECFLO_DIRECTORY" not in first
         assert "bravo" in text and "alpha" not in text
+
+
+# --- a hosted active project whose daemon does not answer ---------------------
+
+
+def _hosted_active_on_a_dead_remote(tmp_path):
+    cfg = config.init_config(tmp_path)
+    config.add_remote(tmp_path, "dead", "http://127.0.0.1:9", "token")
+    config.record_hosted_project(tmp_path, "ghost", "dead")
+    cfg.active_project = "ghost"
+    config.save_config(tmp_path, cfg)
+
+
+def test_reseed_names_the_unreachable_daemon_instead_of_staying_silent(tmp_path):
+    _hosted_active_on_a_dead_remote(tmp_path)
+
+    text = hook.reseed_text(tmp_path)
+
+    assert text.startswith("specflo: the active project 'ghost' is hosted on remote 'dead'")
+    assert "could not be reached" in text
+    assert text.count("\n") == 1
+
+
+def test_claude_session_start_output_carries_the_unreachable_note(tmp_path):
+    _hosted_active_on_a_dead_remote(tmp_path)
+
+    payload = json.loads(hook.claude_session_start_output(tmp_path))
+
+    assert "could not be reached" in payload["hookSpecificOutput"]["additionalContext"]
+    assert payload["systemMessage"].startswith("specflo: the active project 'ghost'")
+
+
+def test_cli_hook_reseed_exits_zero_with_the_note_for_a_dead_remote(tmp_path, monkeypatch):
+    _hosted_active_on_a_dead_remote(tmp_path)
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["hook", "reseed"])
+
+    assert result.exit_code == 0
+    assert "could not be reached" in result.output
+
+
+def test_an_unreadable_local_project_still_reseeds_silently(tmp_path):
+    cfg = config.init_config(tmp_path)
+    cfg.active_project = "missing"
+    config.save_config(tmp_path, cfg)
+
+    assert hook.reseed_text(tmp_path) == ""
+
+
+def test_the_hook_gives_a_daemon_a_few_seconds_not_the_default(tmp_path, monkeypatch):
+    from specflo.service import resolve
+
+    _hosted_active_on_a_dead_remote(tmp_path)
+    seen = []
+    real = hook.resolve_service
+
+    def recording(root, cfg, slug=None, **kwargs):
+        seen.append(kwargs.get("timeout"))
+        return real(root, cfg, slug, **kwargs)
+
+    monkeypatch.setattr(hook, "resolve_service", recording)
+    hook.reseed_text(tmp_path)
+
+    assert seen == [hook.REMOTE_TIMEOUT]
+    assert 0 < hook.REMOTE_TIMEOUT <= 5
+    service = resolve.resolve_service(tmp_path, config.load_config(tmp_path), timeout=hook.REMOTE_TIMEOUT)
+    assert service.client.timeout.connect == hook.REMOTE_TIMEOUT

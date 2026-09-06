@@ -20,6 +20,7 @@ from pathlib import Path
 from . import checkpoint, config, continuation, plan, status
 from .continuation import CONFIRMATION_DIRECTIVE, DIRECT_DIRECTIVE
 from .projects import COMPLETE_STATUS, SHELVED_STATUS
+from .errors import SpecfloError
 from .service.resolve import resolve_service
 
 # The two directives are re-exported, not defined here: `continuation.py` is the
@@ -33,6 +34,12 @@ __all__ = [
     "reseed_text",
     "settings_snippet",
 ]
+
+
+# How long the hook waits on a daemon, in seconds. A session start must not
+# stall on a host that is off the network; a daemon that does not answer in
+# this time is reported as unreachable and the session starts anyway.
+REMOTE_TIMEOUT = 3.0
 
 
 def _active_project(cwd: Path):
@@ -51,8 +58,27 @@ def _active_project(cwd: Path):
     cfg = config.load_config(root)
     if cfg.active_project is None:
         return None
-    service = resolve_service(root, cfg)
+    service = resolve_service(root, cfg, timeout=REMOTE_TIMEOUT)
     return root, cfg, service, service.load_project(cfg.active_project)
+
+
+def _unreachable_note(cwd: Path, exc: Exception) -> str:
+    """One line when the active project is hosted and its daemon did not answer.
+
+    Empty for anything else: a project in the checkout that cannot be read
+    stays silent, as before. The line tells the human why nothing resumed
+    instead of leaving a silent session start to be mistaken for no project.
+    """
+    root = config.find_root(cwd)
+    cfg = config.load_config(root) if root is not None else None
+    slug = cfg.active_project if cfg is not None else None
+    remote = config.hosting_remote(root, slug) if root is not None and slug else None
+    if remote is None:
+        return ""
+    return (
+        f"specflo: the active project {slug!r} is hosted on remote {remote!r},"
+        f" which could not be reached ({exc}). Nothing to resume until it answers.\n"
+    )
 
 
 def _task_brief_text(service, project) -> str | None:
@@ -107,7 +133,10 @@ def reseed_text(
     try:
         if cwd is None:
             cwd = Path.cwd()
-        found = _active_project(cwd)
+        try:
+            found = _active_project(cwd)
+        except SpecfloError as exc:
+            return _unreachable_note(cwd, exc)
         if found is None:
             return ""
         root, _cfg, service, project = found
@@ -181,16 +210,23 @@ def claude_session_start_output(
         context = reseed_text(cwd, directory_source=directory_source)
         if not context:
             return ""
-        found = _active_project(cwd)
+        try:
+            found = _active_project(cwd)
+        except SpecfloError:
+            found = None
         if found is None:
-            return ""
-        root, cfg, service, project = found
+            # The context is the note about a daemon that did not answer;
+            # the human gets the same line, since there is no status to show.
+            message = context.strip()
+        else:
+            root, _cfg, service, project = found
+            message = _user_message(root, service, project)
         payload = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": context,
             },
-            "systemMessage": _user_message(root, service, project),
+            "systemMessage": message,
         }
         return json.dumps(payload)
     except Exception:

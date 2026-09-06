@@ -22,18 +22,25 @@ def local_service(root: Path, cfg: SpecfloConfig) -> ProjectService:
     return LocalProjectService(root, cfg)
 
 
-def remote_service(root: Path, name: str) -> ProjectService:
-    """The service for the projects held by the remote registered as ``name``."""
+def remote_service(root: Path, name: str, *, timeout: float | None = None) -> ProjectService:
+    """The service for the projects held by the remote registered as ``name``.
+
+    ``timeout`` bounds every request in seconds; None takes the client's
+    default. A caller that must never stall, such as a session-start hook,
+    passes a short one.
+    """
     remote = load_remote(root, name)
-    return RemoteProjectService(remote.url, remote.token)
+    if timeout is None:
+        return RemoteProjectService(remote.url, remote.token)
+    return RemoteProjectService(remote.url, remote.token, timeout=timeout)
 
 
 def resolve_service(
-    root: Path, cfg: SpecfloConfig, slug: str | None = None
+    root: Path, cfg: SpecfloConfig, slug: str | None = None, *, timeout: float | None = None
 ) -> ProjectService:
     """The service holding ``slug``, or the active project when no slug is given."""
     slug = cfg.active_project if slug is None else slug
     remote = hosting_remote(root, slug) if slug else None
     if remote is not None:
-        return remote_service(root, remote)
+        return remote_service(root, remote, timeout=timeout)
     return local_service(root, cfg)
