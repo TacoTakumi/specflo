@@ -2138,8 +2138,19 @@ def review_done(
     """Close the active project's open review round with a verdict."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
+    # The report is read here, on the client: only its text reaches the
+    # service, so a hosted round ingests a file of this checkout and never
+    # one on the daemon host.
+    report_text = None
+    if file is not None:
+        try:
+            report_text = Path(file).read_text()
+        except FileNotFoundError:
+            raise _die(f"No report file at {file}.")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _die(f"Cannot read {file} as text: {exc}")
     try:
-        path = svc.close_round(slug, verdict, reason=reason, report=file)
+        path = svc.close_round(slug, verdict, reason=reason, report_text=report_text)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)

@@ -373,3 +373,29 @@ def test_switch_to_a_hosted_project_reports_the_remote_error_not_no_project(chec
 
     assert missing.exit_code == 1
     assert "No project 'nothing'. Run `specflo list`" in missing.stderr
+
+
+def test_review_done_file_reads_the_report_in_the_checkout_not_on_the_daemon(checkout, live_daemon):
+    runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- one nit, from the checkout.\n")
+    # A file that exists only beside the daemon is not the client's to read.
+    (live_daemon["root"] / "secret.txt").write_text("the daemon's own file\n")
+    daemon_only = str(live_daemon["root"] / "secret.txt")
+    (checkout / "not-here").mkdir()
+
+    refused = runner.invoke(
+        app, ["review", "done", "--verdict", "ready-to-merge", "--file", "not-here/secret.txt"]
+    )
+    assert refused.exit_code == 1, refused.output
+    assert "No report file at not-here/secret.txt" in refused.stderr
+    assert "Traceback" not in refused.stderr
+
+    done = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge", "--file", "report.md"])
+
+    assert done.exit_code == 0, done.output
+    assert done.output.strip() == "hosted-thing/review-1 closed ready-to-merge"
+    round_file = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md"
+    assert round_file.read_text().endswith((checkout / "report.md").read_text())
+    assert "the daemon's own file" not in round_file.read_text()
+    assert daemon_only not in done.output

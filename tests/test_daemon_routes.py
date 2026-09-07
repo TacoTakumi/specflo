@@ -257,3 +257,24 @@ def test_a_slug_that_is_not_one_is_refused_before_anything_is_written(root, clie
     assert sorted(p.name for p in tmp_path.iterdir()) == outside_before
     assert not list((root / daemon.PROJECTS_DIRNAME).iterdir())
     assert not list(root.glob(".*.importing"))
+
+
+def test_close_round_takes_the_report_text_and_never_a_path(root, client):
+    # The client reads its own --file; only the text travels. A path in the
+    # request would name a file on the daemon host, which is nobody's to read.
+    call(client, "create_project", name="Thing")
+    call(client, "start_round", slug="thing")
+    assert "report" not in wire.OPERATIONS["close_round"].hints
+    assert wire.OPERATIONS["close_round"].hints["report_text"] == (str | None)
+
+    by_path = client.post(
+        wire.route_path("close_round"),
+        json={"slug": "thing", "verdict": "ready-to-merge", "report": "/etc/hostname"},
+    )
+    assert by_path.status_code == 422 and "report" in by_path.text
+
+    text = "# Round 1\n\n## Findings\n\n- one nit.\n"
+    path = call(client, "close_round", slug="thing", verdict="ready-to-merge", report_text=text)
+
+    assert path == root / daemon.PROJECTS_DIRNAME / "thing" / "review-1.md"
+    assert path.read_text().endswith(text)

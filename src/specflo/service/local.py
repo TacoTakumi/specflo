@@ -352,10 +352,10 @@ class LocalProjectService:
         verdict: str,
         *,
         reason: str | None = None,
-        report: str | None = None,
+        report_text: str | None = None,
     ) -> Path:
         return review.close_round(
-            self.root, self.cfg, slug, verdict, reason=reason, report=report
+            self.root, self.cfg, slug, verdict, reason=reason, report_text=report_text
         )
 
     # --- checkpoint and status ---------------------------------------------

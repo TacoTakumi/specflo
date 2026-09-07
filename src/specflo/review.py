@@ -281,22 +281,23 @@ def close_round(
     verdict: str,
     reason: str | None = None,
     today: str | None = None,
-    report: str | None = None,
+    report_text: str | None = None,
 ) -> Path:
     """Close the open round with ``verdict``, date and sha (REQ-04, REQ-05, REQ-07).
 
     The date and sha stamp the close, overwriting the mint-time date: what
     matters is when the review was decided, not when its file appeared.
 
-    ``report`` is a path whose text becomes the round's body (REQ-10) - the
-    escape hatch for a reviewer that returns its report as text rather than
-    writing into the file. It is refused once the body has been written into,
-    so an ingest can never overwrite a review someone already recorded.
+    ``report_text`` becomes the round's body (REQ-10) - the escape hatch for
+    a reviewer that returns its report as text rather than writing into the
+    file. The caller reads the report file itself and passes the text, so
+    this never opens a file the caller named. It is refused once the body
+    has been written into, so an ingest can never overwrite a review someone
+    already recorded.
 
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
     not one of :data:`VERDICTS`, when ``waived`` comes without a reason
-    (REQ-06), when the report file is missing or the body is already written,
-    or when no round is open.
+    (REQ-06), when the body is already written, or when no round is open.
     """
     if verdict not in VERDICTS:
         raise SpecfloError(
@@ -307,15 +308,6 @@ def close_round(
             "Verdict 'waived' needs a --reason, so a project that skipped review"
             " records why."
         )
-    report_text = ""
-    if report is not None:
-        report_path = Path(report)
-        if not report_path.is_file():
-            raise SpecfloError(f"No report file at {report}.")
-        try:
-            report_text = report_path.read_text()
-        except (OSError, UnicodeDecodeError) as exc:
-            raise SpecfloError(f"Cannot read {report} as text: {exc}") from exc
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
         if path is None:
@@ -325,10 +317,10 @@ def close_round(
         fields = frontmatter(path)
         fields["round"] = _round_number(path, fields.get("round"))
         body = body_of(path)
-        if report is not None:
+        if report_text is not None:
             if body.strip() != skeleton_body(int(fields.get("round") or 0)).strip():
                 raise SpecfloError(
-                    f"{path.name} already has content; ingesting {report} would"
+                    f"{path.name} already has content; ingesting a report would"
                     " overwrite it. Close the round without --file instead."
                 )
             body = report_text

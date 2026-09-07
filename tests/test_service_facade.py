@@ -364,8 +364,10 @@ def test_structural_cli_never_touches_a_file_itself():
 
 
 def test_structural_cli_reads_text_only_from_the_callers_own_file():
-    """``section set --file`` reads the caller's input file, never an artifact;
-    no other command reads text at all."""
+    """``section set --file`` and ``review done --file`` read the caller's
+    input file, never an artifact; no other command reads text at all. What
+    they read travels as text, so a hosted project's service opens no file
+    the client named."""
     import ast
 
     tree, _ = _cli_tree()
@@ -376,7 +378,7 @@ def test_structural_cli_reads_text_only_from_the_callers_own_file():
         for node in ast.walk(fn)
         if isinstance(node, ast.Attribute) and node.attr == "read_text"
     })
-    assert readers == ["section_set"]
+    assert readers == ["review_done", "section_set"]
 
 
 def test_structural_cli_obtains_its_service_from_the_one_resolver():

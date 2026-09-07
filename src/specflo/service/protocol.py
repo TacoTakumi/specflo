@@ -302,9 +302,13 @@ class ProjectService(Protocol):
         verdict: str,
         *,
         reason: str | None = None,
-        report: str | None = None,
+        report_text: str | None = None,
     ) -> Path:
-        """Close the open round with a verdict."""
+        """Close the open round with a verdict; ``report_text`` becomes its body.
+
+        The text, never a path: the caller reads its own report file, so the
+        service opens nothing the caller did not send.
+        """
         ...
 
     # --- checkpoint and status ---------------------------------------------

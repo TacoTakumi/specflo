@@ -50,7 +50,7 @@ def _pipeline():
         (["task", "start", lambda ids: ids["task"]], None),
         (["task", "done", lambda ids: ids["task"]], None),
         (["review", "start"], None),
-        (["review", "done", "--verdict", "ready-to-merge"], None),
+        (["review", "done", "--verdict", "ready-to-merge", "--file", "report.md"], None),
         (["validate", "execute"], None),
         (["checkpoint"], None),
         (["status"], None),
@@ -90,6 +90,9 @@ def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list
     ``raw`` collects each step's stdout before normalization when given."""
     ids = {}
     results = []
+    # The review report a step ingests with --file: a file of the checkout,
+    # read by the client wherever the round itself lives.
+    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- one nit.\n")
     result = runner.invoke(app, ["new", "Parity Thing", "--summary", "One line", *new_args])
     results.append((result.exit_code, _normalize(result.stdout, project_dirs)))
     if raw is not None:
