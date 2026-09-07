@@ -363,6 +363,27 @@ def test_the_control_runs_the_start_off_the_event_loop_so_the_daemon_keeps_answe
     assert served == ["offline-mode"]
 
 
+def test_a_failed_start_page_carries_none_of_the_clis_words(client, root, monkeypatch):
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")
+    socket_path = root / "state" / "project-offline-mode.sock"
+
+    def refuse(root_, slug, **kwargs):
+        raise seat.AgentStartError(
+            f"Starting agent failed: already running (live host on {socket_path})",
+            agent=seat.agent_name(slug), slug=slug,
+        )
+
+    monkeypatch.setattr(seat, "start_agent", refuse)
+
+    response = client.post(start_url("thing", 5), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 502
+    assert seat.agent_name("offline-mode") in response.text
+    assert str(root) not in response.text and ".sock" not in response.text and "already running" not in response.text
+
+
 def test_a_failed_agent_start_reports_the_failure_and_the_page_links_to_the_project(client, root, rpc_rig, monkeypatch):
     seed(root)
     with store_module.open_store(root) as store:

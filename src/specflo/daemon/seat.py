@@ -174,7 +174,21 @@ def seat_token(root: Path, slug: str) -> str:
 
 
 class AgentStartError(SpecfloError):
-    """The agent did not come up: the CLI failed, or its socket never answered."""
+    """The agent did not come up: the CLI failed, or its socket never answered.
+
+    The message carries the agent CLI's own words for the daemon log; what
+    leaves the daemon is ``public``, which names the agent and the project
+    and nothing of the host's layout.
+    """
+
+    def __init__(self, message: str, *, agent: str, slug: str) -> None:
+        super().__init__(message)
+        self.agent = agent
+        self.slug = slug
+
+    @property
+    def public(self) -> str:
+        return f"Agent {self.agent!r} for project {self.slug!r} did not start; the daemon log has the detail."
 
 
 class AgentMessageError(SpecfloError):
@@ -383,23 +397,25 @@ def start_agent(
     try:
         started = _agent_cli(*argv, cwd=workspace, timeout=deadline)
     except subprocess.TimeoutExpired as exc:
-        raise AgentStartError(f"Starting agent {name!r} for {slug!r} did not finish in {deadline:.0f}s.") from exc
+        raise AgentStartError(
+            f"Starting agent {name!r} for {slug!r} did not finish in {deadline:.0f}s.", agent=name, slug=slug
+        ) from exc
     if started.returncode != 0:
         detail = (started.stderr or started.stdout).strip()
         if _ALREADY_RUNNING in detail:
             # Another start brought this agent up first; it is theirs, and it stays.
-            raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
+            raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}", agent=name, slug=slug)
         # The CLI may have brought up a host that never answered in time
         # and left it running; it goes, so the name is free for the next start.
         _agent_stop(name)
-        raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
+        raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}", agent=name, slug=slug)
     probe = _probe(name)
     if not probe.alive:
         # A host whose pi died at once answers as alive but exited; it is no
         # agent for the project, so it goes before the failure is reported.
         _agent_stop(name)
         raise AgentStartError(
-            f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving."
+            f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving.", agent=name, slug=slug
         )
     project = LocalProjectService(root, config.load_config(root)).load_project(slug)
     record_agent(root, slug, name)
@@ -412,7 +428,9 @@ def start_agent(
         # project: it goes, and the start is reported as failed.
         _agent_stop(name)
         forget_agent(root, slug)
-        raise AgentStartError(f"Agent {name!r} for {slug!r} started but took no opening prompt: {exc}") from exc
+        raise AgentStartError(
+            f"Agent {name!r} for {slug!r} started but took no opening prompt: {exc}", agent=name, slug=slug
+        ) from exc
     return name
 
 

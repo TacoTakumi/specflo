@@ -475,6 +475,28 @@ def test_the_route_reports_a_failed_agent_start_as_a_bad_gateway(client, root, r
     assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
 
 
+def test_a_failed_start_over_the_api_names_the_agent_and_none_of_the_clis_words(client, root, rpc_rig, monkeypatch):
+    # The agent CLI's refusals name sockets and seats under the root; the
+    # API answer names the agent and the project and leaves the rest to the log.
+    seed(root)
+    socket_path = root / "state" / "project-fix-the-login.sock"
+
+    def refuse(root_, slug, **kwargs):
+        raise seat.AgentStartError(
+            f"Starting agent failed: already running (live host on {socket_path})",
+            agent=seat.agent_name(slug), slug=slug,
+        )
+
+    monkeypatch.setattr(seat, "start_agent", refuse)
+
+    response = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
+
+    assert response.status_code == 502
+    detail = response.json()["detail"]
+    assert seat.agent_name("fix-the-login") in detail and "fix-the-login" in detail
+    assert str(root) not in response.text and ".sock" not in response.text and "already running" not in response.text
+
+
 def test_the_route_hands_the_daemons_own_url_to_the_seat(root, rpc_rig, monkeypatch):
     seed(root)
     monkeypatch.setattr(seat, "DEFAULT_PI_CMD", rpc_rig["pi_cmd"])

@@ -245,31 +245,25 @@ def audit_records(root):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
 
 
-def test_the_take_runs_its_socket_calls_off_the_event_loop(client, root, monkeypatch):
-    # The view probes the agent's socket and the take tells the agent over
-    # it; the calls below only complete from a worker thread the loop is
-    # free to serve, so a take on the loop would fail here.
+def test_the_take_runs_its_socket_call_off_the_event_loop(client, root, monkeypatch):
+    # The take tells the agent over its socket; the call below only
+    # completes from a worker thread the loop is free to serve, so a take
+    # on the loop would fail here.
     slug = brainstorming(root)
     gated(root, slug, role="developer")
-    probed, announced = [], []
-
-    def liveness_off_loop(root_, slug_):
-        anyio.from_thread.run(anyio.sleep, 0)
-        probed.append(slug_)
-        return seat.Liveness(name=seat.agent_name(slug_), alive=True, state="idle")
+    announced = []
 
     def announce_off_loop(root_, project):
         anyio.from_thread.run(anyio.sleep, 0)
         announced.append(project.slug)
         return True
 
-    monkeypatch.setattr(seat, "liveness", liveness_off_loop)
     monkeypatch.setattr(seat, "announce_take", announce_off_loop)
 
     response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
 
     assert response.status_code == 303, response.text
-    assert probed == [slug] and announced == [slug]
+    assert announced == [slug]
     assert service(root).load_project(slug).gate.taken_by == "developer"
 
 
@@ -338,6 +332,38 @@ def test_a_take_by_an_identity_the_gate_does_not_wait_on_is_refused(client, root
 
     assert response.status_code == 403
     assert service(root).load_project(slug).gate.is_open
+    assert audit_records(root) == []
+
+
+def test_a_take_on_a_shelved_project_with_an_open_gate_is_refused(client, root):
+    # The page shows no gate for a project that is not active; a post to the
+    # take route must not close the gate the page did not offer.
+    slug = seed(root)
+    gated(root, slug, role="developer")
+    service(root).shelve_project(slug)
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 409
+    gate = service(root).load_project(slug).gate
+    assert gate.is_open and gate.role == "developer" and not gate.taken_by
+    assert audit_records(root) == []
+
+
+def test_the_take_checks_the_gate_as_it_stands_when_it_runs_not_as_the_page_showed_it(client, root):
+    # Between the developer's page load and the post, the gate was taken and
+    # reopened for the requester: the record at take time decides.
+    slug = seed(root)
+    gated(root, slug, role="developer")
+    assert take_form(page(client, slug).text) is not None
+    service(root).take_gate(slug)
+    gated(root, slug, role="requester", note="Back to the requester")
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 403
+    gate = service(root).load_project(slug).gate
+    assert gate.is_open and gate.role == "requester"
     assert audit_records(root) == []
 
 
@@ -574,6 +600,25 @@ def test_the_control_runs_the_start_off_the_event_loop_so_the_daemon_keeps_answe
 
     assert response.status_code == 303
     assert served == [slug]
+
+
+def test_a_failed_start_page_names_the_agent_and_none_of_the_clis_words(client, root, monkeypatch):
+    slug = brainstorming(root)
+    socket_path = root / "state" / "project-login-fix.sock"
+
+    def refuse(root_, slug_, **kwargs):
+        raise seat.AgentStartError(
+            f"Starting agent failed: already running (live host on {socket_path})",
+            agent=seat.agent_name(slug_), slug=slug_,
+        )
+
+    monkeypatch.setattr(seat, "start_agent", refuse)
+
+    response = client.post(start_agent_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 502
+    assert seat.agent_name(slug) in response.text and slug in response.text
+    assert str(root) not in response.text and ".sock" not in response.text and "already running" not in response.text
 
 
 def test_a_start_without_the_secret_or_beside_a_live_agent_is_refused(client, root, rpc_rig):

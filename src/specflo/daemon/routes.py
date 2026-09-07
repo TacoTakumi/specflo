@@ -449,7 +449,10 @@ def workitem_start_project(
             root, item_id, identity, url=url, subscribe=pumps.subscribe if pumps is not None else None
         )
     except seat.AgentStartError as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+        # The CLI's words can name paths under the root; they go to the log,
+        # and the response names the agent and the project only.
+        _log.warning("start-project for item %s: %s", item_id, exc)
+        raise HTTPException(status_code=502, detail=exc.public)
     except SpecfloError as exc:
         raise _refused(exc)
     return {"result": wire.encode(started, root)}

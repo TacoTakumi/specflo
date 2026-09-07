@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import logging
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -86,6 +87,8 @@ INBOX_EMPTY = "Nothing waits on {identity}."
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 ASSETS_DIR = Path(__file__).parent / "assets"
+
+_log = logging.getLogger(__name__)
 
 _templates = Environment(
     loader=FileSystemLoader(TEMPLATES_DIR),
@@ -485,7 +488,8 @@ async def start_project(
             seat.start_project, root, item_id, identity, url=url, subscribe=pumps.subscribe
         )
     except seat.AgentStartError as exc:
-        return render("error.html", status_code=502, identity=identity, message=str(exc))
+        _log.warning("start-project for item %s: %s", item_id, exc)
+        return render("error.html", status_code=502, identity=identity, message=exc.public)
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=started.spawned.project.slug), status_code=303)
@@ -594,6 +598,14 @@ def project_page(
     )
 
 
+class _NotWaitedOn(Exception):
+    """A take by an identity the open gate does not wait on."""
+
+    def __init__(self, role: str) -> None:
+        super().__init__(role)
+        self.role = role
+
+
 def session_secret(request: Request) -> str:
     """The live session's cookie value: the secret a mutating form must echo back."""
     return request.cookies.get(SESSION_COOKIE, "")
@@ -623,26 +635,38 @@ async def take_gate(
             message="That form did not come from this session.",
         )
     root = request.app.state.root
-    # The view probes the agent's socket and the take tells the agent over
-    # it; both are blocking calls, so they run off the event loop.
-    view = await run_in_threadpool(project_view, root, slug, viewer=identity)
-    if view is None:
+    try:
+        validate_slug(slug)
+    except SpecfloError:
         return _missing(identity, f"No project {slug!r}.")
-    if view.gate is not None and not view.can_take:
-        return render(
-            "error.html", status_code=403, identity=identity,
-            message=f"This gate waits on {view.gate.role}, not {identity}.",
-        )
     service = LocalProjectService(root, load_config(root), actor=identity, hosted=True)
 
     def take() -> None:
+        # The gate is checked on the record as it stands under the lock,
+        # not on a view rendered earlier: only an active project with an
+        # open gate waiting on this identity is taken.
         with project_lock(root, slug):
+            project = service.load_project(slug)
+            gate = project.gate if project.status == INITIAL_STATUS else None
+            if gate is None or not gate.is_open:
+                raise SpecfloError(f"No open gate on project {slug!r}: nothing to take.")
+            if gate.role != identity:
+                raise _NotWaitedOn(gate.role)
             project = service.take_gate(slug)
             audit(root, identity, "take_gate", slug, None)
+            # The announcement waits on the agent's socket; the take runs
+            # off the event loop, so the wait stalls this request alone.
             seat.announce_take(root, project)
 
     try:
         await run_in_threadpool(take)
+    except ProjectNotFound:
+        return _missing(identity, f"No project {slug!r}.")
+    except _NotWaitedOn as exc:
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message=f"This gate waits on {exc.role}, not {identity}.",
+        )
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
@@ -682,7 +706,8 @@ async def start_agent(
             seat.start_project_agent, root, slug, identity, url=url, subscribe=pumps.subscribe
         )
     except seat.AgentStartError as exc:
-        return render("error.html", status_code=502, identity=identity, message=str(exc))
+        _log.warning("start-agent for %s: %s", slug, exc)
+        return render("error.html", status_code=502, identity=identity, message=exc.public)
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
