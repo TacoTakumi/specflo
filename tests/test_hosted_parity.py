@@ -14,6 +14,7 @@ else is identical.
 import re
 from pathlib import Path
 
+import httpx
 import pytest
 from typer.testing import CliRunner
 
@@ -114,6 +115,20 @@ def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list
     return results
 
 
+def _recording_responses(monkeypatch) -> list[tuple[str, str]]:
+    """Every response body the CLI's HTTP client receives, by route, as it arrives."""
+    bodies = []
+    real_send = httpx.Client.send
+
+    def recording_send(self, request, **kwargs):
+        response = real_send(self, request, **kwargs)
+        bodies.append((request.url.path, response.text))
+        return response
+
+    monkeypatch.setattr(httpx.Client, "send", recording_send)
+    return bodies
+
+
 @pytest.fixture
 def local_run(tmp_path, monkeypatch):
     checkout = tmp_path / "local"
@@ -135,10 +150,17 @@ def hosted_run(tmp_path, monkeypatch, live_daemon):
     )
     assert registered.exit_code == 0, registered.output
     project_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG
+    bodies = _recording_responses(monkeypatch)
     raw = []
     results = _run(checkout, [str(project_dir), f"projects/{SLUG}"], ["--remote", "home"], raw)
     assert not list((checkout / "docs" / "projects").glob(f"{SLUG}*"))
     assert (project_dir / "checkpoint.md").is_file()
+    # The wire is a boundary too: what the daemon answers names nothing of its
+    # host, neither its root nor any absolute path, whatever a client does with it.
+    assert bodies, "the hosted run reached the daemon"
+    for route, body in bodies:
+        assert str(live_daemon["root"]) not in body, f"{route} carries the daemon root:\n{body}"
+        assert not re.search(r'"/', body), f"{route} carries an absolute path:\n{body}"
     # The daemon's directory layout is the daemon's business: no command
     # names it on the client, by its absolute path or by its spelling relative
     # to the daemon root. What a hosted run prints for an artifact is its

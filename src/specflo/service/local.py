@@ -14,7 +14,7 @@ from pathlib import Path
 
 from .. import brainstorm, checkpoint, doc, index, plan, projects, review, spec, status
 from ..brainstorm import Decision
-from ..config import SpecfloConfig
+from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
 from ..projects import LINEAR_EXECUTION, Project
@@ -397,7 +397,12 @@ class LocalProjectService:
 
     def build_status(self, slug: str) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
-        return status.build_status(self.root, self.cfg, project)
+        info = status.build_status(self.root, self.cfg, project)
+        if self.hosted:
+            # The one path the payload carries as text: relative, like the
+            # paths the wire encodes, so the host's layout never leaves.
+            info["dir"] = display_path(project.path, self.root, posix=True)
+        return info
 
     # --- documents ---------------------------------------------------------
 

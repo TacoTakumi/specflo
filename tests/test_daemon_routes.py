@@ -143,7 +143,8 @@ def test_a_route_runs_the_local_service_on_the_daemon_root(root, client):
     assert call(client, "list_projects") == [project]
 
     path, created = call(client, "start_brainstorm", slug="my-thing")
-    assert created and path == root / daemon.PROJECTS_DIRNAME / "my-thing" / "brainstorm.md"
+    assert created and path == Path(daemon.PROJECTS_DIRNAME) / "my-thing" / "brainstorm.md"
+    assert (root / path).is_file()
     decision = call(client, "add_decision", slug="my-thing", text="Use one facade", rationale="why")
     assert decision.text == "Use one facade"
     assert decision.id in call(client, "show_document", slug="my-thing", name="brainstorm")
@@ -277,8 +278,8 @@ def test_close_round_takes_the_report_text_and_never_a_path(root, client):
     text = "# Round 1\n\n## Findings\n\n- one nit.\n"
     path = call(client, "close_round", slug="thing", verdict="ready-to-merge", report_text=text)
 
-    assert path == root / daemon.PROJECTS_DIRNAME / "thing" / "review-1.md"
-    assert path.read_text().endswith(text)
+    assert path == Path(daemon.PROJECTS_DIRNAME) / "thing" / "review-1.md"
+    assert (root / path).read_text().endswith(text)
 
 
 def test_a_bad_element_is_refused_and_a_failure_inside_is_a_500_without_a_traceback(

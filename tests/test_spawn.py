@@ -8,7 +8,9 @@ The CLI records the new project as hosted and makes it active, as ``new
 --remote`` does.
 """
 
+import dataclasses
 import json
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -174,7 +176,9 @@ def test_spawn_route_round_trips_and_records_the_actor(client, root):
     result = spawned.json()["result"]
     assert result["item"]["id"] == 1 and result["item"]["project"] == "fix-the-login"
     assert result["project"]["slug"] == "fix-the-login" and result["project"]["work_item"] == 1
-    assert result["brainstorm"].endswith("brainstorm.md")
+    assert result["brainstorm"] == f"{daemon.PROJECTS_DIRNAME}/fix-the-login/brainstorm.md"
+    assert result["project"]["path"] == f"{daemon.PROJECTS_DIRNAME}/fix-the-login"
+    assert str(root) not in spawned.text
 
     named = client.post(f"{WORK_ITEMS_PATH}/3/spawn", json={"name": "Offline Mode v2"})
     assert named.status_code == 200, named.text
@@ -203,8 +207,9 @@ def test_remote_spawn_mirrors_the_in_process_verb(root, token):
     spawned = remote.spawn(1)
     assert isinstance(spawned, Spawned)
     assert spawned.item.project == "fix-the-login"
-    assert spawned.project == service(root).load_project("fix-the-login")
-    assert spawned.brainstorm == root / daemon.PROJECTS_DIRNAME / "fix-the-login" / "brainstorm.md"
+    held = service(root).load_project("fix-the-login")
+    assert spawned.project == dataclasses.replace(held, path=Path(daemon.PROJECTS_DIRNAME) / "fix-the-login")
+    assert spawned.brainstorm == Path(daemon.PROJECTS_DIRNAME) / "fix-the-login" / "brainstorm.md"
     assert remote.spawn(3, name="Offline Mode v2").project.slug == "offline-mode-v2"
     with pytest.raises(SpecfloError, match="already spawned"):
         remote.spawn(1)

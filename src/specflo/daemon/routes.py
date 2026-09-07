@@ -186,7 +186,9 @@ def _handler(operation: wire.Operation):
             if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
                 _audit(root, identity, operation.name, project, _minted(result, kwargs))
-        return {"result": wire.encode(result)}
+        # The boundary: what leaves here describes the daemon's projects, so a
+        # path is written relative to the root and the host's layout stays home.
+        return {"result": wire.encode(result, root)}
 
     handle.__name__ = operation.name
     handle.__doc__ = getattr(getattr(LocalProjectService, operation.name), "__doc__", None)
@@ -424,4 +426,4 @@ def workitem_spawn(
         except SpecfloError as exc:
             raise _refused(exc)
         _audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
-    return {"result": wire.encode(spawned)}
+    return {"result": wire.encode(spawned, root)}

@@ -14,6 +14,7 @@ import hashlib
 import inspect
 
 import pytest
+from pathlib import Path
 
 from specflo import config, daemon
 from specflo.daemon import auth
@@ -99,9 +100,12 @@ def test_local_service_protocol_names_every_operation_group():
 # --- the local implementation ---------------------------------------------
 
 
-def _drive_every_operation(service, projects_root):
+def _drive_every_operation(service, projects_root, reported=None):
     """Drive one project through every operation; ``projects_root`` is where
-    the service keeps its project directories and its ledger."""
+    the service keeps its project directories and its ledger, and ``reported``
+    how it names that place in what it returns (a daemon names it relative to
+    its root; a local service, as it is)."""
+    reported = projects_root if reported is None else reported
     svc = _Recorder(service)
 
     project = svc.create_project("My Thing", summary="One line", execution="linear")
@@ -113,7 +117,7 @@ def _drive_every_operation(service, projects_root):
 
     # brainstorm: decisions, prose, the gate, the phase bump
     path, created = svc.start_brainstorm(slug)
-    assert created and path == projects_root / slug / "brainstorm.md"
+    assert created and path == reported / slug / "brainstorm.md"
     assert svc.start_brainstorm(slug) == (path, False)
     decision = svc.add_decision(slug, "Use one facade", rationale="one seam")
     assert decision.text == "Use one facade"
@@ -204,9 +208,10 @@ def _drive_every_operation(service, projects_root):
     # checkpoint and status are derived from the artifacts
     assert svc.build_checkpoint(slug)["phase"] == "execute"
     checkpoint = svc.write_checkpoint(slug)
+    assert checkpoint == reported / slug / "checkpoint.md"
     assert checkpoint.name == "checkpoint.md"
     assert svc.has_artifact(slug, "checkpoint")
-    assert svc.show_document(slug, "checkpoint") == checkpoint.read_text()
+    assert svc.show_document(slug, "checkpoint") == (projects_root / slug / "checkpoint.md").read_text()
     status = svc.build_status(slug)
     assert status["active_project"] == slug and status["phase"] == "execute"
 
@@ -224,9 +229,9 @@ def _drive_every_operation(service, projects_root):
     # the ledger over every project
     assert not svc.index_exists()
     index = svc.write_index()
-    assert index == projects_root / "specflo-index.md"
+    assert index == reported / "specflo-index.md"
     assert svc.index_exists()
-    assert "Ships help" in index.read_text()
+    assert "Ships help" in (projects_root / "specflo-index.md").read_text()
     assert svc.index_rule_line()
 
     # the project as a set of files, and a second project made from them
@@ -421,7 +426,9 @@ def test_remote_service_satisfies_the_protocol(remote):
 
 
 def test_remote_service_drives_a_project_through_every_operation(remote, daemon_root):
-    _drive_every_operation(remote, daemon_root / daemon.PROJECTS_DIRNAME)
+    _drive_every_operation(
+        remote, daemon_root / daemon.PROJECTS_DIRNAME, reported=Path(daemon.PROJECTS_DIRNAME)
+    )
 
 
 def test_remote_service_raises_the_daemons_refusals_as_specflo_errors(remote):

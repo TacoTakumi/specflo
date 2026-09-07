@@ -178,16 +178,23 @@ def _describe(hint) -> str:
     return getattr(hint, "__name__", str(hint))
 
 
-def encode(value):
-    """A JSON-ready form of a value the local service returned."""
+def encode(value, root: Path | None = None):
+    """A JSON-ready form of a value the local service returned.
+
+    With ``root``, every path under it is written relative to it, in POSIX
+    form: a daemon's answers then describe its projects, never its host's
+    layout. A path outside ``root`` is written as it is.
+    """
     if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {f.name: encode(getattr(value, f.name)) for f in dataclasses.fields(value)}
+        return {f.name: encode(getattr(value, f.name), root) for f in dataclasses.fields(value)}
     if isinstance(value, Path):
+        if root is not None and value.is_relative_to(root):
+            return value.relative_to(root).as_posix()
         return str(value)
     if isinstance(value, (list, tuple)):
-        return [encode(item) for item in value]
+        return [encode(item, root) for item in value]
     if isinstance(value, dict):
-        return {str(key): encode(item) for key, item in value.items()}
+        return {str(key): encode(item, root) for key, item in value.items()}
     return value
 
 
