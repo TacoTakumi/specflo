@@ -169,7 +169,7 @@ class LocalProjectService:
         """
         directory = projects.project_dir(self.root, self.cfg, projects.validate_slug(slug))
         if directory.exists():
-            raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
+            raise SpecfloError(f"Project {slug!r} already exists.")
         for name in files:
             if (
                 not name or name.startswith(".") or "/" in name or "\\" in name

@@ -105,7 +105,7 @@ def create_project(
     slug = slugify(name)
     directory = project_dir(root, cfg, slug)
     if directory.exists():
-        raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
+        raise SpecfloError(f"Project {slug!r} already exists.")
 
     project = Project(
         name=name,

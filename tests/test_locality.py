@@ -106,7 +106,7 @@ def test_new_remote_refuses_an_unknown_remote(checkout):
     assert _files_naming(checkout, "thing") == []
 
 
-def test_one_slug_has_one_locality(checkout):
+def test_one_slug_has_one_locality(checkout, live_daemon):
     assert runner.invoke(app, ["new", "Alpha"]).exit_code == 0
     assert runner.invoke(app, ["new", "Bravo", "--remote", "home"]).exit_code == 0
 
@@ -117,6 +117,16 @@ def test_one_slug_has_one_locality(checkout):
     remote_again = runner.invoke(app, ["new", "Alpha", "--remote", "home"])
     assert remote_again.exit_code == 1
     assert "already exists" in remote_again.stderr
+
+    # A slug the daemon already holds, that this checkout knows nothing of,
+    # is refused by the daemon; the refusal names the project, never the
+    # daemon's directory.
+    held = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "charlie"
+    held.mkdir()
+    (held / "project.md").write_text("x")
+    taken = runner.invoke(app, ["new", "Charlie", "--remote", "home"])
+    assert taken.exit_code == 1 and "Project 'charlie' already exists" in taken.stderr
+    assert str(live_daemon["root"]) not in taken.stderr and "projects/charlie" not in taken.stderr
 
 
 # --- list, switch, status across localities --------------------------------

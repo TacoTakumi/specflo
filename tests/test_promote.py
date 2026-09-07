@@ -177,7 +177,10 @@ def test_promote_refuses_what_it_cannot_move(checkout, live_daemon):
     (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "thing").mkdir()
     (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "thing" / "project.md").write_text("x")
     clash = runner.invoke(app, ["promote", "thing", "--remote", "home"])
-    assert clash.exit_code == 1 and "already exists" in clash.stderr
+    assert clash.exit_code == 1 and "Project 'thing' already exists" in clash.stderr
+    # The daemon's directory layout is its own business: the refusal names
+    # the project, never where the daemon keeps it.
+    assert str(live_daemon["root"]) not in clash.stderr and "projects/thing" not in clash.stderr
     assert project.path.is_dir()
     assert config.hosted_projects(checkout) == {"other": "home"}
 
