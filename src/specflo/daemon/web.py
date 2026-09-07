@@ -31,7 +31,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ..config import load_config
 from ..doc import ARTIFACTS
 from ..errors import ProjectNotFound, SpecfloError
-from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project
+from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import IDENTITIES, identity_for
@@ -264,9 +264,15 @@ class ProjectView:
 def project_view(root: Path, slug: str) -> ProjectView | None:
     """The page's view of ``slug``, or None for a project the daemon does not hold.
 
-    A project the daemon holds but cannot read raises: that is a fault of the
+    The slug is checked as the API checks it, before it can become a path: a
+    string that is not a slug names no project, and no file is read for it. A
+    project the daemon holds but cannot read raises: that is a fault of the
     daemon's copy, not a missing page.
     """
+    try:
+        validate_slug(slug)
+    except SpecfloError:
+        return None
     service = LocalProjectService(root, load_config(root))
     try:
         project = service.load_project(slug)
@@ -315,7 +321,11 @@ def product_page(
     return render("product.html", identity=identity, view=view)
 
 
-@pages.get(PROJECT_PATH, include_in_schema=False)
+# The page takes the rest of the path, not one segment, so a slash smuggled
+# into the slug reaches the same slug check and the same 404 page as any
+# other string that is not a slug, instead of falling through to the API's
+# JSON 404.
+@pages.get(PROJECT_PATH.replace("{slug}", "{slug:path}"), include_in_schema=False)
 def project_page(
     request: Request, slug: str, identity: str = Depends(current_session)
 ) -> Response:

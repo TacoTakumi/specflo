@@ -216,3 +216,20 @@ def test_a_refusal_while_rendering_any_page_is_a_500_page(client, root, monkeypa
     assert response.headers["content-type"].startswith("text/html")
     assert "the store is unreadable" in response.text
     assert "signed in as" in response.text
+
+
+@pytest.mark.parametrize("raw", ["%2e%2e", "a%2Fb", "Upper", ".hidden"])
+def test_a_slug_that_is_not_one_is_a_404_page_before_any_file_is_read(client, root, monkeypatch, raw):
+    seed(root)
+    loaded = []
+    real = LocalProjectService.load_project
+    monkeypatch.setattr(
+        LocalProjectService, "load_project", lambda self, slug: loaded.append(slug) or real(self, slug)
+    )
+
+    response = client.get(f"/projects/{raw}")
+
+    assert response.status_code == 404
+    assert response.headers["content-type"].startswith("text/html")
+    assert "No project" in unescape(response.text)
+    assert loaded == []
