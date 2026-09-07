@@ -139,6 +139,25 @@ def scaffold(root: Path, slug: str, url: str, token: str) -> Path:
     return workspace
 
 
+def seat_token(root: Path, slug: str) -> str:
+    """The agent token the seat for ``slug`` should hold: its own while that still resolves to agent, else a fresh one.
+
+    A seat keeps one credential for its life. Minting on every start would
+    leave a live token behind per start with nothing to retire it; reusing
+    the seat's own keeps the count at one, and a seat with no token or one
+    the daemon no longer knows gets a fresh mint.
+    """
+    workspace = seat_dir(root, slug)
+    if config.config_path(workspace).is_file():
+        try:
+            token = config.load_remote(workspace, REMOTE_NAME).token
+        except SpecfloError:
+            token = ""
+        if token and auth.identity_for(root, token) == "agent":
+            return token
+    return auth.mint_token(root, "agent")
+
+
 # --- the agent ----------------------------------------------------------------
 
 
@@ -379,7 +398,7 @@ def start_project_agent(
     live = liveness(root, slug)
     if live.alive:
         raise SpecfloError(f"Agent {live.name!r} for {slug!r} is already serving.")
-    scaffold(root, slug, url, auth.mint_token(root, "agent"))
+    scaffold(root, slug, url, seat_token(root, slug))
     name = start_agent(
         root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
     )
@@ -444,7 +463,7 @@ def start_project(
         spawned = WorkItems(store).spawn(item_id, service)
         audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
     slug = spawned.project.slug
-    workspace = scaffold(root, slug, url, auth.mint_token(root, "agent"))
+    workspace = scaffold(root, slug, url, seat_token(root, slug))
     name = start_agent(
         root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
     )

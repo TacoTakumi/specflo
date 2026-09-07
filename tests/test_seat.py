@@ -346,6 +346,38 @@ def test_a_write_that_dies_midway_leaves_the_old_mapping_whole(root, monkeypatch
     assert seat.agent_mapping(root) == {"login-fix": "project-login-fix"}
 
 
+def agent_tokens(root):
+    return [entry for entry in json.loads(auth.tokens_path(root).read_text())["tokens"] if entry["identity"] == "agent"]
+
+
+def test_starting_the_agent_again_keeps_the_seats_token(root, agent_rig):
+    hosted(root, name="Login Fix")
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    url = "http://127.0.0.1:8741"
+
+    first = seat.start_project_agent(root, "login-fix", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("one"))
+    token = config.load_remote(seat.seat_dir(root, "login-fix"), seat.REMOTE_NAME).token
+    assert agent_rig["cli"]("stop", first).returncode == 0
+    second = seat.start_project_agent(root, "login-fix", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("two"))
+
+    assert second == first
+    assert config.load_remote(seat.seat_dir(root, "login-fix"), seat.REMOTE_NAME).token == token
+    assert len(agent_tokens(root)) == 1
+    assert auth.identity_for(root, token) == "agent"
+
+
+def test_a_seat_whose_token_the_daemon_does_not_know_gets_a_fresh_one(root, agent_rig):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    assert auth.identity_for(root, "agent-secret") is None
+
+    seat.start_project_agent(root, slug, "developer", url="http://127.0.0.1:8741", pi_cmd=agent_rig["stub_cmd"]("fresh"))
+
+    token = config.load_remote(seat.seat_dir(root, slug), seat.REMOTE_NAME).token
+    assert token != "agent-secret" and auth.identity_for(root, token) == "agent"
+    assert len(agent_tokens(root)) == 1
+
+
 # --- the agent's end: the advance out of brainstorm, or a developer's stop ------
 
 
