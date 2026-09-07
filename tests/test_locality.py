@@ -344,7 +344,7 @@ def test_remote_remove_is_refused_while_it_hosts_projects_unless_forced(checkout
     forced = runner.invoke(app, ["remote", "remove", "home", "--force"])
 
     assert forced.exit_code == 0, forced.output
-    assert config.hosted_projects(checkout) == {"alpha": "bravo" and "home", "bravo": "home"}
+    assert config.hosted_projects(checkout) == {"alpha": "home", "bravo": "home"}
 
 
 def test_a_hosted_project_whose_remote_is_gone_is_refused_cleanly_by_every_command(checkout):
