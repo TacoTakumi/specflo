@@ -323,3 +323,16 @@ def test_a_staging_directory_left_by_a_killed_import_is_never_listed_and_is_swep
 
     assert not leftover.exists()
     assert [p.slug for p in service.list_projects()] == ["real", "thing"]
+
+
+def test_import_refuses_a_slug_that_is_not_one(tmp_path):
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    outside_before = sorted(p.name for p in tmp_path.parent.iterdir())
+
+    for slug in ("../escape", "a/b", ".hidden", "Upper", ""):
+        with pytest.raises(SpecfloError, match="slug"):
+            service.import_project(slug, {"project.md": "x"})
+
+    assert sorted(p.name for p in tmp_path.parent.iterdir()) == outside_before
+    assert not list((tmp_path / "docs" / "projects").iterdir())

@@ -60,6 +60,23 @@ def slugify(name: str) -> str:
     return slug
 
 
+# Exactly the strings ``slugify`` can produce: lowercase runs joined by
+# single hyphens. A slug names a directory under the projects root, so
+# anything else (a dot, a slash, an empty string) is refused before it
+# reaches a path.
+_SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+
+
+def validate_slug(slug: str) -> str:
+    """``slug`` if it is one ``slugify`` could have made; refused otherwise."""
+    if not isinstance(slug, str) or not _SLUG_RE.match(slug):
+        raise SpecfloError(
+            f"Invalid project slug {slug!r}: expected lowercase letters and digits"
+            " joined by single hyphens."
+        )
+    return slug
+
+
 def project_dir(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return root / cfg.projects_dir / slug
 

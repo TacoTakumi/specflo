@@ -230,3 +230,30 @@ def test_an_argument_of_the_wrong_type_is_a_422_not_a_500(client):
         response = client.post(wire.route_path(operation), json=body)
         assert response.status_code == 422, (operation, response.text)
         assert expected in response.json()["detail"], (operation, response.text)
+
+
+def test_a_slug_that_is_not_one_is_refused_before_anything_is_written(root, client, tmp_path):
+    # The daemon root holds every hosted project; a slug is the one thing a
+    # request contributes to a path under it, so only a slug that slugify
+    # could have made is accepted, for every operation that names one.
+    outside_before = sorted(p.name for p in tmp_path.iterdir())
+
+    for slug in ("../escape", "a/b", ".hidden", "Upper", "two--hyphens", "-lead", ""):
+        response = client.post(
+            wire.route_path("import_project"), json={"slug": slug, "files": {"project.md": "x"}}
+        )
+        assert response.status_code == 400, (slug, response.text)
+        assert "slug" in response.json()["detail"], (slug, response.text)
+        for operation, extra in (
+            ("load_project", {}),
+            ("start_brainstorm", {}),
+            ("add_decision", {"text": "x"}),
+            ("show_document", {"name": "brainstorm"}),
+        ):
+            response = client.post(wire.route_path(operation), json={"slug": slug, **extra})
+            assert response.status_code == 400, (operation, slug, response.text)
+            assert "slug" in response.json()["detail"], (operation, slug, response.text)
+
+    assert sorted(p.name for p in tmp_path.iterdir()) == outside_before
+    assert not list((root / daemon.PROJECTS_DIRNAME).iterdir())
+    assert not list(root.glob(".*.importing"))

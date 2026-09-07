@@ -155,7 +155,7 @@ class LocalProjectService:
         and moved into place in one rename at the end, so a failure part way
         leaves no project behind and a retry is not refused as existing.
         """
-        directory = projects.project_dir(self.root, self.cfg, slug)
+        directory = projects.project_dir(self.root, self.cfg, projects.validate_slug(slug))
         if directory.exists():
             raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
         for name in files:

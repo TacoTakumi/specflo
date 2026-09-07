@@ -26,6 +26,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ..config import load_config
 from ..errors import SpecfloError
+from ..projects import validate_slug
 from ..service import wire
 from ..service.local import LocalProjectService
 from .auth import IDENTITIES, identity_for
@@ -138,6 +139,14 @@ def _handler(operation: wire.Operation):
         root = request.app.state.root
         service = LocalProjectService(root, load_config(root), actor=identity)
         slug = kwargs.get("slug") if operation.slug_scoped else None
+        # The slug is the one part of a request that becomes a path under the
+        # daemon root, so it is checked here for every operation that names
+        # one, before any lock is taken and before the service sees it.
+        if operation.slug_scoped:
+            try:
+                validate_slug(slug)
+            except SpecfloError as exc:
+                raise HTTPException(status_code=400, detail=str(exc))
         with project_lock(root, lock_slug(operation, kwargs)):
             try:
                 result = getattr(service, operation.name)(**kwargs)

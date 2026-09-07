@@ -412,3 +412,11 @@ def test_set_execution_rejects_an_unknown_mode(root, cfg):
         projects.set_execution(root, cfg, "thing", "other")
     assert "linear" in str(exc.value) and "fan-out" in str(exc.value)
     assert path.read_text() == before
+
+
+def test_validate_slug_accepts_what_slugify_makes_and_nothing_else():
+    for name in ("Thing", "My Thing", "  a--b  ", "x1"):
+        assert projects.validate_slug(projects.slugify(name)) == projects.slugify(name)
+    for slug in ("../escape", "a/b", ".hidden", "Upper", "two--hyphens", "-lead", "trail-", "", "a b"):
+        with pytest.raises(SpecfloError, match="slug"):
+            projects.validate_slug(slug)
