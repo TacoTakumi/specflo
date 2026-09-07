@@ -296,17 +296,23 @@ def _locator(slug: str, path: Path) -> str:
     return f"{slug}/{path.stem}"
 
 
-def _checkpoint_report(root: Path, slug: str, path: Path) -> tuple[str, str | None]:
-    """How a command reports the checkpoint it just wrote: its locator, then its path.
+def _artifact_report(root: Path, slug: str, path: Path) -> tuple[str, str | None]:
+    """How a command reports an artifact it just made or closed: its locator, then its path.
 
     The human line carries the locator, so it reads the same for a project in
-    this checkout and one held by a daemon. ``--json`` keeps the display path
-    for a project in this checkout; a hosted project's files are the daemon's,
-    so its path is None rather than a directory on another machine.
+    this checkout and one held by a daemon. ``--json`` keeps the path for a
+    project in this checkout; a hosted project's files are the daemon's, so
+    its path is None rather than a directory on another machine.
     """
     if config.hosting_remote(root, slug) is not None:
         return _locator(slug, path), None
-    return _locator(slug, path), config.display_path(path, root)
+    return _locator(slug, path), str(path)
+
+
+def _checkpoint_report(root: Path, slug: str, path: Path) -> tuple[str, str | None]:
+    """As :func:`_artifact_report`, with the checkpoint's path shown relative to the root."""
+    locator, reported = _artifact_report(root, slug, path)
+    return locator, None if reported is None else config.display_path(path, root)
 
 
 def _directory_override(ctx: click.Context) -> dict | None:
@@ -1136,9 +1142,9 @@ def brainstorm_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator = _locator(slug, path)
+    locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": reported, "created": created}))
     else:
         note = "" if created else " (already started)"
         typer.echo(f"{locator}{note}")
@@ -1434,9 +1440,9 @@ def spec_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator = _locator(slug, path)
+    locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": reported, "created": created}))
     else:
         note = "" if created else " (already started)"
         typer.echo(f"{locator}{note}")
@@ -1504,9 +1510,9 @@ def plan_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator = _locator(slug, path)
+    locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": reported, "created": created}))
     else:
         note = "" if created else " (already started)"
         typer.echo(f"{locator}{note}")
@@ -2109,9 +2115,9 @@ def review_start(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator = _locator(slug, path)
+    locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": str(path), "created": created}))
+        typer.echo(json.dumps({"locator": locator, "path": reported, "created": created}))
     else:
         note = "" if created else " (already open)"
         typer.echo(f"{locator}{note}")
@@ -2154,9 +2160,9 @@ def review_done(
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator = _locator(slug, path)
+    locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": str(path), "verdict": verdict}))
+        typer.echo(json.dumps({"locator": locator, "path": reported, "verdict": verdict}))
     else:
         typer.echo(f"{locator} closed {verdict}")
 

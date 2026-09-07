@@ -399,3 +399,23 @@ def test_review_done_file_reads_the_report_in_the_checkout_not_on_the_daemon(che
     assert round_file.read_text().endswith((checkout / "report.md").read_text())
     assert "the daemon's own file" not in round_file.read_text()
     assert daemon_only not in done.output
+
+
+def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, live_daemon):
+    runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
+    daemon_root = str(live_daemon["root"])
+
+    for args, locator, extra in (
+        # `new` scaffolds the brainstorm, so starting it again locates it.
+        (["brainstorm", "start"], "hosted-thing/brainstorm", {"created": False}),
+        (["spec", "start"], "hosted-thing/spec", {"created": True}),
+        (["plan", "start"], "hosted-thing/plan", {"created": True}),
+        (["review", "start"], "hosted-thing/review-1", {"created": True}),
+        (["review", "done", "--verdict", "ready-to-merge"], "hosted-thing/review-1",
+         {"verdict": "ready-to-merge"}),
+    ):
+        result = runner.invoke(app, [*args, "--json"])
+        assert result.exit_code == 0, (args, result.output)
+        data = json.loads(result.output)
+        assert data == {"locator": locator, "path": None, **extra}, args
+        assert daemon_root not in result.output and "projects/hosted-thing" not in result.output
