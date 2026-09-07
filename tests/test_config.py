@@ -153,6 +153,17 @@ def test_bare_dataclass_defaults_come_from_the_registry():
         assert getattr(cfg, field.name) == field.default
 
 
+def test_the_agent_transport_key_defaults_to_tui_and_accepts_rpc_only(tmp_path):
+    field = config.field_for("agent_transport")
+    assert field.default == "tui"
+    assert config.AGENT_TRANSPORTS == ("tui", "rpc")
+    assert field.validate("rpc") and not field.validate("ssh")
+    config.init_config(tmp_path)
+    assert config.load_config(tmp_path).agent_transport == "tui"
+    config.write_value(tmp_path, field, "rpc")
+    assert config.load_config(tmp_path).agent_transport == "rpc"
+
+
 def test_the_loader_holds_no_per_key_literal():
     # REQ-28/REQ-29: load_config iterates the registry. A key named in the
     # loader's own source would be a second definition site.

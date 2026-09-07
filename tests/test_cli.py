@@ -2986,8 +2986,8 @@ def _set_in_file(path: Path, key: str, value: str) -> None:
 
 def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
     # REQ-16/REQ-21: registry order, resolved values, `(default)` only where
-    # the file is silent. init writes the first two keys, so only those three
-    # tuning keys are defaulted.
+    # the file is silent. init writes the first two keys, so only the
+    # tuning keys after them are defaulted.
     runner.invoke(app, ["init"])
     runner.invoke(app, ["new", "My Thing"])
 
@@ -3003,6 +3003,7 @@ def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
         "prior_projects: historical (default)",
         "context_threshold_percent: 25 (default)",
         "agent_space: agents (default)",
+        "agent_transport: tui (default)",
     ]
 
 

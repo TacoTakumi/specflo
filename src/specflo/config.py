@@ -29,6 +29,10 @@ from .errors import SpecfloError
 CONFIG_DIRNAME = ".specflo"
 CONFIG_FILENAME = "config.yaml"
 DEFAULT_PROJECTS_DIR = "docs/projects"
+# How a daemon runs a project's agent: a pi TUI in a herdr pane, which gives
+# a developer a terminal seat, or the RPC host where herdr is unavailable.
+AGENT_TRANSPORTS = ("tui", "rpc")
+DEFAULT_AGENT_TRANSPORT = "tui"
 
 
 # Autonomy levels for `specflo auto` (REQ-08), defined here rather than in `auto`
@@ -202,6 +206,13 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         "agents",
         "herdr workspace label where `specflo agent start` places agent tabs.",
         Text(),
+    ),
+    ConfigField(
+        "agent_transport",
+        str,
+        DEFAULT_AGENT_TRANSPORT,
+        "Transport a daemon starts a project's agent with: tui (pi in a herdr pane) or rpc.",
+        Choice(AGENT_TRANSPORTS),
     ),
 )
 

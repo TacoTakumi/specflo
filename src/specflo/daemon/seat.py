@@ -12,18 +12,34 @@ directory.
 
 Scaffolding is idempotent: a second call with the same URL and token
 rewrites the same bytes, and one with a new token or URL rebinds the remote.
+
+Starting the agent runs ``specflo agent start`` in the seat, with the
+transport the daemon's config names (the TUI in a herdr pane by default),
+and records which agent name serves the project in one file under the
+root. The agent subsystem is driven through its CLI, as a developer drives
+it, so the daemon imports nothing of it; the mapping is the daemon's own.
 """
 
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
 from pathlib import Path
 
 from .. import config
+from ..errors import SpecfloError
 from ..projects import validate_slug
 
 SEATS_DIRNAME = "seats"
 # The one remote a seat knows: the daemon that scaffolded it.
 REMOTE_NAME = "daemon"
+# The project-to-agent mapping, beside the state store under the root.
+AGENTS_FILENAME = "agents.json"
+AGENT_NAME_PREFIX = "project-"
+# How long a start may take, on top of the agent CLI's own socket deadline.
+START_GRACE = 30.0
+_PROBE_TIMEOUT = 15.0
 
 
 def seat_dir(root: Path, slug: str) -> Path:
@@ -64,3 +80,110 @@ def scaffold(root: Path, slug: str, url: str, token: str) -> Path:
         cfg.active_project = slug
         config.save_config(workspace, cfg)
     return workspace
+
+
+# --- the agent ----------------------------------------------------------------
+
+
+class AgentStartError(SpecfloError):
+    """The agent did not come up: the CLI failed, or its socket never answered."""
+
+
+def agent_name(slug: str) -> str:
+    """The name the project's agent runs under: the slug, prefixed."""
+    return AGENT_NAME_PREFIX + slug
+
+
+def agents_path(root: Path) -> Path:
+    return Path(root) / AGENTS_FILENAME
+
+
+def agent_mapping(root: Path) -> dict[str, str]:
+    """Every project's agent name by slug, in slug order."""
+    path = agents_path(root)
+    if not path.is_file():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(slug): str(name) for slug, name in sorted(data.items())}
+
+
+def _write_mapping(root: Path, mapping: dict[str, str]) -> None:
+    agents_path(root).write_text(json.dumps(dict(sorted(mapping.items())), indent=2) + "\n")
+
+
+def record_agent(root: Path, slug: str, name: str) -> None:
+    mapping = agent_mapping(root)
+    mapping[slug] = name
+    _write_mapping(root, mapping)
+
+
+def forget_agent(root: Path, slug: str) -> bool:
+    """Drop ``slug`` from the mapping; True when it was there."""
+    mapping = agent_mapping(root)
+    if slug not in mapping:
+        return False
+    del mapping[slug]
+    _write_mapping(root, mapping)
+    return True
+
+
+def agent_for(root: Path, slug: str) -> str | None:
+    return agent_mapping(root).get(slug)
+
+
+def _agent_cli(*args: str, cwd: Path | None = None, timeout: float) -> subprocess.CompletedProcess:
+    """Run one ``specflo agent`` verb as a subprocess of this interpreter."""
+    return subprocess.run(
+        [sys.executable, "-c", "import sys; from specflo.cli import main; sys.exit(main())", "agent", *args],
+        capture_output=True,
+        text=True,
+        cwd=str(cwd) if cwd is not None else None,
+        timeout=timeout,
+    )
+
+
+def start_agent(
+    root: Path,
+    slug: str,
+    *,
+    transport: str | None = None,
+    pi_cmd: str | None = None,
+    timeout: float | None = None,
+) -> str:
+    """Start the project's agent in its seat and record the mapping; the agent's name.
+
+    ``transport`` defaults to the root config's ``agent_transport``. The
+    call returns only once ``agent status`` answers for the new agent; a
+    start that fails, or whose socket never answers, raises and records
+    nothing.
+    """
+    slug = validate_slug(slug)
+    workspace = seat_dir(root, slug)
+    if not config.config_path(workspace).is_file():
+        raise SpecfloError(f"Project {slug!r} has no seat under the daemon root; scaffold it first.")
+    transport = transport or config.load_config(root).agent_transport
+    name = agent_name(slug)
+    argv = ["start", name, "--transport", transport, "--cwd", str(workspace)]
+    if pi_cmd is not None:
+        argv += ["--pi-cmd", pi_cmd]
+    if transport != "tui":
+        argv.append("--no-herdr")
+    deadline = (timeout or 0.0) + START_GRACE + _PROBE_TIMEOUT
+    try:
+        started = _agent_cli(*argv, cwd=workspace, timeout=deadline)
+    except subprocess.TimeoutExpired as exc:
+        raise AgentStartError(f"Starting agent {name!r} for {slug!r} did not finish in {deadline:.0f}s.") from exc
+    if started.returncode != 0:
+        detail = (started.stderr or started.stdout).strip()
+        raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
+    probe = _agent_cli("status", name, "--json", timeout=_PROBE_TIMEOUT)
+    answered = probe.returncode == 0 and json.loads(probe.stdout or "{}").get("alive") is True
+    if not answered:
+        raise AgentStartError(f"Agent {name!r} for {slug!r} started but its status does not answer.")
+    record_agent(root, slug, name)
+    return name
