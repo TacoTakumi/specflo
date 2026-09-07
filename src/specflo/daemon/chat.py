@@ -18,7 +18,9 @@ What lands in the log, per frame the extension mirrors or broadcasts:
   the prompt's kind, and back to the run's state when the prompt closes.
 
 The pumps of one daemon process live in one registry the app holds; on
-daemon start it resumes a pump for every mapped agent discovery finds alive.
+daemon start it resumes a pump for every mapped agent discovery finds alive,
+and a start hands the registry's subscribe to the seat so the pump is on
+the socket before the agent hears its opening prompt.
 """
 
 from __future__ import annotations
@@ -86,6 +88,8 @@ class Pump:
         self.name = name
         self.log = chatlog.open_log(root, slug)
         self._stop = threading.Event()
+        # Set once the pump holds its first connection to the socket.
+        self._connected = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"chat-pump-{name}", daemon=True)
         # What the assistant has said so far in the message being streamed.
         self._assembling: list[str] = []
@@ -104,6 +108,10 @@ class Pump:
     def alive(self) -> bool:
         return self._thread.is_alive()
 
+    def wait_connected(self, timeout: float) -> bool:
+        """Block until the pump has connected to the socket once; False when it has not in time."""
+        return self._connected.wait(timeout)
+
     def _mapped(self) -> bool:
         """Whether the project still maps to this pump's agent."""
         return seat.agent_for(self.root, self.slug) == self.name
@@ -113,6 +121,7 @@ class Pump:
             try:
                 with connect(self.name, connect_timeout=CONNECT_TIMEOUT) as client:
                     self.connections += 1
+                    self._connected.set()
                     while not self._stop.is_set():
                         try:
                             frame = client.read(timeout=READ_POLL)
@@ -179,6 +188,18 @@ class Pumps:
             pump = self._pumps[slug] = Pump(self.root, slug, name)
             pump.start()
             return pump
+
+    def subscribe(self, slug: str, name: str) -> Pump:
+        """The pump for ``slug`` on ``name``, connected: what a start hands the seat.
+
+        A start calls this once the agent serves and before it sends the
+        opening prompt, so the wait here is what puts the opening exchange
+        in the log; a socket that does not take the connection in time
+        leaves the pump trying and the start goes on.
+        """
+        pump = self.ensure(slug, name)
+        pump.wait_connected(CONNECT_TIMEOUT)
+        return pump
 
     def stop(self, slug: str) -> bool:
         """Stop the pump for ``slug``; True when there was one."""

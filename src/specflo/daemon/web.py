@@ -477,16 +477,13 @@ async def start_project(
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     pumps = request.app.state.pumps
 
-    def start() -> seat.Started:
-        started = seat.start_project(root, item_id, identity, url=url)
-        pumps.ensure(started.spawned.project.slug, started.agent)
-        return started
-
     try:
         # The start waits on the agent's socket while the agent calls this
-        # daemon back, and the pump start may wait on an old pump's thread,
-        # so both run off the event loop the daemon answers on.
-        started = await run_in_threadpool(start)
+        # daemon back, and the pump it subscribes may wait on an old pump's
+        # thread, so it runs off the event loop the daemon answers on.
+        started = await run_in_threadpool(
+            seat.start_project, root, item_id, identity, url=url, subscribe=pumps.subscribe
+        )
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
@@ -680,13 +677,10 @@ async def start_agent(
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     pumps = request.app.state.pumps
 
-    def start() -> str:
-        name = seat.start_project_agent(root, slug, identity, url=url)
-        pumps.ensure(slug, name)
-        return name
-
     try:
-        await run_in_threadpool(start)
+        await run_in_threadpool(
+            seat.start_project_agent, root, slug, identity, url=url, subscribe=pumps.subscribe
+        )
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:

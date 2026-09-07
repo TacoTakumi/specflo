@@ -349,12 +349,27 @@ def test_an_agent_already_gone_is_forgotten_all_the_same(root, agent_rig):
     assert seat.agent_mapping(root) == {}
 
 
+# The apps a test made: each resumes a pump for the live agent, and a pump
+# thread that outlives its test follows the agent's name into the next one.
+_apps = []
+
+
+@pytest.fixture(autouse=True)
+def _stop_pumps():
+    yield
+    for app in _apps:
+        app.state.pumps.stop_all()
+    _apps.clear()
+
+
 def daemon_client(root):
     from fastapi.testclient import TestClient
 
     from specflo.daemon.app import create_app
 
-    client = TestClient(create_app(root))
+    app = create_app(root)
+    _apps.append(app)
+    client = TestClient(app)
     client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
     return client
 
@@ -460,6 +475,42 @@ def test_a_started_agent_hears_first_which_seat_and_project_it_serves(root, tmp_
     assert seat.agent_mapping(root) == {slug: name}
 
 
+def test_the_subscriber_is_called_with_the_mapping_recorded_before_the_opening_prompt(root, tmp_path, agent_rig):
+    # The daemon's chat pump is the subscriber: called here, it is on the
+    # socket before the agent hears anything, so the opening exchange is
+    # the first thing in the log rather than the first thing lost.
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    pi_cmd, capture = capturing_stub(tmp_path)
+    seen = []
+
+    def subscribe(slug_, name_):
+        seen.append((slug_, name_, seat.agent_mapping(root), len(prompts(capture))))
+
+    name = seat.start_agent(root, slug, pi_cmd=pi_cmd, subscribe=subscribe)
+
+    assert seen == [(slug, name, {slug: name}, 0)]
+    assert len(prompts(capture)) == 1
+
+
+def test_an_agent_that_takes_no_opening_prompt_is_stopped_and_forgotten(root, tmp_path, agent_rig, monkeypatch):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    pi_cmd, capture = capturing_stub(tmp_path)
+
+    def refuse(name, text):
+        raise seat.AgentMessageError("refused")
+
+    monkeypatch.setattr(seat, "send_message", refuse)
+
+    with pytest.raises(seat.AgentStartError, match="opening prompt"):
+        seat.start_agent(root, slug, pi_cmd=pi_cmd)
+
+    assert seat.agent_mapping(root) == {}
+    listed = json.loads(agent_rig["cli"]("list", "--json").stdout)
+    assert not any(item["name"] == seat.agent_name(slug) and item["alive"] for item in listed)
+
+
 def test_a_take_over_the_daemon_tells_the_agent_the_developer_seat_took_over(root, tmp_path, agent_rig):
     slug, name, capture = started_rpc(root, tmp_path)
     opened(root, slug)
@@ -496,17 +547,22 @@ def test_a_take_through_the_page_tells_the_agent_too(root, tmp_path, agent_rig):
 
     slug, name, capture = started_rpc(root, tmp_path)
     opened(root, slug)
+    # The app resumes a pump for the live agent; it is stopped below so no
+    # pump thread outlives this test and follows the name into another.
     browser = TestClient(create_app(root), follow_redirects=False)
-    token = auth.mint_token(root, "developer")
-    assert browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token}).status_code == 303
+    try:
+        token = auth.mint_token(root, "developer")
+        assert browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token}).status_code == 303
 
-    response = browser.post(
-        web.TAKE_PATH.format(slug=slug), data={"session": browser.cookies[web.SESSION_COOKIE]}
-    )
+        response = browser.post(
+            web.TAKE_PATH.format(slug=slug), data={"session": browser.cookies[web.SESSION_COOKIE]}
+        )
 
-    assert response.status_code == 303
-    sent = prompts(capture)
-    assert len(sent) == 2 and "developer seat" in sent[1]["message"]
+        assert response.status_code == 303
+        sent = prompts(capture)
+        assert len(sent) == 2 and "developer seat" in sent[1]["message"]
+    finally:
+        browser.app.state.pumps.stop_all()
 
 
 def test_a_take_with_no_serving_agent_stands_and_sends_nothing(root, tmp_path, agent_rig):

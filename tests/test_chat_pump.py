@@ -256,6 +256,22 @@ def test_ensure_runs_one_pump_per_project_and_stop_ends_it(root, agent):
         pumps.stop_all()
 
 
+def test_subscribe_returns_the_pump_once_it_holds_the_socket(root, agent):
+    # What a start hands the seat: by the time subscribe returns the pump is
+    # connected, so the opening prompt that follows is seen from its first frame.
+    pumps = chat.Pumps(root)
+    try:
+        pump = pumps.subscribe("login-fix", agent.paths.name)
+
+        assert pump.connections == 1
+        # The fake registers the connection on its accept thread, a moment
+        # after the pump's connect returns.
+        assert wait_until(lambda: agent.connected == 1)
+        assert pumps.subscribe("login-fix", agent.paths.name) is pump
+    finally:
+        pumps.stop_all()
+
+
 def test_the_label_names_the_author_and_splits_back_off():
     assert chatlog.label("requester", "hi") == "requester: hi"
     assert chatlog.split_label("requester: hi", "developer") == ("requester", "hi")

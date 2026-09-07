@@ -31,6 +31,7 @@ import dataclasses
 import json
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 from .. import config
@@ -90,6 +91,10 @@ TAKEOVER_MESSAGE = (
 )
 # How long a message send may wait for the agent's answer.
 _SEND_TIMEOUT = 10.0
+# What a start calls once the agent serves and is on record, before the
+# opening prompt goes out: the daemon passes its chat pump's subscribe, so
+# the opening exchange is in the log from its first frame.
+Subscriber = Callable[[str, str], object]
 
 
 def seat_dir(root: Path, slug: str) -> Path:
@@ -271,13 +276,17 @@ def start_agent(
     transport: str | None = None,
     pi_cmd: str | None = None,
     timeout: float | None = None,
+    subscribe: Subscriber | None = None,
 ) -> str:
     """Start the project's agent in its seat and record the mapping; the agent's name.
 
     ``transport`` defaults to the root config's ``agent_transport``. The
     call returns only once ``agent status`` answers for the new agent; a
     start that fails, or whose socket never answers, raises and records
-    nothing.
+    nothing. Once the agent serves, the mapping is recorded and
+    ``subscribe`` is called with the slug and the agent's name, before the
+    opening prompt is sent, so a subscriber sees the whole exchange; an
+    agent that takes no opening prompt is stopped and forgotten again.
     """
     slug = validate_slug(slug)
     workspace = seat_dir(root, slug)
@@ -307,14 +316,17 @@ def start_agent(
             f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving."
         )
     project = LocalProjectService(root, config.load_config(root)).load_project(slug)
+    record_agent(root, slug, name)
+    if subscribe is not None:
+        subscribe(slug, name)
     try:
         send_message(name, chatlog.label(chatlog.DAEMON_AUTHOR, OPENING_PROMPT.format(name=project.name, slug=slug)))
     except AgentMessageError as exc:
         # An agent that never heard which seat it serves is no agent for the
         # project: it goes, and the start is reported as failed.
         _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        forget_agent(root, slug)
         raise AgentStartError(f"Agent {name!r} for {slug!r} started but took no opening prompt: {exc}") from exc
-    record_agent(root, slug, name)
     return name
 
 
@@ -342,6 +354,7 @@ def start_project_agent(
     *,
     url: str = DEFAULT_URL,
     pi_cmd: str | None = None,
+    subscribe: Subscriber | None = None,
 ) -> str:
     """Give a hosted project its agent again: refresh the seat, start, audit; the agent's name.
 
@@ -354,7 +367,9 @@ def start_project_agent(
     if live.alive:
         raise SpecfloError(f"Agent {live.name!r} for {slug!r} is already serving.")
     scaffold(root, slug, url, auth.mint_token(root, "agent"))
-    name = start_agent(root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD)
+    name = start_agent(
+        root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
+    )
     audit(root, identity, "start_agent", slug, None)
     return name
 
@@ -400,6 +415,7 @@ def start_project(
     *,
     url: str = DEFAULT_URL,
     pi_cmd: str | None = None,
+    subscribe: Subscriber | None = None,
 ) -> Started:
     """Spawn the work item's hosted project, scaffold its seat, and start its agent.
 
@@ -416,6 +432,8 @@ def start_project(
         audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
     slug = spawned.project.slug
     workspace = scaffold(root, slug, url, auth.mint_token(root, "agent"))
-    name = start_agent(root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD)
+    name = start_agent(
+        root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
+    )
     audit(root, identity, "start_project", slug, str(item_id))
     return Started(spawned=spawned, seat=workspace, agent=name)

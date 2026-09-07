@@ -443,8 +443,11 @@ def workitem_start_project(
 
     root = request.app.state.root
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    pumps = getattr(request.app.state, "pumps", None)
     try:
-        started = seat.start_project(root, item_id, identity, url=url)
+        started = seat.start_project(
+            root, item_id, identity, url=url, subscribe=pumps.subscribe if pumps is not None else None
+        )
     except seat.AgentStartError as exc:
         raise HTTPException(status_code=502, detail=str(exc))
     except SpecfloError as exc:

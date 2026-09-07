@@ -14,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -46,9 +47,11 @@ def token(root):
 
 @pytest.fixture
 def client(root, token):
-    client = TestClient(create_app(root))
+    app = create_app(root)
+    client = TestClient(app)
     client.headers["Authorization"] = f"Bearer {token}"
-    return client
+    yield client
+    app.state.pumps.stop_all()
 
 
 def seed(root):
@@ -427,7 +430,36 @@ def test_the_start_project_route_calls_the_operation_and_names_the_seat(client, 
     again = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
     assert again.status_code == 400 and "already spawned project 'fix-the-login'" in again.json()["detail"]
     assert client.post(f"{WORK_ITEMS_PATH}/2/start-project").status_code == 400
-    assert TestClient(create_app(root)).post(f"{WORK_ITEMS_PATH}/3/start-project").status_code == 401
+    anonymous = create_app(root)
+    try:
+        assert TestClient(anonymous).post(f"{WORK_ITEMS_PATH}/3/start-project").status_code == 401
+    finally:
+        anonymous.state.pumps.stop_all()
+
+
+def test_the_start_project_route_puts_the_pump_on_the_socket_before_the_opening_prompt(client, root, rpc_rig, monkeypatch):
+    # The stub answers the opening prompt at once, so its reply is in the
+    # log only if the route's pump was on the socket before the prompt went
+    # out: a project started over the API, with no browser, has its
+    # transcript from the first exchange.
+    from specflo.daemon import chat, chatlog
+
+    seed(root)
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", rpc_rig["pi_cmd"])
+    try:
+        response = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
+
+        assert response.status_code == 200, response.text
+        slug = response.json()["result"]["spawned"]["project"]["slug"]
+        assert client.app.state.pumps.running() == {slug: seat.agent_name(slug)}
+        log = chatlog.open_log(root, slug)
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not any(e.kind == chat.ASSISTANT_KIND for e in log.read_from(0)):
+            time.sleep(0.05)
+        kinds = [e.kind for e in log.read_from(0)]
+        assert chat.ASSISTANT_KIND in kinds, kinds
+    finally:
+        client.app.state.pumps.stop_all()
 
 
 def test_the_route_reports_a_failed_agent_start_as_a_bad_gateway(client, root, rpc_rig, monkeypatch):
@@ -449,8 +481,10 @@ def test_the_route_hands_the_daemons_own_url_to_the_seat(root, rpc_rig, monkeypa
     application = create_app(root, url="http://daemon.local:9000")
     client = TestClient(application)
     client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
-
-    assert client.post(f"{WORK_ITEMS_PATH}/1/start-project").status_code == 200
+    try:
+        assert client.post(f"{WORK_ITEMS_PATH}/1/start-project").status_code == 200
+    finally:
+        application.state.pumps.stop_all()
 
     remote = config.load_remote(seat.seat_dir(root, "fix-the-login"), seat.REMOTE_NAME)
     assert remote.url == "http://daemon.local:9000"
