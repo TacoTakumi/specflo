@@ -26,6 +26,10 @@ from pathlib import Path
 from ..projects import validate_slug
 
 CHAT_DIRNAME = "chat"
+# The author a user line names itself with on the wire: a seat, or the
+# daemon for the prompts it sends on its own account.
+DAEMON_AUTHOR = "daemon"
+LABEL_SEPARATOR = ": "
 # Every field an entry carries, in the order a line writes them.
 ENTRY_FIELDS = ("id", "time", "kind", "author", "text")
 
@@ -39,6 +43,20 @@ class Entry:
     kind: str
     author: str
     text: str
+
+
+def label(author: str, text: str) -> str:
+    """``text`` as ``author`` sends it: prefixed with the author's label."""
+    return f"{author}{LABEL_SEPARATOR}{text}"
+
+
+def split_label(text: str, default: str, known: tuple[str, ...] = ("requester", "developer", DAEMON_AUTHOR)) -> tuple[str, str]:
+    """The author a user line names itself with, and the rest; ``default`` when it names none."""
+    for author in known:
+        prefix = author + LABEL_SEPARATOR
+        if text.startswith(prefix):
+            return author, text[len(prefix):]
+    return default, text
 
 
 def log_path(root: Path, slug: str) -> Path:

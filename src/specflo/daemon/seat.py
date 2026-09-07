@@ -39,7 +39,7 @@ from ..errors import SpecfloError
 from ..projects import INITIAL_STATUS, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
-from . import DEFAULT_BIND, DEFAULT_PORT, auth
+from . import DEFAULT_BIND, DEFAULT_PORT, auth, chatlog
 from .routes import audit, project_lock
 from .store import open_store
 from .workitems import Spawned, WorkItems
@@ -300,7 +300,7 @@ def start_agent(
         )
     project = LocalProjectService(root, config.load_config(root)).load_project(slug)
     try:
-        send_message(name, OPENING_PROMPT.format(name=project.name, slug=slug))
+        send_message(name, chatlog.label(chatlog.DAEMON_AUTHOR, OPENING_PROMPT.format(name=project.name, slug=slug)))
     except AgentMessageError as exc:
         # An agent that never heard which seat it serves is no agent for the
         # project: it goes, and the start is reported as failed.
@@ -321,7 +321,7 @@ def announce_take(root: Path, project: Project) -> bool:
         return False
     taker = (project.gate.taken_by if project.gate is not None else "") or DEVELOPER_SEAT
     try:
-        send_message(live.name, TAKEOVER_MESSAGE.format(slug=project.slug, taker=taker))
+        send_message(live.name, chatlog.label(chatlog.DAEMON_AUTHOR, TAKEOVER_MESSAGE.format(slug=project.slug, taker=taker)))
     except AgentMessageError:
         return False
     return True

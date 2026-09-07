@@ -426,6 +426,7 @@ async def start_project(
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
+    request.app.state.pumps.ensure(started.spawned.project.slug, started.agent)
     return RedirectResponse(PROJECT_PATH.format(slug=started.spawned.project.slug), status_code=303)
 
 
@@ -521,11 +522,12 @@ async def start_agent(
         )
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     try:
-        seat.start_project_agent(root, slug, identity, url=url)
+        name = seat.start_project_agent(root, slug, identity, url=url)
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
+    request.app.state.pumps.ensure(slug, name)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 

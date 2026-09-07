@@ -15,7 +15,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from . import HEALTH_PATH, prepare_root, web
+from . import HEALTH_PATH, chat, prepare_root, web
 from .routes import router
 
 
@@ -31,6 +31,10 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     app = FastAPI(title="specflo daemon", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.root = root
     app.state.url = url
+    # The chat pumps: one per agent discovery finds alive for a mapped
+    # project, so a daemon restart follows every live conversation again.
+    app.state.pumps = chat.Pumps(root)
+    app.state.pumps.resume()
 
     @app.get(HEALTH_PATH)
     def health() -> dict:
