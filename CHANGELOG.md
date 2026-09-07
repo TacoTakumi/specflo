@@ -203,6 +203,41 @@ latter. Release tags are of the form `vX.Y.Z`.
   the file and sends its text, so a hosted round ingests a file of this
   checkout, as `section set --file` does, and the daemon opens no file the
   request named.
+- **A refusal names the project, never the daemon's path.** A command on
+  a hosted slug the daemon no longer holds (`switch`, `summary`, `shelve`,
+  `status`, `doc show`, `checkpoint`, `list`, `hook reseed`) prints
+  `No project '<slug>'.` and nothing of the daemon's directory, on stdout,
+  stderr, or in the session-start payload. Every path a daemon answers
+  over the API - a project's directory, the file `brainstorm start`,
+  `review done` or `write_checkpoint` made, the `dir` of a status - is
+  written relative to the daemon root, so no response body carries the
+  host's layout.
+- **One damaged project cannot take the daemon down.** An import whose
+  `project.md` has no front matter, is not a mapping, misses a required
+  field, or names another slug is refused before anything lands on disk.
+  A directory under the projects root whose `project.md` does not parse is
+  skipped by `list`, the index, and the web pages, so the other projects'
+  `checkpoint` and `advance` keep working; loading that project by name
+  reports the fault. The web pages answer a refusal raised while rendering
+  with a page of the UI and status `500`, never a traceback; the project
+  page checks its slug the way the API does, so `/projects/%2e%2e` and a
+  slash smuggled into the slug get the 404 page without a file being read.
+- **`section set` cannot reach a managed entry.** A target header inside
+  Decisions, Requirements, Tasks, Milestones or Pools (a `D-01` or a
+  `REQ-01` entry) is refused naming the verb that owns it, and such headers
+  are not offered as prose sections. `section set --file` with a missing
+  or unreadable file is a refusal (`No body file at <path>.`,
+  `Cannot read <path> as text`), not a traceback.
+- **A mutation never fails on its checkpoint.** When the checkpoint cannot
+  be written after `advance`, `reopen`, `task done` or any other mutation
+  has persisted, the command prints its result, exits 0, and adds one
+  stderr line saying the checkpoint was not written and that `specflo
+  checkpoint` regenerates it; `Checkpoint saved:` is not printed and the
+  `--json` checkpoint fields are `null`.
+- **A spawn that fails part way leaves nothing behind.** The project
+  directory it made is removed, the work item stays unlinked, and a retry
+  succeeds instead of being refused as an existing project. An import
+  refuses a whitespace-only file name.
 
 ## [0.14.0]
 
