@@ -46,6 +46,9 @@ class FakeAgent:
         self.paths.root.mkdir(parents=True, exist_ok=True)
         self.state = state
         self.prompts = []
+        # When set, the next plain prompt is refused the way the host refuses
+        # one that lands after a run began; a steer is taken.
+        self.busy_once = False
         self.server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.server.bind(str(self.paths.socket))
         self.server.listen()
@@ -83,7 +86,16 @@ class FakeAgent:
                 elif kind == "prompt":
                     with self._lock:
                         self.prompts.append(frame)
-                    self._send(conn, {"type": "response", "id": frame.get("id"), "command": "prompt", "success": True})
+                        refuse = self.busy_once and "streamingBehavior" not in frame
+                        if refuse:
+                            self.busy_once = False
+                    if refuse:
+                        self._send(conn, {
+                            "type": "response", "id": frame.get("id"), "command": "prompt", "success": False,
+                            "error": "agent is busy (streaming); use streamingBehavior steer or followUp",
+                        })
+                    else:
+                        self._send(conn, {"type": "response", "id": frame.get("id"), "command": "prompt", "success": True})
         conn.close()
 
     def _send(self, conn, frame):
@@ -208,6 +220,20 @@ def test_a_developer_post_while_the_agent_works_is_a_steer_that_returns_before_s
     # The fake never settles: the post came back with the run still on.
     assert working_agent.state == "working"
     assert seat.liveness(developer.app.state.root, slug).state == "working"
+
+
+def test_a_prompt_refused_as_busy_goes_again_as_a_steer(requester, slug, idle_agent):
+    # The probe said idle, then a run began before the send landed: the
+    # host refuses the plain prompt, and the post still succeeds as a steer.
+    idle_agent.busy_once = True
+
+    response = post(requester, slug, "one more thing")
+
+    assert response.status_code == 303, response.text
+    plain, steered = idle_agent.received()
+    assert "streamingBehavior" not in plain
+    assert steered["streamingBehavior"] == "steer"
+    assert steered["message"] == plain["message"] == chatlog.label(seat.REQUESTER_SEAT, "one more thing")
 
 
 def test_the_post_runs_its_socket_calls_off_the_event_loop(requester, root, slug, monkeypatch):

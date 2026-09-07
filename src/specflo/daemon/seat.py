@@ -84,13 +84,19 @@ OPENING_PROMPT = (
     "one landscape scan early presented plainly, and the gate opened with a note "
     "of the open points when the requester says they are done."
 )
-# What the agent hears when a developer takes the gate: the seat changed, so
-# the skill leaves requester mode.
+# What the agent hears when the gate is taken: which seat took it, and what
+# that means for the mode. A developer's take ends requester mode; a gate
+# the requester took back leaves the conversation with the requester.
 TAKEOVER_MESSAGE = (
-    f"The {DEVELOPER_SEAT} seat has taken the gate on project {{slug!r}}: {{taker}} is "
-    "now in the conversation. Leave requester mode and continue the brainstorm "
-    "by its normal process."
+    "The {role} seat has taken the gate on project {slug!r}: {taker} is now in "
+    "the conversation. {directive}"
 )
+TAKEOVER_DIRECTIVES = {
+    DEVELOPER_SEAT: "Leave requester mode and continue the brainstorm by its normal process.",
+    REQUESTER_SEAT: "Stay in requester mode: the conversation is still with the requester.",
+}
+# The host's refusal of a plain prompt while a run is on; the send retries as a steer.
+_BUSY = "busy"
 # How long a message send may wait for the agent's answer.
 _SEND_TIMEOUT = 10.0
 # What a start calls once the agent serves and is on record, before the
@@ -276,6 +282,15 @@ def send_message(name: str, text: str) -> None:
             if state == "working":
                 command["streamingBehavior"] = "steer"
             response = client.request(command, timeout=_SEND_TIMEOUT)
+            if (
+                not response.get("success")
+                and _BUSY in str(response.get("error", ""))
+                and "streamingBehavior" not in command
+            ):
+                # A run began between the probe and the send, and the host
+                # refuses a plain prompt mid-run: it goes again as a steer.
+                command["streamingBehavior"] = "steer"
+                response = client.request(command, timeout=_SEND_TIMEOUT)
     except (HostUnreachableError, TimeoutError, RuntimeError, OSError, KeyError, TypeError) as exc:
         raise AgentMessageError(f"Agent {name!r} did not take the message: {exc}") from exc
     if not response.get("success"):
@@ -374,9 +389,15 @@ def announce_take(root: Path, project: Project) -> bool:
     live = liveness(root, project.slug)
     if not live.alive or live.name is None:
         return False
-    taker = (project.gate.taken_by if project.gate is not None else "") or DEVELOPER_SEAT
+    gate = project.gate
+    role = (gate.role if gate is not None else "") or DEVELOPER_SEAT
+    taker = (gate.taken_by if gate is not None else "") or role
+    message = TAKEOVER_MESSAGE.format(
+        role=role, slug=project.slug, taker=taker,
+        directive=TAKEOVER_DIRECTIVES.get(role, TAKEOVER_DIRECTIVES[DEVELOPER_SEAT]),
+    )
     try:
-        send_message(live.name, chatlog.label(chatlog.DAEMON_AUTHOR, TAKEOVER_MESSAGE.format(slug=project.slug, taker=taker)))
+        send_message(live.name, chatlog.label(chatlog.DAEMON_AUTHOR, message))
     except AgentMessageError:
         return False
     return True

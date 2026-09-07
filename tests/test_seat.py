@@ -615,6 +615,19 @@ def test_a_take_over_the_daemon_tells_the_agent_the_developer_seat_took_over(roo
     assert "streamingBehavior" not in sent[1]
 
 
+def test_a_requester_gate_taken_back_tells_the_agent_to_stay_in_requester_mode(root, tmp_path, agent_rig):
+    slug, name, capture = started_rpc(root, tmp_path)
+    opened(root, slug, role="requester")
+    project = LocalProjectService(root, config.load_config(root), actor="requester", hosted=True).take_gate(slug)
+
+    assert seat.announce_take(root, project) is True
+
+    message = prompts(capture)[1]["message"]
+    assert "requester seat has taken the gate" in message and "requester is now" in message
+    assert "Stay in requester mode" in message
+    assert "Leave requester mode" not in message and "developer" not in message
+
+
 def test_a_take_while_the_agent_works_is_steered_into_the_run(root, tmp_path, agent_rig):
     slug, name, capture = started_rpc(root, tmp_path, mode="never_settle")
     assert wait_until(lambda: seat.liveness(root, slug).state == "working", timeout=10)
