@@ -60,10 +60,6 @@ SESSION_TTL = 12 * 60 * 60
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
 
-# The phase in which a hosted project has an agent to chat with: it starts
-# with the project and lives until the project advances out of it.
-CHAT_PHASE = PHASES[0]
-
 # The role each phase waits on when no gate is open. One table, so a later
 # slice that hands a phase to the requester changes this line and no template.
 WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
@@ -328,7 +324,7 @@ class ProjectView:
 
 def has_agent(project: Project) -> bool:
     """Whether the project is one with an agent to show: active, in the chat phase."""
-    return project.status == INITIAL_STATUS and project.phase == CHAT_PHASE
+    return project.status == INITIAL_STATUS and project.phase == seat.CHAT_PHASE
 
 
 def project_view(root: Path, slug: str, *, viewer: str | None = None) -> ProjectView | None:
@@ -520,7 +516,7 @@ async def start_agent(
     if view.agent is None:
         return render(
             "error.html", status_code=409, identity=identity,
-            message=f"Project {slug!r} is past the {CHAT_PHASE} phase and has no agent to start.",
+            message=f"Project {slug!r} is past the {seat.CHAT_PHASE} phase and has no agent to start.",
         )
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     try:

@@ -36,8 +36,9 @@ from pathlib import Path
 from .. import config
 from ..agent.client import HostUnreachableError, connect
 from ..errors import SpecfloError
-from ..projects import validate_slug
+from ..projects import INITIAL_STATUS, Project, validate_slug
 from ..service.local import LocalProjectService
+from ..workflow import PHASES
 from . import DEFAULT_BIND, DEFAULT_PORT, auth
 from .routes import audit, project_lock
 from .store import open_store
@@ -54,6 +55,9 @@ REMOTE_NAME = "daemon"
 # The project-to-agent mapping, beside the state store under the root.
 AGENTS_FILENAME = "agents.json"
 AGENT_NAME_PREFIX = "project-"
+# The phase in which a hosted project has an agent: it starts with the
+# project and lives until the project advances out of it.
+CHAT_PHASE = PHASES[0]
 # How long a start may take, on top of the agent CLI's own socket deadline.
 START_GRACE = 30.0
 # The lifecycle states a freshly started agent may answer with and count as
@@ -272,6 +276,28 @@ def start_project_agent(
     name = start_agent(root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD)
     audit(root, identity, "start_agent", slug, None)
     return name
+
+
+def stop_agent(root: Path, slug: str) -> str | None:
+    """Stop the project's agent, if one is on record, and clear the mapping; the name stopped.
+
+    The stop goes through the agent CLI like a developer's; an agent
+    already gone is forgotten all the same, since the mapping is only
+    worth keeping for an agent discovery can find.
+    """
+    name = agent_for(root, slug)
+    if name is None:
+        return None
+    _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+    forget_agent(root, slug)
+    return name
+
+
+def release_on_advance(root: Path, project: Project) -> str | None:
+    """After an advance: a project no longer in the chat phase loses its agent; the name stopped."""
+    if project.status == INITIAL_STATUS and project.phase == CHAT_PHASE:
+        return None
+    return stop_agent(root, project.slug)
 
 
 # --- start project: the one operation behind the control ----------------------

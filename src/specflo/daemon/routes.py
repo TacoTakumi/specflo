@@ -186,6 +186,13 @@ def _handler(operation: wire.Operation):
             if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
                 audit(root, identity, operation.name, project, _minted(result, kwargs))
+            if operation.name == "advance_project":
+                # The seat module builds on this one's lock and audit, so it
+                # is reached here, not at import.
+                from . import seat
+
+                if seat.release_on_advance(root, result) is not None:
+                    audit(root, identity, "stop_agent", slug, None)
         # The boundary: what leaves here describes the daemon's projects, so a
         # path is written relative to the root and the host's layout stays home.
         return {"result": wire.encode(result, root)}

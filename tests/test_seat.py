@@ -310,3 +310,95 @@ def test_the_mapping_is_a_file_under_the_root_that_survives_a_reload(root):
     assert seat.forget_agent(root, "login-fix") is True
     assert seat.forget_agent(root, "login-fix") is False
     assert seat.agent_mapping(root) == {"dark-mode": "project-dark-mode"}
+
+
+# --- the agent's end: the advance out of brainstorm, or a developer's stop ------
+
+
+def test_stop_agent_stops_the_recorded_agent_and_clears_the_mapping(root, agent_rig):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    name = seat.start_agent(root, slug, pi_cmd=agent_rig["stub_cmd"]("rpc"))
+    assert seat.liveness(root, slug).alive is True
+
+    assert seat.stop_agent(root, slug) == name
+
+    assert seat.agent_mapping(root) == {}
+    assert seat.liveness(root, slug) == seat.Liveness(name=None, alive=False, state=seat.MISSING_STATE)
+    listed = json.loads(agent_rig["cli"]("list", "--json").stdout)
+    assert not any(item["name"] == name and item["alive"] for item in listed)
+
+
+def test_stop_agent_with_none_on_record_changes_nothing(root):
+    slug = scaffolded(root)
+    seat.record_agent(root, "other", "project-other")
+
+    assert seat.stop_agent(root, slug) is None
+
+    assert seat.agent_mapping(root) == {"other": "project-other"}
+
+
+def test_an_agent_already_gone_is_forgotten_all_the_same(root, agent_rig):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    name = seat.start_agent(root, slug, pi_cmd=agent_rig["stub_cmd"]("rpc"))
+    assert agent_rig["cli"]("stop", name).returncode == 0
+
+    assert seat.stop_agent(root, slug) == name
+
+    assert seat.agent_mapping(root) == {}
+
+
+def daemon_client(root):
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon.app import create_app
+
+    client = TestClient(create_app(root))
+    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    return client
+
+
+def advance(client, slug):
+    from specflo.service import wire
+
+    response = client.post(wire.route_path("advance_project"), json={"slug": slug})
+    assert response.status_code == 200, response.text
+    return wire.decode(response.json()["result"], wire.OPERATIONS["advance_project"].returns)
+
+
+def audit_records(root):
+    from specflo.daemon import routes
+
+    path = root / routes.AUDIT_FILENAME
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+
+
+def test_advancing_out_of_brainstorm_over_the_daemon_stops_the_agent_and_clears_the_mapping(root, agent_rig):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    name = seat.start_agent(root, slug, pi_cmd=agent_rig["stub_cmd"]("rpc"))
+
+    project = advance(daemon_client(root), slug)
+
+    assert project.phase == "spec"
+    assert seat.agent_mapping(root) == {}
+    listed = json.loads(agent_rig["cli"]("list", "--json").stdout)
+    assert not any(item["name"] == name and item["alive"] for item in listed)
+    operations = [(record["identity"], record["operation"], record["project"]) for record in audit_records(root)]
+    assert operations[-2:] == [("developer", "advance_project", slug), ("developer", "stop_agent", slug)]
+
+
+def test_advancing_a_project_past_brainstorm_touches_no_agent(root, agent_rig):
+    slug = scaffolded(root)
+    seat.record_agent(root, "other", "project-other")
+    client = daemon_client(root)
+    advance(client, slug)
+    LocalProjectService(root, config.load_config(root), hosted=True).start_spec(slug)
+    before = audit_records(root)
+
+    project = advance(client, slug)
+
+    assert project.phase == "plan"
+    assert seat.agent_mapping(root) == {"other": "project-other"}
+    assert [r["operation"] for r in audit_records(root)[len(before):]] == ["advance_project"]
