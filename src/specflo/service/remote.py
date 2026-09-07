@@ -18,6 +18,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+from collections.abc import Callable
 
 import httpx
 
@@ -48,20 +49,37 @@ class RemoteProjectService:
         self.client.headers["Authorization"] = f"Bearer {token}"
 
     def _call(self, operation: str, arguments: dict):
-        try:
-            response = self.client.post(wire.route_path(operation), json=wire.encode(arguments))
-        except httpx.HTTPError as exc:
-            raise SpecfloError(f"Cannot reach the remote at {self.url}: {exc}") from exc
-        if response.status_code == 200:
-            return wire.decode(response.json()["result"], wire.OPERATIONS[operation].returns)
-        detail = response_detail(response)
-        if response.status_code == 401:
-            raise SpecfloError(f"The remote at {self.url} refused the token: {detail}")
-        if response.status_code in (400, 422):
-            raise SpecfloError(detail)
-        raise SpecfloError(
-            f"The remote at {self.url} answered {response.status_code} to {operation}: {detail}"
+        result = daemon_result(
+            self.url,
+            operation,
+            lambda: self.client.post(wire.route_path(operation), json=wire.encode(arguments)),
         )
+        return wire.decode(result, wire.OPERATIONS[operation].returns)
+
+
+def daemon_result(url: str, asked: str, send: Callable[[], httpx.Response]):
+    """The result the daemon at ``url`` answers ``send`` with, or the refusal it stands for.
+
+    One mapping for every client of the daemon: a daemon that cannot be
+    reached, a token it refuses (401), a refusal of its own (400 or 422,
+    raised with the daemon's message and nothing else, so a command cannot
+    tell remote from in-process), and any other status, which names what was
+    ``asked``.
+    """
+    try:
+        response = send()
+    except httpx.HTTPError as exc:
+        raise SpecfloError(f"Cannot reach the remote at {url}: {exc}") from exc
+    if response.status_code == 200:
+        return response.json()["result"]
+    detail = response_detail(response)
+    if response.status_code == 401:
+        raise SpecfloError(f"The remote at {url} refused the token: {detail}")
+    if response.status_code in (400, 422):
+        raise SpecfloError(detail)
+    raise SpecfloError(
+        f"The remote at {url} answered {response.status_code} to {asked}: {detail}"
+    )
 
 
 def response_detail(response: httpx.Response) -> str:

@@ -27,7 +27,7 @@ import httpx
 from ..errors import SpecfloError
 from ..projects import slugify
 from ..service import wire
-from ..service.remote import response_detail
+from ..service.remote import daemon_result
 from .store import Conflict, Product, Store, WorkItem
 
 PRODUCTS_PATH = "/api/products"
@@ -182,20 +182,8 @@ class DaemonClient:
         self.client.headers["Authorization"] = f"Bearer {token}"
 
     def _request(self, method: str, path: str, **kwargs):
-        try:
-            response = self.client.request(method, path, **kwargs)
-        except httpx.HTTPError as exc:
-            raise SpecfloError(f"Cannot reach the remote at {self.url}: {exc}") from exc
-        if response.status_code == 200:
-            return response.json()["result"]
-        detail = response_detail(response)
-        if response.status_code == 401:
-            raise SpecfloError(f"The remote at {self.url} refused the token: {detail}")
-        if response.status_code in (400, 422):
-            raise SpecfloError(detail)
-        raise SpecfloError(
-            f"The remote at {self.url} answered {response.status_code}"
-            f" to {method} {path}: {detail}"
+        return daemon_result(
+            self.url, f"{method} {path}", lambda: self.client.request(method, path, **kwargs)
         )
 
 
