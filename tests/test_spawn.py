@@ -9,7 +9,11 @@ The CLI records the new project as hosted and makes it active, as ``new
 """
 
 import dataclasses
+import inspect
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,7 +22,8 @@ from typer.testing import CliRunner
 
 from specflo import config, daemon, projects
 from specflo.cli import app
-from specflo.daemon import auth, routes
+from specflo.agent.statefiles import ENV_STATE_DIR
+from specflo.daemon import auth, routes, seat
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
@@ -308,3 +313,144 @@ def test_a_spawn_that_fails_part_way_leaves_nothing_behind_and_the_retry_succeed
         assert items.show(1).project == "fix-the-login"
     assert [p.slug for p in svc.list_projects()] == ["fix-the-login"]
     assert (root / daemon.PROJECTS_DIRNAME / "fix-the-login" / "checkpoint.md").is_file()
+
+
+# --- start project: spawn, scaffold, start, as one operation ------------------
+
+STUB_PI = Path(__file__).parent / "agent" / "stub_pi.py"
+
+
+def _agent_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-c", "import sys; from specflo.cli import main; sys.exit(main())", "agent", *args],
+        capture_output=True, text=True, env=dict(os.environ), timeout=30,
+    )
+
+
+@pytest.fixture
+def rpc_rig(root, tmp_path, monkeypatch):
+    """An isolated agent state dir, the rpc transport on the root, and a stub pi."""
+    monkeypatch.setenv(ENV_STATE_DIR, str(tmp_path / "state"))
+    for key in ("SPECFLO_AGENT_SERVE", "SPECFLO_AGENT_NAME", "SPECFLO_AGENT_MANAGED"):
+        monkeypatch.delenv(key, raising=False)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    scenario = tmp_path / "scenario.json"
+    scenario.write_text(json.dumps({"reply": "ok"}), encoding="utf-8")
+    yield {"pi_cmd": f"{sys.executable} {STUB_PI} {scenario}"}
+    for name in seat.agent_mapping(root).values():
+        _agent_cli("stop", name)
+
+
+def test_start_project_spawns_scaffolds_and_starts_the_agent(root, rpc_rig):
+    seed(root)
+
+    started = seat.start_project(root, 1, "requester", url="http://127.0.0.1:8741", pi_cmd=rpc_rig["pi_cmd"])
+
+    slug = started.spawned.project.slug
+    assert slug == "fix-the-login" and started.spawned.item.project == slug
+    assert started.seat == seat.seat_dir(root, slug) and config.config_path(started.seat).is_file()
+    remote = config.load_remote(started.seat, seat.REMOTE_NAME)
+    assert remote.url == "http://127.0.0.1:8741" and auth.identity_for(root, remote.token) == "agent"
+    assert started.agent == seat.agent_name(slug) and seat.agent_mapping(root) == {slug: started.agent}
+    probe = json.loads(_agent_cli("status", started.agent, "--json").stdout)
+    assert probe["alive"] is True and probe["transport"] == "rpc"
+    assert audit_records(root) == [
+        ("requester", slug, "workitem_spawn", "1"),
+        ("requester", slug, "start_project", "1"),
+    ]
+    with store_module.open_store(root) as store:
+        assert WorkItems(store).show(1).project == slug
+
+
+def test_a_second_start_is_refused_naming_the_project_and_changes_nothing(root, rpc_rig):
+    seed(root)
+    seat.start_project(root, 1, "requester", pi_cmd=rpc_rig["pi_cmd"])
+    before = audit_records(root)
+    mapping = seat.agent_mapping(root)
+
+    with pytest.raises(SpecfloError, match="already spawned project 'fix-the-login'"):
+        seat.start_project(root, 1, "requester", pi_cmd=rpc_rig["pi_cmd"])
+
+    assert audit_records(root) == before and seat.agent_mapping(root) == mapping
+    assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
+
+
+def test_a_failed_agent_start_leaves_the_spawned_project_and_reports_it(root, rpc_rig, monkeypatch):
+    seed(root)
+    monkeypatch.setenv("SPECFLO_AGENT_START_TIMEOUT", "1")
+
+    with pytest.raises(seat.AgentStartError):
+        seat.start_project(root, 1, "requester", pi_cmd=f"{sys.executable} -c 'import sys; sys.exit(3)'")
+
+    assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
+    with store_module.open_store(root) as store:
+        assert WorkItems(store).show(1).project == "fix-the-login"
+    assert config.config_path(seat.seat_dir(root, "fix-the-login")).is_file()
+    assert seat.agent_mapping(root) == {}
+    assert audit_records(root) == [("requester", "fix-the-login", "workitem_spawn", "1")]
+
+
+def test_start_project_refuses_what_spawn_refuses_before_any_seat(root, rpc_rig):
+    seed(root)
+
+    with pytest.raises(SpecfloError, match="dev path 'one-prompt'"):
+        seat.start_project(root, 2, "requester", pi_cmd=rpc_rig["pi_cmd"])
+
+    assert not (root / seat.SEATS_DIRNAME).exists()
+    assert service(root).list_projects() == [] and audit_records(root) == []
+
+
+def test_one_function_performs_the_three_steps_and_the_route_only_calls_it():
+    body = inspect.getsource(seat.start_project)
+    steps = [body.index(".spawn("), body.index("scaffold("), body.index("start_agent(")]
+    assert steps == sorted(steps)
+    route = inspect.getsource(routes.workitem_start_project)
+    assert "start_project(" in route
+    for step in (".spawn(", "scaffold(", "start_agent(", "mint_token("):
+        assert step not in route, step
+
+
+def test_the_start_project_route_calls_the_operation_and_names_the_seat(client, root, rpc_rig, monkeypatch):
+    seed(root)
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", rpc_rig["pi_cmd"])
+
+    response = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
+
+    assert response.status_code == 200, response.text
+    result = response.json()["result"]
+    assert result["spawned"]["project"]["slug"] == "fix-the-login"
+    assert result["seat"] == f"{seat.SEATS_DIRNAME}/fix-the-login"
+    assert result["agent"] == seat.agent_name("fix-the-login")
+    assert str(root) not in response.text
+    assert seat.agent_mapping(root) == {"fix-the-login": result["agent"]}
+
+    again = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
+    assert again.status_code == 400 and "already spawned project 'fix-the-login'" in again.json()["detail"]
+    assert client.post(f"{WORK_ITEMS_PATH}/2/start-project").status_code == 400
+    assert TestClient(create_app(root)).post(f"{WORK_ITEMS_PATH}/3/start-project").status_code == 401
+
+
+def test_the_route_reports_a_failed_agent_start_as_a_bad_gateway(client, root, rpc_rig, monkeypatch):
+    seed(root)
+    monkeypatch.setenv("SPECFLO_AGENT_START_TIMEOUT", "1")
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", f"{sys.executable} -c 'import sys; sys.exit(3)'")
+
+    response = client.post(f"{WORK_ITEMS_PATH}/1/start-project")
+
+    assert response.status_code == 502
+    assert "fix-the-login" in response.json()["detail"]
+    assert str(root) not in response.text
+    assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
+
+
+def test_the_route_hands_the_daemons_own_url_to_the_seat(root, rpc_rig, monkeypatch):
+    seed(root)
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", rpc_rig["pi_cmd"])
+    application = create_app(root, url="http://daemon.local:9000")
+    client = TestClient(application)
+    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+
+    assert client.post(f"{WORK_ITEMS_PATH}/1/start-project").status_code == 200
+
+    remote = config.load_remote(seat.seat_dir(root, "fix-the-login"), seat.REMOTE_NAME)
+    assert remote.url == "http://daemon.local:9000"

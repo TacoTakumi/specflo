@@ -19,13 +19,18 @@ from . import HEALTH_PATH, prepare_root, web
 from .routes import router
 
 
-def create_app(root: Path) -> FastAPI:
-    """The application serving the daemon root at ``root``."""
+def create_app(root: Path, *, url: str | None = None) -> FastAPI:
+    """The application serving the daemon root at ``root``.
+
+    ``url`` is where the daemon answers, as its own agents must reach it;
+    the seat a project's agent runs in is scaffolded with it.
+    """
     root = prepare_root(root)
     # No generated docs or schema routes: those would serve every API path
     # to a browser without a token, and the token guard is the contract.
     app = FastAPI(title="specflo daemon", docs_url=None, redoc_url=None, openapi_url=None)
     app.state.root = root
+    app.state.url = url
 
     @app.get(HEALTH_PATH)
     def health() -> dict:

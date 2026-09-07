@@ -22,6 +22,7 @@ it, so the daemon imports nothing of it; the mapping is the daemon's own.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import subprocess
 import sys
@@ -30,6 +31,16 @@ from pathlib import Path
 from .. import config
 from ..errors import SpecfloError
 from ..projects import validate_slug
+from ..service.local import LocalProjectService
+from . import DEFAULT_BIND, DEFAULT_PORT, auth
+from .routes import audit, project_lock
+from .store import open_store
+from .workitems import Spawned, WorkItems
+
+# Where a seat reaches the daemon unless the daemon says otherwise.
+DEFAULT_URL = f"http://{DEFAULT_BIND}:{DEFAULT_PORT}"
+# The pi command the agent runs; None leaves the agent CLI's own default.
+DEFAULT_PI_CMD: str | None = None
 
 SEATS_DIRNAME = "seats"
 # The one remote a seat knows: the daemon that scaffolded it.
@@ -39,6 +50,9 @@ AGENTS_FILENAME = "agents.json"
 AGENT_NAME_PREFIX = "project-"
 # How long a start may take, on top of the agent CLI's own socket deadline.
 START_GRACE = 30.0
+# The lifecycle states a freshly started agent may answer with and count as
+# serving; exited or stopped means its pi is gone.
+HEALTHY_STATES = frozenset({"starting", "idle", "working", "needs-attention"})
 _PROBE_TIMEOUT = 15.0
 
 
@@ -182,8 +196,54 @@ def start_agent(
         detail = (started.stderr or started.stdout).strip()
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
     probe = _agent_cli("status", name, "--json", timeout=_PROBE_TIMEOUT)
-    answered = probe.returncode == 0 and json.loads(probe.stdout or "{}").get("alive") is True
-    if not answered:
-        raise AgentStartError(f"Agent {name!r} for {slug!r} started but its status does not answer.")
+    report = json.loads(probe.stdout or "{}") if probe.returncode == 0 else {}
+    if report.get("alive") is not True or report.get("state") not in HEALTHY_STATES:
+        # A host whose pi died at once answers as alive but exited; it is no
+        # agent for the project, so it goes before the failure is reported.
+        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        state = report.get("state") or "unreachable"
+        raise AgentStartError(
+            f"Agent {name!r} for {slug!r} started but is {state}, not serving."
+        )
     record_agent(root, slug, name)
     return name
+
+
+# --- start project: the one operation behind the control ----------------------
+
+
+@dataclasses.dataclass(frozen=True)
+class Started:
+    """What starting a project made: the spawn, the seat, and the agent's name."""
+
+    spawned: Spawned
+    seat: Path
+    agent: str
+
+
+def start_project(
+    root: Path,
+    item_id: int,
+    identity: str,
+    *,
+    url: str = DEFAULT_URL,
+    pi_cmd: str | None = None,
+) -> Started:
+    """Spawn the work item's hosted project, scaffold its seat, and start its agent.
+
+    The three steps run in that order as ``identity``. The spawn runs under
+    the root lock like the spawn route and is audited as one; the start is
+    audited once the agent answers. A spawn the work item refuses (another
+    dev path, a project already spawned) stops before any seat exists. A
+    start that fails leaves the spawned project and its seat and raises,
+    so the failure is reported and the project can get its agent later.
+    """
+    service = LocalProjectService(root, config.load_config(root), actor=identity, hosted=True)
+    with project_lock(root, None), open_store(root) as store:
+        spawned = WorkItems(store).spawn(item_id, service)
+        audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
+    slug = spawned.project.slug
+    workspace = scaffold(root, slug, url, auth.mint_token(root, "agent"))
+    name = start_agent(root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD)
+    audit(root, identity, "start_project", slug, str(item_id))
+    return Started(spawned=spawned, seat=workspace, agent=name)

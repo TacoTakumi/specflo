@@ -54,8 +54,9 @@ def serve(
     except ImportError:
         typer.secho(f"error: {SERVE_EXTRA_HINT}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
-    application = create_app(root)
-    typer.echo(f"specflo daemon: root {root}, listening on http://{bind}:{port}")
+    url = f"http://{bind}:{port}"
+    application = create_app(root, url=url)
+    typer.echo(f"specflo daemon: root {root}, listening on {url}")
     uvicorn.run(application, host=bind, port=port)
 
 

@@ -410,6 +410,28 @@ def workitem_set_status(
     return {"result": wire.encode(item)}
 
 
+@router.post(WORK_ITEMS_PATH + "/{item_id}/start-project")
+def workitem_start_project(
+    request: Request,
+    item_id: int,
+    identity: str = Depends(current_identity),
+) -> dict:
+    """Spawn the item's project, scaffold its seat, and start its agent: one operation."""
+    # The seat module builds on this one's lock and audit, so it is imported
+    # where it is used rather than at the top.
+    from . import seat
+
+    root = request.app.state.root
+    url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    try:
+        started = seat.start_project(root, item_id, identity, url=url)
+    except seat.AgentStartError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    except SpecfloError as exc:
+        raise _refused(exc)
+    return {"result": wire.encode(started, root)}
+
+
 @router.post(WORK_ITEMS_PATH + "/{item_id}/spawn")
 def workitem_spawn(
     request: Request,
