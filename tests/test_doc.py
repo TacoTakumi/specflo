@@ -362,3 +362,21 @@ def test_set_section_refuses_an_entry_inside_a_managed_section_naming_the_verb(t
     listed = doc.prose_sections(before)
     assert "Current understanding" in listed
     assert not any(title.startswith("D-0") for title in listed)
+
+
+def test_section_set_refuses_a_missing_or_unreadable_body_file(tmp_path, monkeypatch):
+    _cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+    binary = tmp_path / "body.bin"
+    binary.write_bytes(b"\xff\xfe\x00 not text")
+
+    missing = runner.invoke(app, ["section", "set", "brainstorm", "Research", "--file", "does-not-exist.md"])
+    unreadable = runner.invoke(app, ["section", "set", "brainstorm", "Research", "--file", str(binary)])
+
+    assert missing.exit_code == 1
+    assert "No body file at does-not-exist.md." in missing.stderr
+    assert "Traceback" not in missing.stderr and missing.stdout == ""
+    assert unreadable.exit_code == 1
+    assert f"Cannot read {binary} as text" in unreadable.stderr
+    assert "Traceback" not in unreadable.stderr and unreadable.stdout == ""
+    assert path.read_text() == before

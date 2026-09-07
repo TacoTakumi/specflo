@@ -2208,7 +2208,15 @@ def section_set(
         raise _die("Give the new body with --file <path> or --stdin (exactly one).")
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
-    body = sys.stdin.read() if stdin else Path(file).read_text()
+    if stdin:
+        body = sys.stdin.read()
+    else:
+        try:
+            body = Path(file).read_text()
+        except FileNotFoundError:
+            raise _die(f"No body file at {file}.")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _die(f"Cannot read {file} as text: {exc}")
     try:
         title = svc.set_section(slug, artifact, section, body)
     except SpecfloError as exc:
