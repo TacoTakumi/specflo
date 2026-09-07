@@ -65,7 +65,8 @@
 {% if view.agent is not none or view.transcript %}
 <section id="transcript-section">
   <h2>Transcript</h2>
-  <div id="transcript" class="transcript"{% if view.agent is not none %} hx-sse:connect="{{ chat_stream_url(view.project.slug, view.last_entry_id) }}" hx-swap="beforeend"{% endif %}>
+  {# The stream stays open for the whole visit and a turn can outlast htmx's 60 s default request timeout, so the timeout is off for this one request. #}
+  <div id="transcript" class="transcript"{% if view.agent is not none %} hx-sse:connect="{{ chat_stream_url(view.project.slug, view.last_entry_id) }}" hx-swap="beforeend" hx-config="timeout:0"{% endif %}>
     {% for entry in view.transcript %}{% include "chat_line.html" %}
     {% endfor %}
   </div>
