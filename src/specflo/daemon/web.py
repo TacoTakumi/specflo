@@ -60,6 +60,7 @@ OPEN_STATUSES = ("open", "in-progress")
 WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
 
 SIGNIN_FAILED = "That token does not sign in the identity you chose."
+INBOX_EMPTY = "Nothing waits on {identity}."
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -207,6 +208,38 @@ def product_cards(root: Path) -> list[ProductCard]:
 
 
 @dataclasses.dataclass(frozen=True)
+class InboxEntry:
+    """One project waiting on the signed-in role, as the inbox lists it."""
+
+    project: Project
+    product: Product | None
+    gate: Gate
+
+
+def inbox_entries(root: Path, identity: str) -> list[InboxEntry]:
+    """Every active project whose open gate waits on ``identity``, newest gate first.
+
+    A project belongs to the product of the work item it was spawned from;
+    one made outside any work item lists with no product.
+    """
+    with open_store(root) as store:
+        items = {item.id: item for item in WorkItems(store).list()}
+        products = {product.slug: product for product in Products(store).list()}
+    waiting = []
+    for project in LocalProjectService(root, load_config(root)).list_projects():
+        gate = project.gate
+        if project.status != INITIAL_STATUS or gate is None or not gate.is_open:
+            continue
+        if gate.role != identity:
+            continue
+        item = items.get(project.work_item) if project.work_item is not None else None
+        product = products.get(item.product) if item is not None else None
+        waiting.append(InboxEntry(project=project, product=product, gate=gate))
+    waiting.sort(key=lambda entry: entry.gate.opened_at, reverse=True)
+    return waiting
+
+
+@dataclasses.dataclass(frozen=True)
 class ProductView:
     """One product as its page shows it.
 
@@ -315,8 +348,13 @@ pages = APIRouter()
 
 @pages.get(HOME_PATH, include_in_schema=False)
 def products_page(request: Request, identity: str = Depends(current_session)) -> Response:
+    root = request.app.state.root
     return render(
-        "products.html", identity=identity, cards=product_cards(request.app.state.root)
+        "products.html",
+        identity=identity,
+        cards=product_cards(root),
+        inbox=inbox_entries(root, identity),
+        inbox_empty=INBOX_EMPTY.format(identity=identity),
     )
 
 

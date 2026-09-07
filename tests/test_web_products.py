@@ -74,6 +74,130 @@ def rows(html):
     return found
 
 
+def inbox(html):
+    """The inbox section: its rows as (slug, cells) in page order, or the empty-state text."""
+    match = re.search(r'<section id="inbox">(.*?)</section>', html, re.S)
+    assert match, "no inbox section"
+    body = match.group(1)
+    found = []
+    for slug, row in re.findall(r'<li data-project="([^"]+)">(.*?)</li>', body, re.S):
+        found.append((slug, unescape(re.sub(r"<[^>]+>", " ", row))))
+    empty = re.search(r'<p class="empty">(.*?)</p>', body, re.S)
+    return found, (unescape(empty.group(1)).strip() if empty else None)
+
+
+def seed_gates(root):
+    """Three projects under two products: two wait on the developer, one gate is taken.
+
+    ``dark-mode`` was opened after ``login-fix``, so it is the newer of the two.
+    """
+    with store_module.open_store(root) as store:
+        products = Products(store)
+        products.add("Thing", slug="thing", today="2026-09-06")
+        products.add("Other", slug="other", today="2026-09-06")
+        items = WorkItems(store)
+        items.add("thing", "Fix the login", today="2026-09-06")
+        items.add("other", "Dark mode", today="2026-09-06")
+        items.add("thing", "Old work", today="2026-09-06")
+        svc = service(root)
+        items.spawn(1, svc, name="Login fix")
+        items.spawn(2, svc, name="Dark mode")
+        items.spawn(3, svc, name="Old work")
+    agent = LocalProjectService(root, config.load_config(root), actor="agent")
+    agent.open_gate("old-work", "developer", note="Taken already")
+    agent.take_gate("old-work", by="developer")
+    first = agent.open_gate("login-fix", "developer", note="Open points: the name").gate
+    second = agent.open_gate("dark-mode", "developer", note="Open points: the palette").gate
+    assert second.opened_at >= first.opened_at
+    return first, second
+
+
+def signed_in(root, identity):
+    client = TestClient(create_app(root), follow_redirects=False)
+    token = auth.mint_token(root, identity)
+    assert client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token}).status_code == 303
+    return client
+
+
+def test_the_inbox_lists_the_open_gates_for_the_signed_in_role_newest_first(client, root):
+    first, second = seed_gates(root)
+
+    entries, empty = inbox(client.get(web.HOME_PATH).text)
+
+    assert empty is None
+    assert [slug for slug, _ in entries] == ["dark-mode", "login-fix"]
+    newer, older = entries[0][1], entries[1][1]
+    assert "Other" in newer and "Dark mode" in newer
+    assert "Open points: the palette" in newer and second.opened_at in newer
+    assert "Thing" in older and "Login fix" in older
+    assert "Open points: the name" in older and first.opened_at in older
+    assert "Old work" not in newer + older
+
+
+def test_each_inbox_entry_links_to_its_project(client, root):
+    seed_gates(root)
+
+    html = client.get(web.HOME_PATH).text
+
+    match = re.search(r'<section id="inbox">(.*?)</section>', html, re.S)
+    for slug in ("dark-mode", "login-fix"):
+        assert f'href="{web.PROJECT_PATH.format(slug=slug)}"' in match.group(1)
+
+
+def test_the_requester_inbox_is_empty_when_nothing_waits_on_them(root):
+    seed_gates(root)
+    requester = signed_in(root, "requester")
+
+    entries, empty = inbox(requester.get(web.HOME_PATH).text)
+
+    assert entries == []
+    assert empty == web.INBOX_EMPTY.format(identity="requester")
+
+
+def test_a_gate_for_the_requester_reaches_only_the_requester(root):
+    seed_gates(root)
+    service(root).open_gate("old-work", "requester", note="Say which name you prefer")
+
+    entries, _ = inbox(signed_in(root, "requester").get(web.HOME_PATH).text)
+    assert [slug for slug, _ in entries] == ["old-work"]
+    assert "Say which name you prefer" in entries[0][1]
+
+    developer, _ = inbox(signed_in(root, "developer").get(web.HOME_PATH).text)
+    assert [slug for slug, _ in developer] == ["dark-mode", "login-fix"]
+
+
+def test_a_taken_gate_leaves_the_inbox(client, root):
+    seed_gates(root)
+    service(root).take_gate("dark-mode")
+
+    entries, empty = inbox(client.get(web.HOME_PATH).text)
+
+    assert [slug for slug, _ in entries] == ["login-fix"]
+    assert empty is None
+
+
+def test_an_inbox_entry_without_a_product_or_a_note_still_lists(client, root):
+    seed_gates(root)
+    svc = service(root)
+    svc.create_project("Loose")
+    svc.open_gate("loose", "developer")
+
+    entries = dict(inbox(client.get(web.HOME_PATH).text)[0])
+
+    assert set(entries) == {"dark-mode", "login-fix", "loose"}
+    assert "Loose" in entries["loose"] and "No note" in entries["loose"]
+    assert "No product" in entries["loose"]
+
+
+def test_a_gate_on_an_inactive_project_is_not_inbox_work(client, root):
+    seed_gates(root)
+    service(root).shelve_project("dark-mode")
+
+    entries, _ = inbox(client.get(web.HOME_PATH).text)
+
+    assert [slug for slug, _ in entries] == ["login-fix"]
+
+
 def test_the_landing_page_lists_every_product_with_its_counts(client, root):
     seed(root)
 

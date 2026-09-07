@@ -1,6 +1,24 @@
 {% extends "base.html" %}
 {% block title %}Products - specflo{% endblock %}
 {% block content %}
+<section id="inbox">
+  <h2>Inbox</h2>
+  {% if inbox %}
+  <ul class="inbox">
+    {% for entry in inbox %}
+    <li data-project="{{ entry.project.slug }}">
+      <span class="product">{{ entry.product.name if entry.product else "No product" }}</span>
+      <a href="{{ project_url(entry.project.slug) }}">{{ entry.project.name }}</a>
+      <span class="note">{{ entry.gate.note or "No note." }}</span>
+      <time datetime="{{ entry.gate.opened_at }}">{{ entry.gate.opened_at }}</time>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">{{ inbox_empty }}</p>
+  {% endif %}
+</section>
+
 <h1>Products</h1>
 {% if cards %}
 <table>
