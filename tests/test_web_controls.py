@@ -113,3 +113,11 @@ def test_the_transcript_line_renders_author_time_and_text_inside_the_monospace_r
     base = (web.TEMPLATES_DIR / "base.html").read_text()
     rule = re.search(r"\.transcript\s*\{([^}]*)\}", base)
     assert rule and "monospace" in rule.group(1)
+
+
+def test_the_four_mutating_routes_share_one_session_guard():
+    # One place compares the secret, so one fix covers every route.
+    assert inspect.getsource(web).count("compare_digest") == 1
+    assert "compare_digest" in inspect.getsource(web.session_refused)
+    for route in (web.start_project, web.take_gate, web.start_agent, web.post_message):
+        assert "session_refused(" in inspect.getsource(route), route.__name__

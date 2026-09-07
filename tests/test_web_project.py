@@ -335,6 +335,27 @@ def test_a_take_by_an_identity_the_gate_does_not_wait_on_is_refused(client, root
     assert audit_records(root) == []
 
 
+def test_a_session_value_with_a_non_ascii_character_is_refused_like_any_wrong_one(client, root):
+    # A cross-site or hand-built post may carry any text; the guard must
+    # answer with its 403 page, not fall over on the comparison.
+    slug = brainstorming(root)
+    gated(root, slug, role="developer")
+    posts = {
+        "take": (take_url(slug), {"session": "\u00e9"}),
+        "start agent": (start_agent_url(slug), {"session": "s\u00e9cret"}),
+        "chat": (web.CHAT_PATH.format(slug=slug), {"session": "\u00e9", "text": "hi"}),
+        "start project": (web.START_PROJECT_PATH.format(slug="thing", item_id=1), {"session": "\u00e9"}),
+    }
+
+    for name, (url, fields) in posts.items():
+        response = client.post(url, data=fields)
+        assert response.status_code == 403, (name, response.status_code)
+        assert "did not come from this session" in response.text, name
+
+    assert service(root).load_project(slug).gate.is_open
+    assert audit_records(root) == []
+
+
 def test_a_take_on_a_shelved_project_with_an_open_gate_is_refused(client, root):
     # The page shows no gate for a project that is not active; a post to the
     # take route must not close the gate the page did not offer.

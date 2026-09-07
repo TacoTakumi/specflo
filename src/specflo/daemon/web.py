@@ -467,11 +467,9 @@ async def start_project(
     and an agent that fails to start is a 502 page with the project made.
     """
     fields = await form_fields(request)
-    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
-        return render(
-            "error.html", status_code=403, identity=identity,
-            message="That form did not come from this session.",
-        )
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
     root = request.app.state.root
     with open_store(root) as store:
         item = store.get_work_item(item_id) if store.get_product(slug) is not None else None
@@ -619,6 +617,23 @@ def session_secret(request: Request) -> str:
     return request.cookies.get(SESSION_COOKIE, "")
 
 
+def session_refused(request: Request, fields: dict[str, str], identity: str | None) -> HTMLResponse | None:
+    """The 403 page for a form that did not echo the session secret, or None when it did.
+
+    The one guard every mutating route runs first. The values are compared
+    as bytes: the digest comparison refuses non-ASCII text outright, and a
+    cross-site or hand-built post may carry any text, so a wrong value of
+    any shape is a refusal, never a fault.
+    """
+    posted = fields.get("session", "").encode("utf-8", errors="replace")
+    if secrets.compare_digest(posted, session_secret(request).encode("utf-8")):
+        return None
+    return render(
+        "error.html", status_code=403, identity=identity,
+        message="That form did not come from this session.",
+    )
+
+
 async def form_fields(request: Request) -> dict[str, str]:
     """The URL-encoded fields a form posted, first value each."""
     form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
@@ -637,11 +652,9 @@ async def take_gate(
     audited like a take over the API.
     """
     fields = await form_fields(request)
-    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
-        return render(
-            "error.html", status_code=403, identity=identity,
-            message="That form did not come from this session.",
-        )
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
     root = request.app.state.root
     try:
         validate_slug(slug)
@@ -692,11 +705,9 @@ async def start_agent(
     second agent beside it. A start that fails is a 502 page.
     """
     fields = await form_fields(request)
-    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
-        return render(
-            "error.html", status_code=403, identity=identity,
-            message="That form did not come from this session.",
-        )
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
     root = request.app.state.root
     view = await run_in_threadpool(project_view, root, slug, viewer=identity)
     if view is None:
@@ -735,11 +746,9 @@ async def post_message(
     502 page; a blank message is a 400 page and reaches no socket.
     """
     fields = await form_fields(request)
-    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
-        return render(
-            "error.html", status_code=403, identity=identity,
-            message="That form did not come from this session.",
-        )
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
     root = request.app.state.root
     # The view probes the agent's socket and the send waits on it for the
     # agent's ack; both run off the event loop, so a slow agent stalls this
