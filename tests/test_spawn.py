@@ -280,3 +280,26 @@ def test_workitem_spawn_refuses_what_it_cannot_do(checkout, live_daemon):
     assert named.exit_code == 0, named.output
     assert config.hosted_projects(checkout) == {"fix-the-login": "home", "offline-mode-v2": "home"}
     assert config.load_config(checkout).active_project == "offline-mode-v2"
+
+
+def test_a_spawn_that_fails_part_way_leaves_nothing_behind_and_the_retry_succeeds(root, monkeypatch):
+    seed(root)
+    svc = service(root)
+    real = svc.write_checkpoint
+    monkeypatch.setattr(svc, "write_checkpoint", lambda slug: (_ for _ in ()).throw(OSError("disk full")))
+
+    with store_module.open_store(root) as store:
+        items = WorkItems(store)
+        with pytest.raises(OSError, match="disk full"):
+            items.spawn(1, svc)
+        assert items.show(1).project is None
+        assert not (root / daemon.PROJECTS_DIRNAME / "fix-the-login").exists()
+        assert svc.list_projects() == []
+
+        monkeypatch.setattr(svc, "write_checkpoint", real)
+        spawned = items.spawn(1, svc)
+
+        assert spawned.item.project == "fix-the-login"
+        assert items.show(1).project == "fix-the-login"
+    assert [p.slug for p in svc.list_projects()] == ["fix-the-login"]
+    assert (root / daemon.PROJECTS_DIRNAME / "fix-the-login" / "checkpoint.md").is_file()

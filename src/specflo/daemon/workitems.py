@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import shutil
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -194,11 +195,18 @@ class WorkItems:
             work_item=item.id,
             piece=item.piece,
         )
-        brainstorm, _ = service.start_brainstorm(project.slug)
-        service.write_checkpoint(project.slug)
-        item = self.store.set_work_item_project(item.id, project.slug)
-        if item is None:
-            raise SpecfloError(_unknown(item_id))
+        try:
+            brainstorm, _ = service.start_brainstorm(project.slug)
+            service.write_checkpoint(project.slug)
+            item = self.store.set_work_item_project(item.id, project.slug)
+            if item is None:
+                raise SpecfloError(_unknown(item_id))
+        except BaseException:
+            # A spawn that fails part way leaves nothing behind: the directory
+            # goes, so the item stays unlinked and a retry is not refused as
+            # a project that already exists.
+            shutil.rmtree(project.path, ignore_errors=True)
+            raise
         return Spawned(item=item, project=project, brainstorm=brainstorm)
 
 
