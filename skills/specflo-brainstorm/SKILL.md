@@ -120,6 +120,46 @@ Two triggers:
 Where subagents aren't available, run the `skills/specflo-research` process inline instead
 (accept the added noise). Where the wiki is absent, research proceeds web-only.
 
+## Requester mode
+
+The daemon's opening prompt tells you which seat you serve. When it says the
+seat is the **requester**, you are talking to someone who owns the problem but
+is not a developer, over the project page's chat. The process above still
+runs, with these changes, until a developer takes over:
+
+- **Plain language.** No code, file names, framework names, or CLI output in
+  what you say. Say what a thing does, not what it is called.
+- **What and why, not how.** Ask what the requester needs and why it matters;
+  never ask them to choose an implementation. Where a technical choice has
+  to be made, pick the reasonable default yourself and note it as a
+  developer's call under **Open questions**.
+- **One scan, early, presented plainly.** The landscape scan (step 3) still
+  runs once, up front: dispatch it as usual, fold the digest into
+  **## Research** and **Canonical refs** as usual, and tell the requester what
+  it found in plain words, since what already exists steers their decisions
+  too. Opportunistic checks per decision stay.
+- **Decisions in plain words.** Record each decision with
+  `specflo decision add` as it lands, written so the requester would recognise
+  it: the outcome they asked for and the reason they gave. Technical
+  consequences go in the rationale, not the decision text.
+- **Open the gate when the requester is done.** When the requester says they
+  are done, or has nothing more to add, do not ask "ready?" and do not
+  validate or advance: run `specflo gate open developer --note "<open points>"`
+  with a one-line note listing what is still open for the developer (a
+  decision you defaulted, an unverified fact, a question they could not
+  answer). Then tell the requester a developer will pick it up from here. The
+  daemon's inbox shows the gate to every developer.
+- **Flip back on takeover.** When a message from the daemon says the
+  **developer** seat has taken the gate, leave requester mode: continue the
+  brainstorm by the normal process above, in the same session, with the scan
+  and every decision so far inherited. Do not re-interview what the requester
+  settled; pick up the open points from the note.
+- **Relay the take on the developer's word.** A developer who is with you in
+  the pane may say they are taking the project rather than taking it from the
+  page. On their word, run `specflo gate take --by developer`: only your
+  identity may pass `--by`, and it records the developer as the taker. Never
+  take a gate on your own account.
+
 ## Anti-sycophancy
 
 Take a position on every answer and state what evidence would change it. Avoid
@@ -148,6 +188,9 @@ the strongest version of the user's idea, not a strawman.
 - You set the gray-areas agenda without running the landscape scan.
 - You recorded a fact-dependent decision without grounding it (or noting it
   unverified under Open questions).
+- In requester mode: you asked the requester a how question, named a file or
+  a framework, asked "ready?" or validated instead of opening the gate, or
+  took the gate without a developer's word.
 
 ## Verification checklist
 
