@@ -312,6 +312,40 @@ def test_the_mapping_is_a_file_under_the_root_that_survives_a_reload(root):
     assert seat.agent_mapping(root) == {"dark-mode": "project-dark-mode"}
 
 
+def test_concurrent_records_keep_every_entry(root):
+    import threading
+
+    slugs = [f"project-{n}" for n in range(24)]
+    barrier = threading.Barrier(len(slugs))
+
+    def record(slug):
+        barrier.wait()
+        seat.record_agent(root, slug, seat.agent_name(slug))
+
+    threads = [threading.Thread(target=record, args=(slug,)) for slug in slugs]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert seat.agent_mapping(root) == {slug: seat.agent_name(slug) for slug in slugs}
+
+
+def test_a_write_that_dies_midway_leaves_the_old_mapping_whole(root, monkeypatch):
+    seat.record_agent(root, "login-fix", "project-login-fix")
+    before = seat.agents_path(root).read_text()
+
+    def die(src, dst):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(seat.os, "replace", die)
+    with pytest.raises(OSError, match="disk full"):
+        seat.record_agent(root, "dark-mode", "project-dark-mode")
+
+    assert seat.agents_path(root).read_text() == before
+    assert seat.agent_mapping(root) == {"login-fix": "project-login-fix"}
+
+
 # --- the agent's end: the advance out of brainstorm, or a developer's stop ------
 
 

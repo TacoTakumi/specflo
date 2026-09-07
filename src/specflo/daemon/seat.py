@@ -29,8 +29,10 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import os
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 
@@ -171,24 +173,35 @@ def agent_mapping(root: Path) -> dict[str, str]:
     return {str(slug): str(name) for slug, name in sorted(data.items())}
 
 
+# Every read-modify-write of the mapping runs under this lock, so two starts
+# in flight at once cannot drop each other's entry.
+_MAPPING_LOCK = threading.RLock()
+
+
 def _write_mapping(root: Path, mapping: dict[str, str]) -> None:
-    agents_path(root).write_text(json.dumps(dict(sorted(mapping.items())), indent=2) + "\n")
+    """Replace the mapping file whole: a crash mid-write leaves the old file, never a partial one."""
+    path = agents_path(root)
+    scratch = path.with_name(path.name + ".tmp")
+    scratch.write_text(json.dumps(dict(sorted(mapping.items())), indent=2) + "\n")
+    os.replace(scratch, path)
 
 
 def record_agent(root: Path, slug: str, name: str) -> None:
-    mapping = agent_mapping(root)
-    mapping[slug] = name
-    _write_mapping(root, mapping)
+    with _MAPPING_LOCK:
+        mapping = agent_mapping(root)
+        mapping[slug] = name
+        _write_mapping(root, mapping)
 
 
 def forget_agent(root: Path, slug: str) -> bool:
     """Drop ``slug`` from the mapping; True when it was there."""
-    mapping = agent_mapping(root)
-    if slug not in mapping:
-        return False
-    del mapping[slug]
-    _write_mapping(root, mapping)
-    return True
+    with _MAPPING_LOCK:
+        mapping = agent_mapping(root)
+        if slug not in mapping:
+            return False
+        del mapping[slug]
+        _write_mapping(root, mapping)
+        return True
 
 
 def agent_for(root: Path, slug: str) -> str | None:
