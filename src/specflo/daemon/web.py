@@ -40,6 +40,7 @@ from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import BROWSER_IDENTITIES, identity_for
 from .products import Products
+from .routes import audit, project_lock
 from .store import Product, WorkItem, open_store
 from .workitems import WorkItems
 
@@ -48,6 +49,7 @@ SIGNIN_PATH = "/signin"
 ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
+TAKE_PATH = "/projects/{slug}/take"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
@@ -76,6 +78,7 @@ _templates.globals.update(
     identities=BROWSER_IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
+    take_url=lambda slug: TAKE_PATH.format(slug=slug),
 )
 
 
@@ -294,6 +297,8 @@ class ProjectView:
     ``gate`` is the project's open gate, if it has one and is still active;
     ``waiting_on`` is then the gate's role, otherwise the role the current
     phase waits on. A project that is no longer active waits on nobody.
+    ``can_take`` says the viewer is the identity the open gate waits on, so
+    the page offers the take.
     """
 
     project: Project
@@ -301,10 +306,11 @@ class ProjectView:
     waiting_on: str | None
     artifacts: list[tuple[str, str | None]]
     gate: Gate | None = None
+    can_take: bool = False
 
 
-def project_view(root: Path, slug: str) -> ProjectView | None:
-    """The page's view of ``slug``, or None for a project the daemon does not hold.
+def project_view(root: Path, slug: str, *, viewer: str | None = None) -> ProjectView | None:
+    """The page's view of ``slug`` as ``viewer`` sees it, or None for a project the daemon does not hold.
 
     The slug is checked as the API checks it, before it can become a path: a
     string that is not a slug names no project, and no file is read for it. A
@@ -332,6 +338,7 @@ def project_view(root: Path, slug: str) -> ProjectView | None:
         product=product,
         waiting_on=(gate.role if gate else WAITING_ROLES.get(project.phase)) if active else None,
         gate=gate,
+        can_take=gate is not None and gate.role == viewer,
         artifacts=[
             (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
             for name in ARTIFACTS
@@ -379,10 +386,59 @@ def product_page(
 def project_page(
     request: Request, slug: str, identity: str = Depends(current_session)
 ) -> Response:
-    view = project_view(request.app.state.root, slug)
+    view = project_view(request.app.state.root, slug, viewer=identity)
     if view is None:
         return _missing(identity, f"No project {slug!r}.")
-    return render("project.html", identity=identity, view=view)
+    return render(
+        "project.html", identity=identity, view=view, session=session_secret(request)
+    )
+
+
+def session_secret(request: Request) -> str:
+    """The live session's cookie value: the secret a mutating form must echo back."""
+    return request.cookies.get(SESSION_COOKIE, "")
+
+
+async def form_fields(request: Request) -> dict[str, str]:
+    """The URL-encoded fields a form posted, first value each."""
+    form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
+    return {name: values[0] for name, values in form.items()}
+
+
+@pages.post(TAKE_PATH, include_in_schema=False)
+async def take_gate(
+    request: Request, slug: str, identity: str = Depends(current_session)
+) -> Response:
+    """Take the project's open gate as the signed-in identity.
+
+    The form echoes the session secret; a post without it is a cross-site
+    post and is refused before anything is read. The take runs through the
+    same operation as the CLI verb, under the project's lock, and is
+    audited like a take over the API.
+    """
+    fields = await form_fields(request)
+    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message="That form did not come from this session.",
+        )
+    root = request.app.state.root
+    view = project_view(root, slug, viewer=identity)
+    if view is None:
+        return _missing(identity, f"No project {slug!r}.")
+    if view.gate is not None and not view.can_take:
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message=f"This gate waits on {view.gate.role}, not {identity}.",
+        )
+    service = LocalProjectService(root, load_config(root), actor=identity, hosted=True)
+    with project_lock(root, slug):
+        try:
+            service.take_gate(slug)
+        except SpecfloError as exc:
+            return render("error.html", status_code=409, identity=identity, message=str(exc))
+        audit(root, identity, "take_gate", slug, None)
+    return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
 def _missing(identity: str, message: str) -> HTMLResponse:

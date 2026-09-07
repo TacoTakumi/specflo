@@ -29,6 +29,12 @@
     Opened by {{ view.gate.opened_by or "an unnamed seat" }}
     at <time datetime="{{ view.gate.opened_at }}">{{ view.gate.opened_at }}</time>
   </p>
+  {% if view.can_take %}
+  <form id="take" method="post" action="{{ take_url(view.project.slug) }}">
+    <input type="hidden" name="session" value="{{ session }}">
+    <button type="submit">Take</button>
+  </form>
+  {% endif %}
 </section>
 {% endif %}
 

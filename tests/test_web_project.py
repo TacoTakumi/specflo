@@ -2,9 +2,12 @@
 
 One hosted project's page shows its phase, status, and execution mode, the
 role the current phase waits on, and every artifact the project has so far
-with the same text doc show prints. It is a read: the page carries no form
-and no control that would change the project.
+with the same text doc show prints. The one control it carries is the take
+on an open gate, offered only to the identity the gate waits on and guarded
+by the session secret; everything else is a read.
 """
+
+import json
 
 import re
 from html import unescape
@@ -13,7 +16,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import config, daemon
-from specflo.daemon import auth, web
+from specflo.daemon import auth, routes, web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
@@ -206,13 +209,133 @@ def test_an_artifact_not_yet_created_says_so(client, root):
     assert "<pre" not in plan
 
 
-def test_the_page_has_no_form_or_mutating_control(client, root):
+def test_the_page_has_no_form_or_mutating_control_without_a_gate_to_take(client, root):
     slug = seed(root)
 
     html = page(client, slug).text.lower()
 
     for marker in MUTATING:
         assert marker not in html, marker
+
+
+# --- the take control ---------------------------------------------------------
+
+
+def take_form(html):
+    """The take form, or None: ``(action, hidden fields)``."""
+    match = re.search(r'<form[^>]*id="take"[^>]*>(.*?)</form>', html, re.S)
+    if not match:
+        return None
+    action = re.search(r'action="([^"]*)"', match.group(0)).group(1)
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', match.group(1)))
+    return action, fields
+
+
+def take_url(slug):
+    return web.TAKE_PATH.format(slug=slug)
+
+
+def audit_records(root):
+    path = root / routes.AUDIT_FILENAME
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+
+
+def test_the_take_control_is_offered_only_to_the_identity_the_gate_waits_on(client, root):
+    slug = seed(root)
+    gated(root, slug, role="requester")
+
+    assert take_form(page(client, slug).text) is None
+    for marker in MUTATING:
+        assert marker not in page(client, slug).text.lower(), marker
+
+    service(root).take_gate(slug)
+    gated(root, slug, role="developer")
+    form = take_form(page(client, slug).text)
+
+    assert form is not None
+    action, fields = form
+    assert action == take_url(slug)
+    assert fields == {"session": client.cookies[web.SESSION_COOKIE]}
+    assert take_form(signed_in(root, "requester").get(web.PROJECT_PATH.format(slug=slug)).text) is None
+
+
+def signed_in(root, identity):
+    client = TestClient(create_app(root), follow_redirects=False)
+    token = auth.mint_token(root, identity)
+    assert client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token}).status_code == 303
+    return client
+
+
+def test_taking_through_the_page_closes_the_gate_as_the_session_identity(client, root):
+    slug = seed(root)
+    gated(root, slug, role="developer")
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.PROJECT_PATH.format(slug=slug)
+    gate = service(root).load_project(slug).gate
+    assert not gate.is_open
+    assert gate.taken_by == "developer" and gate.taken_at
+    html = page(client, slug).text
+    assert gate_section(html) is None and take_form(html) is None
+    assert facts(html)["Waiting on"] == "developer"
+    last = audit_records(root)[-1]
+    assert last["identity"] == "developer" and last["operation"] == "take_gate"
+    assert last["project"] == slug
+
+
+def test_a_take_without_the_session_secret_is_refused(client, root):
+    slug = seed(root)
+    gated(root, slug, role="developer")
+
+    missing = client.post(take_url(slug), data={})
+    wrong = client.post(take_url(slug), data={"session": "not-the-secret"})
+
+    assert missing.status_code == 403 and wrong.status_code == 403
+    assert service(root).load_project(slug).gate.is_open
+    assert audit_records(root) == []
+
+
+def test_a_take_by_an_identity_the_gate_does_not_wait_on_is_refused(client, root):
+    slug = seed(root)
+    gated(root, slug, role="requester")
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 403
+    assert service(root).load_project(slug).gate.is_open
+    assert audit_records(root) == []
+
+
+def test_a_take_with_no_open_gate_is_refused_as_a_page(client, root):
+    slug = seed(root)
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 409
+    assert "No open gate" in response.text
+    assert audit_records(root) == []
+
+
+def test_a_take_needs_a_session(root):
+    slug = seed(root)
+    gated(root, slug, role="developer")
+    browser = TestClient(create_app(root), follow_redirects=False)
+
+    response = browser.post(take_url(slug), data={"session": "anything"})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
+    assert service(root).load_project(slug).gate.is_open
+
+
+def test_a_take_on_an_unknown_project_is_a_404_page(client, root):
+    seed(root)
+
+    response = client.post(take_url("nope"), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 404
 
 
 def test_the_page_links_back_to_its_product(client, root):

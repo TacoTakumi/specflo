@@ -114,7 +114,7 @@ def project_lock(root: Path, slug: str | None) -> threading.RLock:
     return lock
 
 
-def _audit(root: Path, identity: str, operation: str, project: str | None, minted) -> None:
+def audit(root: Path, identity: str, operation: str, project: str | None, minted) -> None:
     """Append one record for a mutation that succeeded."""
     record = {
         "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
@@ -185,7 +185,7 @@ def _handler(operation: wire.Operation):
                 )
             if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
-                _audit(root, identity, operation.name, project, _minted(result, kwargs))
+                audit(root, identity, operation.name, project, _minted(result, kwargs))
         # The boundary: what leaves here describes the daemon's projects, so a
         # path is written relative to the root and the host's layout stays home.
         return {"result": wire.encode(result, root)}
@@ -245,7 +245,7 @@ def product_add(
             )
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "product_add", None, product.slug)
+        audit(root, identity, "product_add", None, product.slug)
     return {"result": wire.encode(product)}
 
 
@@ -279,7 +279,7 @@ def product_set_vision(
             product = Products(store).set_vision(slug, fields["vision"])
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "product_set_vision", None, slug)
+        audit(root, identity, "product_set_vision", None, slug)
     return {"result": wire.encode(product)}
 
 
@@ -320,7 +320,7 @@ def product_piece_add(
             pieces = Products(store).add_piece(slug, fields["name"])
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "product_piece_add", None, f"{slug}/{fields['name']}")
+        audit(root, identity, "product_piece_add", None, f"{slug}/{fields['name']}")
     return {"result": pieces}
 
 
@@ -334,7 +334,7 @@ def product_piece_remove(
             pieces = Products(store).remove_piece(slug, name)
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "product_piece_remove", None, f"{slug}/{name}")
+        audit(root, identity, "product_piece_remove", None, f"{slug}/{name}")
     return {"result": pieces}
 
 
@@ -363,7 +363,7 @@ def workitem_add(
             )
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "workitem_add", None, str(item.id))
+        audit(root, identity, "workitem_add", None, str(item.id))
     return {"result": wire.encode(item)}
 
 
@@ -406,7 +406,7 @@ def workitem_set_status(
             item = WorkItems(store).set_status(item_id, fields["status"])
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "workitem_set_status", None, str(item_id))
+        audit(root, identity, "workitem_set_status", None, str(item_id))
     return {"result": wire.encode(item)}
 
 
@@ -425,5 +425,5 @@ def workitem_spawn(
             spawned = WorkItems(store).spawn(item_id, service, name=fields.get("name"))
         except SpecfloError as exc:
             raise _refused(exc)
-        _audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
+        audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
     return {"result": wire.encode(spawned, root)}
