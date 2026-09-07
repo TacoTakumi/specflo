@@ -47,8 +47,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   `locality` and `remote` per project in `--json`), `switch` and the
   active pointer work across localities, and every command routes by the
   project's locality, so `status`, `decision add`, `doc show` and the rest
-  run against the daemon for a hosted project with no change in usage. A
-  slug lives in one place: `new` refuses a name already held elsewhere.
+  run against the daemon for a hosted project with no change in usage.
+  Every command prints the same stdout for a hosted project as for a local
+  one, with two deliberate differences: `status` prints `Remote:  <name>`
+  where a local project prints `Dir:`, and `task show` prints an `Actor`
+  line for a task that was added through the daemon. A slug lives in one
+  place: `new` refuses a name already held elsewhere.
 - **The actor on hosted mutations.** A decision, requirement, task or
   milestone added through the daemon carries an `Actor` line naming the
   identity behind the request's token (`requester` or `developer`); the
@@ -183,6 +187,22 @@ latter. Release tags are of the form `vX.Y.Z`.
   removing the local copy and undoes it if the removal fails, and it
   carries every file byte for byte. `list` waits at most five seconds on
   each daemon.
+- **The daemon writes only under its root.** Every request that names a
+  project is refused with `400` unless the slug is one `new` could have
+  made (lowercase letters and digits joined by single hyphens), so no
+  slug can name a directory outside the projects directory; the local
+  service refuses the same slugs on import. A file name with a control
+  character is refused on import. The elements of a list or object
+  argument are typed like the argument itself (`implements: [1]` is a
+  `422`), and anything else that fails inside the service answers `500`
+  with a JSON detail naming the operation and the kind of failure; the
+  traceback goes to the daemon's log, never to the client. A refusal for
+  a project that already exists names the project, never the daemon's
+  directory.
+- **`review done --file` reads the report on the client.** The CLI reads
+  the file and sends its text, so a hosted round ingests a file of this
+  checkout, as `section set --file` does, and the daemon opens no file the
+  request named.
 
 ## [0.14.0]
 

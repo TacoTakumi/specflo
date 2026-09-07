@@ -3,11 +3,12 @@
 One scenario drives the whole pipeline twice: once against a project in the
 checkout, once against a project on a daemon. Every command must exit the
 same way and print the same stdout, once the two things that legitimately
-differ are normalized away: where the project's files live (a command that
-prints a project directory prints the checkout's for a local project and the
-daemon's for a hosted one) and the Actor line the daemon records on every
-entry it adds, which a local add does not carry. Everything else is
-identical.
+differ are normalized away: the one line of ``status`` that says where the
+project lives (``Dir:`` for the checkout, ``Remote:`` for a daemon), and the
+``- Actor:`` line ``task show`` prints for an entry added through the daemon,
+which a local add does not carry. Both are documented differences; the
+hosted fixture asserts each is really there before it is folded. Everything
+else is identical.
 """
 
 import re
@@ -145,6 +146,11 @@ def hosted_run(tmp_path, monkeypatch, live_daemon):
     for args, stdout in raw:
         for spelling in (str(project_dir), f"projects/{SLUG}"):
             assert spelling not in stdout, f"{' '.join(args)} names the daemon dir:\n{stdout}"
+    # The two documented differences from a local run, present before the
+    # normalizer folds them: nothing else may differ.
+    by_args = {tuple(args): stdout for args, stdout in raw}
+    assert "Remote:  home\n" in by_args[("status",)]
+    assert "- Actor: developer\n" in by_args[("task", "show")]
     return results
 
 
