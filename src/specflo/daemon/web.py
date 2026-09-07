@@ -39,10 +39,11 @@ from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import BROWSER_IDENTITIES, identity_for
+from . import seat
 from .products import Products
 from .routes import audit, project_lock
 from .store import Product, WorkItem, open_store
-from .workitems import WorkItems
+from .workitems import FULL_DEV_PATH, WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
@@ -50,6 +51,7 @@ ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
 TAKE_PATH = "/projects/{slug}/take"
+START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
@@ -79,6 +81,7 @@ _templates.globals.update(
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
+    start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
 )
 
 
@@ -260,6 +263,8 @@ class ProductView:
     # Every owned project's name by slug, archived ones included, so a
     # backlog row names its project even while the archive is folded away.
     project_names: dict[str, str]
+    # The items a project can be started on: full dev path, no project yet.
+    startable: frozenset[int] = frozenset()
 
 
 def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView | None:
@@ -285,6 +290,9 @@ def product_view(root: Path, slug: str, *, show_archived: bool) -> ProductView |
         archived_count=len(archived),
         show_archived=show_archived,
         project_names={project.slug: project.name for project in owned},
+        startable=frozenset(
+            item.id for item in items if item.dev_path == FULL_DEV_PATH and item.project is None
+        ),
     )
 
 
@@ -375,7 +383,39 @@ def product_page(
     view = product_view(request.app.state.root, slug, show_archived=archived == "1")
     if view is None:
         return _missing(identity, f"No product {slug!r}.")
-    return render("product.html", identity=identity, view=view)
+    return render("product.html", identity=identity, view=view, session=session_secret(request))
+
+
+@pages.post(START_PROJECT_PATH, include_in_schema=False)
+async def start_project(
+    request: Request, slug: str, item_id: int, identity: str = Depends(current_session)
+) -> Response:
+    """Start a project on the product's work item: spawn, seat, agent, as one operation.
+
+    The form echoes the session secret like every mutating form. The item
+    must belong to the product named in the path; what the operation
+    refuses (another dev path, a project already spawned) is a 409 page,
+    and an agent that fails to start is a 502 page with the project made.
+    """
+    fields = await form_fields(request)
+    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message="That form did not come from this session.",
+        )
+    root = request.app.state.root
+    with open_store(root) as store:
+        item = store.get_work_item(item_id) if store.get_product(slug) is not None else None
+    if item is None or item.product != slug:
+        return _missing(identity, f"No work item {item_id} on product {slug!r}.")
+    url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    try:
+        started = seat.start_project(root, item_id, identity, url=url)
+    except seat.AgentStartError as exc:
+        return render("error.html", status_code=502, identity=identity, message=str(exc))
+    except SpecfloError as exc:
+        return render("error.html", status_code=409, identity=identity, message=str(exc))
+    return RedirectResponse(PROJECT_PATH.format(slug=started.spawned.project.slug), status_code=303)
 
 
 # The page takes the rest of the path, not one segment, so a slash smuggled

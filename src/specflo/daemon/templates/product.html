@@ -55,7 +55,15 @@
         <td>{{ item.piece or "" }}</td>
         <td>{{ item.status }}</td>
         <td>{% if item.issue and item.issue.startswith(("http://", "https://")) %}<a href="{{ item.issue }}">{{ item.issue }}</a>{% elif item.issue %}{{ item.issue }}{% endif %}</td>
-        <td>{% if item.project %}<a href="{{ project_url(item.project) }}">{{ view.project_names.get(item.project, item.project) }}</a>{% endif %}</td>
+        <td>
+          {% if item.project %}<a href="{{ project_url(item.project) }}">{{ view.project_names.get(item.project, item.project) }}</a>
+          {% elif item.id in view.startable %}
+          <form id="start-{{ item.id }}" method="post" action="{{ start_project_url(view.product.slug, item.id) }}">
+            <input type="hidden" name="session" value="{{ session }}">
+            <button type="submit">Start project</button>
+          </form>
+          {% endif %}
+        </td>
       </tr>
       {% endfor %}
     </tbody>

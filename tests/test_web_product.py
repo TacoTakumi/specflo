@@ -6,14 +6,20 @@ projects are the archive: hidden by default and shown when the archived
 filter is on, through a plain link that changes nothing on the daemon.
 """
 
+import json
+import os
 import re
+import subprocess
+import sys
 from html import unescape
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from specflo import config, daemon
-from specflo.daemon import auth, web
+from specflo.agent.statefiles import ENV_STATE_DIR
+from specflo.daemon import auth, seat, web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
@@ -230,3 +236,131 @@ def test_a_bare_product_names_the_verb_that_sets_a_vision(client, root):
     seed(root)
 
     assert "specflo product set-vision" in section(page(client, "other").text, "vision")
+
+
+# --- the start-project control ------------------------------------------------
+
+STUB_PI = Path(__file__).parent / "agent" / "stub_pi.py"
+
+
+@pytest.fixture
+def rpc_rig(root, tmp_path, monkeypatch):
+    """An isolated agent state dir, the rpc transport on the root, and a stub pi."""
+    monkeypatch.setenv(ENV_STATE_DIR, str(tmp_path / "state"))
+    for key in ("SPECFLO_AGENT_SERVE", "SPECFLO_AGENT_NAME", "SPECFLO_AGENT_MANAGED"):
+        monkeypatch.delenv(key, raising=False)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    scenario = tmp_path / "scenario.json"
+    scenario.write_text(json.dumps({"reply": "ok"}), encoding="utf-8")
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", f"{sys.executable} {STUB_PI} {scenario}")
+    yield
+    for name in seat.agent_mapping(root).values():
+        subprocess.run(
+            [sys.executable, "-c", "import sys; from specflo.cli import main; sys.exit(main())", "agent", "stop", name],
+            capture_output=True, text=True, env=dict(os.environ), timeout=30,
+        )
+
+
+def start_forms(html):
+    """Every start-project form in the backlog: item id to (action, hidden fields)."""
+    found = {}
+    for item_id, body in re.findall(r'<form[^>]*id="start-(\d+)"[^>]*>(.*?)</form>', html, re.S):
+        action = re.search(r'action="([^"]*)"', re.search(rf'<form[^>]*id="start-{item_id}"[^>]*>', html).group(0)).group(1)
+        fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', body))
+        found[int(item_id)] = (action, fields)
+    return found
+
+
+def start_url(slug, item_id):
+    return web.START_PROJECT_PATH.format(slug=slug, item_id=item_id)
+
+
+def test_only_a_full_path_item_without_a_project_offers_the_start_control(client, root):
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")  # 5: full, no project
+
+    html = page(client, "thing").text
+
+    forms = start_forms(html)
+    assert set(forms) == {5}
+    action, fields = forms[5]
+    assert action == start_url("thing", 5)
+    assert fields == {"session": client.cookies[web.SESSION_COOKIE]}
+    assert "Start project" in section(html, "backlog")
+
+
+def test_submitting_the_control_starts_the_project_and_links_to_it(client, root, rpc_rig):
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")
+
+    response = client.post(start_url("thing", 5), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.PROJECT_PATH.format(slug="offline-mode")
+    html = page(client, "thing").text
+    assert start_forms(html) == {}
+    assert f'href="{web.PROJECT_PATH.format(slug="offline-mode")}"' in section_html(html, "backlog")
+    assert rows(html, "backlog")[4][-1] == "Offline mode"
+    assert seat.agent_mapping(root) == {"offline-mode": seat.agent_name("offline-mode")}
+    assert config.config_path(seat.seat_dir(root, "offline-mode")).is_file()
+
+
+def test_a_submit_without_the_session_secret_is_refused(client, root, rpc_rig):
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")
+
+    assert client.post(start_url("thing", 5), data={}).status_code == 403
+    assert client.post(start_url("thing", 5), data={"session": "wrong"}).status_code == 403
+    assert "offline-mode" not in [p.slug for p in service(root).list_projects()]
+    assert seat.agent_mapping(root) == {}
+
+
+def test_a_repeated_submit_is_refused_naming_the_existing_project(client, root, rpc_rig):
+    seed(root)
+
+    response = client.post(start_url("thing", 1), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 409
+    assert "login-fix" in response.text
+    assert seat.agent_mapping(root) == {}
+
+
+def test_an_ineligible_item_is_refused_and_an_unknown_one_is_a_404(client, root, rpc_rig):
+    seed(root)
+    secret = client.cookies[web.SESSION_COOKIE]
+
+    assert client.post(start_url("thing", 2), data={"session": secret}).status_code == 409
+    assert client.post(start_url("thing", 99), data={"session": secret}).status_code == 404
+    assert client.post(start_url("other", 1), data={"session": secret}).status_code == 404
+    assert client.post(start_url("nope", 1), data={"session": secret}).status_code == 404
+    assert seat.agent_mapping(root) == {}
+
+
+def test_a_failed_agent_start_reports_the_failure_and_the_page_links_to_the_project(client, root, rpc_rig, monkeypatch):
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")
+    monkeypatch.setenv("SPECFLO_AGENT_START_TIMEOUT", "1")
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", f"{sys.executable} -c 'import sys; sys.exit(3)'")
+
+    response = client.post(start_url("thing", 5), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 502
+    assert "offline-mode" in response.text and str(root) not in response.text
+    html = page(client, "thing").text
+    assert start_forms(html) == {}
+    assert f'href="{web.PROJECT_PATH.format(slug="offline-mode")}"' in section_html(html, "backlog")
+    assert seat.agent_mapping(root) == {}
+
+
+def test_the_start_control_needs_a_session(root):
+    seed(root)
+    browser = TestClient(create_app(root), follow_redirects=False)
+
+    response = browser.post(start_url("thing", 1), data={"session": "anything"})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
