@@ -127,7 +127,7 @@ def create_project(
 def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     path = project_dir(root, cfg, slug) / PROJECT_FILENAME
     if not path.is_file():
-        raise SpecfloError(f"No project {slug!r} found at {path}.")
+        raise SpecfloError(f"No project {slug!r}.")
     fields = _parse_frontmatter(path.read_text())
     return Project(
         name=fields["name"],

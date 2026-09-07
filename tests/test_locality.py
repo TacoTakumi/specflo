@@ -455,3 +455,36 @@ def test_doc_show_checkpoint_of_a_hosted_project_is_what_checkpoint_prints(check
     assert shown.exit_code == 0, shown.output
     assert "verdict: changes-requested" in shown.output
     assert shown.output == (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md").read_text()
+
+
+def test_a_hosted_project_the_daemon_no_longer_holds_is_refused_without_its_path(
+    checkout, live_daemon
+):
+    import shutil
+
+    runner.invoke(app, ["new", "Ghost", "--remote", "home"])
+    shutil.rmtree(live_daemon["root"] / daemon.PROJECTS_DIRNAME / "ghost")
+    daemon_root = str(live_daemon["root"])
+
+    for args in (
+        ["switch", "ghost"],
+        ["summary", "ghost", "x"],
+        ["shelve", "ghost"],
+        ["status"],
+        ["status", "--json"],
+        ["doc", "show", "brainstorm"],
+        ["checkpoint"],
+        ["list"],
+        ["hook", "reseed"],
+        ["hook", "reseed", "--format", "claude"],
+    ):
+        result = runner.invoke(app, args)
+        text = result.stdout + result.stderr
+        assert daemon_root not in text, (args, text)
+        assert "projects/ghost" not in text, (args, text)
+        assert "Traceback" not in text, (args, text)
+        if args == ["status", "--json"]:
+            assert json.loads(result.stdout)["error"] == "No project 'ghost'."
+        elif args[0] not in ("list", "hook"):
+            assert result.exit_code == 1, (args, text)
+            assert "No project 'ghost'." in text, (args, text)
