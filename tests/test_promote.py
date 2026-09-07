@@ -373,3 +373,15 @@ def test_a_bad_directory_beside_a_healthy_project_wedges_nothing(tmp_path):
     assert [p.slug for p in service.list_projects()] == ["thing"]
     assert service.write_checkpoint("thing").is_file()
     assert service.advance_project("thing").phase == "spec"
+
+
+@pytest.mark.parametrize("name", [" ", "\t", "  \t "])
+def test_import_refuses_a_whitespace_only_file_name(tmp_path, name):
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    project = "---\nname: Fresh\nslug: fresh\ncreated: 2026-09-06\nphase: brainstorm\nstatus: active\n---\n"
+
+    with pytest.raises(SpecfloError, match="Invalid file name"):
+        service.import_project("fresh", {"project.md": project, name: "x"})
+
+    assert [p.name for p in (tmp_path / "docs" / "projects").iterdir()] == []
