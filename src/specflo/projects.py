@@ -36,6 +36,32 @@ EXECUTION_MODES = (LINEAR_EXECUTION, FAN_OUT_EXECUTION)
 
 
 @dataclass
+class Gate:
+    """A recorded handoff on a project: the role it waits on, until taken.
+
+    A gate is opened by one identity for a role, with a note saying what the
+    taker should know; it stays open until an explicit take records who took
+    it and when. The project's status is untouched either way: waiting is a
+    record beside the lifecycle, not a state of it.
+    """
+
+    role: str
+    opened_by: str
+    opened_at: str
+    note: str = ""
+    taken_by: str = ""
+    taken_at: str = ""
+
+    @property
+    def is_open(self) -> bool:
+        return not self.taken_by
+
+
+# The gate's front-matter keys, in the order they are written.
+GATE_FIELDS = ("role", "opened_by", "opened_at", "note", "taken_by", "taken_at")
+
+
+@dataclass
 class Project:
     name: str
     slug: str
@@ -51,6 +77,9 @@ class Project:
     # piece it targets. A project made with `new` has neither.
     work_item: int | None = None
     piece: str = ""
+    # The project's gate record; a project file without one reads as no gate,
+    # so files written before gates existed keep their behaviour.
+    gate: Gate | None = None
 
 
 def slugify(name: str) -> str:
@@ -145,7 +174,15 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         execution=str(fields.get("execution") or LINEAR_EXECUTION),
         work_item=int(fields["work_item"]) if fields.get("work_item") is not None else None,
         piece=str(fields.get("piece", "") or ""),
+        gate=_parse_gate(fields.get("gate")),
     )
+
+
+def _parse_gate(raw) -> Gate | None:
+    """The gate a project file's ``gate`` mapping records; None without one."""
+    if not isinstance(raw, dict):
+        return None
+    return Gate(**{name: str(raw.get(name, "") or "") for name in GATE_FIELDS})
 
 
 def list_projects(root: Path, cfg: SpecfloConfig) -> list[Project]:
@@ -345,6 +382,12 @@ def _render(project: Project) -> str:
         fields["completed"] = project.completed
     if project.shelved_reason:
         fields["shelved_reason"] = project.shelved_reason
+    if project.gate is not None:
+        fields["gate"] = {
+            name: getattr(project.gate, name)
+            for name in GATE_FIELDS
+            if getattr(project.gate, name)
+        }
     frontmatter = yaml.safe_dump(fields, sort_keys=False).strip()
     return f"---\n{frontmatter}\n---\n\n# {project.name}\n\n_(phase: {project.phase})_\n"
 

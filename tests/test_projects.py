@@ -449,3 +449,81 @@ def test_list_projects_skips_a_directory_whose_project_file_does_not_parse(root,
     listed = projects.list_projects(root, cfg)
 
     assert [p.slug for p in listed] == ["healthy"]
+
+
+# --- the gate record ----------------------------------------------------------
+
+
+def test_a_project_without_gate_fields_reads_as_no_gate(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+
+    loaded = projects.load_project(root, cfg, "thing")
+
+    assert loaded.gate is None
+    text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert "gate" not in text.split("---")[1]
+
+
+def test_an_open_gate_round_trips_through_the_project_file(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    p = projects.load_project(root, cfg, "thing")
+    p.gate = projects.Gate(
+        role="developer",
+        opened_by="agent",
+        opened_at="2026-09-07T14:00:00+00:00",
+        note="Open points: pricing, the name",
+    )
+    (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+
+    loaded = projects.load_project(root, cfg, "thing")
+
+    assert loaded.gate == p.gate
+    assert loaded.gate.is_open
+    assert loaded.gate.taken_by == "" and loaded.gate.taken_at == ""
+    assert loaded.status == "active"
+
+
+def test_a_taken_gate_round_trips_with_every_field(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    p = projects.load_project(root, cfg, "thing")
+    p.gate = projects.Gate(
+        role="developer",
+        opened_by="agent",
+        opened_at="2026-09-07T14:00:00+00:00",
+        note="Open points: pricing",
+        taken_by="developer",
+        taken_at="2026-09-07T15:30:00+00:00",
+    )
+    rendered = projects._render(p)
+    (p.path / projects.PROJECT_FILENAME).write_text(rendered)
+
+    loaded = projects.load_project(root, cfg, "thing")
+
+    assert loaded.gate == p.gate
+    assert not loaded.gate.is_open
+    assert projects._render(loaded) == rendered
+
+
+def test_a_gate_record_with_an_empty_note_reads_back_empty(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    p = projects.load_project(root, cfg, "thing")
+    p.gate = projects.Gate(role="requester", opened_by="developer", opened_at="2026-09-07")
+    (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+
+    loaded = projects.load_project(root, cfg, "thing")
+
+    assert loaded.gate.note == ""
+    assert loaded.gate.role == "requester"
+
+
+def test_a_gate_survives_a_textual_execution_rewrite(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    p = projects.load_project(root, cfg, "thing")
+    p.gate = projects.Gate(role="developer", opened_by="agent", opened_at="2026-09-07", note="n")
+    (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+
+    projects.set_execution(root, cfg, "thing", projects.FAN_OUT_EXECUTION)
+
+    loaded = projects.load_project(root, cfg, "thing")
+    assert loaded.execution == projects.FAN_OUT_EXECUTION
+    assert loaded.gate == p.gate
