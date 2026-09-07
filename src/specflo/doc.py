@@ -91,12 +91,30 @@ def _section_title(header: str) -> str:
     return header.strip().lstrip("#").strip()
 
 
+def _is_h2(header: str) -> bool:
+    return header.startswith("##") and not header.startswith("###")
+
+
+def _managing_verb(headers: list[str], index: int) -> str | None:
+    """The verb owning ``headers[index]``, or None for a header a prose write may target.
+
+    A header is owned when its nearest enclosing H2 - itself, if it is one -
+    is a managed section: the entries under such a section are the verb's,
+    whatever level their headers carry.
+    """
+    for header in reversed(headers[: index + 1]):
+        if _is_h2(header):
+            return MANAGED_SECTIONS.get(_section_title(header))
+    return None
+
+
 def prose_sections(doc: str) -> list[str]:
     """The titles of the sections a prose write may target, in document order."""
+    headers = markdown.section_headers(doc)
     return [
         _section_title(header)
-        for header in markdown.section_headers(doc)
-        if header.startswith("##") and _section_title(header) not in MANAGED_SECTIONS
+        for index, header in enumerate(headers)
+        if header.startswith("##") and _managing_verb(headers, index) is None
     ]
 
 
@@ -134,17 +152,24 @@ def set_section(
         raise SpecfloError(f"Project {slug!r} has no {name} yet.")
     with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
-        header = next(
-            (h for h in markdown.section_headers(doc)
+        headers = markdown.section_headers(doc)
+        index = next(
+            (i for i, h in enumerate(headers)
              if h.startswith("##") and _section_title(h) == title),
             None,
         )
-        if header is None:
+        if index is None:
             raise SpecfloError(
                 f"No section {title!r} in {slug}/{name}: expected one of "
                 + ", ".join(repr(s) for s in prose_sections(doc)) + "."
             )
-        doc = markdown.replace_section_body(doc, header, body)
+        verb = _managing_verb(headers, index)
+        if verb is not None:
+            raise SpecfloError(
+                f"Section {title!r} is an entry of a managed section: use `{verb}` "
+                "instead of section set."
+            )
+        doc = markdown.replace_section_body(doc, headers[index], body)
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     return title

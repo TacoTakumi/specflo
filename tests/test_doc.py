@@ -347,3 +347,18 @@ def test_doc_show_unknown_artifact_names_the_round_pattern_too(tmp_path, monkeyp
 
     assert result.exit_code != 0
     assert "review-<N>" in result.output
+
+
+def test_set_section_refuses_an_entry_inside_a_managed_section_naming_the_verb(tmp_path, monkeypatch):
+    cfg, path = _brainstorm_with_decisions(tmp_path, monkeypatch)
+    before = path.read_text()
+    entry = next(h for h in before.splitlines() if h.startswith("### D-01"))
+
+    with pytest.raises(SpecfloError) as excinfo:
+        doc.set_section(tmp_path, cfg, "thing", "brainstorm", entry, "x\n")
+
+    assert "decision add" in str(excinfo.value)
+    assert path.read_text() == before
+    listed = doc.prose_sections(before)
+    assert "Current understanding" in listed
+    assert not any(title.startswith("D-0") for title in listed)
