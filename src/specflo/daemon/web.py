@@ -63,6 +63,11 @@ STREAM_POLL = 0.25
 # The stream's headers beyond the event-stream type: a proxy must not hold
 # events back, and nothing may cache them.
 STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
+# What the page says while the agent's session holds a blocking dialog open:
+# the pane is the one place it can be answered.
+ATTENTION_BANNER = "The agent waits on a {kind} dialog: answer it in the pane."
+# The element the stream refreshes with the agent's state line and banner.
+AGENT_STATUS_TARGET = "#agent-status"
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
@@ -97,6 +102,7 @@ _templates.globals.update(
     chat_url=lambda slug: CHAT_PATH.format(slug=slug),
     chat_stream_url=lambda slug, after: f"{CHAT_STREAM_PATH.format(slug=slug)}?after={after}",
     line_label=lambda entry: entry.kind if entry.kind == chat.STATE_KIND else entry.author,
+    attention_banner=lambda kind: ATTENTION_BANNER.format(kind=kind),
     start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
 )
 
@@ -326,7 +332,10 @@ class ProjectView:
     project's agent, asked on every render, for a project in the phase that
     has one; None for any other, which has no agent section. ``transcript``
     is the project's whole chat log as it stands, and ``last_entry_id`` the
-    id of its last entry, where the page's stream picks up.
+    id of its last entry, where the page's stream picks up. ``agent_state``
+    and ``attention`` are what the log's last state entry says of the agent:
+    its state, and the kind of dialog it waits on, if one is open; with no
+    state entry yet, the state is what discovery answered.
     """
 
     project: Project
@@ -337,10 +346,28 @@ class ProjectView:
     can_take: bool = False
     agent: seat.Liveness | None = None
     transcript: list[chatlog.Entry] = dataclasses.field(default_factory=list)
+    agent_state: str | None = None
+    attention: str | None = None
 
     @property
     def last_entry_id(self) -> int:
         return self.transcript[-1].id if self.transcript else 0
+
+
+def state_of(text: str) -> tuple[str, str | None]:
+    """What one state entry says: the state, and the dialog kind while attention is needed."""
+    marker = chat.NEEDS_ATTENTION + chatlog.LABEL_SEPARATOR
+    if text.startswith(marker):
+        return chat.NEEDS_ATTENTION, text[len(marker):]
+    return text, None
+
+
+def agent_status(transcript: list[chatlog.Entry], fallback: str) -> tuple[str, str | None]:
+    """The agent's state and open dialog kind from the log's last state entry; ``fallback`` with none."""
+    for entry in reversed(transcript):
+        if entry.kind == chat.STATE_KIND:
+            return state_of(entry.text)
+    return fallback, None
 
 
 def has_agent(project: Project) -> bool:
@@ -372,14 +399,19 @@ def project_view(root: Path, slug: str, *, viewer: str | None = None) -> Project
             product = store.get_product(item.product) if item is not None else None
     active = project.status == INITIAL_STATUS
     gate = project.gate if active and project.gate is not None and project.gate.is_open else None
+    agent = seat.liveness(root, slug) if has_agent(project) else None
+    transcript = chatlog.open_log(root, slug).read_from(0)
+    agent_state, attention = agent_status(transcript, agent.state) if agent is not None else (None, None)
     return ProjectView(
         project=project,
         product=product,
         waiting_on=(gate.role if gate else WAITING_ROLES.get(project.phase)) if active else None,
         gate=gate,
         can_take=gate is not None and gate.role == viewer,
-        agent=seat.liveness(root, slug) if has_agent(project) else None,
-        transcript=chatlog.open_log(root, slug).read_from(0),
+        agent=agent,
+        transcript=transcript,
+        agent_state=agent_state,
+        attention=attention,
         artifacts=[
             (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
             for name in ARTIFACTS
@@ -457,6 +489,30 @@ def render_line(entry: chatlog.Entry) -> str:
     return _templates.get_template("chat_line.html").render(entry=entry)
 
 
+def render_status(name: str, state: str, attention: str | None) -> str:
+    """The agent's state line and banner: the fragment the page holds and a state event refreshes."""
+    return _templates.get_template("agent_status.html").render(
+        name=name, state=state, attention=attention
+    )
+
+
+def render_event(entry: chatlog.Entry) -> str:
+    """What one entry sends the page: its line, and for a state entry the refreshed status beside it.
+
+    The line lands in the transcript, where the connection swaps; the status
+    rides along as a partial aimed at its own element, so the state line and
+    the banner change the moment the session's state does.
+    """
+    html = render_line(entry)
+    if entry.kind == chat.STATE_KIND:
+        state, attention = state_of(entry.text)
+        html += (
+            f'<hx-partial hx-target="{AGENT_STATUS_TARGET}">'
+            f"{render_status(entry.author, state, attention)}</hx-partial>"
+        )
+    return html
+
+
 async def transcript_events(
     log: chatlog.ChatLog, after_id: int, disconnected: Callable[[], Awaitable[bool]]
 ) -> AsyncIterator[dict[str, str]]:
@@ -472,7 +528,7 @@ async def transcript_events(
         if log.last_id > sent:
             for entry in log.read_from(sent):
                 sent = entry.id
-                yield {"id": str(entry.id), "data": render_line(entry)}
+                yield {"id": str(entry.id), "data": render_event(entry)}
         await asyncio.sleep(STREAM_POLL)
 
 

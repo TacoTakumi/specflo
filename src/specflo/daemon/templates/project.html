@@ -42,7 +42,9 @@
 <section id="agent">
   <h2>Agent</h2>
   {% if view.agent.alive %}
-  <p class="agent-state">{{ view.agent.name }} is {{ view.agent.state }}.</p>
+  <div id="agent-status">
+    {% with name=view.agent.name, state=view.agent_state, attention=view.attention %}{% include "agent_status.html" %}{% endwith %}
+  </div>
   <form id="chat" method="post" action="{{ chat_url(view.project.slug) }}">
     <input type="hidden" name="session" value="{{ session }}">
     <textarea name="text" rows="3" required placeholder="Message the agent as {{ identity }}"></textarea>

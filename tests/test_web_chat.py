@@ -444,3 +444,94 @@ def test_the_stream_needs_a_session_and_a_project(root, requester, slug):
     assert response.headers["location"] == web.SIGNIN_PATH
 
     assert requester.get(stream_url("nope")).status_code == 404
+
+
+# --- the agent's state and the needs-attention banner, from state entries ------
+
+
+def agent_status(html):
+    """The state line's text and the banner's text (empty when none), from the agent section."""
+    section = re.search(r'<section id="agent">(.*?)</section>', html, re.S).group(1)
+    state = re.search(r'<p id="agent-state"[^>]*>(.*?)</p>', section, re.S).group(1)
+    banner = re.search(r'<div id="attention"[^>]*>(.*?)</div>', section, re.S).group(1)
+    return unescape(" ".join(state.split())), unescape(" ".join(re.sub(r"<[^>]+>", " ", banner).split()))
+
+
+def state_entry(root, slug, text):
+    return log(root, slug).append(chat.STATE_KIND, seat.agent_name(slug), text)
+
+
+def test_the_state_line_follows_the_last_state_entry_and_falls_back_to_the_probe(requester, root, slug, idle_agent):
+    page_url = web.PROJECT_PATH.format(slug=slug)
+    name = seat.agent_name(slug)
+
+    state, banner = agent_status(requester.get(page_url).text)
+    assert (state, banner) == (f"{name} is idle.", "")
+
+    state_entry(root, slug, chat.WORKING)
+    log(root, slug).append(chat.USER_KIND, seat.REQUESTER_SEAT, "a line after the state change")
+    state, _ = agent_status(requester.get(page_url).text)
+    assert state == f"{name} is {chat.WORKING}."
+
+    state_entry(root, slug, chat.IDLE)
+    state, _ = agent_status(requester.get(page_url).text)
+    assert state == f"{name} is {chat.IDLE}."
+
+
+def test_the_banner_names_the_dialog_kind_while_one_is_open_and_clears_when_it_closes(requester, root, slug, idle_agent):
+    page_url = web.PROJECT_PATH.format(slug=slug)
+    state_entry(root, slug, chat.WORKING)
+    state_entry(root, slug, f"{chat.NEEDS_ATTENTION}: confirm")
+
+    state, banner = agent_status(requester.get(page_url).text)
+    assert state == f"{seat.agent_name(slug)} is {chat.NEEDS_ATTENTION}."
+    assert "confirm" in banner and "pane" in banner
+    assert banner == web.ATTENTION_BANNER.format(kind="confirm")
+
+    state_entry(root, slug, chat.WORKING)
+    state, banner = agent_status(requester.get(page_url).text)
+    assert state == f"{seat.agent_name(slug)} is {chat.WORKING}."
+    assert banner == ""
+
+
+def test_the_banner_text_is_escaped(requester, root, slug, idle_agent):
+    state_entry(root, slug, f"{chat.NEEDS_ATTENTION}: <b>bold</b>")
+
+    html = requester.get(web.PROJECT_PATH.format(slug=slug)).text
+
+    assert "<b>bold</b>" not in html
+    assert "&lt;b&gt;bold&lt;/b&gt;" in html
+
+
+def partials(data):
+    """Every hx-partial in an event's data: ``(target, inner html)``."""
+    return re.findall(r'<hx-partial hx-target="([^"]+)"[^>]*>(.*?)</hx-partial>', data, re.S)
+
+
+def test_a_state_event_on_the_stream_refreshes_the_state_line_and_banner_in_place(live):
+    name = seat.agent_name(live.slug)
+    log(live.root, live.slug).append(chat.USER_KIND, seat.REQUESTER_SEAT, "hello")
+    state_entry(live.root, live.slug, chat.WORKING)
+    state_entry(live.root, live.slug, f"{chat.NEEDS_ATTENTION}: input")
+    state_entry(live.root, live.slug, chat.IDLE)
+
+    with live.client.stream("GET", stream_url(live.slug)) as response:
+        events = read_events(response.iter_lines(), count=4)
+
+    user, working, attention, idle = [data for _, data in events]
+    assert partials(user) == []
+    assert len(lines(user)) == 1
+
+    assert len(lines(working)) == 1
+    [(target, status)] = partials(working)
+    assert target == "#agent-status"
+    assert f"{name} is {chat.WORKING}." in status and 'id="attention"' in status
+    assert web.ATTENTION_BANNER.format(kind="input") not in status
+
+    [(_, status)] = partials(attention)
+    assert f"{name} is {chat.NEEDS_ATTENTION}." in status
+    assert web.ATTENTION_BANNER.format(kind="input") in status
+
+    [(_, status)] = partials(idle)
+    assert f"{name} is {chat.IDLE}." in status
+    assert "dialog" not in status
