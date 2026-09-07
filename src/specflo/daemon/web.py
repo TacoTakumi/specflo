@@ -41,6 +41,7 @@ from ..workflow import PHASES
 from .auth import BROWSER_IDENTITIES, identity_for
 from . import seat
 from .products import Products
+from . import chat
 from .routes import audit, project_lock
 from .store import Product, WorkItem, open_store
 from .workitems import FULL_DEV_PATH, WorkItems
@@ -52,6 +53,7 @@ PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
 TAKE_PATH = "/projects/{slug}/take"
 START_AGENT_PATH = "/projects/{slug}/agent/start"
+CHAT_PATH = "/projects/{slug}/chat"
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
@@ -83,6 +85,7 @@ _templates.globals.update(
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
     start_agent_url=lambda slug: START_AGENT_PATH.format(slug=slug),
+    chat_url=lambda slug: CHAT_PATH.format(slug=slug),
     start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
 )
 
@@ -528,6 +531,46 @@ async def start_agent(
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
     request.app.state.pumps.ensure(slug, name)
+    return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
+
+
+@pages.post(CHAT_PATH, include_in_schema=False)
+async def post_message(
+    request: Request, slug: str, identity: str = Depends(current_session)
+) -> Response:
+    """Send the signed-in identity's message to the project's agent.
+
+    The form echoes the session secret like every mutating form. The text
+    goes to the agent prefixed with the identity's label; an agent mid-run
+    takes it as a steer, and the post returns once the agent has the
+    prompt, not when the run settles. A project past the phase that has an
+    agent is a 409 page; an agent that does not serve, or refuses, is a
+    502 page; a blank message is a 400 page and reaches no socket.
+    """
+    fields = await form_fields(request)
+    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message="That form did not come from this session.",
+        )
+    root = request.app.state.root
+    view = project_view(root, slug, viewer=identity)
+    if view is None:
+        return _missing(identity, f"No project {slug!r}.")
+    if view.agent is None:
+        return render(
+            "error.html", status_code=409, identity=identity,
+            message=f"Project {slug!r} is past the {seat.CHAT_PHASE} phase and has no agent to talk to.",
+        )
+    text = fields.get("text", "").strip()
+    if not text:
+        return render(
+            "error.html", status_code=400, identity=identity, message="The message is empty.",
+        )
+    try:
+        chat.post_message(root, slug, identity, text)
+    except seat.AgentMessageError as exc:
+        return render("error.html", status_code=502, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 

@@ -43,6 +43,11 @@
   <h2>Agent</h2>
   {% if view.agent.alive %}
   <p class="agent-state">{{ view.agent.name }} is {{ view.agent.state }}.</p>
+  <form id="chat" method="post" action="{{ chat_url(view.project.slug) }}">
+    <input type="hidden" name="session" value="{{ session }}">
+    <textarea name="text" rows="3" required placeholder="Message the agent as {{ identity }}"></textarea>
+    <button type="submit">Send</button>
+  </form>
   {% else %}
   <p class="agent-state">
     {% if view.agent.name %}{{ view.agent.name }} is {{ view.agent.state }}: not serving.{% else %}This project has no agent yet.{% endif %}

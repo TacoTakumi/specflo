@@ -60,6 +60,23 @@ def message_text(message: object) -> str:
     )
 
 
+def post_message(root: Path, slug: str, author: str, text: str) -> None:
+    """Deliver ``text`` from ``author`` to the project's agent as a prompt.
+
+    The text goes out prefixed with the author's label, so the session
+    reports it back with its seat and the pump attributes it. Nothing is
+    written to the log here: the entry lands when the agent reports the
+    message, like a line typed in the pane. An agent mid-run gets the
+    message with steering behaviour; the call returns once the agent has
+    taken the prompt, not when it settles. A project with no agent on
+    record, or one that does not serve, raises.
+    """
+    name = seat.agent_for(root, slug)
+    if name is None:
+        raise seat.AgentMessageError(f"Project {slug!r} has no agent to take the message.")
+    seat.send_message(name, chatlog.label(author, text))
+
+
 class Pump:
     """One agent's subscription: a thread that follows the socket into the log."""
 
