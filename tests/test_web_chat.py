@@ -504,8 +504,30 @@ def test_the_banner_text_is_escaped(requester, root, slug, idle_agent):
 
 
 def partials(data):
-    """Every hx-partial in an event's data: ``(target, inner html)``."""
-    return re.findall(r'<hx-partial hx-target="([^"]+)"[^>]*>(.*?)</hx-partial>', data, re.S)
+    """Every partial in an event's data, in the form htmx 4 handles: ``(target, inner html)``.
+
+    The vendored bundle looks for ``template[hx]`` with ``type="partial"``
+    and swaps the template's content into its ``hx-target``; any other
+    element would land in the transcript as content.
+    """
+    return re.findall(
+        r'<template hx type="partial" hx-target="([^"]+)"[^>]*>(.*?)</template>', data, re.S
+    )
+
+
+def test_the_status_partial_takes_the_form_the_vendored_bundle_handles():
+    # The partial is only as good as the library's reading of it: the
+    # bundle selects template elements marked hx and reads their type, so
+    # the event must carry exactly that, not an element of the page's own.
+    bundle = (web.ASSETS_DIR / "htmx.min.js").read_text(encoding="utf-8")
+    assert "template[hx]" in bundle and '"partial"' in bundle
+    entry = chatlog.Entry(id=1, time="2026-09-07T00:00:00+00:00", kind=chat.STATE_KIND, author="a", text=chat.WORKING)
+
+    data = web.render_event(entry)
+
+    assert data.count("<template hx type=\"partial\"") == 1
+    assert "hx-partial" not in data
+    assert [target for target, _ in partials(data)] == [web.AGENT_STATUS_TARGET]
 
 
 def test_a_state_event_on_the_stream_refreshes_the_state_line_and_banner_in_place(live):

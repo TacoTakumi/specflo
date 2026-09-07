@@ -504,14 +504,17 @@ def render_event(entry: chatlog.Entry) -> str:
 
     The line lands in the transcript, where the connection swaps; the status
     rides along as a partial aimed at its own element, so the state line and
-    the banner change the moment the session's state does.
+    the banner change the moment the session's state does. htmx 4 reads a
+    partial from a template element marked ``hx`` with type ``partial``,
+    swaps its content into the target, and drops the template from what
+    lands in the transcript.
     """
     html = render_line(entry)
     if entry.kind == chat.STATE_KIND:
         state, attention = state_of(entry.text)
         html += (
-            f'<hx-partial hx-target="{AGENT_STATUS_TARGET}">'
-            f"{render_status(entry.author, state, attention)}</hx-partial>"
+            f'<template hx type="partial" hx-target="{AGENT_STATUS_TARGET}" hx-swap="innerHTML">'
+            f"{render_status(entry.author, state, attention)}</template>"
         )
     return html
 
