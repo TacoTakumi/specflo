@@ -35,7 +35,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from ..config import load_config
 from ..doc import ARTIFACTS
 from ..errors import ProjectNotFound, SpecfloError
-from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project, validate_slug
+from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import BROWSER_IDENTITIES, identity_for
@@ -55,8 +55,8 @@ SESSION_TTL = 12 * 60 * 60
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
 
-# The role each phase waits on. One table, so a later slice that hands a
-# phase to the requester changes this line and no template.
+# The role each phase waits on when no gate is open. One table, so a later
+# slice that hands a phase to the requester changes this line and no template.
 WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
 
 SIGNIN_FAILED = "That token does not sign in the identity you chose."
@@ -258,14 +258,16 @@ class ProjectView:
 
     ``artifacts`` pairs every artifact name, in pipeline order, with its
     verbatim text, or None for one the project has not created yet.
-    ``waiting_on`` is the role the current phase waits on; a project that
-    is no longer active waits on nobody.
+    ``gate`` is the project's open gate, if it has one and is still active;
+    ``waiting_on`` is then the gate's role, otherwise the role the current
+    phase waits on. A project that is no longer active waits on nobody.
     """
 
     project: Project
     product: Product | None
     waiting_on: str | None
     artifacts: list[tuple[str, str | None]]
+    gate: Gate | None = None
 
 
 def project_view(root: Path, slug: str) -> ProjectView | None:
@@ -290,10 +292,13 @@ def project_view(root: Path, slug: str) -> ProjectView | None:
         with open_store(root) as store:
             item = store.get_work_item(project.work_item)
             product = store.get_product(item.product) if item is not None else None
+    active = project.status == INITIAL_STATUS
+    gate = project.gate if active and project.gate is not None and project.gate.is_open else None
     return ProjectView(
         project=project,
         product=product,
-        waiting_on=WAITING_ROLES.get(project.phase) if project.status == INITIAL_STATUS else None,
+        waiting_on=(gate.role if gate else WAITING_ROLES.get(project.phase)) if active else None,
+        gate=gate,
         artifacts=[
             (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
             for name in ARTIFACTS

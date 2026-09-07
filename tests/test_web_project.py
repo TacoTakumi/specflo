@@ -96,6 +96,74 @@ def test_the_page_shows_where_the_project_stands_and_who_it_waits_on(client, roo
     }
 
 
+def gated(root, slug, role="requester", note="Open points: the name, pricing"):
+    """Open a gate on ``slug`` as the agent, the way the brainstorm agent does."""
+    agent = LocalProjectService(root, config.load_config(root), actor="agent")
+    return agent.open_gate(slug, role, note=note).gate
+
+
+def gate_section(html):
+    match = re.search(r'<section id="gate">(.*?)</section>', html, re.S)
+    return unescape(re.sub(r"<[^>]+>", " ", match.group(1))) if match else None
+
+
+def test_an_open_gate_names_the_role_the_project_waits_on(client, root):
+    slug = seed(root)
+    gate = gated(root, slug)
+
+    html = page(client, slug).text
+
+    assert facts(html)["Waiting on"] == "requester"
+    section = gate_section(html)
+    assert section is not None
+    assert "Open points: the name, pricing" in section
+    assert "agent" in section and gate.opened_at in section
+    assert f'datetime="{gate.opened_at}"' in html
+
+
+def test_a_taken_gate_falls_back_to_the_phase_table(client, root):
+    slug = seed(root)
+    gated(root, slug)
+    service(root).take_gate(slug)
+
+    html = page(client, slug).text
+
+    assert facts(html)["Waiting on"] == "developer"
+    assert gate_section(html) is None
+
+
+def test_a_gate_without_a_note_or_an_opener_says_so(client, root):
+    slug = seed(root)
+    service(root).open_gate(slug, "developer")
+
+    html = page(client, slug).text
+
+    assert facts(html)["Waiting on"] == "developer"
+    section = gate_section(html)
+    assert "No note" in section and "unnamed" in section
+
+
+def test_the_gate_note_is_escaped(client, root):
+    slug = seed(root)
+    gated(root, slug, note="<script>alert(1)</script> & done")
+
+    html = page(client, slug).text
+
+    assert "<script>alert(1)</script>" not in html
+    assert "&lt;script&gt;alert(1)&lt;/script&gt; &amp; done" in html
+
+
+def test_an_open_gate_on_an_inactive_project_shows_nothing_to_wait_on(client, root):
+    slug = seed(root)
+    gated(root, slug)
+    service(root).shelve_project(slug)
+
+    html = page(client, slug).text
+
+    assert facts(html)["Waiting on"] == "nobody"
+    assert gate_section(html) is None
+
+
 def test_the_waiting_role_table_covers_every_phase_with_the_developer(root):
     assert list(web.WAITING_ROLES) == PHASES
     assert set(web.WAITING_ROLES.values()) == {"developer"}

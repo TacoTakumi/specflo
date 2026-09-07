@@ -21,6 +21,17 @@
   <dd>{{ view.waiting_on or "nobody" }}</dd>
 </dl>
 
+{% if view.gate %}
+<section id="gate">
+  <h2>Waiting on {{ view.gate.role }}</h2>
+  <p class="gate-note">{{ view.gate.note or "No note." }}</p>
+  <p class="gate-meta">
+    Opened by {{ view.gate.opened_by or "an unnamed seat" }}
+    at <time datetime="{{ view.gate.opened_at }}">{{ view.gate.opened_at }}</time>
+  </p>
+</section>
+{% endif %}
+
 {% for name, text in view.artifacts %}
 <section id="artifact-{{ name }}">
   <h2>{{ name }}</h2>
