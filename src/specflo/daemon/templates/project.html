@@ -45,6 +45,7 @@
   <div id="agent-status">
     {% with name=view.agent.name, state=view.agent_state, attention=view.attention %}{% include "agent_status.html" %}{% endwith %}
   </div>
+  <p id="agent-transport" class="agent-transport">Transport: {{ view.agent.transport or "unknown" }}</p>
   <form id="chat" method="post" action="{{ chat_url(view.project.slug) }}">
     <input type="hidden" name="session" value="{{ session }}">
     <textarea name="text" rows="3" required placeholder="Message the agent as {{ identity }}"></textarea>

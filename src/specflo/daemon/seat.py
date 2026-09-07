@@ -196,12 +196,14 @@ class Liveness:
 
     ``name`` is None for a project with no agent on record. ``alive`` is
     True only when the agent's socket answers with a state in which it
-    serves; ``state`` is that state, or why it does not serve.
+    serves; ``state`` is that state, or why it does not serve. ``transport``
+    is the one the agent's status names, for an agent that answered.
     """
 
     name: str | None
     alive: bool
     state: str
+    transport: str | None = None
 
 
 def _probe(name: str) -> Liveness:
@@ -212,7 +214,13 @@ def _probe(name: str) -> Liveness:
     except (HostUnreachableError, TimeoutError, RuntimeError, OSError, KeyError, TypeError):
         return Liveness(name=name, alive=False, state=DEAD_STATE)
     state = str(status.get("state") or DEAD_STATE)
-    return Liveness(name=name, alive=state in HEALTHY_STATES, state=state)
+    transport = status.get("transport")
+    return Liveness(
+        name=name,
+        alive=state in HEALTHY_STATES,
+        state=state,
+        transport=str(transport) if transport else None,
+    )
 
 
 def send_message(name: str, text: str) -> None:

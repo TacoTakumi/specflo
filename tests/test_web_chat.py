@@ -557,3 +557,13 @@ def test_a_state_event_on_the_stream_refreshes_the_state_line_and_banner_in_plac
     [(_, status)] = partials(idle)
     assert f"{name} is {chat.IDLE}." in status
     assert "dialog" not in status
+
+
+def test_the_page_names_the_transport_the_serving_agent_reports(requester, root, slug, idle_agent):
+    assert seat.liveness(root, slug).transport == "rpc"
+
+    html = requester.get(web.PROJECT_PATH.format(slug=slug)).text
+
+    match = re.search(r'<p id="agent-transport"[^>]*>(.*?)</p>', html, re.S)
+    assert match is not None
+    assert match.group(1).strip() == "Transport: rpc"
