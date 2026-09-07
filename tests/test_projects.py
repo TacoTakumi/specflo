@@ -527,3 +527,61 @@ def test_a_gate_survives_a_textual_execution_rewrite(root, cfg):
     loaded = projects.load_project(root, cfg, "thing")
     assert loaded.execution == projects.FAN_OUT_EXECUTION
     assert loaded.gate == p.gate
+
+
+# --- the gate through the lifecycle -------------------------------------------
+
+
+def _open_gate(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    return projects.open_gate(
+        root, cfg, "thing", "developer", opened_by="agent", note="Open points: the name"
+    ).gate
+
+
+def test_an_open_gate_survives_shelve_and_resume(root, cfg):
+    gate = _open_gate(root, cfg)
+
+    shelved = projects.shelve_project(root, cfg, "thing", reason="later")
+    assert shelved.gate == gate and shelved.status == "shelved"
+    assert projects.load_project(root, cfg, "thing").gate == gate
+
+    resumed = projects.resume_project(root, cfg, "thing")
+    assert resumed.gate == gate and resumed.status == "active"
+    assert projects.load_project(root, cfg, "thing").gate == gate
+    assert gate.is_open
+
+
+def test_a_taken_gate_survives_advance_and_completion(root, cfg):
+    _open_gate(root, cfg)
+    taken = projects.take_gate(root, cfg, "thing", taken_by="developer").gate
+    assert not taken.is_open
+
+    advanced = projects.advance_project(root, cfg, "thing")
+    assert advanced.phase == "spec" and advanced.gate == taken
+    assert projects.load_project(root, cfg, "thing").gate == taken
+
+    for _ in range(2):
+        projects.advance_project(root, cfg, "thing")
+    completed = projects.complete_project(root, cfg, "thing")
+    assert completed.status == "complete" and completed.gate == taken
+    assert projects.load_project(root, cfg, "thing").gate == taken
+
+
+def test_setting_the_summary_keeps_the_gate(root, cfg):
+    gate = _open_gate(root, cfg)
+
+    summarized = projects.set_summary(root, cfg, "thing", "Ships help")
+
+    assert summarized.summary == "Ships help" and summarized.gate == gate
+    loaded = projects.load_project(root, cfg, "thing")
+    assert loaded.gate == gate and loaded.summary == "Ships help"
+
+
+def test_reopen_and_execution_mode_keep_the_gate(root, cfg):
+    gate = _open_gate(root, cfg)
+    projects.advance_project(root, cfg, "thing")
+
+    assert projects.reopen_project(root, cfg, "thing").gate == gate
+    projects.set_execution(root, cfg, "thing", projects.FAN_OUT_EXECUTION)
+    assert projects.load_project(root, cfg, "thing").gate == gate

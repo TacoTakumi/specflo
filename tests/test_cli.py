@@ -4781,3 +4781,28 @@ def test_gate_take_by_is_refused_without_the_agent_identity(cwd):
     assert result.exit_code == 1
     assert "--by" in result.stderr
     assert project_file.read_text() == before
+
+
+def test_the_gate_survives_shelve_resume_summary_and_advance_through_the_cli(cwd):
+    project_file = _new_active_project(cwd)
+    assert runner.invoke(app, ["gate", "open", "developer", "--note", "the name"]).exit_code == 0
+    opened = yaml.safe_load(project_file.read_text().split("---")[1])["gate"]
+
+    for args in (["shelve", "--reason", "later"], ["resume"], ["summary", "Ships help"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, (args, result.output)
+        front = yaml.safe_load(project_file.read_text().split("---")[1])
+        assert front["gate"] == opened, args
+    assert front["status"] == "active" and front["summary"] == "Ships help"
+
+    assert runner.invoke(app, ["gate", "take"]).exit_code == 0
+    taken = yaml.safe_load(project_file.read_text().split("---")[1])["gate"]
+    assert runner.invoke(app, ["brainstorm", "start"]).exit_code == 0
+    section = ["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"]
+    assert runner.invoke(app, ["decision", "add", "--text", "Use one facade"]).exit_code == 0
+    assert runner.invoke(app, section, input="No auth.\n").exit_code == 0
+    advanced = runner.invoke(app, ["advance"])
+    assert advanced.exit_code == 0, advanced.output
+    front = yaml.safe_load(project_file.read_text().split("---")[1])
+    assert front["phase"] == "spec" and front["gate"] == taken
+    assert "developer" in runner.invoke(app, ["doc", "show", "project"]).stdout
