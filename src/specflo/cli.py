@@ -334,19 +334,50 @@ def _require_active(cfg: config.SpecfloConfig) -> str:
     return cfg.active_project
 
 
-def _refresh_checkpoint(svc: ProjectService, slug: str) -> None:
+def _report_unwritten_checkpoint(exc: Exception) -> None:
+    """One stderr line: the checkpoint was not written, and how to regenerate it."""
+    typer.secho(
+        f"note: checkpoint not written ({exc.__class__.__name__}: {exc}); "
+        "run `specflo checkpoint` to regenerate it.",
+        fg=typer.colors.YELLOW,
+        err=True,
+    )
+
+
+def _refresh_checkpoint(svc: ProjectService, slug: str) -> bool:
     """Best-effort: rewrite the active project's checkpoint.md after a mutation.
 
     The checkpoint is fully derived, so this is cheap and always current. It runs
     after the triggering mutation has already succeeded and been persisted, so a
-    failure here must never fail that command — swallow *any* refresh error
+    failure here must never fail that command — catch *any* refresh error
     (a failed load, or a write that hits a read-only FS, permissions, full disk,
-    or a clobbered path) and move on.
+    or a clobbered path), say so on stderr, and move on. Returns whether the
+    checkpoint was written, so a caller never reports a save that did not happen.
     """
     try:
         svc.write_checkpoint(slug)
-    except Exception:
-        pass
+    except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
+        _report_unwritten_checkpoint(exc)
+        return False
+    return True
+
+
+def _checkpoint_after(
+    svc: ProjectService, root: Path, slug: str
+) -> tuple[str | None, str | None]:
+    """The checkpoint report for a mutation already persisted: written if it can be.
+
+    As :func:`_checkpoint_report` when the write succeeds. When it does not, the
+    failure is reported the way :func:`_refresh_checkpoint` reports it and both
+    the locator and the path come back None: the command's mutation stands, and
+    its output must not claim a checkpoint it does not have.
+    """
+    try:
+        path = svc.write_checkpoint(slug)
+    except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
+        _report_unwritten_checkpoint(exc)
+        return None, None
+    return _checkpoint_report(root, slug, path)
 
 
 def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
@@ -1275,7 +1306,7 @@ def advance(
         updated = svc.complete_project(slug)
         svc.stamp_banners(slug)
         _refresh_index(root, cfg)
-        cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
+        cp_locator, cp_path = _checkpoint_after(svc, root, slug)
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
         # and the prose carry the identical text (REQ-12).
@@ -1295,7 +1326,8 @@ def advance(
                 'Revise the summary to describe what shipped:'
                 ' `specflo summary "<one line>"`.'
             )
-            typer.echo(f"Checkpoint saved: {cp_locator}")
+            if cp_locator is not None:
+                typer.echo(f"Checkpoint saved: {cp_locator}")
             typer.echo(cont)
         return
 
@@ -1321,7 +1353,7 @@ def advance(
         raise _die(str(exc))
 
     _refresh_index(root, cfg)
-    cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
+    cp_locator, cp_path = _checkpoint_after(svc, root, slug)
 
     # Progress-aware next step for the phase we just entered (e.g. advancing into
     # execute names the first actionable task). Non-task targets keep the static
@@ -1342,7 +1374,8 @@ def advance(
              "checkpoint_locator": cp_locator, "continuation": cont}))
     else:
         typer.echo(f"Advanced '{slug}' from {from_phase} to {updated.phase}.")
-        typer.echo(f"Checkpoint saved: {cp_locator}")
+        if cp_locator is not None:
+            typer.echo(f"Checkpoint saved: {cp_locator}")
         typer.echo(cont)
 
 
@@ -1405,7 +1438,7 @@ def reopen(
         raise _die(str(exc))
 
     stale = _stale_downstream_artifacts(svc, updated)
-    cp_locator, cp_path = _checkpoint_report(root, slug, svc.write_checkpoint(slug))
+    cp_locator, cp_path = _checkpoint_after(svc, root, slug)
     if json_output:
         typer.echo(json.dumps(
             {"reopened": True, "from": from_phase, "to": updated.phase,
@@ -1416,7 +1449,8 @@ def reopen(
             typer.echo("Possibly stale downstream artifacts (unchanged on disk):")
             for name in stale:
                 typer.echo(f"  - {name}")
-        typer.echo(f"Checkpoint saved: {cp_locator}")
+        if cp_locator is not None:
+            typer.echo(f"Checkpoint saved: {cp_locator}")
         # Reopening is a clear-point too, and has been since before the shared
         # builder existed. It routes through the builder so no seam keeps its own
         # copy of the wording (REQ-04, D-06). The clear-point stays unconditional,
@@ -1848,10 +1882,14 @@ def task_done(
         task = svc.done_task(slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
-    _refresh_checkpoint(svc, slug)
+    written = _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
     cont = _seam_continuation(svc, slug, root)
+    if not written:
+        # The continuation derives from the project's state, not from the file,
+        # so it stands; the checkpoint location does not.
+        cont = {**cont, "checkpoint": None, "checkpoint_locator": None}
     _report_transition(task, json_output, extra=cont)
     if not json_output:
         if cont["continuation"] is None:
@@ -1860,7 +1898,8 @@ def task_done(
             # prose for the marker never silently stops resuming (REQ-01).
             typer.echo(continuation.clear_point_only())
         else:
-            typer.echo(f"Checkpoint saved: {cont['checkpoint_locator']}")
+            if written:
+                typer.echo(f"Checkpoint saved: {cont['checkpoint_locator']}")
             typer.echo(cont["continuation"])
 
 

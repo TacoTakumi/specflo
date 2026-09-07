@@ -4609,3 +4609,46 @@ def test_task_start_and_block_reject_a_note(tmp_path, monkeypatch):
     assert r.exit_code != 0
     r = runner.invoke(app, ["task", "block", "T-01", "--note", "x"])
     assert r.exit_code != 0
+
+
+def _checkpoint_writes_fail(monkeypatch):
+    def _raise(*args, **kwargs):
+        raise OSError("read-only file system")
+
+    # cli.py reaches checkpoint.write_checkpoint by attribute at call time.
+    monkeypatch.setattr("specflo.checkpoint.write_checkpoint", _raise)
+
+
+def _assert_reported_not_failed(result, result_line):
+    assert result.exit_code == 0, result.output
+    assert result_line in result.stdout
+    assert "Checkpoint saved" not in result.stdout
+    assert "Traceback" not in result.stderr
+    (note,) = [line for line in result.stderr.splitlines() if "checkpoint not written" in line]
+    assert "specflo checkpoint" in note
+
+
+def test_advance_and_reopen_report_a_checkpoint_that_could_not_be_written(cwd, monkeypatch):
+    _ready_brainstorm(cwd)
+    _checkpoint_writes_fail(monkeypatch)
+
+    advanced = runner.invoke(app, ["advance"])
+    reopened = runner.invoke(app, ["reopen"])
+
+    _assert_reported_not_failed(advanced, "Advanced 'my-thing' from brainstorm to spec.")
+    _assert_reported_not_failed(reopened, "Reopened 'my-thing' from spec to brainstorm.")
+    assert config.load_config(cwd).active_project == "my-thing"
+    data = _json.loads(runner.invoke(app, ["advance", "--json"]).stdout)
+    assert data["advanced"] is True and data["checkpoint"] is None and data["checkpoint_locator"] is None
+
+
+def test_task_done_reports_a_checkpoint_that_could_not_be_written(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute_with_two_tasks(runner, app, tmp_path)
+    runner.invoke(app, ["task", "start", "T-01"])
+    _checkpoint_writes_fail(monkeypatch)
+
+    done = runner.invoke(app, ["task", "done", "T-01"])
+
+    _assert_reported_not_failed(done, "T-01 -> done")
+    assert "T-02" in done.stdout
