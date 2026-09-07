@@ -245,6 +245,34 @@ def audit_records(root):
     return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
 
 
+def test_the_take_runs_its_socket_calls_off_the_event_loop(client, root, monkeypatch):
+    # The view probes the agent's socket and the take tells the agent over
+    # it; the calls below only complete from a worker thread the loop is
+    # free to serve, so a take on the loop would fail here.
+    slug = brainstorming(root)
+    gated(root, slug, role="developer")
+    probed, announced = [], []
+
+    def liveness_off_loop(root_, slug_):
+        anyio.from_thread.run(anyio.sleep, 0)
+        probed.append(slug_)
+        return seat.Liveness(name=seat.agent_name(slug_), alive=True, state="idle")
+
+    def announce_off_loop(root_, project):
+        anyio.from_thread.run(anyio.sleep, 0)
+        announced.append(project.slug)
+        return True
+
+    monkeypatch.setattr(seat, "liveness", liveness_off_loop)
+    monkeypatch.setattr(seat, "announce_take", announce_off_loop)
+
+    response = client.post(take_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303, response.text
+    assert probed == [slug] and announced == [slug]
+    assert service(root).load_project(slug).gate.taken_by == "developer"
+
+
 def test_the_take_control_is_offered_only_to_the_identity_the_gate_waits_on(client, root):
     slug = seed(root)
     gated(root, slug, role="requester")

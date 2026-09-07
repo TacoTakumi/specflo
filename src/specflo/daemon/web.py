@@ -475,15 +475,22 @@ async def start_project(
     if item is None or item.product != slug:
         return _missing(identity, f"No work item {item_id} on product {slug!r}.")
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    pumps = request.app.state.pumps
+
+    def start() -> seat.Started:
+        started = seat.start_project(root, item_id, identity, url=url)
+        pumps.ensure(started.spawned.project.slug, started.agent)
+        return started
+
     try:
         # The start waits on the agent's socket while the agent calls this
-        # daemon back, so it runs off the event loop the daemon answers on.
-        started = await run_in_threadpool(seat.start_project, root, item_id, identity, url=url)
+        # daemon back, and the pump start may wait on an old pump's thread,
+        # so both run off the event loop the daemon answers on.
+        started = await run_in_threadpool(start)
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
-    request.app.state.pumps.ensure(started.spawned.project.slug, started.agent)
     return RedirectResponse(PROJECT_PATH.format(slug=started.spawned.project.slug), status_code=303)
 
 
@@ -619,7 +626,9 @@ async def take_gate(
             message="That form did not come from this session.",
         )
     root = request.app.state.root
-    view = project_view(root, slug, viewer=identity)
+    # The view probes the agent's socket and the take tells the agent over
+    # it; both are blocking calls, so they run off the event loop.
+    view = await run_in_threadpool(project_view, root, slug, viewer=identity)
     if view is None:
         return _missing(identity, f"No project {slug!r}.")
     if view.gate is not None and not view.can_take:
@@ -628,13 +637,17 @@ async def take_gate(
             message=f"This gate waits on {view.gate.role}, not {identity}.",
         )
     service = LocalProjectService(root, load_config(root), actor=identity, hosted=True)
-    with project_lock(root, slug):
-        try:
+
+    def take() -> None:
+        with project_lock(root, slug):
             project = service.take_gate(slug)
-        except SpecfloError as exc:
-            return render("error.html", status_code=409, identity=identity, message=str(exc))
-        audit(root, identity, "take_gate", slug, None)
-        seat.announce_take(root, project)
+            audit(root, identity, "take_gate", slug, None)
+            seat.announce_take(root, project)
+
+    try:
+        await run_in_threadpool(take)
+    except SpecfloError as exc:
+        return render("error.html", status_code=409, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
@@ -656,7 +669,7 @@ async def start_agent(
             message="That form did not come from this session.",
         )
     root = request.app.state.root
-    view = project_view(root, slug, viewer=identity)
+    view = await run_in_threadpool(project_view, root, slug, viewer=identity)
     if view is None:
         return _missing(identity, f"No project {slug!r}.")
     if view.agent is None:
@@ -665,13 +678,19 @@ async def start_agent(
             message=f"Project {slug!r} is past the {seat.CHAT_PHASE} phase and has no agent to start.",
         )
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    pumps = request.app.state.pumps
+
+    def start() -> str:
+        name = seat.start_project_agent(root, slug, identity, url=url)
+        pumps.ensure(slug, name)
+        return name
+
     try:
-        name = await run_in_threadpool(seat.start_project_agent, root, slug, identity, url=url)
+        await run_in_threadpool(start)
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
-    request.app.state.pumps.ensure(slug, name)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
@@ -695,7 +714,10 @@ async def post_message(
             message="That form did not come from this session.",
         )
     root = request.app.state.root
-    view = project_view(root, slug, viewer=identity)
+    # The view probes the agent's socket and the send waits on it for the
+    # agent's ack; both run off the event loop, so a slow agent stalls this
+    # request and no other.
+    view = await run_in_threadpool(project_view, root, slug, viewer=identity)
     if view is None:
         return _missing(identity, f"No project {slug!r}.")
     if view.agent is None:
@@ -709,7 +731,7 @@ async def post_message(
             "error.html", status_code=400, identity=identity, message="The message is empty.",
         )
     try:
-        chat.post_message(root, slug, identity, text)
+        await run_in_threadpool(chat.post_message, root, slug, identity, text)
     except seat.AgentMessageError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)

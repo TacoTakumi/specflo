@@ -19,6 +19,7 @@ import time
 from html import unescape
 from types import SimpleNamespace
 
+import anyio
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -207,6 +208,32 @@ def test_a_developer_post_while_the_agent_works_is_a_steer_that_returns_before_s
     # The fake never settles: the post came back with the run still on.
     assert working_agent.state == "working"
     assert seat.liveness(developer.app.state.root, slug).state == "working"
+
+
+def test_the_post_runs_its_socket_calls_off_the_event_loop(requester, root, slug, monkeypatch):
+    # The probe and the send both wait on the agent's socket; run on the
+    # loop they would stall every other request. The calls below only
+    # complete from a worker thread the loop is free to serve.
+    probed, sent = [], []
+
+    def liveness_off_loop(root_, slug_):
+        anyio.from_thread.run(anyio.sleep, 0)
+        probed.append(slug_)
+        return seat.Liveness(name=seat.agent_name(slug_), alive=True, state="idle")
+
+    def send_off_loop(name, text):
+        anyio.from_thread.run(anyio.sleep, 0)
+        sent.append((name, text))
+
+    monkeypatch.setattr(seat, "liveness", liveness_off_loop)
+    monkeypatch.setattr(seat, "send_message", send_off_loop)
+    seat.record_agent(root, slug, seat.agent_name(slug))
+
+    response = post(requester, slug, "hello")
+
+    assert response.status_code == 303, response.text
+    assert probed == [slug]
+    assert sent == [(seat.agent_name(slug), chatlog.label(seat.REQUESTER_SEAT, "hello"))]
 
 
 def test_the_page_offers_the_form_with_the_session_secret_to_a_live_agent(requester, slug, idle_agent):
