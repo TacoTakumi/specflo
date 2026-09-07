@@ -132,6 +132,35 @@ class ChatLog:
         """Every entry with an id above ``after_id``, in order."""
         return [entry for entry in self._entries() if entry.id > after_id]
 
+    def tail(self, after_id: int, offset: int) -> tuple[list[Entry], int]:
+        """The entries above ``after_id`` that landed from byte ``offset`` on, and where to read from next.
+
+        A follower keeps the offset between calls so each read costs only
+        what landed since, not the whole file. Only whole lines count: a
+        line still being written is left for the next call, and the offset
+        returned stops before it. A file shorter than the offset was
+        replaced; the read starts over from the top.
+        """
+        if not self.path.is_file():
+            return [], 0
+        with open(self.path, "rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            if offset > size:
+                offset = 0
+            handle.seek(offset)
+            chunk = handle.read()
+        end = chunk.rfind(b"\n")
+        if end < 0:
+            return [], offset
+        whole = chunk[: end + 1]
+        entries = []
+        for line in whole.decode("utf-8", errors="replace").splitlines():
+            entry = _parse(line)
+            if entry is not None and entry.id > after_id:
+                entries.append(entry)
+        return entries, offset + len(whole)
+
 
 _open: dict[Path, ChatLog] = {}
 _registry = threading.Lock()

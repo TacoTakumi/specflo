@@ -75,7 +75,10 @@ def post_message(root: Path, slug: str, author: str, text: str) -> None:
     """
     name = seat.agent_for(root, slug)
     if name is None:
-        raise seat.AgentMessageError(f"Project {slug!r} has no agent to take the message.")
+        raise seat.AgentMessageError(
+            f"Project {slug!r} has no agent to take the message.",
+            public=f"Project {slug!r} has no agent to take the message.",
+        )
     seat.send_message(name, chatlog.label(author, text))
 
 
@@ -108,8 +111,18 @@ class Pump:
     def alive(self) -> bool:
         return self._thread.is_alive()
 
+    @property
+    def connected(self) -> bool:
+        """Whether the pump holds a connection to the socket right now."""
+        return self._connected.is_set()
+
     def wait_connected(self, timeout: float) -> bool:
-        """Block until the pump has connected to the socket once; False when it has not in time."""
+        """Block until the pump holds a connection to the socket; False when it does not in time.
+
+        The flag falls when the connection drops, so a pump left looping on
+        a dead socket does not count as subscribed until it is back on the
+        new one: a start that waits here is waiting on the live agent.
+        """
         return self._connected.wait(timeout)
 
     def _mapped(self) -> bool:
@@ -130,6 +143,8 @@ class Pump:
                         self.handle(frame)
             except (HostUnreachableError, OSError, RuntimeError, ValueError):
                 pass
+            finally:
+                self._connected.clear()
             self._stop.wait(RECONNECT_DELAY)
 
     def handle(self, frame: object) -> None:

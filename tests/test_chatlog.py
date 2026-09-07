@@ -52,6 +52,33 @@ def test_read_from_returns_the_entries_after_an_id_in_order(root):
     assert chatlog.open_log(root, "login-fix").read_from(3) == entries[3:]
 
 
+def test_tail_reads_only_what_landed_since_the_offset_and_leaves_a_torn_line(root):
+    log = chatlog.open_log(root, "login-fix")
+    for n in range(3):
+        log.append("user", "requester", f"line {n}")
+
+    entries, offset = log.tail(0, 0)
+    assert [e.text for e in entries] == ["line 0", "line 1", "line 2"]
+    assert offset == log.path.stat().st_size
+
+    again, same = log.tail(entries[-1].id, offset)
+    assert again == [] and same == offset
+
+    log.append("assistant", "agent", "reply")
+    with open(log.path, "ab") as handle:
+        handle.write(b'{"id": 5, "time": "t", "kind": "user", "author": "requester", "text": "torn')
+    entries, offset = log.tail(3, offset)
+    assert [e.text for e in entries] == ["reply"]
+    assert log.path.read_bytes()[offset:].startswith(b'{"id": 5')
+
+    entries, past_the_end = log.tail(0, log.path.stat().st_size + 100)
+    assert [e.text for e in entries] == ["line 0", "line 1", "line 2", "reply"]
+    assert past_the_end == offset
+
+    missing = chatlog.open_log(root, "nothing-yet")
+    assert missing.tail(0, 0) == ([], 0)
+
+
 def test_the_log_is_one_file_per_project_under_the_root(root):
     chatlog.open_log(root, "login-fix").append("user", "requester", "one")
     chatlog.open_log(root, "dark-mode").append("user", "requester", "two")

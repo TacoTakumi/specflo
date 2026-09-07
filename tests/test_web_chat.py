@@ -305,6 +305,39 @@ def test_a_post_to_a_project_with_no_serving_agent_is_a_502_page(requester, slug
     assert "has no agent to take the message" in unescape(response.text)
 
 
+def test_a_post_to_a_recorded_agent_that_is_dead_names_its_state_and_no_path(requester, root, tmp_path, slug):
+    # The agent was stopped out of band: the mapping stands, the socket is
+    # gone. The page names the agent and its state; the client's words about
+    # the socket, which carry its path, stay in the daemon log.
+    name = seat.agent_name(slug)
+    seat.record_agent(root, slug, name)
+    state_dir = str(tmp_path / "state")
+
+    response = post(requester, slug, "anyone there?")
+
+    assert response.status_code == 502
+    text = unescape(response.text)
+    assert f"Agent '{name}' is {seat.DEAD_STATE}, not serving." in text
+    assert state_dir not in text and "sock" not in text and "cannot connect" not in text
+
+
+def test_a_message_error_surfaced_after_the_probe_shows_its_public_form_only(requester, root, slug, idle_agent, monkeypatch):
+    def refuse(name, text):
+        raise seat.AgentMessageError(
+            f"Agent {name!r} did not take the message: cannot connect to agent socket /var/state/{name}/sock",
+            public=f"Agent {name!r} did not take the message; the daemon log has the detail.",
+        )
+
+    monkeypatch.setattr(seat, "send_message", refuse)
+
+    response = post(requester, slug, "hello")
+
+    assert response.status_code == 502
+    text = unescape(response.text)
+    assert "the daemon log has the detail" in text
+    assert "/var/state" not in text and "cannot connect" not in text
+
+
 def test_a_post_to_a_project_past_the_chat_phase_is_refused(requester, root, slug):
     LocalProjectService(root, config.load_config(root)).advance_project(slug)
 

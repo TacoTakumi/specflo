@@ -192,7 +192,16 @@ class AgentStartError(SpecfloError):
 
 
 class AgentMessageError(SpecfloError):
-    """A message did not reach the agent: it is not serving, or it refused the prompt."""
+    """A message did not reach the agent: it is not serving, or it refused the prompt.
+
+    The message carries the client's own words for the daemon log; what
+    leaves the daemon is ``public``, which names the agent and the outcome
+    and nothing of the host's layout.
+    """
+
+    def __init__(self, message: str, *, public: str) -> None:
+        super().__init__(message)
+        self.public = public
 
 
 def agent_name(slug: str) -> str:
@@ -309,7 +318,10 @@ def send_message(name: str, text: str) -> None:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             state = str(client.status(timeout=_PROBE_TIMEOUT)["status"].get("state"))
             if state not in HEALTHY_STATES:
-                raise AgentMessageError(f"Agent {name!r} is {state}, not serving.")
+                raise AgentMessageError(
+                    f"Agent {name!r} is {state}, not serving.",
+                    public=f"Agent {name!r} is {state}, not serving.",
+                )
             command: dict = {"type": "prompt", "message": text}
             if state == "working":
                 command["streamingBehavior"] = "steer"
@@ -324,9 +336,15 @@ def send_message(name: str, text: str) -> None:
                 command["streamingBehavior"] = "steer"
                 response = client.request(command, timeout=_SEND_TIMEOUT)
     except (HostUnreachableError, TimeoutError, RuntimeError, OSError, KeyError, TypeError) as exc:
-        raise AgentMessageError(f"Agent {name!r} did not take the message: {exc}") from exc
+        raise AgentMessageError(
+            f"Agent {name!r} did not take the message: {exc}",
+            public=f"Agent {name!r} did not take the message; the daemon log has the detail.",
+        ) from exc
     if not response.get("success"):
-        raise AgentMessageError(f"Agent {name!r} refused the message: {response.get('error')}")
+        raise AgentMessageError(
+            f"Agent {name!r} refused the message: {response.get('error')}",
+            public=f"Agent {name!r} refused the message; the daemon log has the detail.",
+        )
 
 
 def liveness(root: Path, slug: str) -> Liveness:

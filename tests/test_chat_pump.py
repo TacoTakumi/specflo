@@ -213,6 +213,31 @@ def test_the_pump_reconnects_after_the_socket_drops(root, agent, pump):
     assert [text for _, _, text in entries(root)] == ["before the drop", "after the drop"]
 
 
+def test_a_pump_off_its_socket_is_not_subscribed_until_it_is_back_on_the_new_one(root, base, agent):
+    # The agent died out of band and the mapping stayed; the same name is
+    # started again. Subscribe must wait for the pump to reach the new
+    # socket, not hand back the pump on the strength of its old connection.
+    pumps = chat.Pumps(root)
+    fresh = None
+    try:
+        pump = pumps.subscribe("login-fix", agent.paths.name)
+        assert pump.connected
+        agent.close()
+        assert wait_until(lambda: not pump.connected)
+
+        fresh = FakeAgent(base, agent.paths.name)
+        again = pumps.subscribe("login-fix", agent.paths.name)
+
+        assert again is pump and pump.connected
+        assert wait_until(lambda: fresh.connected == 1)
+        fresh.emit(user_message("requester: after the restart"))
+        assert wait_until(lambda: len(entries(root)) == 1)
+    finally:
+        pumps.stop_all()
+        if fresh is not None:
+            fresh.close()
+
+
 def test_a_pump_ends_on_its_own_once_the_project_maps_to_no_agent(root, agent, pump):
     seat.forget_agent(root, "login-fix")
     agent.drop_clients()

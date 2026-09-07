@@ -685,7 +685,7 @@ def test_an_agent_that_takes_no_opening_prompt_is_stopped_and_forgotten(root, tm
     pi_cmd, capture = capturing_stub(tmp_path)
 
     def refuse(name, text):
-        raise seat.AgentMessageError("refused")
+        raise seat.AgentMessageError("refused", public="refused")
 
     monkeypatch.setattr(seat, "send_message", refuse)
 

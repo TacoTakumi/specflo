@@ -533,16 +533,18 @@ async def transcript_events(
     """Every entry above ``after_id`` as one event each, then each new one as it lands.
 
     An event's id is the entry's, so a client that reconnects with the last
-    id it saw gets what it missed once, in order. The log's last id is a
-    cheap check that costs no read while nothing new has landed; the loop
-    ends when the client is gone.
+    id it saw gets what it missed once, in order. The log is tailed from
+    the byte it was last read to, in a worker thread, so a long transcript
+    with many pages open costs the loop nothing per entry; the loop ends
+    when the client is gone.
     """
     sent = after_id
+    offset = 0
     while not await disconnected():
-        if log.last_id > sent:
-            for entry in log.read_from(sent):
-                sent = entry.id
-                yield {"id": str(entry.id), "data": render_event(entry)}
+        entries, offset = await run_in_threadpool(log.tail, sent, offset)
+        for entry in entries:
+            sent = entry.id
+            yield {"id": str(entry.id), "data": render_event(entry)}
         await asyncio.sleep(STREAM_POLL)
 
 
@@ -570,10 +572,16 @@ async def chat_stream(
     connection held open through a long turn blocks no other request.
     """
     root = request.app.state.root
-    try:
-        validate_slug(slug)
-        LocalProjectService(root, load_config(root)).load_project(slug)
-    except SpecfloError:
+
+    def holds_project() -> bool:
+        try:
+            validate_slug(slug)
+            LocalProjectService(root, load_config(root)).load_project(slug)
+        except SpecfloError:
+            return False
+        return True
+
+    if not await run_in_threadpool(holds_project):
         return _missing(identity, f"No project {slug!r}.")
     log = chatlog.open_log(root, slug)
     events = transcript_events(log, _last_event_id(request, after), request.is_disconnected)
@@ -744,6 +752,16 @@ async def post_message(
             "error.html", status_code=409, identity=identity,
             message=f"Project {slug!r} is past the {seat.CHAT_PHASE} phase and has no agent to talk to.",
         )
+    if not view.agent.alive:
+        # The page offered no form; a post that arrives anyway is answered
+        # with the agent's state, never with the client's words about it.
+        return render(
+            "error.html", status_code=502, identity=identity,
+            message=(
+                f"Agent {view.agent.name!r} is {view.agent.state}, not serving."
+                if view.agent.name else f"Project {slug!r} has no agent to take the message."
+            ),
+        )
     text = fields.get("text", "").strip()
     if not text:
         return render(
@@ -752,7 +770,8 @@ async def post_message(
     try:
         await run_in_threadpool(chat.post_message, root, slug, identity, text)
     except seat.AgentMessageError as exc:
-        return render("error.html", status_code=502, identity=identity, message=str(exc))
+        _log.warning("post to %s: %s", slug, exc)
+        return render("error.html", status_code=502, identity=identity, message=exc.public)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
