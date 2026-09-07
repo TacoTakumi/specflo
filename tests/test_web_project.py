@@ -15,6 +15,7 @@ import sys
 from html import unescape
 from pathlib import Path
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -524,6 +525,27 @@ def test_the_control_starts_the_agent_and_the_page_then_shows_it_serving(client,
     assert f"{name} is idle." in agent_section(html)
     last = audit_records(root)[-1]
     assert (last["identity"], last["operation"], last["project"]) == ("developer", "start_agent", slug)
+
+
+def test_the_control_runs_the_start_off_the_event_loop_so_the_daemon_keeps_answering(client, root, monkeypatch):
+    # The agent calls the daemon back while it starts, so a start that held
+    # the event loop would wait on itself; the probe below only completes
+    # from a worker thread the loop is free to serve.
+    slug = brainstorming(root)
+    served = []
+
+    def start_off_loop(root_, slug_, **kwargs):
+        anyio.from_thread.run(anyio.sleep, 0)
+        served.append(slug_)
+        return seat.agent_name(slug_)
+
+    monkeypatch.setattr(seat, "start_agent", start_off_loop)
+    monkeypatch.setattr(client.app.state.pumps, "ensure", lambda slug_, name: None)
+
+    response = client.post(start_agent_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303
+    assert served == [slug]
 
 
 def test_a_start_without_the_secret_or_beside_a_live_agent_is_refused(client, root, rpc_rig):

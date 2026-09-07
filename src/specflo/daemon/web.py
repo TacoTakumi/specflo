@@ -34,6 +34,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sse_starlette import EventSourceResponse
+from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
 from ..doc import ARTIFACTS
@@ -475,7 +476,9 @@ async def start_project(
         return _missing(identity, f"No work item {item_id} on product {slug!r}.")
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     try:
-        started = seat.start_project(root, item_id, identity, url=url)
+        # The start waits on the agent's socket while the agent calls this
+        # daemon back, so it runs off the event loop the daemon answers on.
+        started = await run_in_threadpool(seat.start_project, root, item_id, identity, url=url)
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:
@@ -660,7 +663,7 @@ async def start_agent(
         )
     url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
     try:
-        name = seat.start_project_agent(root, slug, identity, url=url)
+        name = await run_in_threadpool(seat.start_project_agent, root, slug, identity, url=url)
     except seat.AgentStartError as exc:
         return render("error.html", status_code=502, identity=identity, message=str(exc))
     except SpecfloError as exc:

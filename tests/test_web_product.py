@@ -14,6 +14,7 @@ import sys
 from html import unescape
 from pathlib import Path
 
+import anyio
 import pytest
 from fastapi.testclient import TestClient
 
@@ -337,6 +338,29 @@ def test_an_ineligible_item_is_refused_and_an_unknown_one_is_a_404(client, root,
     assert client.post(start_url("other", 1), data={"session": secret}).status_code == 404
     assert client.post(start_url("nope", 1), data={"session": secret}).status_code == 404
     assert seat.agent_mapping(root) == {}
+
+
+def test_the_control_runs_the_start_off_the_event_loop_so_the_daemon_keeps_answering(client, root, monkeypatch):
+    # The agent calls the daemon back while it starts, so a start that held
+    # the event loop would wait on itself; the probe below only completes
+    # from a worker thread the loop is free to serve.
+    seed(root)
+    with store_module.open_store(root) as store:
+        WorkItems(store).add("thing", "Offline mode", today="2026-09-06")
+    served = []
+
+    def start_off_loop(root_, slug, **kwargs):
+        anyio.from_thread.run(anyio.sleep, 0)
+        served.append(slug)
+        return seat.agent_name(slug)
+
+    monkeypatch.setattr(seat, "start_agent", start_off_loop)
+    monkeypatch.setattr(client.app.state.pumps, "ensure", lambda slug, name: None)
+
+    response = client.post(start_url("thing", 5), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303
+    assert served == ["offline-mode"]
 
 
 def test_a_failed_agent_start_reports_the_failure_and_the_page_links_to_the_project(client, root, rpc_rig, monkeypatch):
