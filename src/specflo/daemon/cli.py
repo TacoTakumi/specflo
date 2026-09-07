@@ -67,7 +67,7 @@ def token_add(
     ctx: typer.Context,
     identity: str = typer.Argument(
         ...,
-        metavar="<requester|developer>",
+        metavar="<requester|developer|agent>",
         help="The identity the token is bound to.",
     ),
 ) -> None:
@@ -80,6 +80,6 @@ def token_add(
         raise typer.Exit(code=1)
     typer.echo(secret)
     typer.secho(
-        f"Minted a {identity} token for {root}; it is shown once, store it now.",
+        f"Minted a token for {identity} under {root}; it is shown once, store it now.",
         err=True,
     )

@@ -1,9 +1,11 @@
-"""Bearer tokens bound to the two identities the daemon knows.
+"""Bearer tokens bound to the three identities the daemon knows.
 
 Every request to the daemon carries a bearer token minted on the serve side
-for one of two identities, requester or developer. The daemon stores only
-the token's hash, refuses a request with no or an unknown token, and hands
-every route the identity the token is bound to.
+for one of three identities: requester, developer, or agent. The daemon
+stores only the token's hash, refuses a request with no or an unknown token,
+and hands every route the identity the token is bound to. The agent identity
+is for the pipeline agent the daemon runs: it acts over the API like the
+other two and every mutation it makes is audited under its own name.
 """
 
 import hashlib
@@ -15,9 +17,10 @@ from typer.testing import CliRunner
 
 from specflo import daemon
 from specflo.cli import app
-from specflo.daemon import auth
+from specflo.daemon import auth, routes
 from specflo.daemon.app import create_app
 from specflo.errors import SpecfloError
+from specflo.service import wire
 
 runner = CliRunner()
 
@@ -51,8 +54,8 @@ def test_mint_stores_only_the_hash_bound_to_the_identity(root):
     assert secret not in (root / auth.TOKENS_FILENAME).read_text()
 
 
-def test_mint_refuses_an_identity_outside_the_two(root):
-    with pytest.raises(SpecfloError, match="requester, developer"):
+def test_mint_refuses_an_identity_outside_the_three(root):
+    with pytest.raises(SpecfloError, match="requester, developer, agent"):
         auth.mint_token(root, "admin")
 
     assert not (root / auth.TOKENS_FILENAME).exists()
@@ -107,8 +110,16 @@ def test_token_add_refuses_an_unknown_identity(root):
     result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "admin"])
 
     assert result.exit_code == 1
-    assert "requester, developer" in result.stderr
+    assert "requester, developer, agent" in result.stderr
     assert result.stdout == ""
+
+
+def test_token_add_mints_an_agent_token(root):
+    result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "agent"])
+
+    assert result.exit_code == 0, result.output
+    assert auth.identity_for(root, result.stdout.strip()) == "agent"
+    assert "token for agent" in result.stderr
 
 
 # --- requests ---------------------------------------------------------------
@@ -133,7 +144,13 @@ def test_a_request_with_an_unknown_token_gets_401(root, client):
     assert client.get("/whoami", headers={"Authorization": "Basic abc"}).status_code == 401
 
 
+def test_the_daemon_knows_exactly_three_identities():
+    assert auth.IDENTITIES == ("requester", "developer", "agent")
+    assert auth.BROWSER_IDENTITIES == ("requester", "developer")
+
+
 def test_a_valid_token_attaches_its_identity_to_the_request(root, client):
+    assert "agent" in auth.IDENTITIES
     for identity in auth.IDENTITIES:
         secret = auth.mint_token(root, identity)
 
@@ -154,3 +171,27 @@ def test_the_generated_docs_and_schema_are_not_served(client, root, path):
     assert client.get(path).status_code == 404
     secret = auth.mint_token(root, "developer")
     assert client.get(path, headers=_bearer(secret)).status_code == 404
+
+
+def test_a_mutation_by_the_agent_is_audited_as_agent(root, client):
+    secret = auth.mint_token(root, "agent")
+    headers = _bearer(secret)
+
+    def post(operation, **body):
+        response = client.post(wire.route_path(operation), json=body, headers=headers)
+        assert response.status_code == 200, response.text
+        return response.json()["result"]
+
+    post("create_project", name="Audited")
+    post("start_brainstorm", slug="audited")
+    post("add_decision", slug="audited", text="The agent decided")
+
+    records = [
+        json.loads(line)
+        for line in (root / routes.AUDIT_FILENAME).read_text().splitlines()
+    ]
+    decision = [r for r in records if r["operation"] == "add_decision"]
+    assert len(decision) == 1
+    assert decision[0]["identity"] == "agent"
+    assert decision[0]["project"] == "audited"
+    assert {r["identity"] for r in records} == {"agent"}

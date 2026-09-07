@@ -4,9 +4,11 @@ A browser reaches the daemon's pages through a session cookie, not a bearer
 token. Without a live session every page sends the browser to the sign-in
 page, and nothing else is served but that page and the assets it needs.
 Signing in as requester or developer with that identity's token sets the
-cookie; the pages then show who is signed in. The session lives only in the
-daemon process, so a restart signs every browser out; the bearer token never
-reaches the browser and the cookie never unlocks the API.
+cookie; the pages then show who is signed in. The agent identity has no
+browser: the sign-in page does not offer it and refuses its token. The
+session lives only in the daemon process, so a restart signs every browser
+out; the bearer token never reaches the browser and the cookie never unlocks
+the API.
 """
 
 import re
@@ -67,10 +69,17 @@ def test_the_sign_in_page_offers_both_identities_and_a_token_field(client):
     assert response.headers["content-type"].startswith("text/html")
     html = response.text
     assert f'action="{web.SIGNIN_PATH}"' in html and 'method="post"' in html
-    for identity in auth.IDENTITIES:
+    for identity in auth.BROWSER_IDENTITIES:
         assert f'value="{identity}"' in html
     assert 'name="token"' in html and 'type="password"' in html
     assert "signed in as" not in html
+
+
+def test_the_sign_in_page_does_not_offer_the_agent_identity(client):
+    html = client.get(web.SIGNIN_PATH).text
+
+    assert 'value="agent"' not in html
+    assert tuple(auth.BROWSER_IDENTITIES) == ("requester", "developer")
 
 
 def test_the_assets_directory_is_served_without_a_session(client):
@@ -96,7 +105,7 @@ def test_every_script_on_a_rendered_page_comes_from_the_assets_directory(client,
 # --- signing in -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("identity", auth.IDENTITIES)
+@pytest.mark.parametrize("identity", auth.BROWSER_IDENTITIES)
 def test_signing_in_sets_a_session_cookie_and_the_pages_show_the_identity(
     client, root, identity
 ):
@@ -111,7 +120,7 @@ def test_signing_in_sets_a_session_cookie_and_the_pages_show_the_identity(
 
     assert page.status_code == 200
     assert "signed in as" in page.text and identity in page.text
-    other = next(name for name in auth.IDENTITIES if name != identity)
+    other = next(name for name in auth.BROWSER_IDENTITIES if name != identity)
     assert other not in page.text
 
 
@@ -163,6 +172,19 @@ def test_an_identity_outside_the_two_does_not_sign_in(client, root):
 
     assert response.status_code == 400
     assert "set-cookie" not in response.headers
+
+
+def test_an_agent_token_does_not_sign_in_as_anyone(client, root):
+    token = auth.mint_token(root, "agent")
+
+    for identity in ("agent", "developer", "requester"):
+        response = client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token})
+
+        assert response.status_code == 400
+        assert "set-cookie" not in response.headers
+        assert web.SIGNIN_FAILED in response.text
+    assert client.get(web.HOME_PATH).status_code == 303
+    assert client.app.state.sessions == {}
 
 
 def test_a_form_missing_its_fields_does_not_sign_in(client):

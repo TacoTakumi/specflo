@@ -1,7 +1,8 @@
 """The daemon's web UI: server-rendered pages behind a browser session.
 
-A browser signs in as one of the two identities by presenting that identity's
-bearer token once, on the sign-in page. The daemon answers with a session
+A browser signs in as requester or developer by presenting that identity's
+bearer token once, on the sign-in page; the agent identity has no browser,
+so the page neither offers it nor accepts its token. The daemon answers with a session
 cookie holding a fresh secret of its own; the token itself never reaches the
 browser, and the cookie never unlocks the API, whose routes still read only
 the Authorization header. Sessions live in the daemon process, so a restart
@@ -34,7 +35,7 @@ from ..errors import ProjectNotFound, SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
-from .auth import IDENTITIES, identity_for
+from .auth import BROWSER_IDENTITIES, identity_for
 from .products import Products
 from .store import Product, WorkItem, open_store
 from .workitems import WorkItems
@@ -68,7 +69,7 @@ _templates.globals.update(
     home_path=HOME_PATH,
     signin_path=SIGNIN_PATH,
     assets_path=ASSETS_PATH,
-    identities=IDENTITIES,
+    identities=BROWSER_IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
 )
@@ -129,7 +130,10 @@ async def sign_in(request: Request) -> Response:
     form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
     identity = form.get("identity", [""])[0]
     token = form.get("token", [""])[0].strip()
-    if identity not in IDENTITIES or identity_for(request.app.state.root, token) != identity:
+    if (
+        identity not in BROWSER_IDENTITIES
+        or identity_for(request.app.state.root, token) != identity
+    ):
         return render(
             "signin.html", status_code=400, identity=None, error=SIGNIN_FAILED, chosen=identity
         )

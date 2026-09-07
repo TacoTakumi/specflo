@@ -1,10 +1,12 @@
-"""Bearer tokens bound to the two identities the daemon knows.
+"""Bearer tokens bound to the three identities the daemon knows.
 
-The daemon serves two fixed identities, requester and developer. A token is
-minted on the serve side for one of them and shown once; the daemon keeps
-only the token's hash, beside the state store under its root. A request
-resolves its bearer token to the identity it was minted for, so every route
-knows who is acting and a mutation can record it.
+The daemon serves three fixed identities: requester, developer, and agent.
+The first two are people at a browser or a CLI; agent is the pipeline agent
+the daemon drives, which acts over the API only. A token is minted on the
+serve side for one of them and shown once; the daemon keeps only the token's
+hash, beside the state store under its root. A request resolves its bearer
+token to the identity it was minted for, so every route knows who is acting
+and a mutation can record it.
 
 Plain files and the standard library only: minting a token needs no web
 stack, so it works wherever the daemon root does.
@@ -20,7 +22,10 @@ from pathlib import Path
 
 from ..errors import SpecfloError
 
-IDENTITIES = ("requester", "developer")
+IDENTITIES = ("requester", "developer", "agent")
+# The identities a browser can sign in as. The agent has no browser: the
+# sign-in page offers only these and refuses an agent token.
+BROWSER_IDENTITIES = ("requester", "developer")
 TOKENS_FILENAME = "tokens.json"
 
 
@@ -35,7 +40,7 @@ def hash_token(secret: str) -> str:
 
 
 def validate_identity(identity: str) -> str:
-    """``identity``, or a refusal naming the two the daemon knows."""
+    """``identity``, or a refusal naming the three the daemon knows."""
     if identity not in IDENTITIES:
         raise SpecfloError(
             f"Unknown identity {identity!r}: expected one of " + ", ".join(IDENTITIES) + "."
