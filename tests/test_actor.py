@@ -202,6 +202,10 @@ def test_daemon_appends_one_audit_record_per_mutation(daemon_root):
     # Derived writes render what the adds above already recorded: no record.
     _call(client, "write_checkpoint", slug="thing")
     _call(client, "write_index")
+    # A mutation that changed nothing is no user action either: starting a
+    # brainstorm that exists, or setting the execution mode it already has.
+    assert _call(client, "start_brainstorm", slug="thing")[1] is False
+    assert _call(client, "set_execution", slug="thing", mode="linear") == ("linear", False)
 
     records = [
         json.loads(line)

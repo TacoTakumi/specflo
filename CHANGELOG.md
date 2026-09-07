@@ -152,7 +152,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   cannot be read stays silent, as before.
 - **One audit record per user action.** The daemon no longer records the
   derived writes that follow a mutation (the checkpoint, the index, the
-  banners), so `audit.jsonl` holds one line for one `decision add`.
+  banners), so `audit.jsonl` holds one line for one `decision add`. A
+  mutation that changed nothing (a `brainstorm start` on a brainstorm that
+  exists, an `execution` set to the mode already recorded) leaves no
+  record either.
 - **A hosted project never shows the daemon's paths.** `status` prints
   `Remote:  <name>` where a local project prints `Dir:`, and its `--json`
   carries `dir: null`, `remote`, `checkpoint: null` and `checkpoint_locator`

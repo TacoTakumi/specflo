@@ -24,6 +24,7 @@ import datetime
 import json
 import logging
 import threading
+import typing
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
@@ -132,6 +133,19 @@ def _minted(result, kwargs: dict):
     return minted if isinstance(minted, str) else kwargs.get("task_id") or kwargs.get("milestone_id")
 
 
+def _changed(operation: wire.Operation, result) -> bool:
+    """Whether a mutation changed anything.
+
+    An operation that answers ``(value, flag)`` with a boolean flag reports
+    it itself: a brainstorm that was already started, or an execution mode
+    already set, is a no-op and no user action, so it leaves no record.
+    """
+    returns = operation.returns
+    if typing.get_origin(returns) is tuple and typing.get_args(returns)[1:] == (bool,):
+        return bool(result[1])
+    return True
+
+
 def _service(root: Path, identity: str) -> LocalProjectService:
     """The local service a request runs as: its identity as actor, its projects hosted."""
     return LocalProjectService(root, load_config(root), actor=identity, hosted=True)
@@ -169,7 +183,7 @@ def _handler(operation: wire.Operation):
                     status_code=500,
                     detail=f"{operation.name} failed on the daemon: {type(exc).__name__}.",
                 )
-            if operation.name in AUDITED_OPERATIONS:
+            if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
                 _audit(root, identity, operation.name, project, _minted(result, kwargs))
         return {"result": wire.encode(result)}
