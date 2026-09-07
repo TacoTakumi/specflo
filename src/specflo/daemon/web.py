@@ -21,9 +21,11 @@ uses is 4's, and a structural test scans for 2's.
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import secrets
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -31,6 +33,7 @@ from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from sse_starlette import EventSourceResponse
 
 from ..config import load_config
 from ..doc import ARTIFACTS
@@ -41,7 +44,7 @@ from ..workflow import PHASES
 from .auth import BROWSER_IDENTITIES, identity_for
 from . import seat
 from .products import Products
-from . import chat
+from . import chat, chatlog
 from .routes import audit, project_lock
 from .store import Product, WorkItem, open_store
 from .workitems import FULL_DEV_PATH, WorkItems
@@ -54,6 +57,12 @@ PROJECT_PATH = "/projects/{slug}"
 TAKE_PATH = "/projects/{slug}/take"
 START_AGENT_PATH = "/projects/{slug}/agent/start"
 CHAT_PATH = "/projects/{slug}/chat"
+CHAT_STREAM_PATH = "/projects/{slug}/chat/stream"
+# How often an open stream looks at the log for entries it has not sent.
+STREAM_POLL = 0.25
+# The stream's headers beyond the event-stream type: a proxy must not hold
+# events back, and nothing may cache them.
+STREAM_HEADERS = {"X-Accel-Buffering": "no", "Cache-Control": "no-cache"}
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
@@ -86,6 +95,8 @@ _templates.globals.update(
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
     start_agent_url=lambda slug: START_AGENT_PATH.format(slug=slug),
     chat_url=lambda slug: CHAT_PATH.format(slug=slug),
+    chat_stream_url=lambda slug, after: f"{CHAT_STREAM_PATH.format(slug=slug)}?after={after}",
+    line_label=lambda entry: entry.kind if entry.kind == chat.STATE_KIND else entry.author,
     start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
 )
 
@@ -313,7 +324,9 @@ class ProjectView:
     ``can_take`` says the viewer is the identity the open gate waits on, so
     the page offers the take. ``agent`` is what discovery says of the
     project's agent, asked on every render, for a project in the phase that
-    has one; None for any other, which has no agent section.
+    has one; None for any other, which has no agent section. ``transcript``
+    is the project's whole chat log as it stands, and ``last_entry_id`` the
+    id of its last entry, where the page's stream picks up.
     """
 
     project: Project
@@ -323,6 +336,11 @@ class ProjectView:
     gate: Gate | None = None
     can_take: bool = False
     agent: seat.Liveness | None = None
+    transcript: list[chatlog.Entry] = dataclasses.field(default_factory=list)
+
+    @property
+    def last_entry_id(self) -> int:
+        return self.transcript[-1].id if self.transcript else 0
 
 
 def has_agent(project: Project) -> bool:
@@ -361,6 +379,7 @@ def project_view(root: Path, slug: str, *, viewer: str | None = None) -> Project
         gate=gate,
         can_take=gate is not None and gate.role == viewer,
         agent=seat.liveness(root, slug) if has_agent(project) else None,
+        transcript=chatlog.open_log(root, slug).read_from(0),
         artifacts=[
             (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
             for name in ARTIFACTS
@@ -433,6 +452,66 @@ async def start_project(
     return RedirectResponse(PROJECT_PATH.format(slug=started.spawned.project.slug), status_code=303)
 
 
+def render_line(entry: chatlog.Entry) -> str:
+    """One transcript line: the fragment the page holds per entry and the stream sends per event."""
+    return _templates.get_template("chat_line.html").render(entry=entry)
+
+
+async def transcript_events(
+    log: chatlog.ChatLog, after_id: int, disconnected: Callable[[], Awaitable[bool]]
+) -> AsyncIterator[dict[str, str]]:
+    """Every entry above ``after_id`` as one event each, then each new one as it lands.
+
+    An event's id is the entry's, so a client that reconnects with the last
+    id it saw gets what it missed once, in order. The log's last id is a
+    cheap check that costs no read while nothing new has landed; the loop
+    ends when the client is gone.
+    """
+    sent = after_id
+    while not await disconnected():
+        if log.last_id > sent:
+            for entry in log.read_from(sent):
+                sent = entry.id
+                yield {"id": str(entry.id), "data": render_line(entry)}
+        await asyncio.sleep(STREAM_POLL)
+
+
+def _last_event_id(request: Request, after: int) -> int:
+    """Where a stream client wants to pick up: the header a reconnect sends, else the query."""
+    header = request.headers.get("last-event-id", "").strip()
+    if header:
+        try:
+            return int(header)
+        except ValueError:
+            return after
+    return after
+
+
+@pages.get(CHAT_STREAM_PATH, include_in_schema=False)
+async def chat_stream(
+    request: Request, slug: str, after: int = 0, identity: str = Depends(current_session)
+) -> Response:
+    """The project's transcript as server-sent events, from the id the client names.
+
+    A fresh page connects with the id of the last line it rendered, or 0
+    for the whole transcript; a reconnecting client sends the last event
+    id it saw, which wins over the query. The response carries the header
+    that stops a proxy buffering events, and the route is async, so a
+    connection held open through a long turn blocks no other request.
+    """
+    root = request.app.state.root
+    try:
+        validate_slug(slug)
+        LocalProjectService(root, load_config(root)).load_project(slug)
+    except SpecfloError:
+        return _missing(identity, f"No project {slug!r}.")
+    log = chatlog.open_log(root, slug)
+    events = transcript_events(log, _last_event_id(request, after), request.is_disconnected)
+    return EventSourceResponse(events, headers=STREAM_HEADERS)
+
+
+# The stream is declared before the page so its path is matched first: the
+# page takes the rest of the path and would otherwise swallow it as a slug.
 # The page takes the rest of the path, not one segment, so a slash smuggled
 # into the slug reaches the same slug check and the same 404 page as any
 # other string that is not a slug, instead of falling through to the API's

@@ -495,6 +495,7 @@ dependencies = [
 serve = [
     { name = "fastapi" },
     { name = "jinja2" },
+    { name = "sse-starlette" },
     { name = "uvicorn" },
 ]
 
@@ -515,6 +516,7 @@ requires-dist = [
     { name = "jinja2", marker = "extra == 'serve'", specifier = ">=3.1" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruamel-yaml", specifier = ">=0.18" },
+    { name = "sse-starlette", marker = "extra == 'serve'", specifier = ">=3.4" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.52.4" },
 ]
@@ -526,6 +528,19 @@ dev = [
     { name = "jinja2", specifier = ">=3.1" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "uvicorn", specifier = ">=0.52.4" },
+]
+
+[[package]]
+name = "sse-starlette"
+version = "3.4.11"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "starlette" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/2b/54/6767bb789b2f2fed6e0f953df949cd39dc263a384c1b65a95232598621d6/sse_starlette-3.4.11.tar.gz", hash = "sha256:1bae716c02f3e6f294be41ff333220692dae7c3cbab077c900f159676719dade", size = 34972, upload-time = "2026-09-05T12:11:04.607Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/98/6a/2ba3ed4a69babf3afdddf7d8314a48d87562c0a442206bbc2a1b50d5efc0/sse_starlette-3.4.11-py3-none-any.whl", hash = "sha256:c7b2244bdff016fe7f64e10075e89a3e6bbf899649cc89b0fe884b5545042453", size = 17122, upload-time = "2026-09-05T12:11:03.195Z" },
 ]
 
 [[package]]

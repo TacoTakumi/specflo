@@ -166,7 +166,9 @@ def test_wheel_requires_agentsquire_floor(dist):
 WEB_FILES = [
     "templates/base.html",
     "templates/signin.html",
+    "templates/chat_line.html",
     "assets/htmx.min.js",
+    "assets/hx-sse.js",
 ]
 
 
@@ -197,6 +199,14 @@ def test_the_serve_extra_declares_the_template_engine(dist):
     jinja = [req for req in _requires_dist(dist) if req.startswith("jinja2")]
     assert jinja, "jinja2 is not declared at all"
     assert all("extra ==" in req and "serve" in req for req in jinja), jinja
+
+
+def test_the_serve_extra_declares_the_event_stream_library(dist):
+    # The chat page follows the transcript over server-sent events, which
+    # the daemon frames with sse-starlette; it rides with serve like jinja2.
+    sse = [req for req in _requires_dist(dist) if req.startswith("sse-starlette")]
+    assert sse, "sse-starlette is not declared at all"
+    assert all("extra ==" in req and "serve" in req for req in sse), sse
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)

@@ -60,6 +60,16 @@
 </section>
 {% endif %}
 
+{% if view.agent is not none or view.transcript %}
+<section id="transcript-section">
+  <h2>Transcript</h2>
+  <div id="transcript" class="transcript"{% if view.agent is not none %} hx-sse:connect="{{ chat_stream_url(view.project.slug, view.last_entry_id) }}" hx-swap="beforeend"{% endif %}>
+    {% for entry in view.transcript %}{% include "chat_line.html" %}
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 {% for name, text in view.artifacts %}
 <section id="artifact-{{ name }}">
   <h2>{{ name }}</h2>

@@ -54,6 +54,7 @@ serve = [
     "uvicorn>=0.52.4",
     # The web UI's templates; a daemon serves pages, so it rides with serve.
     "jinja2>=3.1",
+    "sse-starlette>=3.4",
 ]
 
 [build-system]
