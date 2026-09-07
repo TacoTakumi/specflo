@@ -287,16 +287,30 @@ def test_local_service_keeps_every_write_under_its_root(local, tmp_path):
 # members the CLI may still reach in them: constants, types, and pure
 # renderers that never touch a file. Everything else goes through the
 # service.
+# The modules that read and write project artifacts. A command reaches one of
+# them only for the pure members listed here (names, constants, renderers);
+# everything else goes through the facade. A module in the set with no entry
+# allows nothing, so an import of it under any name is caught the moment a
+# member is used.
+_ARTIFACT_MODULES = {
+    "specflo.projects", "specflo.brainstorm", "specflo.spec", "specflo.plan", "specflo.review",
+    "specflo.checkpoint", "specflo.status", "specflo.doc", "specflo.index",
+}
 _ARTIFACT_MODULE_ALLOWLIST = {
-    "projects": {"slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS"},
-    "brainstorm": {"BRAINSTORM_FILENAME"},
-    "spec": {"SPEC_FILENAME"},
-    "plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
-    "review_module": set(),
-    "checkpoint": {"render_checkpoint", "hosted_view"},
-    "status_view": {"render_status", "hosted_view"},
-    "doc_module": {"ARTIFACTS", "PROSE_ARTIFACTS", "artifact_names"},
-    "index_module": set(),
+    "specflo.projects": {"slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS"},
+    "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
+    "specflo.spec": {"SPEC_FILENAME"},
+    "specflo.plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
+    "specflo.checkpoint": {"render_checkpoint", "hosted_view"},
+    "specflo.status": {"render_status", "hosted_view"},
+    "specflo.doc": {"ARTIFACTS", "PROSE_ARTIFACTS", "artifact_names"},
+}
+# The artifact modules cli.py imports today, whatever it calls them. A new one
+# is a review point: add it here and give it an allowlist entry, or route the
+# need through the facade.
+_CLI_ARTIFACT_IMPORTS = {
+    "specflo.projects", "specflo.brainstorm", "specflo.spec", "specflo.plan",
+    "specflo.checkpoint", "specflo.status", "specflo.doc",
 }
 
 # File primitives a command may not call on anything: an artifact path is
@@ -311,6 +325,17 @@ def _cli_tree():
     from specflo import cli
 
     return ast.parse(inspect.getsource(cli)), cli
+
+
+def _bound_modules(namespace: dict) -> dict[str, str]:
+    """Each name in ``namespace`` bound to a module, mapped to that module's name.
+
+    The scan keys its allowlist by module, not by the name a source imports
+    it under, so an alias is no way around it.
+    """
+    import inspect
+
+    return {name: obj.__name__ for name, obj in namespace.items() if inspect.ismodule(obj)}
 
 
 def _locally_bound(fn) -> set[str]:
@@ -329,10 +354,11 @@ def _locally_bound(fn) -> set[str]:
     return bound
 
 
-def test_structural_cli_reaches_artifact_modules_only_for_pure_members():
+def _artifact_module_offenders(tree, modules: dict[str, str]) -> list[str]:
+    """Every ``name.member`` in ``tree`` where ``name`` is bound (per ``modules``)
+    to an artifact module and ``member`` is not one of its pure members."""
     import ast
 
-    tree, _ = _cli_tree()
     offenders = []
     for scope in ast.walk(tree):
         if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -351,10 +377,49 @@ def test_structural_cli_reaches_artifact_modules_only_for_pure_members():
             base = node.value.id
             if base in shadowed:
                 continue
-            allowed = _ARTIFACT_MODULE_ALLOWLIST.get(base)
-            if allowed is not None and node.attr not in allowed:
+            module = modules.get(base)
+            if module not in _ARTIFACT_MODULES:
+                continue
+            if node.attr not in _ARTIFACT_MODULE_ALLOWLIST.get(module, set()):
                 offenders.append(f"{base}.{node.attr} (line {node.lineno})")
-    assert offenders == []
+    return offenders
+
+
+def test_structural_cli_reaches_artifact_modules_only_for_pure_members():
+    tree, cli = _cli_tree()
+    modules = _bound_modules(vars(cli))
+
+    assert set(modules.values()) & _ARTIFACT_MODULES == _CLI_ARTIFACT_IMPORTS
+    assert _artifact_module_offenders(tree, modules) == []
+
+
+@pytest.mark.parametrize(
+    "source, expected",
+    [
+        # an artifact module imported under its own name, with no allowlist entry
+        ("from specflo import review\n\ndef f(slug):\n    return review.start_round(slug)\n",
+         ["review.start_round (line 4)"]),
+        # the same module under an alias: the alias is no way around the scan
+        ("from specflo import index as ledger\n\ndef f(root):\n    return ledger.write_index(root)\n",
+         ["ledger.write_index (line 4)"]),
+        # a module with an entry, used past it
+        ("from specflo import projects\n\ndef f(root, cfg, slug):\n    return projects.load_project(root, cfg, slug)\n",
+         ["projects.load_project (line 4)"]),
+        # a pure member, and a module that is not an artifact module
+        ("from specflo import projects, config\n\ndef f(name, root):\n"
+         "    return projects.slugify(name), config.load_config(root)\n",
+         []),
+        # a local that shadows the module name is not the module
+        ("from specflo import spec\n\ndef f(spec):\n    return spec.start_spec\n", []),
+    ],
+)
+def test_structural_scan_catches_a_planted_offender(source, expected):
+    import ast
+
+    namespace = {}
+    exec(source, namespace)
+
+    assert _artifact_module_offenders(ast.parse(source), _bound_modules(namespace)) == expected
 
 
 def test_structural_cli_never_touches_a_file_itself():
