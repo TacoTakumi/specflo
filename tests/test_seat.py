@@ -286,6 +286,29 @@ def test_a_start_whose_socket_never_connects_fails_and_records_nothing(root, age
     assert not any(item["name"] == seat.agent_name(slug) and item["alive"] for item in listed)
 
 
+def test_a_start_the_cli_reports_as_failed_is_followed_by_a_stop(root, monkeypatch):
+    # The agent CLI's rpc start exits after its readiness deadline without
+    # killing the host it spawned; the seat stops the name so nothing is
+    # orphaned and the next start is not refused.
+    slug = scaffolded(root)
+    calls = []
+
+    def fake_cli(*args, cwd=None, timeout):
+        calls.append(args)
+        if args[0] == "start":
+            return subprocess.CompletedProcess(args, 11, stdout="", stderr="socket never answered")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(seat, "_agent_cli", fake_cli)
+
+    with pytest.raises(seat.AgentStartError, match="socket never answered"):
+        seat.start_agent(root, slug)
+
+    assert [call[0] for call in calls] == ["start", "stop"]
+    assert calls[1][1] == seat.agent_name(slug)
+    assert seat.agent_mapping(root) == {}
+
+
 def test_the_rpc_switch_selects_the_rpc_transport(root, agent_rig):
     slug = scaffolded(root)
     config.write_value(root, config.field_for("agent_transport"), "rpc")

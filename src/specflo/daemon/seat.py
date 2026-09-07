@@ -338,6 +338,9 @@ def start_agent(
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} did not finish in {deadline:.0f}s.") from exc
     if started.returncode != 0:
         detail = (started.stderr or started.stdout).strip()
+        # The CLI may have brought up a host that never answered in time
+        # and left it running; it goes, so the name is free for the next start.
+        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
     probe = _probe(name)
     if not probe.alive:
