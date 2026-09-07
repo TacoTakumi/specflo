@@ -86,6 +86,10 @@ class ProjectService(Protocol):
         """Set the execution mode; ``(mode, changed)``."""
         ...
 
+    def open_gate(self, slug: str, role: str, *, note: str = "") -> Project:
+        """Open a gate for ``role`` as the service's identity; refused while one is open."""
+        ...
+
     def has_artifact(self, slug: str, name: str) -> bool:
         """Whether the project has created the named artifact yet."""
         ...

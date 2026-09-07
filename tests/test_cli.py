@@ -4652,3 +4652,74 @@ def test_task_done_reports_a_checkpoint_that_could_not_be_written(tmp_path, monk
 
     _assert_reported_not_failed(done, "T-01 -> done")
     assert "T-02" in done.stdout
+
+
+# --- the gate --------------------------------------------------------------
+
+
+def _new_active_project(cwd):
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert runner.invoke(app, ["new", "Thing"]).exit_code == 0
+    return cwd / "docs" / "projects" / "thing" / "project.md"
+
+
+def test_gate_open_records_the_role_note_and_time_on_the_active_project(cwd):
+    project_file = _new_active_project(cwd)
+
+    result = runner.invoke(app, ["gate", "open", "developer", "--note", "Open points: the name"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Opened a gate for developer on 'thing'. Note: Open points: the name.\n"
+    front = yaml.safe_load(project_file.read_text().split("---")[1])
+    assert front["status"] == "active"
+    assert front["gate"]["role"] == "developer"
+    assert front["gate"]["note"] == "Open points: the name"
+    assert front["gate"]["opened_at"]
+    assert "opened_by" not in front["gate"]
+    assert "taken_by" not in front["gate"]
+
+
+def test_gate_open_json_reports_the_record(cwd):
+    _new_active_project(cwd)
+
+    result = runner.invoke(app, ["gate", "open", "requester", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["slug"] == "thing"
+    assert payload["gate"]["role"] == "requester"
+    assert payload["gate"]["note"] == ""
+    assert payload["gate"]["opened_by"] == ""
+    assert payload["gate"]["taken_by"] == ""
+    assert payload["gate"]["opened_at"]
+
+
+def test_a_second_gate_open_is_refused_naming_the_open_gate(cwd):
+    project_file = _new_active_project(cwd)
+    assert runner.invoke(app, ["gate", "open", "developer", "--note", "first"]).exit_code == 0
+    before = project_file.read_text()
+
+    result = runner.invoke(app, ["gate", "open", "requester", "--note", "second"])
+
+    assert result.exit_code == 1
+    assert "already open" in result.stderr and "developer" in result.stderr
+    assert result.stdout == ""
+    assert project_file.read_text() == before
+
+
+def test_gate_open_refuses_a_role_it_does_not_know(cwd):
+    project_file = _new_active_project(cwd)
+
+    result = runner.invoke(app, ["gate", "open", "admin"])
+
+    assert result.exit_code == 1
+    assert "requester, developer" in result.stderr
+    assert "gate" not in project_file.read_text()
+
+
+def test_gate_open_needs_an_active_project(cwd):
+    assert runner.invoke(app, ["init"]).exit_code == 0
+
+    result = runner.invoke(app, ["gate", "open", "developer"])
+
+    assert result.exit_code == 1

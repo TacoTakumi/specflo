@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import os
 import sys
@@ -186,6 +187,9 @@ app.add_typer(pool_app, name="pool")
 
 review_app = typer.Typer(help="Record end-of-execute review rounds.")
 app.add_typer(review_app, name="review")
+
+gate_app = typer.Typer(help="Hand the active project to a role and record who takes it.")
+app.add_typer(gate_app, name="gate")
 
 doc_app = typer.Typer(help="Read the active project's artifacts by name.")
 app.add_typer(doc_app, name="doc")
@@ -1211,6 +1215,43 @@ def decision_add(
         message = f"Recorded {decision.id}."
         if decision.supersedes:
             message += f" Supersedes {decision.supersedes}."
+        typer.echo(message)
+
+
+@gate_app.command(
+    "open",
+    epilog='Example: specflo gate open developer --note "Open points: the name, pricing"',
+)
+def gate_open(
+    role: str = typer.Argument(
+        ..., metavar="<requester|developer>", help="The role the project now waits on."
+    ),
+    note: str = typer.Option(
+        "", "--note", help="What the taker should know: the open points (one line)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Open a gate on the active project: it waits on <role> until someone takes it.
+
+    The gate records the role, who opened it, when, and the note; the
+    project's status stays active. Only one gate is open at a time.
+    """
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    svc = _service(root, cfg, slug)
+    try:
+        project = svc.open_gate(slug, role, note=note)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    gate = project.gate
+    if json_output:
+        typer.echo(json.dumps({"slug": project.slug, "gate": dataclasses.asdict(gate)}))
+    else:
+        message = f"Opened a gate for {gate.role} on '{project.slug}'."
+        if gate.note:
+            message += f" Note: {gate.note}."
         typer.echo(message)
 
 

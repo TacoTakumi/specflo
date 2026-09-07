@@ -59,6 +59,8 @@ class Gate:
 
 # The gate's front-matter keys, in the order they are written.
 GATE_FIELDS = ("role", "opened_by", "opened_at", "note", "taken_by", "taken_at")
+# The roles a gate can wait on: the two human seats.
+GATE_ROLES = ("requester", "developer")
 
 
 @dataclass
@@ -278,6 +280,50 @@ def complete_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     project.status = COMPLETE_STATUS
     if not project.completed:
         project.completed = datetime.date.today().isoformat()
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
+def validate_role(role: str) -> str:
+    """``role``, or a refusal naming the roles a gate can wait on."""
+    if role not in GATE_ROLES:
+        raise SpecfloError(
+            f"Unknown role {role!r}: expected one of " + ", ".join(GATE_ROLES) + "."
+        )
+    return role
+
+
+def _timestamp() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def open_gate(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    role: str,
+    *,
+    opened_by: str = "",
+    note: str = "",
+    opened_at: str | None = None,
+) -> Project:
+    """Open a gate for ``role`` on the project, persisting and returning it.
+
+    ``opened_by`` is the identity opening it, empty where the caller has none.
+    A gate that was taken is history and a new one replaces it; a gate still
+    open is refused, naming its role, and the file is left as it was. The
+    project's status is untouched.
+    """
+    role = validate_role(role)
+    project = load_project(root, cfg, slug)
+    if project.gate is not None and project.gate.is_open:
+        raise SpecfloError(
+            f"A gate for {project.gate.role} is already open on {slug!r}; "
+            "take it before opening another."
+        )
+    project.gate = Gate(
+        role=role, opened_by=opened_by, opened_at=opened_at or _timestamp(), note=note
+    )
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 

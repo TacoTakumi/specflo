@@ -99,6 +99,11 @@ class LocalProjectService:
     def set_execution(self, slug: str, mode: str) -> tuple[str, bool]:
         return projects.set_execution(self.root, self.cfg, slug, mode)
 
+    def open_gate(self, slug: str, role: str, *, note: str = "") -> Project:
+        return projects.open_gate(
+            self.root, self.cfg, slug, role, opened_by=self.actor or "", note=note
+        )
+
     def has_artifact(self, slug: str, name: str) -> bool:
         return doc.artifact_path(self.root, self.cfg, slug, name).is_file()
 
