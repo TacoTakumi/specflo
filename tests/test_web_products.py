@@ -149,3 +149,15 @@ def test_the_products_page_needs_a_session(root):
 
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+def test_a_directory_that_is_not_a_project_does_not_take_the_page_down(client, root):
+    seed(root)
+    broken = root / daemon.PROJECTS_DIRNAME / "broken"
+    broken.mkdir(parents=True)
+    (broken / "project.md").write_text("not a project\n")
+
+    response = client.get(web.HOME_PATH)
+
+    assert response.status_code == 200
+    assert rows(response.text)["thing"] == ["Thing", "Ship the thing.", "3", "1"]

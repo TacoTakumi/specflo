@@ -184,3 +184,35 @@ def test_the_project_page_needs_a_session(root):
 
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+def test_an_unreadable_project_is_a_500_page_not_a_traceback(client, root):
+    seed(root)
+    broken = root / daemon.PROJECTS_DIRNAME / "broken"
+    broken.mkdir(parents=True)
+    (broken / "project.md").write_text("not a project\n")
+
+    response = page(client, "broken")
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("text/html")
+    assert 'class="brand"' in response.text
+    assert "Project 'broken'" in unescape(response.text)
+    assert "Traceback" not in response.text
+    assert page(client, "nothing").status_code == 404
+
+
+def test_a_refusal_while_rendering_any_page_is_a_500_page(client, root, monkeypatch):
+    from specflo.errors import SpecfloError
+
+    def refuse(root):
+        raise SpecfloError("the store is unreadable")
+
+    monkeypatch.setattr(web, "product_cards", refuse)
+
+    response = client.get(web.HOME_PATH)
+
+    assert response.status_code == 500
+    assert response.headers["content-type"].startswith("text/html")
+    assert "the store is unreadable" in response.text
+    assert "signed in as" in response.text

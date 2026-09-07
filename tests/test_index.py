@@ -10,7 +10,7 @@ from typer.testing import CliRunner
 
 from specflo import config, projects
 from specflo.cli import app
-from specflo.index import INDEX_FILENAME, index_path, write_index
+from specflo.index import INDEX_FILENAME, index_path, rule_line, write_index
 
 runner = CliRunner()
 
@@ -435,3 +435,13 @@ def test_backfill_prompt_absent_on_a_rerun(tmp_path, monkeypatch):
 
     out = runner.invoke(app, ["index"]).output
     assert "Offer the user" not in out
+
+
+def test_the_rule_line_survives_a_directory_that_is_not_a_project(root, cfg):
+    projects.create_project(root, cfg, "Done", created="2026-01-02", summary="D.")
+    projects.complete_project(root, cfg, "done")
+    broken = root / "docs" / "projects" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "project.md").write_text("not a project\n")
+
+    assert rule_line(root, cfg) is not None

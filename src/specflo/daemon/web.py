@@ -30,7 +30,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from ..config import load_config
 from ..doc import ARTIFACTS
-from ..errors import SpecfloError
+from ..errors import ProjectNotFound, SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Project
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
@@ -262,11 +262,15 @@ class ProjectView:
 
 
 def project_view(root: Path, slug: str) -> ProjectView | None:
-    """The page's view of ``slug``, or None for a project the daemon does not hold."""
+    """The page's view of ``slug``, or None for a project the daemon does not hold.
+
+    A project the daemon holds but cannot read raises: that is a fault of the
+    daemon's copy, not a missing page.
+    """
     service = LocalProjectService(root, load_config(root))
     try:
         project = service.load_project(slug)
-    except SpecfloError:
+    except ProjectNotFound:
         return None
     product = None
     if project.work_item is not None:
@@ -326,10 +330,20 @@ def _missing(identity: str, message: str) -> HTMLResponse:
     return render("missing.html", status_code=404, identity=identity, message=message)
 
 
+def _to_error_page(request: Request, exc: SpecfloError) -> HTMLResponse:
+    """A refusal raised while a page rendered: a 500 as a page of the UI, never a traceback."""
+    try:
+        identity = current_session(request)
+    except SignInRequired:
+        identity = None
+    return render("error.html", status_code=500, identity=identity, message=str(exc))
+
+
 def install(app: FastAPI) -> None:
     """Add the web UI to ``app``: its pages, the sign-in routes, and the assets."""
     app.state.sessions = {}
     app.add_exception_handler(SignInRequired, _to_sign_in)
+    app.add_exception_handler(SpecfloError, _to_error_page)
     app.include_router(front_door)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")

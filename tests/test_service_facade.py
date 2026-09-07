@@ -232,10 +232,12 @@ def _drive_every_operation(service, projects_root):
     # the project as a set of files, and a second project made from them
     files = svc.export_project(slug)
     assert set(files) >= {"project.md", "brainstorm.md", "spec.md", "plan.md", "checkpoint.md", "review-1.md"}
-    assert svc.import_project("copy", files) == {
-        name: hashlib.sha256(text.encode()).hexdigest() for name, text in files.items()
+    # an import is refused unless the project file names the slug it lands under
+    copied = {**files, "project.md": files["project.md"].replace(f"slug: {slug}", "slug: copy", 1)}
+    assert svc.import_project("copy", copied) == {
+        name: hashlib.sha256(text.encode()).hexdigest() for name, text in copied.items()
     }
-    assert svc.show_document("copy", "spec") == files["spec.md"]
+    assert svc.show_document("copy", "spec") == copied["spec.md"]
 
     assert svc.called == set(operations())
 

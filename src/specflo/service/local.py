@@ -180,6 +180,14 @@ class LocalProjectService:
             raise SpecfloError(
                 f"A project needs its {projects.PROJECT_FILENAME}; none was given."
             )
+        # The project file is read before anything lands on disk: a file that
+        # is not a project, or one naming another slug, would otherwise sit
+        # under the root as a directory every listing has to step around.
+        named = projects._parse_frontmatter(files[projects.PROJECT_FILENAME])["slug"]
+        if named != slug:
+            raise SpecfloError(
+                f"Cannot import {slug!r}: its {projects.PROJECT_FILENAME} names {named!r}."
+            )
         staging = directory.with_name(f".{directory.name}.importing")
         if staging.exists():
             shutil.rmtree(staging)

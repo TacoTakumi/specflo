@@ -15,7 +15,7 @@ from pathlib import Path
 import yaml
 
 from .config import SpecfloConfig, save_config
-from .errors import SpecfloError
+from .errors import ProjectNotFound, SpecfloError
 from .locking import lock_path_for, locked
 from .workflow import next_phase, resolve_reopen_target
 
@@ -127,8 +127,11 @@ def create_project(
 def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     path = project_dir(root, cfg, slug) / PROJECT_FILENAME
     if not path.is_file():
-        raise SpecfloError(f"No project {slug!r}.")
-    fields = _parse_frontmatter(path.read_text())
+        raise ProjectNotFound(f"No project {slug!r}.")
+    try:
+        fields = _parse_frontmatter(path.read_text())
+    except SpecfloError as exc:
+        raise SpecfloError(f"Project {slug!r} cannot be read. {exc}") from exc
     return Project(
         name=fields["name"],
         slug=fields["slug"],
@@ -150,16 +153,23 @@ def list_projects(root: Path, cfg: SpecfloConfig) -> list[Project]:
 
     Directories without a ``project.md`` are skipped, so stray folders under the
     projects dir don't break the listing; so are dot-directories, which a slug
-    can never name (an import stages its files in one).
+    can never name (an import stages its files in one), and directories whose
+    ``project.md`` does not parse - one damaged file must not take every
+    listing, index, and page down with it. Loading such a project by name
+    still reports the fault.
     """
     base = root / cfg.projects_dir
     if not base.is_dir():
         return []
-    return [
-        load_project(root, cfg, entry.name)
-        for entry in sorted(base.iterdir())
-        if not entry.name.startswith(".") and (entry / PROJECT_FILENAME).is_file()
-    ]
+    listed = []
+    for entry in sorted(base.iterdir()):
+        if entry.name.startswith(".") or not (entry / PROJECT_FILENAME).is_file():
+            continue
+        try:
+            listed.append(load_project(root, cfg, entry.name))
+        except SpecfloError:
+            continue
+    return listed
 
 
 def switch_project(root: Path, cfg: SpecfloConfig, name: str) -> Project:
@@ -339,8 +349,27 @@ def _render(project: Project) -> str:
     return f"---\n{frontmatter}\n---\n\n# {project.name}\n\n_(phase: {project.phase})_\n"
 
 
+# The fields every project file carries; a file without one of them is not a
+# project, whatever else it holds.
+REQUIRED_FIELDS = ("name", "slug", "created", "phase", "status")
+
+
 def _parse_frontmatter(text: str) -> dict:
+    """The YAML front matter of a project file as a mapping.
+
+    Refuses, naming the fault, text with no front matter, front matter that is
+    not valid YAML or not a mapping, and a mapping missing a required field.
+    """
     parts = text.split("---", 2)
     if len(parts) < 3 or parts[0].strip():
         raise SpecfloError("Malformed project file: missing YAML frontmatter.")
-    return yaml.safe_load(parts[1]) or {}
+    try:
+        fields = yaml.safe_load(parts[1])
+    except yaml.YAMLError as exc:
+        raise SpecfloError("Malformed project file: the frontmatter is not valid YAML.") from exc
+    if not isinstance(fields, dict):
+        raise SpecfloError("Malformed project file: the frontmatter is not a mapping.")
+    missing = [key for key in REQUIRED_FIELDS if fields.get(key) is None]
+    if missing:
+        raise SpecfloError(f"Malformed project file: missing {', '.join(missing)}.")
+    return fields

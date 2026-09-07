@@ -236,7 +236,11 @@ def test_a_failed_import_leaves_nothing_behind_and_the_retry_is_not_refused(tmp_
 
     config.init_config(tmp_path)
     service = LocalProjectService(tmp_path, config.load_config(tmp_path))
-    files = {"project.md": "---\nname: Thing\nslug: thing\n---\n", "brainstorm.md": "# b\n", "spec.md": "# s\n"}
+    files = {
+        "project.md": "---\nname: Thing\nslug: thing\ncreated: 2026-09-06\nphase: brainstorm\nstatus: active\n---\n",
+        "brainstorm.md": "# b\n",
+        "spec.md": "# s\n",
+    }
     real = _Path.write_bytes
     written = []
 
@@ -339,3 +343,33 @@ def test_import_refuses_a_slug_that_is_not_one(tmp_path):
 
     assert sorted(p.name for p in tmp_path.parent.iterdir()) == outside_before
     assert not list((tmp_path / "docs" / "projects").iterdir())
+
+
+def test_import_refuses_a_file_that_is_not_a_project_and_a_slug_that_differs(tmp_path):
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    real = _local_project(tmp_path, "Thing")
+    files = service.export_project("thing")
+
+    with pytest.raises(SpecfloError, match="Malformed project file"):
+        service.import_project("broken", {"project.md": "not a project\n"})
+    with pytest.raises(SpecfloError, match="Malformed project file"):
+        service.import_project("broken", {"project.md": "---\nname: [unclosed\n---\n"})
+    with pytest.raises(SpecfloError, match="'other'.*'thing'"):
+        service.import_project("other", files)
+
+    projects_dir = real.path.parent
+    assert sorted(p.name for p in projects_dir.iterdir()) == ["thing"]
+
+
+def test_a_bad_directory_beside_a_healthy_project_wedges_nothing(tmp_path):
+    config.init_config(tmp_path)
+    service = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    healthy = _local_project(tmp_path, "Thing")
+    broken = healthy.path.parent / "broken"
+    broken.mkdir()
+    (broken / "project.md").write_text("not a project\n")
+
+    assert [p.slug for p in service.list_projects()] == ["thing"]
+    assert service.write_checkpoint("thing").is_file()
+    assert service.advance_project("thing").phase == "spec"

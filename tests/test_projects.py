@@ -420,3 +420,32 @@ def test_validate_slug_accepts_what_slugify_makes_and_nothing_else():
     for slug in ("../escape", "a/b", ".hidden", "Upper", "two--hyphens", "-lead", "trail-", "", "a b"):
         with pytest.raises(SpecfloError, match="slug"):
             projects.validate_slug(slug)
+
+
+BAD_PROJECT_FILES = {
+    "no front matter": "not a project\n",
+    "invalid yaml": "---\nname: [unclosed\n---\n",
+    "not a mapping": "---\njust a string\n---\n",
+    "missing fields": "---\nname: Thing\n---\n",
+}
+
+
+@pytest.mark.parametrize("text", list(BAD_PROJECT_FILES.values()), ids=list(BAD_PROJECT_FILES))
+def test_load_project_refuses_an_unreadable_project_file_by_name(root, cfg, text):
+    directory = root / "docs" / "projects" / "broken"
+    directory.mkdir(parents=True)
+    (directory / "project.md").write_text(text)
+
+    with pytest.raises(SpecfloError, match="Project 'broken'"):
+        projects.load_project(root, cfg, "broken")
+
+
+def test_list_projects_skips_a_directory_whose_project_file_does_not_parse(root, cfg):
+    projects.create_project(root, cfg, "Healthy", created="2026-01-02")
+    broken = root / "docs" / "projects" / "broken"
+    broken.mkdir(parents=True)
+    (broken / "project.md").write_text("not a project\n")
+
+    listed = projects.list_projects(root, cfg)
+
+    assert [p.slug for p in listed] == ["healthy"]

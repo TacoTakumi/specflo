@@ -7,3 +7,11 @@ class SpecfloError(Exception):
     The CLI catches these, prints the message, and exits non-zero — so the
     message should read as guidance to the user, not a stack trace.
     """
+
+
+class ProjectNotFound(SpecfloError):
+    """No project of that name is held here.
+
+    A ``SpecfloError`` like any other to the CLI and the daemon's API; the
+    web pages tell it apart from a project that is held but cannot be read.
+    """
