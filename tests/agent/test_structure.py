@@ -20,6 +20,11 @@ STUB = Path(__file__).parent / "stub_pi.py"
 # The composition point: the one pipeline-side file allowed to import the
 # agent subsystem (it only registers the typer group and bridges config).
 COMPOSITION_FILES = {SRC / "cli.py"}
+# The daemon may import the agent client, and only the client, to ask a
+# project's agent whether it is alive; the agent subsystem never imports
+# the daemon back.
+DAEMON_DIR = SRC / "daemon"
+DAEMON_ALLOWED_PREFIX = "specflo.agent.client"
 
 # Controller-side sentinel conventions the HOST must never know about.
 SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
@@ -74,6 +79,8 @@ def test_pipeline_modules_import_no_agent_code():
         offending = {
             n for n in specflo_modules(path) if n.startswith("specflo.agent")
         }
+        if DAEMON_DIR in path.parents:
+            offending = {n for n in offending if not n.startswith(DAEMON_ALLOWED_PREFIX)}
         assert not offending, f"{path} imports the agent subsystem: {sorted(offending)}"
 
 

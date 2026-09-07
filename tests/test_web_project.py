@@ -8,15 +8,19 @@ by the session secret; everything else is a read.
 """
 
 import json
-
+import os
 import re
+import subprocess
+import sys
 from html import unescape
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from specflo import config, daemon
-from specflo.daemon import auth, routes, web
+from specflo.agent.statefiles import ENV_STATE_DIR
+from specflo.daemon import auth, routes, seat, web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
@@ -424,3 +428,155 @@ def test_a_slug_that_is_not_one_is_a_404_page_before_any_file_is_read(client, ro
     assert response.headers["content-type"].startswith("text/html")
     assert "No project" in unescape(response.text)
     assert loaded == []
+
+
+# --- the agent and its start control ------------------------------------------
+
+STUB_PI = Path(__file__).parent / "agent" / "stub_pi.py"
+
+
+def agent_cli(*args):
+    return subprocess.run(
+        [sys.executable, "-c", "import sys; from specflo.cli import main; sys.exit(main())", "agent", *args],
+        capture_output=True, text=True, env=dict(os.environ), timeout=30,
+    )
+
+
+@pytest.fixture
+def rpc_rig(root, tmp_path, monkeypatch):
+    """An isolated agent state dir, the rpc transport on the root, and a stub pi."""
+    monkeypatch.setenv(ENV_STATE_DIR, str(tmp_path / "state"))
+    for key in ("SPECFLO_AGENT_SERVE", "SPECFLO_AGENT_NAME", "SPECFLO_AGENT_MANAGED", "SPECFLO_AGENT_START_TIMEOUT"):
+        monkeypatch.delenv(key, raising=False)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    scenario = tmp_path / "scenario.json"
+    scenario.write_text(json.dumps({"reply": "ok"}), encoding="utf-8")
+    monkeypatch.setattr(seat, "DEFAULT_PI_CMD", f"{sys.executable} {STUB_PI} {scenario}")
+    yield
+    for name in seat.agent_mapping(root).values():
+        agent_cli("stop", name)
+
+
+def brainstorming(root):
+    """Product ``thing`` whose one work item spawned ``login-fix``, still in brainstorm."""
+    with store_module.open_store(root) as store:
+        Products(store).add("Thing", slug="thing", today="2026-09-06")
+        WorkItems(store).add("thing", "Fix the login", today="2026-09-06")
+        WorkItems(store).spawn(1, service(root), name="Login fix")
+    return "login-fix"
+
+
+def agent_section(html):
+    match = re.search(r'<section id="agent">(.*?)</section>', html, re.S)
+    return unescape(re.sub(r"<[^>]+>", " ", match.group(1))) if match else None
+
+
+def start_agent_form(html):
+    """The start-agent form, or None: ``(action, hidden fields)``."""
+    match = re.search(r'<form[^>]*id="start-agent"[^>]*>(.*?)</form>', html, re.S)
+    if not match:
+        return None
+    action = re.search(r'action="([^"]*)"', match.group(0)).group(1)
+    fields = dict(re.findall(r'<input type="hidden" name="([^"]+)" value="([^"]*)"', match.group(1)))
+    return action, fields
+
+
+def start_agent_url(slug):
+    return web.START_AGENT_PATH.format(slug=slug)
+
+
+def test_a_brainstorm_project_with_no_agent_on_record_offers_the_start_control(client, root):
+    slug = brainstorming(root)
+
+    html = page(client, slug).text
+
+    assert seat.liveness(root, slug) == seat.Liveness(name=None, alive=False, state=seat.MISSING_STATE)
+    assert "no agent yet" in agent_section(html)
+    action, fields = start_agent_form(html)
+    assert action == start_agent_url(slug)
+    assert fields == {"session": client.cookies[web.SESSION_COOKIE]}
+    assert "Start agent" in html
+
+
+def test_a_project_past_brainstorm_has_no_agent_section_and_refuses_the_start(client, root):
+    slug = seed(root)
+
+    assert agent_section(page(client, slug).text) is None
+    response = client.post(start_agent_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 409
+    assert "no agent to start" in response.text
+    assert seat.agent_mapping(root) == {}
+
+
+def test_the_control_starts_the_agent_and_the_page_then_shows_it_serving(client, root, rpc_rig):
+    slug = brainstorming(root)
+
+    response = client.post(start_agent_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.PROJECT_PATH.format(slug=slug)
+    name = seat.agent_name(slug)
+    assert seat.agent_mapping(root) == {slug: name}
+    assert config.config_path(seat.seat_dir(root, slug)).is_file()
+    html = page(client, slug).text
+    assert start_agent_form(html) is None
+    assert f"{name} is idle." in agent_section(html)
+    last = audit_records(root)[-1]
+    assert (last["identity"], last["operation"], last["project"]) == ("developer", "start_agent", slug)
+
+
+def test_a_start_without_the_secret_or_beside_a_live_agent_is_refused(client, root, rpc_rig):
+    slug = brainstorming(root)
+    secret = client.cookies[web.SESSION_COOKIE]
+    assert client.post(start_agent_url(slug), data={}).status_code == 403
+    assert client.post(start_agent_url(slug), data={"session": "wrong"}).status_code == 403
+    assert seat.agent_mapping(root) == {}
+    assert client.post(start_agent_url(slug), data={"session": secret}).status_code == 303
+    before = json.loads(agent_cli("status", seat.agent_name(slug), "--json").stdout)["status"]["host_pid"]
+
+    response = client.post(start_agent_url(slug), data={"session": secret})
+
+    assert response.status_code == 409
+    assert "already serving" in response.text
+    after = json.loads(agent_cli("status", seat.agent_name(slug), "--json").stdout)["status"]["host_pid"]
+    assert after == before
+    assert client.post(start_agent_url("nope"), data={"session": secret}).status_code == 404
+
+
+def test_an_agent_stopped_out_of_band_brings_the_control_back_and_the_control_restarts_it(client, root, rpc_rig):
+    slug = brainstorming(root)
+    secret = client.cookies[web.SESSION_COOKIE]
+    assert client.post(start_agent_url(slug), data={"session": secret}).status_code == 303
+    name = seat.agent_name(slug)
+
+    assert agent_cli("stop", name).returncode == 0
+
+    html = page(client, slug).text
+    assert seat.liveness(root, slug).alive is False
+    assert f"{name} is {seat.DEAD_STATE}: not serving." in agent_section(html)
+    assert start_agent_form(html) is not None
+    assert seat.agent_mapping(root) == {slug: name}
+
+    assert client.post(start_agent_url(slug), data={"session": secret}).status_code == 303
+
+    html = page(client, slug).text
+    assert start_agent_form(html) is None
+    assert f"{name} is idle" in agent_section(html)
+    assert seat.liveness(root, slug).alive is True
+
+
+def test_a_fresh_daemon_over_the_same_root_finds_the_live_agent_by_discovery(client, root, rpc_rig):
+    slug = brainstorming(root)
+    assert client.post(start_agent_url(slug), data={"session": client.cookies[web.SESSION_COOKIE]}).status_code == 303
+    name = seat.agent_name(slug)
+    host_pid = json.loads(agent_cli("status", name, "--json").stdout)["status"]["host_pid"]
+    audits = len(audit_records(root))
+
+    again = signed_in(root, "developer")
+    html = again.get(web.PROJECT_PATH.format(slug=slug)).text
+
+    assert start_agent_form(html) is None
+    assert f"{name} is idle" in agent_section(html)
+    assert json.loads(agent_cli("status", name, "--json").stdout)["status"]["host_pid"] == host_pid
+    assert len(audit_records(root)) == audits

@@ -38,6 +38,23 @@
 </section>
 {% endif %}
 
+{% if view.agent is not none %}
+<section id="agent">
+  <h2>Agent</h2>
+  {% if view.agent.alive %}
+  <p class="agent-state">{{ view.agent.name }} is {{ view.agent.state }}.</p>
+  {% else %}
+  <p class="agent-state">
+    {% if view.agent.name %}{{ view.agent.name }} is {{ view.agent.state }}: not serving.{% else %}This project has no agent yet.{% endif %}
+  </p>
+  <form id="start-agent" method="post" action="{{ start_agent_url(view.project.slug) }}">
+    <input type="hidden" name="session" value="{{ session }}">
+    <button type="submit">Start agent</button>
+  </form>
+  {% endif %}
+</section>
+{% endif %}
+
 {% for name, text in view.artifacts %}
 <section id="artifact-{{ name }}">
   <h2>{{ name }}</h2>

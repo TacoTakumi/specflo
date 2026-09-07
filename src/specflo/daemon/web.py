@@ -51,6 +51,7 @@ ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
 TAKE_PATH = "/projects/{slug}/take"
+START_AGENT_PATH = "/projects/{slug}/agent/start"
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
@@ -58,6 +59,10 @@ SESSION_TTL = 12 * 60 * 60
 
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
+
+# The phase in which a hosted project has an agent to chat with: it starts
+# with the project and lives until the project advances out of it.
+CHAT_PHASE = PHASES[0]
 
 # The role each phase waits on when no gate is open. One table, so a later
 # slice that hands a phase to the requester changes this line and no template.
@@ -81,6 +86,7 @@ _templates.globals.update(
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
+    start_agent_url=lambda slug: START_AGENT_PATH.format(slug=slug),
     start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
 )
 
@@ -306,7 +312,9 @@ class ProjectView:
     ``waiting_on`` is then the gate's role, otherwise the role the current
     phase waits on. A project that is no longer active waits on nobody.
     ``can_take`` says the viewer is the identity the open gate waits on, so
-    the page offers the take.
+    the page offers the take. ``agent`` is what discovery says of the
+    project's agent, asked on every render, for a project in the phase that
+    has one; None for any other, which has no agent section.
     """
 
     project: Project
@@ -315,6 +323,12 @@ class ProjectView:
     artifacts: list[tuple[str, str | None]]
     gate: Gate | None = None
     can_take: bool = False
+    agent: seat.Liveness | None = None
+
+
+def has_agent(project: Project) -> bool:
+    """Whether the project is one with an agent to show: active, in the chat phase."""
+    return project.status == INITIAL_STATUS and project.phase == CHAT_PHASE
 
 
 def project_view(root: Path, slug: str, *, viewer: str | None = None) -> ProjectView | None:
@@ -347,6 +361,7 @@ def project_view(root: Path, slug: str, *, viewer: str | None = None) -> Project
         waiting_on=(gate.role if gate else WAITING_ROLES.get(project.phase)) if active else None,
         gate=gate,
         can_take=gate is not None and gate.role == viewer,
+        agent=seat.liveness(root, slug) if has_agent(project) else None,
         artifacts=[
             (name, service.show_document(slug, name) if service.has_artifact(slug, name) else None)
             for name in ARTIFACTS
@@ -478,6 +493,42 @@ async def take_gate(
         except SpecfloError as exc:
             return render("error.html", status_code=409, identity=identity, message=str(exc))
         audit(root, identity, "take_gate", slug, None)
+    return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
+
+
+@pages.post(START_AGENT_PATH, include_in_schema=False)
+async def start_agent(
+    request: Request, slug: str, identity: str = Depends(current_session)
+) -> Response:
+    """Start the project's agent again, for a project whose agent is dead or was never started.
+
+    The form echoes the session secret like every mutating form. The
+    project must be one with an agent to show; one whose agent discovery
+    finds serving is refused, as a 409 page, so the control cannot start a
+    second agent beside it. A start that fails is a 502 page.
+    """
+    fields = await form_fields(request)
+    if not secrets.compare_digest(fields.get("session", ""), session_secret(request)):
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message="That form did not come from this session.",
+        )
+    root = request.app.state.root
+    view = project_view(root, slug, viewer=identity)
+    if view is None:
+        return _missing(identity, f"No project {slug!r}.")
+    if view.agent is None:
+        return render(
+            "error.html", status_code=409, identity=identity,
+            message=f"Project {slug!r} is past the {CHAT_PHASE} phase and has no agent to start.",
+        )
+    url = getattr(request.app.state, "url", None) or seat.DEFAULT_URL
+    try:
+        seat.start_project_agent(root, slug, identity, url=url)
+    except seat.AgentStartError as exc:
+        return render("error.html", status_code=502, identity=identity, message=str(exc))
+    except SpecfloError as exc:
+        return render("error.html", status_code=409, identity=identity, message=str(exc))
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 

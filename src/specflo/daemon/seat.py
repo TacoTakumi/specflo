@@ -17,7 +17,12 @@ Starting the agent runs ``specflo agent start`` in the seat, with the
 transport the daemon's config names (the TUI in a herdr pane by default),
 and records which agent name serves the project in one file under the
 root. The agent subsystem is driven through its CLI, as a developer drives
-it, so the daemon imports nothing of it; the mapping is the daemon's own.
+it; the mapping is the daemon's own. The daemon keeps no process handle:
+whether the agent is alive is asked of agent discovery, by name, each time
+it matters, so an agent stopped from a shell is seen as gone on the next
+look, and one still serving is found again by a fresh daemon process over
+the same root. The daemon imports the agent client for that probe and
+nothing else of the subsystem.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ import sys
 from pathlib import Path
 
 from .. import config
+from ..agent.client import HostUnreachableError, connect
 from ..errors import SpecfloError
 from ..projects import validate_slug
 from ..service.local import LocalProjectService
@@ -54,6 +60,10 @@ START_GRACE = 30.0
 # serving; exited or stopped means its pi is gone.
 HEALTHY_STATES = frozenset({"starting", "idle", "working", "needs-attention"})
 _PROBE_TIMEOUT = 15.0
+# What liveness reports for a project with no agent on record.
+MISSING_STATE = "missing"
+# What it reports for a recorded agent whose socket does not answer.
+DEAD_STATE = "dead"
 
 
 def seat_dir(root: Path, slug: str) -> Path:
@@ -150,6 +160,39 @@ def agent_for(root: Path, slug: str) -> str | None:
     return agent_mapping(root).get(slug)
 
 
+@dataclasses.dataclass(frozen=True)
+class Liveness:
+    """What discovery says of a project's agent: its name, whether it serves, and its state.
+
+    ``name`` is None for a project with no agent on record. ``alive`` is
+    True only when the agent's socket answers with a state in which it
+    serves; ``state`` is that state, or why it does not serve.
+    """
+
+    name: str | None
+    alive: bool
+    state: str
+
+
+def _probe(name: str) -> Liveness:
+    """Ask the agent named ``name`` for its state over its socket."""
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            status = client.status(timeout=_PROBE_TIMEOUT)["status"]
+    except (HostUnreachableError, TimeoutError, RuntimeError, OSError, KeyError, TypeError):
+        return Liveness(name=name, alive=False, state=DEAD_STATE)
+    state = str(status.get("state") or DEAD_STATE)
+    return Liveness(name=name, alive=state in HEALTHY_STATES, state=state)
+
+
+def liveness(root: Path, slug: str) -> Liveness:
+    """Whether the project's agent serves right now, by discovery, not by memory."""
+    name = agent_for(root, slug)
+    if name is None:
+        return Liveness(name=None, alive=False, state=MISSING_STATE)
+    return _probe(name)
+
+
 def _agent_cli(*args: str, cwd: Path | None = None, timeout: float) -> subprocess.CompletedProcess:
     """Run one ``specflo agent`` verb as a subprocess of this interpreter."""
     return subprocess.run(
@@ -195,17 +238,39 @@ def start_agent(
     if started.returncode != 0:
         detail = (started.stderr or started.stdout).strip()
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
-    probe = _agent_cli("status", name, "--json", timeout=_PROBE_TIMEOUT)
-    report = json.loads(probe.stdout or "{}") if probe.returncode == 0 else {}
-    if report.get("alive") is not True or report.get("state") not in HEALTHY_STATES:
+    probe = _probe(name)
+    if not probe.alive:
         # A host whose pi died at once answers as alive but exited; it is no
         # agent for the project, so it goes before the failure is reported.
         _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
-        state = report.get("state") or "unreachable"
         raise AgentStartError(
-            f"Agent {name!r} for {slug!r} started but is {state}, not serving."
+            f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving."
         )
     record_agent(root, slug, name)
+    return name
+
+
+def start_project_agent(
+    root: Path,
+    slug: str,
+    identity: str,
+    *,
+    url: str = DEFAULT_URL,
+    pi_cmd: str | None = None,
+) -> str:
+    """Give a hosted project its agent again: refresh the seat, start, audit; the agent's name.
+
+    This is the operation behind the start-agent control on a project whose
+    agent is dead or was never started. An agent still serving is refused,
+    so the control cannot start a second one beside it.
+    """
+    slug = validate_slug(slug)
+    live = liveness(root, slug)
+    if live.alive:
+        raise SpecfloError(f"Agent {live.name!r} for {slug!r} is already serving.")
+    scaffold(root, slug, url, auth.mint_token(root, "agent"))
+    name = start_agent(root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD)
+    audit(root, identity, "start_agent", slug, None)
     return name
 
 
