@@ -12,11 +12,11 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ### Added
 - **`specflo doc show <artifact>`** - print one artifact of the active
-  project verbatim: `brainstorm`, `spec`, `plan`, `checkpoint`, or
-  `project`. An unknown name is refused with the valid names listed. Agents
-  read artifacts through this verb instead of opening files, so the same
-  command serves a project whose files live in the checkout and one held
-  by a daemon.
+  project verbatim: `brainstorm`, `spec`, `plan`, `checkpoint`, `project`,
+  or a review round by number, `review-<N>`. An unknown name is refused
+  with the valid names listed. Agents read artifacts through this verb
+  instead of opening files, so the same command serves a project whose
+  files live in the checkout and one held by a daemon.
 - **`specflo serve --root <dir>`** - run the specflo daemon: a FastAPI
   process that owns a root of its own, with a `projects` directory for the
   projects it hosts and a SQLite state store, both created on first start.
@@ -157,10 +157,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   `Remote:  <name>` where a local project prints `Dir:`, and its `--json`
   carries `dir: null`, `remote`, `checkpoint: null` and `checkpoint_locator`
   (a local project gains `remote: null` and `checkpoint_locator` beside
-  its unchanged fields). `checkpoint` and `hook reseed` list `Read first`
-  as locators (`my-thing/brainstorm`) for a hosted project, with `path:
-  null` and a `locator` in `checkpoint --json`; a local project keeps its
-  paths and gains the same `locator`.
+  its unchanged fields). A hosted project's checkpoint lists `Read first`
+  as locators (`my-thing/brainstorm`, `my-thing/review-2`) in the file the
+  daemon stores, so `checkpoint`, `hook reseed`, `doc show checkpoint`
+  and the web project page all show the same text, with `path: null` and
+  a `locator` in `checkpoint --json`; a local project keeps its paths and
+  gains the same `locator`. The `--json` of `brainstorm start`, `spec
+  start`, `plan start`, `review start` and `review done` carries `path:
+  null` for a hosted project too.
 - **`remote remove` is refused while the remote hosts projects** of the
   checkout, naming them; `--force` forgets it anyway. A hosted project
   whose remote is gone makes every command exit 1 with the message, never

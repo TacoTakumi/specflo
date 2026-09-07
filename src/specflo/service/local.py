@@ -37,12 +37,24 @@ class LocalProjectService:
     ``actor`` is the identity every add is stamped with. A checkout runs the
     service without one, so local entries carry no Actor line; the daemon
     runs it as the identity behind each request's token.
+
+    ``hosted`` says the projects are served to clients elsewhere, as a
+    daemon's are: a derived artifact then names files by locator, since the
+    paths under ``root`` name nothing where it will be read.
     """
 
-    def __init__(self, root: Path, cfg: SpecfloConfig, *, actor: str | None = None) -> None:
+    def __init__(
+        self,
+        root: Path,
+        cfg: SpecfloConfig,
+        *,
+        actor: str | None = None,
+        hosted: bool = False,
+    ) -> None:
         self.root = root
         self.cfg = cfg
         self.actor = actor
+        self.hosted = hosted
 
     # --- project lifecycle --------------------------------------------------
 
@@ -362,11 +374,15 @@ class LocalProjectService:
 
     def build_checkpoint(self, slug: str) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
-        return checkpoint.build_checkpoint(self.root, project, cfg=self.cfg)
+        return checkpoint.build_checkpoint(
+            self.root, project, cfg=self.cfg, locators=self.hosted
+        )
 
     def write_checkpoint(self, slug: str) -> Path:
         project = projects.load_project(self.root, self.cfg, slug)
-        return checkpoint.write_checkpoint(self.root, project, cfg=self.cfg)
+        return checkpoint.write_checkpoint(
+            self.root, project, cfg=self.cfg, locators=self.hosted
+        )
 
     def build_status(self, slug: str) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)

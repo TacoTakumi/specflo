@@ -51,6 +51,7 @@ def _pipeline():
         (["task", "done", lambda ids: ids["task"]], None),
         (["review", "start"], None),
         (["review", "done", "--verdict", "ready-to-merge", "--file", "report.md"], None),
+        (["doc", "show", "review-1"], None),
         (["validate", "execute"], None),
         (["checkpoint"], None),
         (["status"], None),

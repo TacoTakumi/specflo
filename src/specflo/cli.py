@@ -2171,7 +2171,7 @@ def review_done(
 def doc_show(
     artifact: str = typer.Argument(
         ..., metavar="<artifact>",
-        help="One of: " + ", ".join(doc_module.ARTIFACTS) + ".",
+        help="One of: " + doc_module.artifact_names() + ".",
     ),
 ) -> None:
     """Print the named artifact of the active project verbatim."""

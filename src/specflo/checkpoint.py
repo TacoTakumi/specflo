@@ -13,7 +13,7 @@ Mirrors ``guide.py``: pure derivation (``build_checkpoint``) + a renderer
 from __future__ import annotations
 
 import datetime
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from . import index as index_module, plan as plan_module, review, validators, workflow
 from .brainstorm import BRAINSTORM_FILENAME
@@ -44,6 +44,8 @@ def build_checkpoint(
     project: Project,
     cfg: SpecfloConfig | None = None,
     today: str | None = None,
+    *,
+    locators: bool = False,
 ) -> dict:
     """Derive the resume-prompt payload for ``project`` from current state.
 
@@ -52,12 +54,23 @@ def build_checkpoint(
     ``cfg`` is threaded from the write path so brainstorm/spec/plan can derive
     honest doneness — running the phase's real validator inline (REQ-01/03).
     Without it (a bare ``build_checkpoint`` call), the static work hint stands.
+
+    ``locators`` names each file in Read first as ``<slug>/<artifact>``, the
+    locator every command prints, instead of its path under ``root``. A daemon
+    asks for that: its paths name nothing on the clients it serves, and the
+    locator is what ``doc show`` resolves wherever the file lives.
     """
     directory = project.path
-    read_first = [display_path(directory / PROJECT_FILENAME, root, posix=True)]
+
+    def name(path: Path) -> str:
+        if locators:
+            return f"{project.slug}/{path.stem}"
+        return display_path(path, root, posix=True)
+
+    read_first = [name(directory / PROJECT_FILENAME)]
     for filename in _ARTIFACT_ORDER:
         if (directory / filename).is_file():
-            read_first.append(display_path(directory / filename, root, posix=True))
+            read_first.append(name(directory / filename))
     # Where the review stands, read fresh from the round files (review-rounds
     # REQ-09). None without cfg, or while the project has no rounds.
     review_info = review.review_state(root, cfg, project.slug) if cfg is not None else None
@@ -66,7 +79,7 @@ def build_checkpoint(
     # Listing a passing round would pull its stale findings into the next
     # reviewer's context for no gain.
     if review_info is not None and review_info["verdict"] == "changes-requested":
-        read_first.append(display_path(directory / review_info["file"], root, posix=True))
+        read_first.append(name(directory / review_info["file"]))
     shelved = project.status == SHELVED_STATUS
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
@@ -144,19 +157,14 @@ def build_checkpoint(
 
 
 def hosted_view(payload: dict) -> dict:
-    """``payload`` as a client of a daemon reports it: every path a locator.
+    """``payload`` as a client of a daemon reports it.
 
-    A checkpoint built on a daemon names the daemon's files; on the client
-    those paths name nothing. Read first becomes locators, ``<slug>/<artifact>``,
-    which ``doc show`` resolves wherever the files live, and ``path`` is None
-    since the file is not here.
+    A daemon builds the payload with Read first already by locator, so the
+    checkpoint it stores and the one a client prints are the same text. The
+    checkpoint's own ``path`` is the daemon's file, which names nothing on
+    the client, so it is None here.
     """
-    slug = payload["project"]
-    return {
-        **payload,
-        "read_first": [f"{slug}/{PurePosixPath(entry).stem}" for entry in payload["read_first"]],
-        "path": None,
-    }
+    return {**payload, "path": None}
 
 
 def render_checkpoint(payload: dict) -> str:
@@ -211,13 +219,16 @@ def write_checkpoint(
     project: Project,
     cfg: SpecfloConfig | None = None,
     today: str | None = None,
+    *,
+    locators: bool = False,
 ) -> Path:
     """Render the checkpoint for ``project`` and write ``checkpoint.md``.
 
-    ``cfg`` is forwarded to :func:`build_checkpoint` so the written checkpoint
-    reflects derived doneness for brainstorm/spec/plan (REQ-01).
+    ``cfg`` and ``locators`` are forwarded to :func:`build_checkpoint`, so the
+    written checkpoint reflects derived doneness for brainstorm/spec/plan
+    (REQ-01) and names files the way its readers can resolve them.
     """
-    payload = build_checkpoint(root, project, cfg=cfg, today=today)
+    payload = build_checkpoint(root, project, cfg=cfg, today=today, locators=locators)
     path = project.path / CHECKPOINT_FILENAME
     path.write_text(render_checkpoint(payload))
     return path

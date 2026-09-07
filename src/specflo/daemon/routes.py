@@ -126,6 +126,11 @@ def _minted(result, kwargs: dict):
     return minted if isinstance(minted, str) else kwargs.get("task_id") or kwargs.get("milestone_id")
 
 
+def _service(root: Path, identity: str) -> LocalProjectService:
+    """The local service a request runs as: its identity as actor, its projects hosted."""
+    return LocalProjectService(root, load_config(root), actor=identity, hosted=True)
+
+
 def _handler(operation: wire.Operation):
     def handle(
         request: Request,
@@ -137,7 +142,7 @@ def _handler(operation: wire.Operation):
         except wire.WireError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         root = request.app.state.root
-        service = LocalProjectService(root, load_config(root), actor=identity)
+        service = _service(root, identity)
         slug = kwargs.get("slug") if operation.slug_scoped else None
         # The slug is the one part of a request that becomes a path under the
         # daemon root, so it is checked here for every operation that names
@@ -386,7 +391,7 @@ def workitem_spawn(
 ) -> dict:
     fields = _fields(body, required=(), optional=("name",))
     root = request.app.state.root
-    service = LocalProjectService(root, load_config(root), actor=identity)
+    service = _service(root, identity)
     with project_lock(root, None), open_store(root) as store:
         try:
             spawned = WorkItems(store).spawn(item_id, service, name=fields.get("name"))

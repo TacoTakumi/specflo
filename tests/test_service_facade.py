@@ -288,7 +288,7 @@ _ARTIFACT_MODULE_ALLOWLIST = {
     "review_module": set(),
     "checkpoint": {"render_checkpoint", "hosted_view"},
     "status_view": {"render_status", "hosted_view"},
-    "doc_module": {"ARTIFACTS", "PROSE_ARTIFACTS"},
+    "doc_module": {"ARTIFACTS", "PROSE_ARTIFACTS", "artifact_names"},
     "index_module": set(),
 }
 

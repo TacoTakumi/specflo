@@ -311,3 +311,39 @@ def test_section_set_refreshes_the_checkpoint(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert checkpoint_md.is_file()
+
+
+# --- review rounds by number ----------------------------------------------
+
+
+def test_artifact_filename_accepts_a_review_round_by_number():
+    assert doc.artifact_filename("review-1") == "review-1.md"
+    assert doc.artifact_filename("review-12") == "review-12.md"
+    for name in ("review", "review-", "review-x", "review-1.md", "Review-1", "review-1/../x"):
+        with pytest.raises(SpecfloError, match="Unknown artifact"):
+            doc.artifact_filename(name)
+
+
+def test_doc_show_prints_a_review_round_by_its_number(tmp_path, monkeypatch):
+    from specflo import review
+
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
+    review.close_round(tmp_path, cfg, "thing", "changes-requested", today="2026-08-02")
+
+    result = runner.invoke(app, ["doc", "show", "review-1"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output == (project_dir / "review-1.md").read_text()
+    missing = runner.invoke(app, ["doc", "show", "review-2"])
+    assert missing.exit_code != 0 and "review-2" in missing.output
+
+
+def test_doc_show_unknown_artifact_names_the_round_pattern_too(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["doc", "show", "notes"])
+
+    assert result.exit_code != 0
+    assert "review-<N>" in result.output

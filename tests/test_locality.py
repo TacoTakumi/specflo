@@ -419,3 +419,29 @@ def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, li
         data = json.loads(result.output)
         assert data == {"locator": locator, "path": None, **extra}, args
         assert daemon_root not in result.output and "projects/hosted-thing" not in result.output
+
+
+def test_doc_show_checkpoint_of_a_hosted_project_is_what_checkpoint_prints(checkout, live_daemon):
+    _hosted_in_spec()
+    daemon_dir = str(live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing")
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    assert runner.invoke(app, ["review", "done", "--verdict", "changes-requested"]).exit_code == 0
+
+    stored = runner.invoke(app, ["doc", "show", "checkpoint"]).output
+    printed = runner.invoke(app, ["checkpoint"]).output
+
+    # The artifact the daemon holds and the payload the client renders are
+    # one checkpoint: both name every file by locator. `doc show` prints the
+    # file's own bytes; `checkpoint` ends its output with a newline.
+    assert printed == stored + "\n"
+    read_first = stored.split("## Read first")[1].split("## Do next")[0]
+    for line in ("- hosted-thing/project", "- hosted-thing/brainstorm", "- hosted-thing/spec",
+                 "- hosted-thing/review-1"):
+        assert line in read_first, read_first
+    assert daemon_dir not in stored and "projects/hosted-thing" not in stored and ".md" not in stored
+
+    # The round the checkpoint points at can be read by that locator.
+    shown = runner.invoke(app, ["doc", "show", "review-1"])
+    assert shown.exit_code == 0, shown.output
+    assert "verdict: changes-requested" in shown.output
+    assert shown.output == (live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md").read_text()

@@ -10,6 +10,7 @@ lists) stay behind their own verbs so no prose write can disturb an entry.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from . import markdown
@@ -33,6 +34,11 @@ ARTIFACTS: dict[str, str] = {
 }
 
 
+# A review round, ``review-N``, is named by its number; there is one file per
+# round, so the name maps to ``review-N.md`` directly.
+_ROUND_NAME = re.compile(r"^review-\d+$")
+ROUND_PATTERN = "review-<N>"
+
 # The artifacts that carry authored prose sections. checkpoint.md is derived
 # and regenerated; project.md is front matter with no sections.
 PROSE_ARTIFACTS: tuple[str, ...] = ("brainstorm", "spec", "plan")
@@ -48,14 +54,18 @@ MANAGED_SECTIONS: dict[str, str] = {
 }
 
 
+def artifact_names() -> str:
+    """The artifact names as a help line: the five documents, or a round by number."""
+    return ", ".join(ARTIFACTS) + f", or {ROUND_PATTERN}"
+
+
 def artifact_filename(name: str) -> str:
     """The filename behind an artifact name; unknown names are refused."""
-    try:
+    if name in ARTIFACTS:
         return ARTIFACTS[name]
-    except KeyError:
-        raise SpecfloError(
-            f"Unknown artifact {name!r}: expected one of " + ", ".join(ARTIFACTS) + "."
-        ) from None
+    if _ROUND_NAME.match(name):
+        return f"{name}.md"
+    raise SpecfloError(f"Unknown artifact {name!r}: expected one of {artifact_names()}.")
 
 
 def artifact_path(root: Path, cfg: SpecfloConfig, slug: str, name: str) -> Path:

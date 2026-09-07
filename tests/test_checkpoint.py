@@ -500,3 +500,24 @@ def test_render_checkpoint_shows_execution_in_the_subtitle(tmp_path):
         assert subtitle.startswith("_phase: brainstorm")
         assert f"execution: {mode}" in subtitle
         assert subtitle.endswith("generated 2026-06-21_")
+
+
+# --- a checkpoint rendered for clients elsewhere -------------------------------
+
+
+def test_checkpoint_names_every_file_by_locator_when_asked(tmp_path):
+    # A daemon writes the checkpoint for projects it serves to clients
+    # elsewhere: its own paths name nothing there, so Read first carries the
+    # locator every command prints instead, including the round to act on.
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "changes-requested")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02", locators=True)
+
+    assert payload["read_first"] == ["thing/project", "thing/spec", "thing/plan", "thing/review-1"]
+    assert payload["locator"] == "thing/checkpoint"
+    written = checkpoint.write_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02", locators=True)
+    text = written.read_text()
+    assert "- thing/review-1\n" in text and ".md" not in text.split("## Do next")[0]
+    by_default = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02")
+    assert by_default["read_first"][0] == "docs/projects/thing/project.md"
