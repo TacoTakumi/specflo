@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, test } from "node:test";
 
 import { registerControl } from "../src/control/mod.ts";
 import { deriveIdentity } from "../src/control/identity.ts";
+import { ControlServer } from "../src/control/server.ts";
 import { createControlHarness, type ControlHarness } from "./harness.ts";
 
 /** Env keys the module reads; saved and restored around every test. */
@@ -47,6 +48,24 @@ function onlyRecordDir(): string {
 
 function readStatus(dir: string): any {
   return JSON.parse(fs.readFileSync(path.join(dir, "status.json"), "utf8"));
+}
+
+/** A socket client that keeps every frame the server sends it. */
+function readerOn(socketPath: string): Promise<{ frames: any[]; close(): void }> {
+  const frames: any[] = [];
+  let rest = "";
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(socketPath);
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      rest += chunk;
+      const lines = rest.split("\n");
+      rest = lines.pop() ?? "";
+      for (const line of lines) if (line !== "") frames.push(JSON.parse(line));
+    });
+    socket.once("connect", () => resolve({ frames, close: () => socket.destroy() }));
+    socket.once("error", reject);
+  });
 }
 
 function connectable(socketPath: string): Promise<boolean> {
@@ -126,6 +145,48 @@ describe("control server core (T-02)", () => {
     await harness.startSession();
     await harness.shutdownSession();
     assert.deepEqual(fs.readdirSync(base), ["serve.off"]);
+  });
+
+  test("broadcast reaches every connected client and writes no event line", async () => {
+    const server = new ControlServer({
+      baseDir: base,
+      name: "streamer",
+      ownership: "managed",
+      cwd,
+      pid: process.pid,
+      bridge: {
+        isIdle: () => true,
+        abort: () => {},
+        sendUserMessage: () => {},
+        state: () => ({}),
+        lastAssistantText: () => undefined,
+        detach: () => {},
+      },
+    });
+    await server.start();
+    const clients = await Promise.all([readerOn(server.socketPath), readerOn(server.socketPath)]);
+    // The client sees its connect before the server's accept handler runs.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      const before = fs.readFileSync(server.eventsPath, "utf8");
+      server.broadcast({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "x" } });
+      server.publish({ type: "message_end", message: { role: "assistant", content: [] } });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      for (const client of clients) {
+        assert.deepEqual(
+          client.frames.map((frame) => frame.type),
+          ["message_update", "message_end"],
+        );
+      }
+      const after = fs.readFileSync(server.eventsPath, "utf8").slice(before.length);
+      assert.deepEqual(
+        after.split("\n").filter((l) => l !== "").map((l) => JSON.parse(l).type),
+        ["message_end"],
+      );
+    } finally {
+      for (const client of clients) client.close();
+      await server.stop();
+    }
   });
 
   test("the handshake name is used verbatim and marks the session managed", async () => {

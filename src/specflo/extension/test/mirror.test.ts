@@ -5,11 +5,13 @@
  * append-only events.jsonl the v1 host writes - RPC-shaped lines, each with a
  * ts field - and drives status.json through the v1 lifecycle transitions:
  * working at agent_start, idle at agent_settled. Token-level update events
- * (message_update, tool_execution_update) are deliberately not mirrored.
+ * (message_update, tool_execution_update) are deliberately not mirrored;
+ * message_update still reaches a connected socket client as it happens.
  */
 
 import { strict as assert } from "node:assert";
 import * as fs from "node:fs";
+import * as net from "node:net";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, beforeEach, describe, test } from "node:test";
@@ -38,6 +40,28 @@ function readEvents(): any[] {
     .split("\n")
     .filter((line) => line !== "")
     .map((line) => JSON.parse(line));
+}
+
+/** A socket client that keeps every frame the server sends it. */
+function subscribe(): Promise<{ frames: any[]; close(): void }> {
+  const frames: any[] = [];
+  let rest = "";
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(path.join(recordDir(), "sock"));
+    socket.setEncoding("utf8");
+    socket.on("data", (chunk: string) => {
+      rest += chunk;
+      const lines = rest.split("\n");
+      rest = lines.pop() ?? "";
+      for (const line of lines) if (line !== "") frames.push(JSON.parse(line));
+    });
+    socket.once("connect", () => resolve({ frames, close: () => socket.destroy() }));
+    socket.once("error", reject);
+  });
+}
+
+async function settled(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
 function readState(): string {
@@ -129,6 +153,54 @@ describe("event mirroring and lifecycle (T-03)", () => {
         ["control_start", "agent_start", "agent_settled"],
       );
     } finally {
+      await harness.shutdownSession();
+    }
+  });
+
+  test("message_update deltas reach a socket client as they happen, and never the disk", async () => {
+    const harness = await servedHarness();
+    const client = await subscribe();
+    try {
+      const message = { role: "assistant", content: [{ type: "text", text: "" }] };
+      await harness.emit({ type: "agent_start" });
+      await harness.emit({ type: "message_start", message });
+      const deltas = ["hel", "lo ", "there"];
+      for (const delta of deltas) {
+        await harness.emit({
+          type: "message_update",
+          message,
+          assistantMessageEvent: { type: "text_delta", delta },
+        });
+      }
+      await harness.emit({ type: "tool_execution_update", toolCallId: "t1", toolName: "bash", args: {}, partialResult: "" });
+      await harness.emit({ type: "message_end", message });
+      await harness.emit({ type: "agent_settled" });
+      await settled();
+
+      const wire = client.frames.map((frame) => frame.type);
+      assert.deepEqual(wire, [
+        "agent_start",
+        "message_start",
+        "message_update",
+        "message_update",
+        "message_update",
+        "message_end",
+        "agent_settled",
+      ]);
+      const streamed = client.frames
+        .filter((frame) => frame.type === "message_update")
+        .map((frame) => frame.assistantMessageEvent.delta);
+      assert.deepEqual(streamed, deltas);
+      for (const frame of client.frames) assert.equal(frame.ts, undefined, `ts on the wire for ${frame.type}`);
+
+      const lines = fs.readFileSync(path.join(recordDir(), "events.jsonl"), "utf8").split("\n").filter((l) => l !== "");
+      assert.equal(lines.length, 5, "one line per boundary event, none per token");
+      assert.deepEqual(
+        readEvents().map((event) => event.type),
+        ["control_start", "agent_start", "message_start", "message_end", "agent_settled"],
+      );
+    } finally {
+      client.close();
       await harness.shutdownSession();
     }
   });

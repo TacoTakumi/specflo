@@ -6,8 +6,12 @@
  *
  * The mirrored set is the RPC-shaped run events: agent lifecycle, message
  * boundaries, tool execution boundaries. The token-level update events
- * (message_update, tool_execution_update) are deliberately absent - they are
- * a streaming optimization, and mirroring them would write a line per token.
+ * (message_update, tool_execution_update) are deliberately absent from the
+ * log - they are a streaming optimization, and mirroring them would write a
+ * line per token. The message deltas still reach the wire: a connected
+ * client sees message_update frames as the assistant's text streams, so a
+ * subscriber can show a reply as it forms, while the disk keeps only the
+ * message boundaries it always did.
  *
  * Handlers are registered once at extension load; each consults the live
  * server at event time, so a session with serving opted out (or a failed
@@ -28,6 +32,9 @@ export const MIRRORED_EVENTS = [
   "tool_execution_start",
   "tool_execution_end",
 ] as const;
+
+/** Sent to connected clients as they happen, never written to events.jsonl. */
+export const BROADCAST_ONLY_EVENTS = ["message_update"] as const;
 
 export function registerMirror(
   pi: ExtensionAPI,
@@ -64,6 +71,18 @@ export function registerMirror(
         live.publish(event as Record<string, unknown>);
         if (type === "agent_start") moveLifecycle(live, "working");
         else if (type === "agent_settled") moveLifecycle(live, "idle");
+      } catch {
+        // Best-effort by requirement: never disturb the run.
+      }
+    });
+  }
+
+  for (const type of BROADCAST_ONLY_EVENTS) {
+    on(type, (event: unknown) => {
+      const live = server();
+      if (live === null) return;
+      try {
+        live.broadcast(event as Record<string, unknown>);
       } catch {
         // Best-effort by requirement: never disturb the run.
       }

@@ -175,6 +175,15 @@ export class ControlServer implements CommandHost {
   publish(frame: Record<string, unknown>): void {
     this.trackLastAssistant(frame);
     appendEvent(this.eventsPath, frame);
+    this.broadcast(frame);
+  }
+
+  /**
+   * Send one frame to every connected client and nothing to disk: the
+   * token-level updates a subscriber assembles into a message as it streams,
+   * which a line per token in events.jsonl would only bloat.
+   */
+  broadcast(frame: Record<string, unknown>): void {
     const data = `${JSON.stringify(frame)}\n`;
     for (const socket of this.connections) {
       try {

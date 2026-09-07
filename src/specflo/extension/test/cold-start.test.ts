@@ -169,6 +169,7 @@ describe("cold start", () => {
         "before_agent_start",
         "message_end",
         "message_start",
+        "message_update",
         "session_shutdown",
         "session_start",
         "tool_execution_end",
