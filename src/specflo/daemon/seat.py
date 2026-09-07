@@ -97,6 +97,12 @@ TAKEOVER_DIRECTIVES = {
 }
 # The host's refusal of a plain prompt while a run is on; the send retries as a steer.
 _BUSY = "busy"
+# The agent CLI's refusal to start a name whose socket already serves: that
+# agent is someone else's live start, never something to clean up.
+_ALREADY_RUNNING = "already running"
+# How long a stop may wait for the host to go down, and the grace on top of
+# it before the subprocess itself is given up on.
+STOP_TIMEOUT = 30.0
 # How long a message send may wait for the agent's answer.
 _SEND_TIMEOUT = 10.0
 # What a start calls once the agent serves and is on record, before the
@@ -201,6 +207,18 @@ def agent_mapping(root: Path) -> dict[str, str]:
 # Every read-modify-write of the mapping runs under this lock, so two starts
 # in flight at once cannot drop each other's entry.
 _MAPPING_LOCK = threading.RLock()
+# One lock per project across its liveness check and its start, so two
+# overlapping starts run one after the other and the second sees the first.
+_START_LOCKS: dict[str, threading.Lock] = {}
+_START_REGISTRY = threading.Lock()
+
+
+def _start_lock(slug: str) -> threading.Lock:
+    with _START_REGISTRY:
+        lock = _START_LOCKS.get(slug)
+        if lock is None:
+            lock = _START_LOCKS[slug] = threading.Lock()
+    return lock
 
 
 def _write_mapping(root: Path, mapping: dict[str, str]) -> None:
@@ -316,6 +334,21 @@ def _agent_cli(*args: str, cwd: Path | None = None, timeout: float) -> subproces
     )
 
 
+def _agent_stop(name: str) -> bool:
+    """Stop the agent named ``name`` through the CLI; True when it reported the stop done.
+
+    A stop that is refused or outruns its bound is reported, not raised:
+    the callers decide what a still-running agent means for their state.
+    """
+    try:
+        stopped = _agent_cli(
+            "stop", name, "--timeout", str(STOP_TIMEOUT), timeout=STOP_TIMEOUT + _PROBE_TIMEOUT
+        )
+    except subprocess.TimeoutExpired:
+        return False
+    return stopped.returncode == 0
+
+
 def start_agent(
     root: Path,
     slug: str,
@@ -353,15 +386,18 @@ def start_agent(
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} did not finish in {deadline:.0f}s.") from exc
     if started.returncode != 0:
         detail = (started.stderr or started.stdout).strip()
+        if _ALREADY_RUNNING in detail:
+            # Another start brought this agent up first; it is theirs, and it stays.
+            raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
         # The CLI may have brought up a host that never answered in time
         # and left it running; it goes, so the name is free for the next start.
-        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        _agent_stop(name)
         raise AgentStartError(f"Starting agent {name!r} for {slug!r} failed: {detail}")
     probe = _probe(name)
     if not probe.alive:
         # A host whose pi died at once answers as alive but exited; it is no
         # agent for the project, so it goes before the failure is reported.
-        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        _agent_stop(name)
         raise AgentStartError(
             f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving."
         )
@@ -374,7 +410,7 @@ def start_agent(
     except AgentMessageError as exc:
         # An agent that never heard which seat it serves is no agent for the
         # project: it goes, and the start is reported as failed.
-        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        _agent_stop(name)
         forget_agent(root, slug)
         raise AgentStartError(f"Agent {name!r} for {slug!r} started but took no opening prompt: {exc}") from exc
     return name
@@ -419,13 +455,14 @@ def start_project_agent(
     so the control cannot start a second one beside it.
     """
     slug = validate_slug(slug)
-    live = liveness(root, slug)
-    if live.alive:
-        raise SpecfloError(f"Agent {live.name!r} for {slug!r} is already serving.")
-    scaffold(root, slug, url, seat_token(root, slug))
-    name = start_agent(
-        root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
-    )
+    with _start_lock(slug):
+        live = liveness(root, slug)
+        if live.alive:
+            raise SpecfloError(f"Agent {live.name!r} for {slug!r} is already serving.")
+        scaffold(root, slug, url, seat_token(root, slug))
+        name = start_agent(
+            root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
+        )
     audit(root, identity, "start_agent", slug, None)
     return name
 
@@ -435,12 +472,16 @@ def stop_agent(root: Path, slug: str) -> str | None:
 
     The stop goes through the agent CLI like a developer's; an agent
     already gone is forgotten all the same, since the mapping is only
-    worth keeping for an agent discovery can find.
+    worth keeping for an agent discovery can find. A stop the CLI refuses
+    or that outruns its bound leaves the mapping in place and returns None:
+    an agent that may still serve stays on record, for the page to show and
+    a developer to stop by hand.
     """
     name = agent_for(root, slug)
     if name is None:
         return None
-    _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+    if not _agent_stop(name) and _probe(name).alive:
+        return None
     forget_agent(root, slug)
     return name
 
@@ -487,9 +528,10 @@ def start_project(
         spawned = WorkItems(store).spawn(item_id, service)
         audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
     slug = spawned.project.slug
-    workspace = scaffold(root, slug, url, seat_token(root, slug))
-    name = start_agent(
-        root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
-    )
+    with _start_lock(slug):
+        workspace = scaffold(root, slug, url, seat_token(root, slug))
+        name = start_agent(
+            root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
+        )
     audit(root, identity, "start_project", slug, str(item_id))
     return Started(spawned=spawned, seat=workspace, agent=name)

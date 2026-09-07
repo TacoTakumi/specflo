@@ -309,6 +309,103 @@ def test_a_start_the_cli_reports_as_failed_is_followed_by_a_stop(root, monkeypat
     assert seat.agent_mapping(root) == {}
 
 
+def test_a_start_refused_as_already_running_stops_nothing(root, monkeypatch):
+    # The refusal means another start brought the agent up first; a cleanup
+    # stop here would kill that agent under the other start.
+    slug = scaffolded(root)
+    calls = []
+
+    def fake_cli(*args, cwd=None, timeout):
+        calls.append(args)
+        return subprocess.CompletedProcess(
+            args, 1, stdout="", stderr=f"Error: agent {seat.agent_name(slug)!r} is already running (live host)"
+        )
+
+    monkeypatch.setattr(seat, "_agent_cli", fake_cli)
+
+    with pytest.raises(seat.AgentStartError, match="already running"):
+        seat.start_agent(root, slug)
+
+    assert [call[0] for call in calls] == ["start"]
+
+
+def test_overlapping_starts_for_one_project_run_one_after_the_other(root, monkeypatch):
+    import threading
+
+    slug = scaffolded(root)
+    started = []
+
+    def slow_start(root_, slug_, **kwargs):
+        time.sleep(0.3)
+        seat.record_agent(root_, slug_, seat.agent_name(slug_))
+        started.append(slug_)
+        return seat.agent_name(slug_)
+
+    def liveness_by_mapping(root_, slug_):
+        name = seat.agent_for(root_, slug_)
+        return seat.Liveness(name=name, alive=name is not None, state="idle" if name else seat.MISSING_STATE)
+
+    monkeypatch.setattr(seat, "start_agent", slow_start)
+    monkeypatch.setattr(seat, "liveness", liveness_by_mapping)
+    outcomes = []
+
+    def attempt():
+        try:
+            outcomes.append(seat.start_project_agent(root, slug, "developer", url="http://127.0.0.1:8741"))
+        except SpecfloError as exc:
+            outcomes.append(str(exc))
+
+    threads = [threading.Thread(target=attempt) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert started == [slug]
+    assert sorted(outcomes) == sorted([seat.agent_name(slug), f"Agent {seat.agent_name(slug)!r} for {slug!r} is already serving."])
+
+
+def test_a_stop_that_fails_or_outruns_its_bound_keeps_the_mapping_of_a_live_agent(root, monkeypatch):
+    slug = scaffolded(root)
+    name = seat.agent_name(slug)
+    seat.record_agent(root, slug, name)
+    monkeypatch.setattr(seat, "_probe", lambda name_: seat.Liveness(name=name_, alive=True, state="working"))
+
+    def refuse(*args, cwd=None, timeout):
+        return subprocess.CompletedProcess(args, 1, stdout="", stderr="host would not go")
+
+    monkeypatch.setattr(seat, "_agent_cli", refuse)
+    assert seat.stop_agent(root, slug) is None
+    assert seat.agent_mapping(root) == {slug: name}
+
+    def hang(*args, cwd=None, timeout):
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(seat, "_agent_cli", hang)
+    assert seat.stop_agent(root, slug) is None
+    assert seat.agent_mapping(root) == {slug: name}
+
+    # An agent that is gone by the time the stop gives up is forgotten all the same.
+    monkeypatch.setattr(seat, "_probe", lambda name_: seat.Liveness(name=name_, alive=False, state=seat.DEAD_STATE))
+    assert seat.stop_agent(root, slug) == name
+    assert seat.agent_mapping(root) == {}
+
+
+def test_a_start_failure_whose_cleanup_stop_hangs_still_raises_the_start_error(root, monkeypatch):
+    slug = scaffolded(root)
+
+    def fake_cli(*args, cwd=None, timeout):
+        if args[0] == "start":
+            return subprocess.CompletedProcess(args, 11, stdout="", stderr="socket never answered")
+        raise subprocess.TimeoutExpired(args, timeout)
+
+    monkeypatch.setattr(seat, "_agent_cli", fake_cli)
+
+    with pytest.raises(seat.AgentStartError, match="socket never answered"):
+        seat.start_agent(root, slug)
+    assert seat.agent_mapping(root) == {}
+
+
 def test_the_rpc_switch_selects_the_rpc_transport(root, agent_rig):
     slug = scaffolded(root)
     config.write_value(root, config.field_for("agent_transport"), "rpc")
