@@ -40,6 +40,28 @@ NODE_PREFIXES = ("vite.config.", "webpack.config.", "rollup.config.", "esbuild."
 # .js/.mjs/.cjs files run as they are (the vendored htmx, a node test double).
 SOURCE_SUFFIXES = (".ts", ".tsx", ".jsx")
 
+HTMX_MAJOR = 4
+# Names that exist only in htmx 2: attributes it dropped or renamed and the
+# camel-cased event names 4 spells with colons. A template using one is
+# still written against 2, whatever htmx.min.js holds.
+HTMX_2_ONLY_ATTRIBUTES = (
+    "hx-ext", "hx-vars", "hx-params", "hx-disinherit", "hx-inherit",
+    "hx-request", "hx-history", "hx-disabled-elt", "hx-prompt",
+    "sse-connect", "sse-swap", "sse-close", "ws-connect", "ws-send",
+)
+HTMX_2_ONLY_EVENTS = (
+    "htmx:afterOnLoad", "htmx:afterProcessNode", "htmx:afterRequest",
+    "htmx:afterSettle", "htmx:afterSwap", "htmx:beforeCleanupElement",
+    "htmx:beforeHistorySave", "htmx:beforeOnLoad", "htmx:beforeProcessNode",
+    "htmx:beforeRequest", "htmx:beforeSend", "htmx:beforeSwap",
+    "htmx:configRequest", "htmx:historyCacheMiss", "htmx:historyRestore",
+    "htmx:load", "htmx:oobAfterSwap", "htmx:oobBeforeSwap",
+    "htmx:pushedIntoHistory", "htmx:replacedInHistory", "htmx:responseError",
+    "htmx:sendError", "htmx:swapError", "htmx:targetError", "htmx:timeout",
+    "htmx:sseOpen", "htmx:sseError", "htmx:sseBeforeMessage", "htmx:sseMessage",
+    "htmx:sseClose",
+)
+
 
 def tracked_files():
     out = subprocess.run(
@@ -68,6 +90,58 @@ def test_the_web_ui_has_templates_and_an_assets_directory():
         "base.html", "signin.html", "products.html", "product.html", "project.html"
     }
     assert (web.ASSETS_DIR / "htmx.min.js").is_file()
+
+
+def test_the_vendored_htmx_is_major_version_four_with_its_sse_extension():
+    htmx = (web.ASSETS_DIR / "htmx.min.js").read_text()
+    version = re.search(r'version="(\d+)\.(\d+)\.(\d+)"', htmx)
+    assert version, "the vendored htmx carries no version marker"
+    assert int(version.group(1)) == HTMX_MAJOR, version.group(0)
+    sse = (web.ASSETS_DIR / "hx-sse.js").read_text()
+    # 4's extension names its own attributes and events with the hx-sse prefix
+    assert "hx-sse:connect" in sse and "htmx:sse:after:message" in sse
+
+
+def test_no_template_uses_an_htmx_2_only_name():
+    offenders = []
+    for template in sorted(web.TEMPLATES_DIR.glob("*.html")):
+        text = template.read_text()
+        for name in HTMX_2_ONLY_ATTRIBUTES:
+            if re.search(rf"(?<![\w-]){re.escape(name)}(?![\w-])", text):
+                offenders.append((template.name, name))
+        for name in HTMX_2_ONLY_EVENTS:
+            if name in text:
+                offenders.append((template.name, name))
+    assert offenders == [], offenders
+
+
+def test_the_two_only_name_scan_catches_a_planted_offender(tmp_path, monkeypatch):
+    planted = tmp_path / "templates"
+    planted.mkdir()
+    (planted / "page.html").write_text(
+        '<div hx-ext="sse" sse-connect="/x" hx-on:htmx:afterSwap="1"></div>\n'
+    )
+    (planted / "fine.html").write_text(
+        '<div hx-sse:connect="/x" hx-on:htmx:after:swap="1" hx-swap="innerHTML"></div>\n'
+    )
+    monkeypatch.setattr(web, "TEMPLATES_DIR", planted)
+
+    with pytest.raises(AssertionError) as caught:
+        test_no_template_uses_an_htmx_2_only_name()
+    message = str(caught.value)
+    assert "hx-ext" in message and "sse-connect" in message and "htmx:afterSwap" in message
+    assert "fine.html" not in message
+
+
+def test_every_page_loads_htmx_before_its_sse_extension(pages):
+    _, rendered = pages
+    for path, response in rendered.items():
+        sources = [
+            re.search(r'\ssrc="([^"]*)"', tag).group(1) for tag in script_tags(response.text)
+        ]
+        htmx = sources.index(f"{web.ASSETS_PATH}/htmx.min.js")
+        sse = sources.index(f"{web.ASSETS_PATH}/hx-sse.js")
+        assert htmx < sse, (path, sources)
 
 
 def test_no_node_toolchain_file_outside_the_pi_extension():

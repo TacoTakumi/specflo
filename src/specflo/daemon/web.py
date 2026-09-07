@@ -12,8 +12,11 @@ Every page renders a Jinja2 template from the package's ``templates``
 directory, from what the store and the project index hold at that moment;
 nothing is cached, so a change through the CLI shows on the next request. The browser scripts a page needs ship from the package's
 ``assets`` directory, which is the one thing served without a session besides
-the sign-in page itself: it holds a vendored htmx (2.0.10, from the htmx.org
-npm package, Zero-Clause BSD) and nothing is built.
+the sign-in page itself: it holds a vendored htmx 4 with its sse extension
+(4.0.0, from the htmx.org npm package, Zero-Clause BSD) and nothing is built.
+In htmx 4 an extension registers itself when its script loads, so a page
+carries no ``hx-ext`` attribute; every attribute and event name a template
+uses is 4's, and a structural test scans for 2's.
 """
 
 from __future__ import annotations
