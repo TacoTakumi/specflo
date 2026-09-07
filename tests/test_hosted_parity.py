@@ -62,6 +62,8 @@ def _pipeline():
         (["doc", "show", "project"], None),
         (["gate", "open", "developer", "--note", "Open points: the name"], None),
         (["gate", "open", "requester"], None),
+        (["gate", "take"], None),
+        (["gate", "take"], None),
         (["advance"], None),
         (["status"], None),
         (["hook", "reseed"], None),
@@ -188,11 +190,11 @@ def test_the_pipeline_is_identical_for_a_local_and_a_hosted_project(local_run, h
 
 def test_the_scenario_reaches_completion_and_prints_every_seam(local_run):
     codes = [code for _, code, _ in local_run[1:]]
-    # The first validate fails on purpose (an empty Out of scope section) and
-    # so does the second gate open (one is already open); every other step
-    # passes: a scenario that never exercised a refusal would prove less than
-    # one that did.
-    assert codes.count(1) == 2 and set(codes) <= {0, 1}
+    # The first validate fails on purpose (an empty Out of scope section), so
+    # do the second gate open (one is already open) and the second take (none
+    # is open); every other step passes: a scenario that never exercised a
+    # refusal would prove less than one that did.
+    assert codes.count(1) == 3 and set(codes) <= {0, 1}
     outputs = "\n".join(text for _, _, text in local_run[1:])
     for expected in (
         "Recorded ",
@@ -202,6 +204,7 @@ def test_the_scenario_reaches_completion_and_prints_every_seam(local_run):
         "parity-thing/review-1 closed ready-to-merge",
         "Completed project 'parity-thing'.",
         "Opened a gate for developer on 'parity-thing'.",
+        "Took the gate for developer on 'parity-thing'.",
         "Checkpoint saved: parity-thing/checkpoint",
         "- parity-thing/brainstorm",
         "<where>",

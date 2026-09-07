@@ -31,6 +31,11 @@ _COMPLETERS = {
 }
 
 
+# The one identity that acts for a human: it relays the developer's word
+# from the terminal pane, so a take it runs may name who really took it.
+RELAYING_ACTOR = "agent"
+
+
 class LocalProjectService:
     """A ``ProjectService`` over the projects under ``root``.
 
@@ -103,6 +108,23 @@ class LocalProjectService:
         return projects.open_gate(
             self.root, self.cfg, slug, role, opened_by=self.actor or "", note=note
         )
+
+    def take_gate(self, slug: str, *, by: str | None = None) -> Project:
+        taker = self.actor or ""
+        if by is not None:
+            if self.actor != RELAYING_ACTOR:
+                acting = f"as {self.actor}" if self.actor else "with no identity"
+                raise SpecfloError(
+                    f"--by names the human the {RELAYING_ACTOR} takes for; "
+                    f"this take runs {acting}, so leave it out."
+                )
+            if by not in projects.GATE_ROLES:
+                raise SpecfloError(
+                    f"--by must name a human identity, one of "
+                    + ", ".join(projects.GATE_ROLES) + f"; got {by!r}."
+                )
+            taker = by
+        return projects.take_gate(self.root, self.cfg, slug, taken_by=taker)
 
     def has_artifact(self, slug: str, name: str) -> bool:
         return doc.artifact_path(self.root, self.cfg, slug, name).is_file()

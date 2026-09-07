@@ -90,6 +90,13 @@ class ProjectService(Protocol):
         """Open a gate for ``role`` as the service's identity; refused while one is open."""
         ...
 
+    def take_gate(self, slug: str, *, by: str | None = None) -> Project:
+        """Close the open gate as the service's identity, or as ``by`` when it relays a human.
+
+        Only the agent identity may name ``by``; refused with no gate open.
+        """
+        ...
+
     def has_artifact(self, slug: str, name: str) -> bool:
         """Whether the project has created the named artifact yet."""
         ...

@@ -187,6 +187,37 @@ def test_hosted_adds_through_the_cli_carry_the_identity(tmp_path, monkeypatch, l
     assert "- Actor:" not in runner.invoke(app, ["doc", "show", "spec"]).output
 
 
+# --- the gate -------------------------------------------------------------
+
+
+def test_the_agent_takes_a_gate_for_the_human_it_relays(daemon_root):
+    agent = _client(daemon_root, "agent")
+    developer = _client(daemon_root, "developer")
+    _call(agent, "create_project", name="Thing")
+    _call(agent, "open_gate", slug="thing", role="developer", note="Open points")
+
+    refused = developer.post(wire.route_path("take_gate"), json={"slug": "thing", "by": "developer"})
+    assert refused.status_code == 400 and "--by" in refused.json()["detail"]
+    assert _call(developer, "load_project", slug="thing").gate.is_open
+
+    taken = _call(agent, "take_gate", slug="thing", by="developer")
+
+    assert taken.gate.taken_by == "developer" and taken.gate.taken_at
+    assert taken.gate.opened_by == "agent"
+    records = [json.loads(line) for line in (daemon_root / routes.AUDIT_FILENAME).read_text().splitlines()]
+    assert [(r["operation"], r["identity"]) for r in records[-2:]] == [
+        ("open_gate", "agent"), ("take_gate", "agent"),
+    ]
+
+
+def test_a_human_takes_a_gate_as_themselves(daemon_root):
+    developer = _client(daemon_root, "developer")
+    _call(developer, "create_project", name="Thing")
+    _call(developer, "open_gate", slug="thing", role="developer")
+
+    assert _call(developer, "take_gate", slug="thing").gate.taken_by == "developer"
+
+
 # --- the audit log ----------------------------------------------------------
 
 

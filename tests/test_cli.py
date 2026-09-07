@@ -4723,3 +4723,61 @@ def test_gate_open_needs_an_active_project(cwd):
     result = runner.invoke(app, ["gate", "open", "developer"])
 
     assert result.exit_code == 1
+
+
+def test_gate_take_closes_the_open_gate_with_a_time(cwd):
+    project_file = _new_active_project(cwd)
+    assert runner.invoke(app, ["gate", "open", "developer", "--note", "the name"]).exit_code == 0
+
+    result = runner.invoke(app, ["gate", "take"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Took the gate for developer on 'thing'.\n"
+    front = yaml.safe_load(project_file.read_text().split("---")[1])
+    assert front["gate"]["role"] == "developer" and front["gate"]["note"] == "the name"
+    assert front["gate"]["taken_at"]
+    assert "taken_by" not in front["gate"]
+    assert front["status"] == "active"
+
+
+def test_gate_take_json_reports_the_record(cwd):
+    _new_active_project(cwd)
+    assert runner.invoke(app, ["gate", "open", "requester"]).exit_code == 0
+
+    result = runner.invoke(app, ["gate", "take", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["slug"] == "thing"
+    assert payload["gate"]["role"] == "requester"
+    assert payload["gate"]["taken_by"] == "" and payload["gate"]["taken_at"]
+
+
+def test_gate_take_with_no_open_gate_is_refused_and_changes_nothing(cwd):
+    project_file = _new_active_project(cwd)
+    before = project_file.read_text()
+
+    result = runner.invoke(app, ["gate", "take"])
+
+    assert result.exit_code == 1
+    assert "No open gate" in result.stderr and result.stdout == ""
+    assert project_file.read_text() == before
+
+    assert runner.invoke(app, ["gate", "open", "developer"]).exit_code == 0
+    assert runner.invoke(app, ["gate", "take"]).exit_code == 0
+    taken = project_file.read_text()
+    again = runner.invoke(app, ["gate", "take"])
+    assert again.exit_code == 1 and "No open gate" in again.stderr
+    assert project_file.read_text() == taken
+
+
+def test_gate_take_by_is_refused_without_the_agent_identity(cwd):
+    project_file = _new_active_project(cwd)
+    assert runner.invoke(app, ["gate", "open", "developer"]).exit_code == 0
+    before = project_file.read_text()
+
+    result = runner.invoke(app, ["gate", "take", "--by", "developer"])
+
+    assert result.exit_code == 1
+    assert "--by" in result.stderr
+    assert project_file.read_text() == before

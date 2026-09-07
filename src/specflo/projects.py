@@ -54,7 +54,8 @@ class Gate:
 
     @property
     def is_open(self) -> bool:
-        return not self.taken_by
+        """Open until a take records its time; a taker may be unnamed locally."""
+        return not self.taken_at
 
 
 # The gate's front-matter keys, in the order they are written.
@@ -324,6 +325,28 @@ def open_gate(
     project.gate = Gate(
         role=role, opened_by=opened_by, opened_at=opened_at or _timestamp(), note=note
     )
+    (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
+    return project
+
+
+def take_gate(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    *,
+    taken_by: str = "",
+    taken_at: str | None = None,
+) -> Project:
+    """Close the project's open gate, recording ``taken_by`` and when.
+
+    ``taken_by`` is the identity taking it, empty where the caller has none.
+    With no gate open the take is refused and the file is left as it was.
+    """
+    project = load_project(root, cfg, slug)
+    if project.gate is None or not project.gate.is_open:
+        raise SpecfloError(f"No open gate on {slug!r}.")
+    project.gate.taken_by = taken_by
+    project.gate.taken_at = taken_at or _timestamp()
     (project_dir(root, cfg, slug) / PROJECT_FILENAME).write_text(_render(project))
     return project
 

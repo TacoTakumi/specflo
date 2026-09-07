@@ -82,6 +82,7 @@ def test_local_service_protocol_names_every_operation_group():
         "complete_artifact",
         "add_decision",
         "open_gate",
+        "take_gate",
         "add_requirement",
         "add_task",
         "task_brief",
@@ -233,6 +234,12 @@ def _drive_every_operation(service, projects_root, reported=None):
     with pytest.raises(SpecfloError, match="already open"):
         svc.open_gate(slug, "requester")
     assert svc.load_project(slug).gate == opened.gate
+    taken = svc.take_gate(slug)
+    assert not taken.gate.is_open and taken.gate.taken_at
+    assert taken.gate.role == "developer" and taken.gate.note == "Open points: the name"
+    with pytest.raises(SpecfloError, match="No open gate"):
+        svc.take_gate(slug)
+    assert svc.load_project(slug).gate == taken.gate
     assert svc.reopen_project(slug).phase == "plan"
     assert svc.reopen_project(slug, "brainstorm").phase == "brainstorm"
     assert svc.complete_project(slug).status == "complete"
@@ -274,6 +281,40 @@ def test_local_service_opens_a_gate_as_its_actor(tmp_path):
     acting = LocalProjectService(root, cfg, actor="agent")
     acting.create_project("Other")
     assert acting.open_gate("other", "developer").gate.opened_by == "agent"
+
+
+def test_local_service_takes_a_gate_as_its_actor(tmp_path):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    cfg = config.init_config(root)
+    anonymous = LocalProjectService(root, cfg)
+    anonymous.create_project("Thing")
+    anonymous.open_gate("thing", "developer")
+    gate = anonymous.take_gate("thing").gate
+    assert gate.taken_by == "" and gate.taken_at and not gate.is_open
+
+    developer = LocalProjectService(root, cfg, actor="developer")
+    developer.open_gate("thing", "developer")
+    assert developer.take_gate("thing").gate.taken_by == "developer"
+
+
+def test_only_the_agent_takes_a_gate_on_behalf_of_a_human(tmp_path):
+    root = tmp_path / "checkout"
+    root.mkdir()
+    cfg = config.init_config(root)
+    agent = LocalProjectService(root, cfg, actor="agent")
+    agent.create_project("Thing")
+    agent.open_gate("thing", "developer")
+
+    for service in (LocalProjectService(root, cfg), LocalProjectService(root, cfg, actor="developer")):
+        with pytest.raises(SpecfloError, match="--by"):
+            service.take_gate("thing", by="developer")
+        assert agent.load_project("thing").gate.is_open
+    with pytest.raises(SpecfloError, match="requester, developer"):
+        agent.take_gate("thing", by="admin")
+    assert agent.load_project("thing").gate.is_open
+
+    assert agent.take_gate("thing", by="developer").gate.taken_by == "developer"
 
 
 def test_local_service_refuses_a_gate_for_a_role_it_does_not_know(local):
@@ -536,6 +577,18 @@ def test_remote_service_opens_a_gate_as_the_tokens_identity(remote):
 
     assert opened.gate.opened_by == "developer"
     assert remote.load_project("thing").gate == opened.gate
+
+
+def test_remote_service_takes_a_gate_as_the_tokens_identity(remote):
+    remote.create_project("Thing")
+    remote.open_gate("thing", "developer")
+
+    with pytest.raises(SpecfloError, match="--by"):
+        remote.take_gate("thing", by="requester")
+    taken = remote.take_gate("thing")
+
+    assert taken.gate.taken_by == "developer" and taken.gate.taken_at
+    assert remote.load_project("thing").gate == taken.gate
 
 
 def test_remote_service_raises_the_daemons_refusals_as_specflo_errors(remote):

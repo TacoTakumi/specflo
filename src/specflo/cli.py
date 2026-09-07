@@ -1255,6 +1255,33 @@ def gate_open(
         typer.echo(message)
 
 
+@gate_app.command("take", epilog="Example: specflo gate take")
+def gate_take(
+    by: str = typer.Option(
+        None,
+        "--by",
+        metavar="<requester|developer>",
+        help="The human this take is relayed for; only the agent identity may pass it.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Take the active project's open gate: records who took it and when."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    slug = _require_active(cfg)
+    svc = _service(root, cfg, slug)
+    try:
+        project = svc.take_gate(slug, by=by)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    gate = project.gate
+    if json_output:
+        typer.echo(json.dumps({"slug": project.slug, "gate": dataclasses.asdict(gate)}))
+    else:
+        typer.echo(f"Took the gate for {gate.role} on '{project.slug}'.")
+
+
 @app.command(epilog="Example: specflo validate spec")
 def validate(
     artifact: str = typer.Argument(

@@ -192,6 +192,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Close the open review round with a verdict (--verdict)."},
     {"name": "gate open", "group": "workflow", "args": "<requester|developer> [--note <text>]",
      "summary": "Hand the active project to a role: it waits until someone takes the gate."},
+    {"name": "gate take", "group": "workflow", "args": "[--by <requester|developer>]",
+     "summary": "Take the active project's open gate; --by only when the agent relays a human."},
     {"name": "doc show", "group": "workflow", "args": "<artifact>",
      "summary": "Print an artifact of the active project verbatim "
                 "(brainstorm|spec|plan|checkpoint|project)."},
