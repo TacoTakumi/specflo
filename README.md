@@ -208,12 +208,19 @@ See **[The config file](#the-config-file)** for the file itself.
 ### Hosted projects: the daemon and remotes
 
 - `specflo serve --root <dir> [--bind <host>] [--port <port>]` - run the daemon on a root of its own, which holds a `projects` directory for the projects it hosts, a SQLite state store, its token hashes and its audit log. Binds `127.0.0.1:8741` unless told otherwise; `/health` answers without a token. Needs the `serve` extra (`pip install 'specflo[serve]'`).
-- `specflo serve --root <dir> token add requester|developer` - mint a bearer token bound to one of the daemon's two identities. The secret prints once; the daemon keeps only its hash. Every request but `/health` and the web UI's sign-in must carry a valid token, and every mutation records the identity behind it in `audit.jsonl`.
+- `specflo serve --root <dir> token add requester|developer|agent` - mint a bearer token bound to one of the daemon's three identities. The secret prints once; the daemon keeps only its hash. Every request but `/health` and the web UI's sign-in must carry a valid token, and every mutation records the identity behind it in `audit.jsonl`. The web sign-in page refuses an agent token.
 - `specflo remote add <name> <url> --token <secret>` / `remote list` / `remote remove <name>` - register the daemons this checkout can reach. Each remote is one file under `.specflo/remotes/` holding its URL and token; `remote list` never prints tokens.
 - `specflo new <name> --remote <name>` - create a project on a registered daemon. The checkout records which remote holds it and writes nothing else for it; every command then routes to the daemon for that project with no change in usage, and `list` marks it `[hosted: <remote>]`.
 - `specflo promote <project> --remote <name>` - move a local project into a daemon: upload every file, verify the daemon's hashes against what was sent, and only then remove the local copy and record the project as hosted. A mismatch aborts with the local copy untouched.
 
 See **[Hosting projects on a daemon](#hosting-projects-on-a-daemon)** for the model.
+
+### Gates
+
+- `specflo gate open <requester|developer> [--note <text>]` - hand the active project to a role: records the role waited on, the acting identity, the time and a one-line note of the open points. The project stays active. Opening while a gate is open is refused naming the open gate.
+- `specflo gate take [--by <requester|developer>]` - close the open gate, recording who took it and when. `--by` names the human an agent relays the take for and is accepted from the agent identity only. Taking with no open gate is refused.
+
+The gate fields are optional front matter on the project record: a record without them reads as before, and one with them survives shelve, resume, summary and advance. `project show` reports the gate, and the web UI reads it for the inbox and the take control (see **[The web UI](#the-web-ui)**).
 
 ### Products and work items
 
@@ -395,19 +402,29 @@ and auto-answering stops for that run.
 
 A project lives in one place: in a checkout under the projects directory, or on a daemon. `specflo serve` runs the daemon on a root of its own; a checkout registers it with `specflo remote add` and then creates projects there with `new --remote`, moves existing ones there with `promote`, and works them with the same commands as before. The daemon holds the only copy of a hosted project's artifacts; the checkout keeps a pointer and nothing else.
 
-The daemon knows two identities, `requester` and `developer`, each with its own bearer tokens minted by `serve token add`. Every request carries one, and every mutation is recorded with the identity behind it. There is no permission system beyond that yet: the two identities exist so the handoff between them can be built on.
+The daemon knows three identities, `requester`, `developer` and `agent`, each with its own bearer tokens minted by `serve token add`. Every request carries one, and every mutation is recorded with the identity behind it. The two human identities sign in to the web UI; the agent identity is what a daemon-started agent acts as, and the sign-in page refuses it. There is no permission system beyond that: the identities exist so the handoff between requester and developer is recorded.
 
 The daemon also holds products and their work items, the layer above projects: a product has a vision, declares the pieces it is made of, and carries a backlog; a `full` work item spawns exactly one project, cross-linked both ways. `product roadmap` reads the vision and the backlog back in order.
 
 ### The web UI
 
-With the `serve` extra installed the daemon serves a read-only web UI beside its API. A browser signs in at `/signin` as one identity with that identity's token and receives a session cookie; the token never reaches the browser and the cookie never unlocks the API. Without a session every page redirects to sign-in. Sessions live in the daemon process, so a restart signs every browser out.
+With the `serve` extra installed the daemon serves a web UI beside its API. A browser signs in at `/signin` as `requester` or `developer` with that identity's token and receives a session cookie; the token never reaches the browser and the cookie never unlocks the API. Without a session every page redirects to sign-in. Sessions live in the daemon process, so a restart signs every browser out.
 
-- `/` - every product with the first line of its vision, its open work items and its active projects.
-- `/products/<slug>` - a product's vision, pieces, backlog and projects; complete projects are hidden until the archived filter (`?archived=1`) is on.
-- `/projects/<slug>` - a project's phase, status, execution mode, the role its phase waits on, and each artifact with the same text `doc show` prints.
+- `/` - the signed-in identity's inbox: every hosted project with an open gate for their role, newest first, with its product, name, note and opened time. Below it, every product with the first line of its vision, its open work items and its active projects.
+- `/products/<slug>` - a product's vision, pieces, backlog and projects; complete projects are hidden until the archived filter (`?archived=1`) is on. A work item whose dev path is `full` and has no project carries a start-project control.
+- `/projects/<slug>` - a project's phase, status, execution mode, the role it waits on (from the open gate with its note, opener and time when there is one, from the phase otherwise), each artifact with the same text `doc show` prints, and, in the brainstorm phase, the agent section: the agent's state, its transport, and the chat.
 
-The pages are server-rendered Jinja2 templates shipped in the package. The one browser script, htmx, is vendored in the package's `assets` directory; there is no JavaScript build step, and no page carries a control that changes state.
+The UI has exactly four controls that change state, and a structural test pins the set: start project on a work item, send a message on a project, take a gate on a project, and start agent on a project. No control advances a phase, runs auto mode or edits an artifact; that stays with the CLI. Every form carries the session secret as a hidden field the route checks.
+
+The pages are server-rendered Jinja2 templates shipped in the package. The browser scripts, htmx 4 and its sse extension, are vendored in the package's `assets` directory; there is no JavaScript build step.
+
+### The daemon seat
+
+Starting a project from its work item is one daemon operation, also callable without a browser: spawn the hosted project, scaffold its seat, start its agent, and record the project-to-agent mapping once the agent's control socket answers. The seat is a client checkout under the daemon root's `seats` directory, named for the project: a config whose active project is the hosted one, a remote entry pointing at the daemon's own URL with an agent token, and no artifacts. The agent is a pi started with `specflo agent start` in that seat, named for the project, over the transport the `agent_transport` config key names: `tui` (the default) places a real pi in a herdr pane, `rpc` a headless host. A start whose socket never answers within the timeout fails with the project and seat kept, and the project page then offers a start-agent control.
+
+The fresh agent gets an opening prompt naming its seat as the requester and pointing it at the brainstorm skill's requester mode: plain language, what and why rather than how, one early landscape scan presented plainly, decisions recorded in plain words, and the gate opened with a note of the open points when the requester says they are done. The open gate shows in the developer's inbox. When the developer takes it, from the take control on the project page or by their word in the pane (the agent relays it with `gate take --by developer`), the daemon tells the agent the developer seat is in the conversation and the skill goes back to its normal process.
+
+The chat is shared by the web and the pane. A message posted from the project page reaches the agent as a prompt prefixed with the poster's label; an agent mid-run takes it as a steer, and the post returns once the agent has the prompt. The daemon holds one subscription to each live agent's socket and appends every user message from any seat, every assistant message and every state change to a durable per-project chat log under its root, each entry with a monotonic id. The page follows the log over one server-sent-events stream with replay from the last id it saw, shows the agent's state (working, idle) and a needs-attention banner while a blocking dialog is open in the session, which says to answer in the pane. The log and the mapping survive a daemon restart: the daemon finds the live agent again without a new start. Advancing the project out of brainstorm stops the agent and clears the mapping; `specflo agent stop` does the same by hand.
 
 ## The config file
 
@@ -435,6 +452,9 @@ active_project: my-thing
 
 # herdr workspace label where `specflo agent start` places agent tabs.
 # agent_space: agents
+
+# Transport a daemon starts a project's agent with: tui (pi in a herdr pane) or rpc.
+# agent_transport: tui
 ```
 
 It is your file, so specflo writes it conservatively:

@@ -25,7 +25,7 @@ latter. Release tags are of the form `vX.Y.Z`.
   `serve` extra (`pip install 'specflo[serve]'`); `httpx`, the client side,
   is a core dependency so every install can talk to a daemon.
 - **`specflo serve --root <dir> token add <requester|developer>`** - mint
-  a bearer token bound to one of the daemon's two identities. The secret
+  a bearer token bound to one of the daemon's identities. The secret
   prints once on stdout; the daemon keeps only its SHA-256 hash in
   `tokens.json` under its root. Every daemon request except `/health`
   must carry a valid token: none or an unknown one gets `401`, a valid one
@@ -132,10 +132,83 @@ latter. Release tags are of the form `vX.Y.Z`.
   hidden until `?archived=1`; `/projects/<slug>` shows a project's phase,
   status, execution mode, the role its phase waits on (the developer, in
   every phase, for now) and each artifact with the same text `doc show`
-  prints. No page carries a form or control that changes state. Pages are
-  Jinja2 templates in the package; the one browser script, htmx 2.0.10,
-  ships vendored from the package's `assets` directory and the repository
-  has no JavaScript build step. `jinja2` joins the `serve` extra.
+  prints. Pages are Jinja2 templates in the package; the browser scripts,
+  htmx 4.0.0 and its sse extension, ship vendored from the package's
+  `assets` directory and the repository has no JavaScript build step.
+  `jinja2` joins the `serve` extra.
+- **The `agent` identity.** The daemon knows a third fixed identity beside
+  `requester` and `developer`: `serve token add agent` mints its token, an
+  API request bearing it resolves to `agent`, and every mutation it makes
+  is audited as `agent`. The web sign-in page refuses it: an agent has no
+  browser session.
+- **`specflo gate open <requester|developer> [--note <text>]` and
+  `gate take [--by <requester|developer>]`** - hand the active project to a
+  role and record who takes it. `open` records the role waited on, the
+  acting identity, the time and a one-line note of the open points; the
+  project stays active, and a second open is refused naming the open gate.
+  `take` closes the gate with the taking identity and time; `--by` names
+  the human an agent relays the take for and is refused for any other
+  identity. Taking with no open gate is refused. The gate fields are
+  optional front matter on the project record, so a record without them
+  reads as before and one with them survives shelve, resume, summary and
+  advance. Local and hosted projects round-trip the same fields.
+- **The `agent_transport` config key.** The transport a daemon starts a
+  project's agent with: `tui` (the default: a real pi in a herdr pane) or
+  `rpc` (a headless host). The project page names the transport in use.
+- **Start project from the web.** The product page offers a start-project
+  control on each work item whose dev path is `full` and has no project.
+  Submitting it is one daemon operation, also callable without a browser:
+  spawn the hosted project, scaffold the agent's seat (a client checkout
+  under the daemon root's `seats` directory, pointed at the daemon with an
+  agent token and holding no artifacts), start the agent named for the
+  project with the seat as its cwd, and record the project-to-agent
+  mapping once the agent's control socket answers. The fresh agent gets an
+  opening prompt naming its seat as the requester and pointing it at the
+  brainstorm skill's requester mode: plain language, what and why rather
+  than how, one early landscape scan presented plainly, decisions in plain
+  words, and the gate opened with a note when the requester says they are
+  done. A start whose socket never answers within the timeout fails with
+  the project and seat kept, so the agent can be started later from the
+  project page's start-agent control. Advancing a hosted project out of
+  brainstorm stops its agent and clears the mapping; `agent stop` does the
+  same by hand, after which the page shows the start-agent control again.
+- **The chat.** The project page carries a message form while the agent
+  serves. A post is forwarded to the agent's socket as a prompt prefixed
+  with the posting identity's label; an agent mid-run takes it as a steer
+  instead of refusing it, and the post returns once the agent has the
+  prompt, not when the run settles. The daemon holds one subscription to
+  each live agent's socket and appends to a durable per-project chat log
+  under its root: one entry per user message from any seat (the web or
+  the herdr pane alike), one per assistant message assembled from its
+  streamed text, and one per state change, each with a monotonic id, a
+  time and an author or kind. The log survives a daemon restart, and the
+  daemon finds a live agent again after a restart without a new start.
+  The page follows the log over one server-sent-events stream: a fresh
+  page gets the whole transcript, a reconnecting page sends the last id
+  it saw and gets only what it missed. A state line reads working during
+  a run and idle at settle, and a needs-attention banner names the prompt
+  kind while a blocking dialog is open in the session, telling the reader
+  to answer in the pane. Every transcript line carries its author or kind
+  and time in a monospace region.
+- **The inbox and the take control.** The front page lists every hosted
+  project with an open gate for the signed-in identity's role, newest
+  first, with its product, name, note and opened time; a taken gate leaves
+  the list. The project page shows the role the project waits on from the
+  open gate when there is one, with its note, opener and time, and offers
+  a take control only to the identity the gate waits on; submitting it
+  closes the gate through the same path as `gate take`, and the daemon
+  tells the agent the developer seat is in the conversation so the skill
+  leaves requester mode. In the pane, the developer's word is enough: the
+  agent relays the take with `gate take --by developer`.
+- **Four mutating controls, no more.** The web UI's state-changing
+  controls are exactly: start project on a work item, send a message on a
+  project, take a gate on a project, and start agent on a project. No
+  control advances a phase, runs auto mode or edits an artifact, and a
+  structural test pins the set. Every mutating form carries the session
+  secret as a hidden field the route checks.
+- **The pi extension broadcasts text deltas.** Socket clients receive the
+  session's `message_update` deltas as they stream; the extension writes
+  none of them to disk.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,
