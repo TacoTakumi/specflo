@@ -312,6 +312,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   succeeds instead of being refused as an existing project. An import
   refuses a whitespace-only file name.
 
+### Fixed
+
+- **The index stops calling a finished project active.** The `(active)`
+  marker in `specflo-index.md` now needs a live status as well as the
+  active-project pointer. `complete` and `shelve` both leave the pointer
+  where it is, so a completed or shelved project used to keep the marker
+  next to its own `complete/...` state.
+
 ## [0.14.0]
 
 ### Added

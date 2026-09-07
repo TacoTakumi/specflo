@@ -17,6 +17,7 @@ from .config import SpecfloConfig, rule_text
 from .locking import lock_path_for, locked
 from .projects import (
     COMPLETE_STATUS,
+    INITIAL_STATUS,
     NEEDS_SUMMARY,
     PROJECT_FILENAME,
     Project,
@@ -122,7 +123,11 @@ def _cell(text: str) -> str:
 
 
 def _row(project: Project, active: bool) -> str:
-    name = f"{project.name} (active)" if active else project.name
+    # The marker means "in flight", so it needs both the pointer and a live
+    # status: `complete` and `shelve` leave the pointer where it is, and a
+    # finished project labelled active would misread the ledger.
+    marked = active and project.status == INITIAL_STATUS
+    name = f"{project.name} (active)" if marked else project.name
     state = f"{project.status}/{project.phase}"
     summary = project.summary or NEEDS_SUMMARY
     cells = (name, project.created, project.completed, state, summary)

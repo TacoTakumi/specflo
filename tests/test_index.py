@@ -79,6 +79,20 @@ def test_index_marks_the_active_project(root, cfg):
     assert "(active)" in rows[1]
 
 
+def test_the_marker_drops_when_the_pointed_at_project_ends(root, cfg):
+    projects.create_project(root, cfg, "One", created="2025-01-01", summary="1.")
+    cfg.active_project = "one"
+    assert "(active)" in _rows(write_index(root, cfg).read_text())[0]
+
+    for status in (projects.COMPLETE_STATUS, projects.SHELVED_STATUS):
+        p = projects.load_project(root, cfg, "one")
+        p.status = status
+        (p.path / projects.PROJECT_FILENAME).write_text(projects._render(p))
+        (row,) = _rows(write_index(root, cfg).read_text())
+        assert "(active)" not in row
+        assert status in row
+
+
 def test_index_header_defaults_to_the_historical_rule(root, cfg):
     projects.create_project(root, cfg, "Thing", summary="S.")
     text = write_index(root, cfg).read_text()
