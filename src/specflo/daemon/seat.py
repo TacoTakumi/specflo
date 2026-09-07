@@ -68,6 +68,28 @@ _PROBE_TIMEOUT = 15.0
 MISSING_STATE = "missing"
 # What it reports for a recorded agent whose socket does not answer.
 DEAD_STATE = "dead"
+# The seats a project's conversation can be held from.
+REQUESTER_SEAT = "requester"
+DEVELOPER_SEAT = "developer"
+# What a fresh agent hears first: which seat it serves, which project, and
+# how to run the brainstorm for someone who is not a developer.
+OPENING_PROMPT = (
+    "You are the agent for the project {name!r} ({slug}). The seat you serve is "
+    f"the {REQUESTER_SEAT}: not a developer. Run the brainstorm in requester mode, "
+    "as the specflo-brainstorm skill's requester-mode section describes: plain "
+    "language, what and why rather than how, decisions recorded in plain words, "
+    "one landscape scan early presented plainly, and the gate opened with a note "
+    "of the open points when the requester says they are done."
+)
+# What the agent hears when a developer takes the gate: the seat changed, so
+# the skill leaves requester mode.
+TAKEOVER_MESSAGE = (
+    f"The {DEVELOPER_SEAT} seat has taken the gate on project {{slug!r}}: {{taker}} is "
+    "now in the conversation. Leave requester mode and continue the brainstorm "
+    "by its normal process."
+)
+# How long a message send may wait for the agent's answer.
+_SEND_TIMEOUT = 10.0
 
 
 def seat_dir(root: Path, slug: str) -> Path:
@@ -115,6 +137,10 @@ def scaffold(root: Path, slug: str, url: str, token: str) -> Path:
 
 class AgentStartError(SpecfloError):
     """The agent did not come up: the CLI failed, or its socket never answered."""
+
+
+class AgentMessageError(SpecfloError):
+    """A message did not reach the agent: it is not serving, or it refused the prompt."""
 
 
 def agent_name(slug: str) -> str:
@@ -189,6 +215,28 @@ def _probe(name: str) -> Liveness:
     return Liveness(name=name, alive=state in HEALTHY_STATES, state=state)
 
 
+def send_message(name: str, text: str) -> None:
+    """Deliver ``text`` to the agent named ``name`` as a prompt.
+
+    An agent in the middle of a run gets it with steering behaviour, so
+    the message lands in the run instead of being refused; one that does
+    not serve, or refuses, raises.
+    """
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            state = str(client.status(timeout=_PROBE_TIMEOUT)["status"].get("state"))
+            if state not in HEALTHY_STATES:
+                raise AgentMessageError(f"Agent {name!r} is {state}, not serving.")
+            command: dict = {"type": "prompt", "message": text}
+            if state == "working":
+                command["streamingBehavior"] = "steer"
+            response = client.request(command, timeout=_SEND_TIMEOUT)
+    except (HostUnreachableError, TimeoutError, RuntimeError, OSError, KeyError, TypeError) as exc:
+        raise AgentMessageError(f"Agent {name!r} did not take the message: {exc}") from exc
+    if not response.get("success"):
+        raise AgentMessageError(f"Agent {name!r} refused the message: {response.get('error')}")
+
+
 def liveness(root: Path, slug: str) -> Liveness:
     """Whether the project's agent serves right now, by discovery, not by memory."""
     name = agent_for(root, slug)
@@ -250,8 +298,33 @@ def start_agent(
         raise AgentStartError(
             f"Agent {name!r} for {slug!r} started but is {probe.state}, not serving."
         )
+    project = LocalProjectService(root, config.load_config(root)).load_project(slug)
+    try:
+        send_message(name, OPENING_PROMPT.format(name=project.name, slug=slug))
+    except AgentMessageError as exc:
+        # An agent that never heard which seat it serves is no agent for the
+        # project: it goes, and the start is reported as failed.
+        _agent_cli("stop", name, timeout=_PROBE_TIMEOUT)
+        raise AgentStartError(f"Agent {name!r} for {slug!r} started but took no opening prompt: {exc}") from exc
     record_agent(root, slug, name)
     return name
+
+
+def announce_take(root: Path, project: Project) -> bool:
+    """Tell the project's agent its gate was taken; True when a serving agent heard it.
+
+    A project with no agent, or one that no longer serves, hears nothing:
+    the take stands either way, and the page shows the agent's state.
+    """
+    live = liveness(root, project.slug)
+    if not live.alive or live.name is None:
+        return False
+    taker = (project.gate.taken_by if project.gate is not None else "") or DEVELOPER_SEAT
+    try:
+        send_message(live.name, TAKEOVER_MESSAGE.format(slug=project.slug, taker=taker))
+    except AgentMessageError:
+        return False
+    return True
 
 
 def start_project_agent(

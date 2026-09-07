@@ -402,3 +402,120 @@ def test_advancing_a_project_past_brainstorm_touches_no_agent(root, agent_rig):
     assert project.phase == "plan"
     assert seat.agent_mapping(root) == {"other": "project-other"}
     assert [r["operation"] for r in audit_records(root)[len(before):]] == ["advance_project"]
+
+
+# --- what the agent hears: the opening prompt, and the takeover ----------------
+
+
+def capturing_stub(tmp_path, mode="reply"):
+    """A stub pi that records every frame it is sent; the command and the capture file."""
+    capture = tmp_path / "capture.jsonl"
+    scenario = tmp_path / "scenario-capture.json"
+    scenario.write_text(json.dumps({"reply": "ok", "mode": mode, "capture": str(capture)}), encoding="utf-8")
+    return f"{sys.executable} {STUB_PI} {scenario}", capture
+
+
+def prompts(capture):
+    """Every prompt frame the stub received, in order."""
+    if not capture.exists():
+        return []
+    frames = [json.loads(line) for line in capture.read_text().splitlines() if line]
+    return [frame for frame in frames if frame.get("type") == "prompt"]
+
+
+def started_rpc(root, tmp_path, mode="reply"):
+    slug = scaffolded(root)
+    config.write_value(root, config.field_for("agent_transport"), "rpc")
+    pi_cmd, capture = capturing_stub(tmp_path, mode=mode)
+    name = seat.start_agent(root, slug, pi_cmd=pi_cmd)
+    return slug, name, capture
+
+
+def opened(root, slug, role="developer"):
+    """A gate the agent opened on the requester's word."""
+    LocalProjectService(root, config.load_config(root), actor="agent", hosted=True).open_gate(
+        slug, role, note="Open points: the name"
+    )
+
+
+def take(client, slug):
+    from specflo.service import wire
+
+    response = client.post(wire.route_path("take_gate"), json={"slug": slug})
+    assert response.status_code == 200, response.text
+    return wire.decode(response.json()["result"], wire.OPERATIONS["take_gate"].returns)
+
+
+def test_a_started_agent_hears_first_which_seat_and_project_it_serves(root, tmp_path, agent_rig):
+    slug, name, capture = started_rpc(root, tmp_path)
+
+    sent = prompts(capture)
+
+    assert len(sent) == 1
+    message = sent[0]["message"]
+    assert "'Login Fix'" in message and f"({slug})" in message
+    assert "requester" in message and "requester mode" in message
+    assert "not a developer" in message
+    assert "streamingBehavior" not in sent[0]
+    assert seat.agent_mapping(root) == {slug: name}
+
+
+def test_a_take_over_the_daemon_tells_the_agent_the_developer_seat_took_over(root, tmp_path, agent_rig):
+    slug, name, capture = started_rpc(root, tmp_path)
+    opened(root, slug)
+
+    project = take(daemon_client(root), slug)
+
+    assert project.gate.taken_by == "developer"
+    sent = prompts(capture)
+    assert len(sent) == 2
+    message = sent[1]["message"]
+    assert "developer seat" in message and f"'{slug}'" in message and "developer is now" in message
+    assert "requester mode" in message
+    assert "streamingBehavior" not in sent[1]
+
+
+def test_a_take_while_the_agent_works_is_steered_into_the_run(root, tmp_path, agent_rig):
+    slug, name, capture = started_rpc(root, tmp_path, mode="never_settle")
+    assert wait_until(lambda: seat.liveness(root, slug).state == "working", timeout=10)
+    opened(root, slug)
+
+    take(daemon_client(root), slug)
+
+    sent = prompts(capture)
+    assert len(sent) == 2
+    assert sent[1]["streamingBehavior"] == "steer"
+    assert "developer seat" in sent[1]["message"]
+
+
+def test_a_take_through_the_page_tells_the_agent_too(root, tmp_path, agent_rig):
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon import web
+    from specflo.daemon.app import create_app
+
+    slug, name, capture = started_rpc(root, tmp_path)
+    opened(root, slug)
+    browser = TestClient(create_app(root), follow_redirects=False)
+    token = auth.mint_token(root, "developer")
+    assert browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token}).status_code == 303
+
+    response = browser.post(
+        web.TAKE_PATH.format(slug=slug), data={"session": browser.cookies[web.SESSION_COOKIE]}
+    )
+
+    assert response.status_code == 303
+    sent = prompts(capture)
+    assert len(sent) == 2 and "developer seat" in sent[1]["message"]
+
+
+def test_a_take_with_no_serving_agent_stands_and_sends_nothing(root, tmp_path, agent_rig):
+    slug, name, capture = started_rpc(root, tmp_path)
+    assert agent_rig["cli"]("stop", name).returncode == 0
+    opened(root, slug)
+
+    project = take(daemon_client(root), slug)
+
+    assert project.gate.taken_by == "developer"
+    assert len(prompts(capture)) == 1
+    assert seat.announce_take(root, project) is False

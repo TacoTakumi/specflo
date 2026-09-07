@@ -485,10 +485,11 @@ async def take_gate(
     service = LocalProjectService(root, load_config(root), actor=identity, hosted=True)
     with project_lock(root, slug):
         try:
-            service.take_gate(slug)
+            project = service.take_gate(slug)
         except SpecfloError as exc:
             return render("error.html", status_code=409, identity=identity, message=str(exc))
         audit(root, identity, "take_gate", slug, None)
+        seat.announce_take(root, project)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 

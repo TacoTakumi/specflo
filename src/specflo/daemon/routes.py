@@ -146,6 +146,24 @@ def _changed(operation: wire.Operation, result) -> bool:
     return True
 
 
+# The mutations the project's agent hears of: its stop on an advance out of
+# the chat phase, and the takeover on a take.
+AGENT_HOOKS = frozenset({"advance_project", "take_gate"})
+
+
+def _agent_hook(name: str, root: Path, identity: str, slug: str | None, result) -> None:
+    """What the project's agent hears of a mutation that succeeded."""
+    # The seat module builds on this one's lock and audit, so it is reached
+    # here, not at import.
+    from . import seat
+
+    if name == "advance_project":
+        if seat.release_on_advance(root, result) is not None:
+            audit(root, identity, "stop_agent", slug, None)
+    elif name == "take_gate":
+        seat.announce_take(root, result)
+
+
 def _service(root: Path, identity: str) -> LocalProjectService:
     """The local service a request runs as: its identity as actor, its projects hosted."""
     return LocalProjectService(root, load_config(root), actor=identity, hosted=True)
@@ -186,13 +204,8 @@ def _handler(operation: wire.Operation):
             if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
                 audit(root, identity, operation.name, project, _minted(result, kwargs))
-            if operation.name == "advance_project":
-                # The seat module builds on this one's lock and audit, so it
-                # is reached here, not at import.
-                from . import seat
-
-                if seat.release_on_advance(root, result) is not None:
-                    audit(root, identity, "stop_agent", slug, None)
+            if operation.name in AGENT_HOOKS:
+                _agent_hook(operation.name, root, identity, slug, result)
         # The boundary: what leaves here describes the daemon's projects, so a
         # path is written relative to the root and the host's layout stays home.
         return {"result": wire.encode(result, root)}
