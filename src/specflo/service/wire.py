@@ -108,8 +108,9 @@ def decode_args(operation: Operation, body: dict) -> dict:
 def _accepts(hint, value) -> bool:
     """Whether a JSON value can stand for a parameter typed ``hint``.
 
-    Plain types and unions of them are checked; anything richer is let
-    through, so a hint the wire does not model never refuses a valid call.
+    Plain types, unions of them, and the elements of a typed list or object
+    are checked; anything richer is let through, so a hint the wire does not
+    model never refuses a valid call.
     """
     if hint is None:
         return True
@@ -127,10 +128,33 @@ def _accepts(hint, value) -> bool:
     if hint is str or hint is Path:
         return isinstance(value, str)
     if hint is dict or origin is dict:
-        return isinstance(value, dict)
+        if not isinstance(value, dict):
+            return False
+        args = typing.get_args(hint)
+        if len(args) != 2:
+            return True
+        return all(
+            _accepts(args[0], key) and _accepts(args[1], item) for key, item in value.items()
+        )
     if hint in (list, tuple) or origin in (list, tuple):
-        return isinstance(value, list)
+        if not isinstance(value, list):
+            return False
+        args = typing.get_args(hint)
+        if origin is not list or len(args) != 1:
+            return True
+        return all(_accepts(args[0], item) for item in value)
     return True
+
+
+# How the elements of a typed container read in a refusal.
+_PLURALS = {str: "strings", int: "integers", float: "numbers", bool: "booleans"}
+
+
+def _of(hint) -> str:
+    """`` of strings`` for a container typed over a plain type; empty otherwise."""
+    args = typing.get_args(hint)
+    element = args[-1] if args else None
+    return f" of {_PLURALS[element]}" if element in _PLURALS else ""
 
 
 def _describe(hint) -> str:
@@ -148,9 +172,9 @@ def _describe(hint) -> str:
     if hint is float:
         return "a number"
     if hint is dict or origin is dict:
-        return "an object"
+        return "an object" + _of(hint)
     if hint in (list, tuple) or origin in (list, tuple):
-        return "a list"
+        return "a list" + (_of(hint) if origin is list else "")
     return getattr(hint, "__name__", str(hint))
 
 

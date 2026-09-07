@@ -171,7 +171,10 @@ class LocalProjectService:
         if directory.exists():
             raise SpecfloError(f"Project {slug!r} already exists at {directory}.")
         for name in files:
-            if not name or name.startswith(".") or "/" in name or "\\" in name:
+            if (
+                not name or name.startswith(".") or "/" in name or "\\" in name
+                or any(ord(char) < 32 or ord(char) == 127 for char in name)
+            ):
                 raise SpecfloError(f"Invalid file name {name!r}: expected a plain file name.")
         if projects.PROJECT_FILENAME not in files:
             raise SpecfloError(

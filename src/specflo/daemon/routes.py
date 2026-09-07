@@ -12,13 +12,17 @@ carries an Actor line, and every mutation that succeeds appends one audit
 record (time, identity, project, operation, minted id) to the daemon root.
 
 A refusal from the service is a 400 carrying its message, so a client can
-raise it unchanged. A request naming a wrong argument is a 422.
+raise it unchanged. A request naming a wrong argument is a 422. Anything
+else that fails inside the service is a 500 whose detail names the operation
+and the kind of failure; the traceback goes to the daemon's log, never to
+the client.
 """
 
 from __future__ import annotations
 
 import datetime
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -36,6 +40,8 @@ from .workitems import WORK_ITEMS_PATH, WorkItems
 
 WHOAMI_PATH = "/whoami"
 AUDIT_FILENAME = "audit.jsonl"
+
+_log = logging.getLogger(__name__)
 
 # The operations that change nothing; every other operation is a mutation
 # and leaves an audit record.
@@ -157,6 +163,12 @@ def _handler(operation: wire.Operation):
                 result = getattr(service, operation.name)(**kwargs)
             except SpecfloError as exc:
                 raise HTTPException(status_code=400, detail=str(exc))
+            except Exception as exc:
+                _log.exception("%s failed on the daemon", operation.name)
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"{operation.name} failed on the daemon: {type(exc).__name__}.",
+                )
             if operation.name in AUDITED_OPERATIONS:
                 project = slug or getattr(result, "slug", None)
                 _audit(root, identity, operation.name, project, _minted(result, kwargs))

@@ -74,7 +74,7 @@ def test_import_refuses_an_existing_project_and_a_bad_filename(tmp_path):
 
     with pytest.raises(SpecfloError, match="already exists"):
         service.import_project("taken", {"project.md": "x"})
-    for name in ("../escape.md", "sub/dir.md", "", ".hidden"):
+    for name in ("../escape.md", "sub/dir.md", "", ".hidden", "bad\x00name.md", "tab\tname.md"):
         with pytest.raises(SpecfloError, match="file name"):
             service.import_project("fresh", {name: "x"})
     assert not (tmp_path / "docs" / "projects" / "fresh").exists()

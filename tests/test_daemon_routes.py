@@ -22,6 +22,7 @@ from specflo.daemon.app import create_app
 from specflo.plan import Task
 from specflo.projects import Project
 from specflo.service import ProjectService, wire
+from specflo.service.local import LocalProjectService
 
 
 def operations() -> list[str]:
@@ -278,3 +279,45 @@ def test_close_round_takes_the_report_text_and_never_a_path(root, client):
 
     assert path == root / daemon.PROJECTS_DIRNAME / "thing" / "review-1.md"
     assert path.read_text().endswith(text)
+
+
+def test_a_bad_element_is_refused_and_a_failure_inside_is_a_500_without_a_traceback(
+    client, root, monkeypatch
+):
+    call(client, "create_project", name="Thing")
+
+    # A file name with a control character never reaches the filesystem.
+    nul = client.post(
+        wire.route_path("import_project"),
+        json={"slug": "other", "files": {"project.md": "x", "bad\x00name.md": "y"}},
+    )
+    assert nul.status_code == 400, nul.text
+    assert "file name" in nul.json()["detail"]
+    assert not (root / daemon.PROJECTS_DIRNAME / "other").exists()
+
+    # The elements of a list or object are typed too, not only the container.
+    for operation, body, expected in (
+        ("import_project", {"slug": "other", "files": {"project.md": 1}},
+         "'files' must be an object of strings"),
+        ("add_task", {"slug": "thing", "text": "t", "acceptance": "a", "verify": "v",
+                      "implements": [1, 2]},
+         "'implements' must be a list of strings"),
+        ("add_milestone", {"slug": "thing", "text": "m", "exit_items": ["ok", None]},
+         "'exit_items' must be a list of strings"),
+    ):
+        response = client.post(wire.route_path(operation), json=body)
+        assert response.status_code == 422, (operation, response.text)
+        assert expected in response.json()["detail"], (operation, response.text)
+
+    # Whatever else fails inside the service answers as JSON naming the
+    # operation and the kind of failure; the traceback stays in the log.
+    def broken(self, slug):
+        raise RuntimeError("/srv/daemon/projects/thing/project.md is unreadable")
+
+    monkeypatch.setattr(LocalProjectService, "load_project", broken)
+    response = client.post(wire.route_path("load_project"), json={"slug": "thing"})
+
+    assert response.status_code == 500, response.text
+    detail = response.json()["detail"]
+    assert "load_project" in detail and "RuntimeError" in detail
+    assert "Traceback" not in response.text and "/srv/daemon" not in response.text
