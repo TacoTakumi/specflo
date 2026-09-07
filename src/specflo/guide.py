@@ -100,7 +100,7 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Install the bundled pi extension into pi's extension directory."},
     {"name": "serve", "group": "setup", "args": "--root <dir>",
      "summary": "Run the daemon that hosts projects for CLI clients (serve extra)."},
-    {"name": "serve token add", "group": "setup", "args": "--root <dir> ... <requester|developer>",
+    {"name": "serve token add", "group": "setup", "args": "--root <dir> ... <requester|developer|agent>",
      "summary": "Mint a daemon bearer token for one identity; the secret prints once."},
     {"name": "remote add", "group": "setup", "args": "<name> <url> --token <secret>",
      "summary": "Register a daemon by name; changes nothing about local projects."},
@@ -190,6 +190,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mint the next review round (review-N.md) and print its path."},
     {"name": "review done", "group": "workflow", "args": "",
      "summary": "Close the open review round with a verdict (--verdict)."},
+    {"name": "gate open", "group": "workflow", "args": "<requester|developer> [--note <text>]",
+     "summary": "Hand the active project to a role: it waits until someone takes the gate."},
     {"name": "doc show", "group": "workflow", "args": "<artifact>",
      "summary": "Print an artifact of the active project verbatim "
                 "(brainstorm|spec|plan|checkpoint|project)."},
