@@ -102,6 +102,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Run the daemon that hosts projects for CLI clients (serve extra)."},
     {"name": "serve token add", "group": "setup", "args": "--root <dir> ... <requester|developer|agent>",
      "summary": "Mint a daemon bearer token for one identity; the secret prints once."},
+    {"name": "serve pool validate", "group": "setup", "args": "--root <dir> ...",
+     "summary": "Check the pool configuration under the daemon root; prints every fault in one run."},
     {"name": "remote add", "group": "setup", "args": "<name> <url> --token <secret>",
      "summary": "Register a daemon by name; changes nothing about local projects."},
     {"name": "remote list", "group": "setup", "args": "",

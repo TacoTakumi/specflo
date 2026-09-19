@@ -11,6 +11,7 @@ from pathlib import Path
 import typer
 
 from ..errors import SpecfloError
+from ..pool.cli_admin import pool_app
 from . import DEFAULT_BIND, DEFAULT_PORT, auth, prepare_root
 
 SERVE_EXTRA_HINT = (
@@ -25,6 +26,9 @@ serve_app = typer.Typer(
 
 token_app = typer.Typer(help="Mint the bearer tokens clients present to the daemon.")
 serve_app.add_typer(token_app, name="token")
+
+# The pool commands read files under the root and never start the daemon.
+serve_app.add_typer(pool_app, name="pool")
 
 
 @serve_app.callback(epilog="Example: specflo serve --root ~/specflo-daemon --port 8741")
