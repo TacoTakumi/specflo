@@ -1,0 +1,30 @@
+# A cut-down llama-swap configuration in the rig's shape: a models map keyed
+# by model ID, and a matrix whose vars give short names to model IDs and whose
+# sets are expressions over those names.
+healthCheckTimeout: 900
+globalTTL: 0
+
+models:
+  model-a:
+    cmd: llama-server --port ${PORT} -m /models/a.gguf
+  model-b:
+    cmd: llama-server --port ${PORT} -m /models/b.gguf
+  model-c:
+    cmd: llama-server --port ${PORT} -m /models/c.gguf
+  model-d:
+    cmd: llama-server --port ${PORT} -m /models/d.gguf
+
+matrix:
+  vars:
+    a: model-a
+    b: model-b
+    c: model-c
+    d: model-d
+
+  evict_costs:
+    a: 15
+
+  sets:
+    # One of a or b, together with c; subsets let any piece run alone.
+    # d is in no set, so it only ever runs alone.
+    pair: "(a | b) & c"
