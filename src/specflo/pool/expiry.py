@@ -12,14 +12,22 @@ A lease whose last activity lies its idle limit or more behind has expired.
 Whoever reads a lease works that out; the pool service does, and ends the
 lease, at the start of whatever it is next asked to do.
 
-The rule is a function of the lease row, the status record and the time. It
-reads no clock and no file: the status record is handed in as data, and
-``None`` stands for a member with no status to go by.
+A team is renewed as one. Its member leases share a team lease id and an idle
+limit, and the last activity a member lease is judged by is the latest among
+the team's member leases that were read: a prompt to one member keeps every
+member, and with nothing done anywhere they are all due at the same look. A
+member's own last activity stays its own, for whoever asks how long that one
+member has been idle.
+
+The rule is a function of the lease rows, the status records and the time. It
+reads no clock and no file: a status record is handed in as data, and
+``None`` stands for a member with no status to go by. Whoever has the active
+leases and their statuses can apply it, with no pool service at hand.
 """
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -27,6 +35,9 @@ from ..daemon.poolstore import Lease
 
 # The agent host's state for a member with a turn running.
 WORKING = "working"
+
+# A lease as it is read: its row, and its member's status record or None.
+Read = tuple[Lease, Mapping[str, Any] | None]
 
 
 def last_activity(lease: Lease, status: Mapping[str, Any] | None, now: datetime) -> datetime:
@@ -46,6 +57,34 @@ def last_activity(lease: Lease, status: Mapping[str, Any] | None, now: datetime)
 def expired(lease: Lease, status: Mapping[str, Any] | None, now: datetime) -> bool:
     """Has *lease* been idle for its limit at the time *now*?"""
     return now - last_activity(lease, status, now) >= timedelta(seconds=lease.idle_limit)
+
+
+def judged_activity(read: Iterable[Read], now: datetime) -> dict[str, datetime]:
+    """The last activity each lease of *read* is judged by, by lease id: its
+    own, and for a member lease of a team the latest among the team's leases
+    in *read*. Hand in the active leases; one that has ended renews no one."""
+    own = [(lease, last_activity(lease, status, now)) for lease, status in read]
+    latest: dict[str, datetime] = {}
+    for lease, seen in own:
+        if lease.team_lease_id is not None:
+            team = lease.team_lease_id
+            latest[team] = max(seen, latest.get(team, seen))
+    return {
+        lease.id: seen if lease.team_lease_id is None else latest[lease.team_lease_id]
+        for lease, seen in own
+    }
+
+
+def due(read: Iterable[Read], now: datetime) -> list[Lease]:
+    """The leases of *read* idle for their limit at the time *now*, in the
+    order read. A team's member leases share their limit and the time they
+    are judged by, so they are all due at the same look or none is."""
+    read = list(read)
+    judged = judged_activity(read, now)
+    return [
+        lease for lease, _ in read
+        if now - judged[lease.id] >= timedelta(seconds=lease.idle_limit)
+    ]
 
 
 def _time(text: Any) -> datetime | None:

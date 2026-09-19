@@ -20,6 +20,13 @@ asked for. The refusal stands on the holder's release only: a member that
 does not start, and whatever else ends a lease from inside the pool, ends
 member leases one by one.
 
+The team is kept as one too. Every member lease has the same idle limit: the
+shortest default among the team's pools, or what the request asks, which the
+shortest maximum among them must allow. What any member does renews every
+member, and with nothing done they all expire at once; that is a rule of how
+the team's leases are read, and it stands with the other rules of expiry (see
+``expiry``).
+
 This module holds what is the team's own: what a granted team is, the member
 slots its roles come to, the leases that stand for members placed and not yet
 written, the idle limit of its member leases, and its release. Whether the
@@ -102,11 +109,21 @@ def idle_limits(
     pools: Iterable[Pool], asked: int | None, limit_of: Callable[[Pool, int | None], int]
 ) -> dict[str, int]:
     """The idle limit of a member lease of a team on each of *pools*, by pool
-    name, in seconds. *limit_of* is the pool service's rule for one lease on
-    one pool: what was *asked* when the pool allows it, or the pool's default.
-    Every pool is asked here, before anything is granted, so a limit that one
-    pool refuses leaves nothing behind."""
-    return {pool.name: limit_of(pool, asked) for pool in pools}
+    name, in seconds: one limit, the same on every pool. *limit_of* is the
+    pool service's rule for one lease on one pool: what was *asked* when the
+    pool allows it, or the pool's default.
+
+    With nothing asked the limit is the shortest default among the pools.
+    What is asked is put to the pool whose maximum is the shortest, so a
+    refusal names that maximum and the pool that sets it. This is worked out
+    before anything is granted, so a limit that is refused leaves nothing
+    behind."""
+    pools = list(pools)
+    if asked is None:
+        limit = min(limit_of(pool, None) for pool in pools)
+    else:
+        limit = limit_of(min(pools, key=lambda pool: pool.idle_max), asked)
+    return {pool.name: limit for pool in pools}
 
 
 def refuse_member_release(lease: Lease) -> None:

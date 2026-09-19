@@ -19,7 +19,9 @@ Nothing here runs in the background, so no lease expires by itself. Each
 entry point begins with ``expire_due``: the leases idle for their limit, by
 the rule in ``expiry``, are ended as expired before the caller is served. An
 expired lease therefore stands as active until the pool is next asked for
-something, and is never counted against the one who asks.
+something, and is never counted against the one who asks. A team's member
+leases are judged by the latest activity on any of them, so they are all
+ended at the same check or none is, each as a lease of no team is.
 
 Grants and endings take turns, one at a time in this process. A member's slot
 reads as free from the moment its lease leaves the active state, while its
@@ -217,10 +219,11 @@ class PoolService:
             try:
                 now = self.clock()
                 with self.open_store() as store:
-                    due = [
-                        lease.id for lease in store.list_leases(state="active")
-                        if expiry.expired(lease, runner.status(ledger.agent_of(lease)), now)
+                    read = [
+                        (lease, runner.status(ledger.agent_of(lease)))
+                        for lease in store.list_leases(state="active")
                     ]
+                due = [lease.id for lease in expiry.due(read, now)]
                 return [self.end_lease(lease_id, "expired") for lease_id in due]
             finally:
                 self._checking = False
