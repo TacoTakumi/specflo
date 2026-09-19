@@ -514,6 +514,10 @@ class PiHost:
         with self._wall_lock:
             if ctype == "pool_bind":
                 if self._pool_digest is not None:
+                    # the bound pool may say so again, which changes nothing:
+                    # whoever holds that token commands this host already
+                    if pool is not None and hmac.compare_digest(pool, self._pool_digest):
+                        return None
                     return "a pool is already bound to this host"
                 if pool is None:
                     return "pool_bind needs a pool_token"

@@ -15,6 +15,14 @@ draining: the slot takes no new lease, the lease that is out on it stands,
 and with none out the slot is offline again, row or no row. A row whose slot
 the configuration no longer declares is no slot's, and is never read.
 
+An attached host is the developer's to end, and one that is gone serves no
+one. Whoever reads the states hands in what the hosts last wrote of
+themselves, by agent name, with None for a host that is gone (``statuses``):
+the slot of such a host is offline, whatever its row says. The lease that was
+out on it stands until it has been idle for its limit, as the lease of any
+member whose pi went away. With no statuses handed in, the rows are taken at
+their word.
+
 The ledger matches nothing to a slot that is offline or draining. The pool
 service hands it those slots by name at every placement (``unmatched``), and
 the ledger passes them over. A pool that only such slots serve has no room,
@@ -22,20 +30,27 @@ which is the refusal a request waits on: an attach ends the wait.
 
 An attach is refused for a name that is not a declared console, for a slot an
 agent is attached to or that still drains, and for an agent that does not run
-on the daemon's host or runs on the TUI transport. Otherwise the pool's token
-is bound on the agent's host, which is all the pool does to it until a lease:
-a host takes one pool's token, once, so a host that serves another slot, or a
-leased member's, does not take it and is refused by that.
+on the daemon's host or runs on the TUI transport. It is refused as well for
+an agent that serves another slot, attached or still draining, and for one
+that a lease on a member the pool started runs on: a host serves one slot.
+Otherwise the pool's token is bound on the agent's host, which is all the
+pool does to it until a lease. A host takes one pool's token, and takes the
+same one again, so the host that left a slot may be attached anew.
 
 A lease on an attached slot runs on the attached agent, so that is the agent
-the grant names and the name on the lease row (``placement``).
+the grant names and the name on the lease row (``placement``). Its ending
+stops nothing, and ``leased`` says which leases end so: those on a declared
+console, those on a slot's attached agent when a later configuration
+declares the slot otherwise, and those on a member the configuration no
+longer declares at all. Only a lease that is known to be on a member the
+pool started has its process stopped.
 
 Nothing here talks to an agent host; the runner does, as for every member.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import replace
 from datetime import timezone
 from typing import TYPE_CHECKING
@@ -63,13 +78,20 @@ def slots(config: PoolConfig) -> tuple[Member, ...]:
     return tuple(member for member in config.members if member.kind == CONSOLE)
 
 
-def state(slot: str, rows: Iterable[ConsoleAttachment], leases: Iterable[Lease]) -> str:
+def state(
+    slot: str,
+    rows: Iterable[ConsoleAttachment],
+    leases: Iterable[Lease],
+    statuses: Mapping[str, object] | None = None,
+) -> str:
     """The state of the console *slot*, from the console *rows* and the *leases*.
 
-    *leases* may hold rows that have ended; they count for nothing.
+    *leases* may hold rows that have ended; they count for nothing. With
+    *statuses*, what each attached host last wrote of itself by agent name, a
+    slot whose host is gone, or is not among them, is offline.
     """
     row = next((row for row in rows if row.slot == slot), None)
-    if row is None:
+    if row is None or _gone(row, statuses):
         return OFFLINE
     if not row.draining:
         return ATTACHED
@@ -78,11 +100,32 @@ def state(slot: str, rows: Iterable[ConsoleAttachment], leases: Iterable[Lease])
     return DRAINING if out else OFFLINE
 
 
-def unmatched(config: PoolConfig, rows: Iterable[ConsoleAttachment]) -> frozenset[str]:
+def unmatched(
+    config: PoolConfig,
+    rows: Iterable[ConsoleAttachment],
+    statuses: Mapping[str, object] | None = None,
+) -> frozenset[str]:
     """The console slots of *config* that take no new lease now: those with no
-    agent attached, and those that were detached."""
-    serving = {row.slot for row in rows if not row.draining}
+    agent attached, those that were detached and, with *statuses* (see
+    ``state``), those whose host is gone."""
+    serving = {row.slot for row in rows if not row.draining and not _gone(row, statuses)}
     return frozenset(member.name for member in slots(config) if member.name not in serving)
+
+
+def leased(lease: Lease, config: PoolConfig, rows: Iterable[ConsoleAttachment]) -> bool:
+    """Does *lease* run on a developer's process, which its ending must leave
+    running? It does not when *config* declares its member as one the pool
+    starts and no row of *rows* attached the lease's agent under that name."""
+    member = next((m for m in config.members if m.name == lease.member), None)
+    if member is None or member.kind == CONSOLE:
+        # A member that is declared no more is not known to be the pool's own.
+        return True
+    agent = ledger.agent_of(lease)
+    return any(row.slot == lease.member and row.agent == agent for row in rows)
+
+
+def _gone(row: ConsoleAttachment, statuses: Mapping[str, object] | None) -> bool:
+    return statuses is not None and statuses.get(row.agent) is None
 
 
 def placement(
@@ -108,12 +151,14 @@ def attach(service: PoolService, slot: str, agent: str) -> ConsoleAttachment:
     of *service*; the row that says so.
 
     Raises ``ConsoleRefused`` for a name that is no declared console, a slot
-    that is attached or still drains, and an agent that is not attachable.
+    that is attached or still drains, an agent that serves another slot or
+    runs a lease of a member the pool started, and one that is not attachable.
     """
     _declared(service.config, slot)
     with service.open_store() as store:
         rows = store.list_consoles()
-        now = state(slot, rows, store.list_leases(state=ledger.ACTIVE))
+        out = store.list_leases(state=ledger.ACTIVE)
+        now = state(slot, rows, out)
         if now == ATTACHED:
             held = next(row.agent for row in rows if row.slot == slot)
             raise ConsoleRefused(
@@ -124,6 +169,19 @@ def attach(service: PoolService, slot: str, agent: str) -> ConsoleAttachment:
             raise ConsoleRefused(
                 f"console '{slot}' was detached and its lease is still out; it goes offline, "
                 "and can be attached again, when that lease ends."
+            )
+        # A host takes this pool's token again, so it is asked here whether
+        # the agent serves already: one host is one slot's.
+        for row in rows:
+            if row.agent == agent and row.slot != slot and state(row.slot, rows, out) != OFFLINE:
+                raise ConsoleRefused(
+                    f"agent '{agent}' is attached to console '{row.slot}'; detach it there "
+                    "first, and let its lease end."
+                )
+        if any(ledger.agent_of(lease) == agent for lease in out):
+            raise ConsoleRefused(
+                f"agent '{agent}' is not a developer's to attach: a lease of the pool runs on "
+                "it, on a member the pool started."
             )
         try:
             runner.attach_console(agent, pool_token=service.pool_token)

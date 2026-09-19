@@ -77,10 +77,12 @@ def test_pool_bind_is_accepted_once(make_host):
         first = client.request({"type": "pool_bind", "pool_token": POOL})
         assert first["success"] is True
         assert first["command"] == "pool_bind"
-        for token in (POOL, "another-pool"):
-            again = client.request({"type": "pool_bind", "pool_token": token})
-            assert again["success"] is False
-            assert again["error"]
+        # the pool that is bound may say so again; no other pool is let in
+        again = client.request({"type": "pool_bind", "pool_token": POOL})
+        assert again["success"] is True
+        other = client.request({"type": "pool_bind", "pool_token": "another-pool"})
+        assert other["success"] is False
+        assert other["error"]
 
 
 def test_pool_bind_needs_a_token(make_host):
@@ -301,6 +303,6 @@ def test_client_binding_helpers_raise_when_refused(make_host):
             client.lease_bind(POOL, HOLDER)
         client.pool_bind(POOL)
         with pytest.raises(RuntimeError):
-            client.pool_bind(POOL)
+            client.pool_bind("another-pool")
         with pytest.raises(RuntimeError):
             client.lease_clear("wrong")

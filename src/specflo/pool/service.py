@@ -13,7 +13,8 @@ preempts it - it ends in ``end_lease`` and nowhere else. The move out of the
 active state is one guarded write in the store, so of two callers ending one
 lease one wins: the winner stops the member's process, and the agent host
 aborts a running turn before it stops pi. The other caller, and anyone ending
-a lease that has ended, gets the recorded end state and changes nothing.
+a lease that has ended, gets the recorded end state and changes nothing. The
+one process the winner does not stop is a developer's console's.
 
 Nothing here runs in the background, so no lease expires by itself. Each
 entry point begins with ``expire_due``: the leases idle for their limit, by
@@ -86,11 +87,18 @@ that does not start ends the members granted before it, and no lease of the
 team stays out.
 
 A console is a member whose process is its developer's (see ``console``). At
-every placement the service reads which consoles have an agent attached and
-hands the ledger the others, which it passes over, so a pool that only they
-serve has no room and its request waits for an attach. A lease on a console
-is written as any other, under the attached agent's name, and its grant binds
-the lease on that agent's host and starts nothing.
+every placement the service reads which consoles have an agent attached, and
+through the runner whether each attached host still runs, and hands the
+ledger the other consoles, which it passes over. So a pool that only they
+serve has no room and its request waits: for an attach, also when the host
+that was attached has died. A lease on a console is written as any other,
+under the attached agent's name, and its grant binds the lease on that
+agent's host and starts nothing. Its ending, whichever of the three it is,
+comes through ``end_lease`` like every ending and stops nothing either: the
+runner lowers the wall, aborts a turn the holder left running and records
+the ending for the former holder, and the developer's pi runs on. Which
+leases end so is ``console.leased`` to say. A lease that is out on a host
+that died expires at its idle limit, as any lease whose pi went away.
 
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
@@ -430,7 +438,9 @@ class PoolService:
         the preempting request's *request_id*. *cause* is the record's own
         wording of why; without one the kind stands for it. A running turn is
         aborted and the member's process stopped, the slot is free to the
-        next request, and the former holder's next verb is told the kind.
+        next request, and the former holder's next verb is told the kind. A
+        console's process is its developer's and is not stopped: its lease
+        ends on the host, and the host runs on.
 
         A lease that has ended already is left as it is, and how it ended is
         returned. Raises ``UnknownLease``, and ``RunnerError`` when the
@@ -449,12 +459,16 @@ class PoolService:
             )
             if store.record_transition(ending, expect="active") is None:
                 return _recorded_end(store, lease_id)
-            # The host aborts a running turn itself before it stops pi.
             ended = store.get_lease(lease_id)
-            runner.stop(
-                ledger.agent_of(ended), kind, pool_token=self.pool_token,
-                request_id=request_id, holder=ended.holder_hash,
+            # A console's process is never the pool's to stop; any other
+            # member's host aborts a running turn itself before it stops pi.
+            told = dict(
+                pool_token=self.pool_token, request_id=request_id, holder=ended.holder_hash
             )
+            if console.leased(ended, self.config, store.list_consoles()):
+                runner.release_console(ledger.agent_of(ended), kind, **told)
+            else:
+                runner.stop(ledger.agent_of(ended), kind, **told)
         return Ended(lease_id=lease_id, state=kind, cause=cause, time=ending.time)
 
     def _pool(self, name: str) -> Pool:
@@ -631,8 +645,9 @@ class PoolService:
         the requesting project *project* pins, when there is one. The accounts the store holds as
         closed, and that are not open again by the service's clock, go to the
         ledger with their reopen times, and so do the consoles that no agent
-        is attached to now, which it passes over; a placement on a console is
-        on the agent attached to it (see ``console``). Raises ``NoFreeMember``,
+        is attached to now, or whose attached host is gone, which it passes
+        over; a placement on a console is on the agent attached to it (see
+        ``console``). Raises ``NoFreeMember``,
         ``EgressRefused`` for a pool with no member under the request's
         ceiling, and ``ClosedAccount`` for one whose members under it all run
         through closed accounts."""
@@ -654,13 +669,15 @@ class PoolService:
             lease for lease in store.list_leases(state="active") if lease.id not in leave_out
         ]
         consoles = store.list_consoles()
+        # A host that is gone has no status, and its console serves no one.
+        hosts = {row.agent: runner.status(row.agent) for row in consoles}
         try:
             return console.placement(ledger.place(
                 self.config, [*out, *also],
                 ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
                 standing=() if alone else self.standing(), closed=closed,
                 # An attach cures a console with no agent, so with *alone* it counts.
-                unmatched=() if alone else console.unmatched(self.config, consoles),
+                unmatched=() if alone else console.unmatched(self.config, consoles, hosts),
             ), consoles)
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full), out) from full

@@ -27,7 +27,10 @@ attaches an agent host that runs already: ``attach_console`` checks that one
 answers under the name on the rpc transport and binds the pool's token on it,
 and ``bind_console`` raises the wall on it for one lease. Neither starts
 anything. An agent on the TUI transport has no host to bind a token on, so
-it is not attachable.
+it is not attachable. The end of a console's lease is ``release_console``
+and never ``stop``: the ending is recorded as for any member, the wall is
+lowered and a turn the holder left running is aborted, and the host and its
+pi run on, the developer's as they were.
 
 A member's event log is the host's record of the lease, and the daemon reads
 it for one thing: the turns that ended in a provider error. ``read_log`` gives
@@ -225,7 +228,7 @@ def attach_console(name: str, *, pool_token: str) -> None:
 
     Raises ``NotAttachable`` for a name that names no agent, an agent on the
     TUI transport, one whose host does not answer, and a host that does not
-    take the token: a host takes a pool's token once.
+    take the token: a host takes one pool's token, again too, and no other's.
     """
     try:
         paths = AgentPaths.resolve(name)
@@ -243,7 +246,7 @@ def attach_console(name: str, *, pool_token: str) -> None:
     except RuntimeError as exc:
         raise NotAttachable(
             f"agent '{name}': its host did not take the pool's token: {exc}. A host takes "
-            "one pool's token once; start a fresh agent host to attach."
+            "one pool's token and no other's; start a fresh agent host to attach."
         ) from exc
     except (HostUnreachableError, TimeoutError, OSError) as exc:
         raise NotAttachable(
@@ -264,7 +267,43 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
             client.lease_bind(pool_token, lease_token)
     except (HostUnreachableError, TimeoutError, RuntimeError, OSError) as exc:
         raise RunnerError(f"console '{name}': its host did not take the lease: {exc}") from exc
+    # As at a start: the last ending was a former lease's, not this one's.
+    lease.clear_ended(_paths(name).root)
     return name
+
+
+def release_console(
+    name: str,
+    cause: str,
+    *,
+    pool_token: str,
+    request_id: str | None = None,
+    holder: str | None = None,
+) -> None:
+    """End the lease on the attached console host *name* for *cause*, and
+    stop nothing: the host and its pi are the developer's.
+
+    The record is written as ``stop`` writes it, so the former holder is told
+    why. The wall comes down, and a turn that ran under the lease is aborted;
+    pi stays up through an abort. A host that is gone, or that does not know
+    the pool's token, is left alone: the lease ends all the same.
+    """
+    paths = _paths(name)
+    lease.write_ended(paths.root, cause, request_id, holder=holder)
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            # Read while the wall is up: a turn that runs now is the holder's.
+            try:
+                record = client.status(timeout=_PROBE_TIMEOUT).get("status")
+            except (TimeoutError, RuntimeError):
+                record = None  # the wall comes down all the same
+            client.lease_clear(pool_token)
+            if isinstance(record, dict) and record.get("state") == "working":
+                client.request({"type": "abort"}, timeout=_PROBE_TIMEOUT)
+    except (HostUnreachableError, TimeoutError, RuntimeError, OSError):
+        # No host, or one that this pool is not bound on: nothing of it is
+        # this pool's to clear or to abort.
+        pass
 
 
 def _refuse_tui(name: str, record: object) -> None:

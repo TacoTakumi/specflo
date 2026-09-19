@@ -36,7 +36,6 @@ from specflo.daemon import auth
 from specflo.pool import cli_admin, console, ledger, service, waiting
 from specflo.pool import config as pool_config
 from specflo.pool.config import Member
-from specflo.pool.runner import RunnerError
 from specflo.service.pool_remote import RemotePool
 
 from . import test_lease_request
@@ -475,21 +474,6 @@ def test_detach_makes_the_next_request_wait(console_daemon, pool_rig):
     assert SLOT in refused.output
     operations = [r["operation"] for r in audit_records(console_daemon["root"])]
     assert operations == ["console_attach", "console_detach"]
-
-
-def test_a_host_that_does_not_take_the_lease_leaves_no_active_lease(pool_rig):
-    svc = pool_rig.service(pool_rig.config(console_member()))
-    host_pid = start_host(pool_rig)["host_pid"]
-    console.attach(svc, SLOT, AGENT)
-    with connect(AGENT) as host:
-        host.stop()
-    assert wait_until(lambda: not pid_alive(host_pid))
-
-    with pytest.raises(RunnerError, match=AGENT):
-        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
-
-    with pool_rig.store() as store:
-        assert store.list_leases(state="active") == []
 
 
 # -- local mode ---------------------------------------------------------------
