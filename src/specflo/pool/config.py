@@ -24,19 +24,26 @@ Loading is strict: a key this module does not know is refused rather than
 ignored, and every refusal names the entry and the field at fault. Accounts
 members and pools are lists of named entries, not mappings, because YAML drops a
 repeated mapping key without a word and a repeated name must be refused.
+
+The pool file, the definitions and the teams in ``teams/`` make up the pool
+directory, and ``load_pool_config`` reads the whole of it as one configuration.
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from ..errors import SpecfloError
 from . import matrix
 from .definitions import EGRESS_CLASSES, AgentDefinition, DefinitionError, load_definition
+
+if TYPE_CHECKING:
+    from .teams import Team
 
 # What backs a member: llama-swap on this host, or a provider over the network.
 LOCAL = "local"
@@ -59,6 +66,9 @@ MEMBER_FIELDS: tuple[str, ...] = (
 POOL_FIELDS: tuple[str, ...] = (
     "name", "definition", "members", "size", "idle_default", "idle_max", "preempt_after",
 )
+
+# The pool file's name in a pool directory.
+POOL_FILE = "pool.yaml"
 
 # The directory beside the pool file that holds the agent definitions, one
 # markdown file each; a pool binds a definition by the file's stem.
@@ -130,7 +140,8 @@ class Pool:
 class PoolConfig:
     """What ``pool.yaml`` declares, with the definitions beside it. ``swap`` is
     the llama-swap configuration at ``llama_swap``; both are None when the
-    file names none."""
+    file names none. ``teams`` is filled only when the whole pool directory is
+    loaded."""
 
     path: Path
     accounts: tuple[Account, ...] = ()
@@ -139,6 +150,31 @@ class PoolConfig:
     definitions: tuple[AgentDefinition, ...] = ()
     llama_swap: Path | None = None
     swap: matrix.SwapConfig | None = None
+    teams: tuple[Team, ...] = ()
+
+
+def load_pool_config(directory: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
+    """The whole pool *directory* as one configuration, with every fault found
+    in it: the pool file, the definitions and the teams.
+
+    A team is checked against the pools that stand. One that names a pool
+    refused for its own fault is not reported again, but it cannot stand
+    without that pool.
+    """
+    # The teams module builds on this one, so it is imported only here.
+    from . import teams
+
+    directory = Path(directory)
+    config, errors, pool_names = _check_pool_file(directory / POOL_FILE)
+    if any(e.entry == FILE and e.field == "file" for e in errors):
+        # Without the pool file no pool is declared, and every role of every
+        # team would be reported for it.
+        return config, errors
+    standing = {p.name: p for p in config.pools}
+    found, faults = teams.check_teams(
+        directory / teams.TEAMS_DIR, standing, pool_names - set(standing)
+    )
+    return replace(config, teams=found), errors + faults
 
 
 def load_pool_file(path: Path | str) -> PoolConfig:
@@ -160,19 +196,25 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
     with a fault is left out of the configuration, so what is returned holds
     only entries that stand as written.
     """
-    path = Path(path)
+    config, errors, _ = _check_pool_file(Path(path))
+    return config, errors
+
+
+def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str]]:
+    """As ``check_pool_file``, and with every name a pool entry gives, whether
+    or not the pool stands."""
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
         problem = f"cannot be read ({exc.strerror})."
-        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)]
+        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)], set()
     except yaml.YAMLError:
-        return PoolConfig(path), [ConfigError(path, FILE, "file", "not valid YAML.")]
+        return PoolConfig(path), [ConfigError(path, FILE, "file", "not valid YAML.")], set()
     if data is None:
         data = {}
     if not isinstance(data, dict):
         problem = "not a mapping of " + ", ".join(SECTIONS) + "."
-        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)]
+        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)], set()
 
     errors: list[ConfigError] = []
     for key in data:
@@ -238,7 +280,7 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
         tuple(definitions.values()),
         llama_swap,
         swap,
-    ), errors
+    ), errors, set(_names(pool_entries))
 
 
 def _entries(
@@ -317,8 +359,8 @@ def _definitions(
 
 
 class _Entry:
-    """One account, member or pool entry being checked: reads its fields and notes
-    each fault against the entry's name, or its position when it has none."""
+    """One account, member, pool or team role entry being checked: reads its fields
+    and notes each fault against the entry's name, or its position when it has none."""
 
     def __init__(
         self, path: Path, kind: str, section: str, position: int, fields: object,
