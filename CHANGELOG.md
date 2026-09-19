@@ -200,15 +200,127 @@ latter. Release tags are of the form `vX.Y.Z`.
   tells the agent the developer seat is in the conversation so the skill
   leaves requester mode. In the pane, the developer's word is enough: the
   agent relays the take with `gate take --by developer`.
-- **Four mutating controls, no more.** The web UI's state-changing
+- **Nine mutating controls, no more.** The web UI's state-changing
   controls are exactly: start project on a work item, send a message on a
-  project, take a gate on a project, and start agent on a project. No
-  control advances a phase, runs auto mode or edits an artifact, and a
-  structural test pins the set. Every mutating form carries the session
-  secret as a hidden field the route checks.
+  project, take a gate on a project, start agent on a project, and on the
+  agent pool's pages release a lease, save and delete a definition, and
+  save and delete a team. No control advances a phase, runs auto mode or
+  edits an artifact, and a structural test pins the set. Every mutating
+  form carries the session secret as a hidden field the route checks.
 - **The pi extension broadcasts text deltas.** Socket clients receive the
   session's `message_update` deltas as they stream; the extension writes
   none of them to disk.
+- **The agent pool.** A daemon can hold a roster of pi agents that an admin
+  declares ahead of time and orchestrators lease by name. The configuration
+  is the directory `pool/` under the daemon root: `pool.yaml` (the
+  llama-swap configuration path, provider accounts with a lease cap and the
+  name of the key's environment variable, members that are `local` or
+  `hosted`, and named pools that bind one agent definition to members with
+  a size and idle limits), `definitions/<name>.md` and `teams/<name>.md`.
+  Nothing that is not declared can be leased, and an unknown key is
+  refused. The daemon reads the directory at start; a configuration with a
+  fault disables only the pool, so projects are served as before and every
+  pool route answers `400` with every fault. Local mode is unchanged: a
+  checkout with no remote loads no pool code and the pool verbs are
+  refused there.
+- **`specflo serve --root <dir> pool init`, `pool validate` and `pool
+  reload`.** `init` writes a `pool.yaml` that is all comments and the five
+  shipped agent definitions (`worker`, `critic`, `hermes-rebaser`,
+  `model-update-checker`, `landscape-scanner`), keeping any file that
+  exists. `validate` checks the whole directory without a daemon and
+  prints every fault in one run, each naming the file, the entry and the
+  field. `reload [--remote <name>]` asks a running daemon, as the
+  developer, to read the directory again with no restart; a directory with
+  a fault changes nothing, a change that removes a member with a lease out
+  is refused whole, and a reload that passes brings to life a pool that
+  was invalid at start.
+- **What a member is given.** Each lease on a started member runs a fresh
+  pi through `specflo agent start`, in a herdr pane named for the member,
+  and the end of the lease stops it. The definition reaches pi as
+  `--tools` (or `--no-tools`), `--skill`, `--append-system-prompt` and
+  `--no-context-files` unless it asks for the project's context. The
+  environment is a short baseline plus the variables the definition lists
+  and the key of the member's own account; the prompt and the key never
+  sit on a command line. A definition's `deny` list is enforced by a pi
+  extension the pool loads on every member. It matches the text of a bash
+  command and is a guard against mistakes, not a security boundary: there
+  is no sandbox, and a member's pi runs as the daemon's user.
+- **`specflo lease request <pool>`, `lease release <lease>` and `lease
+  list`.** A request prints the lease id and the agent to drive with the
+  `specflo agent` verbs; the member starts in the requester's directory or
+  in `--cwd`. The lease token is kept in `.specflo/leases/<agent>.token`
+  (mode 0600, never printed), where the agent verbs find it. A request
+  that does not fit waits on the daemon for up to `--wait` seconds, 600 by
+  default, and says so at once on stderr with the pool, what is full, its
+  place and the limit; `--wait 0` refuses at once and an interrupt cancels
+  the request. Waiting requests are served in arrival order. A lease has
+  an idle limit (`--idle-limit` up to the pool's `idle_max`, else its
+  `idle_default`); what the holder does on the member and every turn the
+  member works renews it, there is no renew verb, and an idle lease is
+  ended as expired at the next pool request, with no background reaper.
+  `lease list` shows only the leases this checkout holds tokens for.
+- **`specflo agent reset <name>`** - clear an agent's conversation context
+  in place (pi `new_session`); the process, its directory and its model
+  stay. A working agent refuses it with exit 10, and under a lease only
+  the holder may run it.
+- **Egress classes and `specflo egress <local|no-train|open>`.** Every
+  member declares where its prompts go: `local`, `no-train` (a hosted
+  member whose generated pi configuration carries the OpenRouter flags
+  `data_collection: deny` and `zdr: true`) or `open`. A request is served
+  only by a member no more open than the strictest of its `--egress`
+  (`no-train` when none is given), the class its pool's definition accepts
+  and the class its hosted project pins with `specflo egress`. The daemon
+  reads the pin from its own record, so no request option widens it. A
+  pool with no member under the ceiling is refused at once. Validation
+  refuses a `no-train` member on an `anthropic/` model, for which pi sends
+  no routing flags.
+- **Closed accounts.** When a provider answers a hosted member's call with
+  a 402 for the key's limit or the account's credits, the daemon reads the
+  key (`GET /api/v1/key`, its one provider call) and closes the account
+  until the limit resets. A closed account ends no lease; a request that
+  only closed accounts could serve is refused at once, naming each account
+  and its reopen time. A 402 for the in-flight spending budget leaves the
+  account open and the same prompt is sent again after 5 s. The pool holds
+  no management key and creates no keys.
+- **One ledger for every pool.** A request is admitted against each pool's
+  `size`, each member's `capacity` and each account's `cap`, counted across
+  pools, and a local member fits only when the llama-swap configuration
+  lets its model stay loaded beside every model under lease. The agents
+  the daemon runs for hosted projects count as standing entries, by the
+  hand-written `project_agent_model` and `project_agent_account` keys of
+  the daemon root's config. The pool reads the llama-swap configuration
+  and `GET /api/events` (for the reload counts on the pool page) and never
+  asks llama-swap to load or unload a model.
+- **Teams.** `specflo lease request --team <name>` leases every role
+  member of `teams/<name>.md` all or nothing under one team lease id; a
+  team that waits holds nothing. Activity on any member renews every
+  member, they expire together, and `lease release <team lease id>` ends
+  them all; a release of one member lease is refused naming the team lease
+  id.
+- **Preemption, opt-in per pool.** A pool that declares `preempt_after`
+  lets a request that already waits take a lease that has been idle for
+  longer than that, never one whose member is in a turn, and a team only
+  as a whole. There are no priorities. The former holder's next agent verb
+  exits 12 with `lease preempted by <request id>`.
+- **Consoles: `specflo console attach <slot> <agent>` and `console detach
+  <slot>`.** A member of `kind: console` is a slot for a developer's own
+  agent, running under `specflo agent start` on the rpc transport on the
+  daemon's host. While attached it is leased like any member; a lease on
+  it starts nothing, stops nothing and leaves the developer's pi as it was
+  started, and between leases the host refuses the tokens of former
+  holders. A detached slot takes no new lease and a lease that is out
+  stands. Both verbs are the developer identity's alone.
+- **The pool in the web UI.** `/pool` shows every pool, waiting request,
+  member, lease, account, standing entry and recent transition to the
+  requester and the developer; it carries nothing a member wrote and no
+  token. The developer's page has a release control on every active lease,
+  which ends it, or its whole team, as `released by developer`. The
+  developer also has pages that list, create, edit and delete agent
+  definitions and teams: a save is checked against the whole pool
+  directory before the file changes, written as an admin would write it,
+  followed by a reload and audited; a definition that a pool binds is not
+  deleted. Accounts, members and named pools have no edit pages and no
+  page runs an agent.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,
@@ -311,6 +423,28 @@ latter. Release tags are of the form `vX.Y.Z`.
   directory it made is removed, the work item stays unlinked, and a retry
   succeeds instead of being refused as an existing project. An import
   refuses a whitespace-only file name.
+- **The agent verbs present a lease token.** `agent status`, `prompt`,
+  `wait`, `last`, `reset`, `log` and `stop` take `--lease-token`, then
+  `SPECFLO_LEASE_TOKEN`, then `.specflo/leases/<name>.token` found upward
+  from the working directory. While a lease is out the agent's host
+  answers only its holder: another caller exits 1 with `agent '<name>' is
+  leased to another holder`, and the host sends its events only to
+  connections that presented the holder's or the pool's token. After the
+  lease the former holder's verb exits 12 and stderr says `lease
+  released`, `lease expired` or `lease preempted by <request id>`. An
+  agent under no lease behaves as before.
+- **A hosted plan's `Needs` lines count the daemon's pools.** For a hosted
+  project, a `Needs` name that is one of the daemon's pools has the
+  daemon's size and as many slots taken as the pool has leases out, across
+  every project; `task list` computes the ready set from that, and
+  `validate plan` reports a name that is neither a daemon pool nor
+  declared in the plan. `status`, `checkpoint` and the web project page do
+  not read daemon capacity yet. A local plan is counted as before.
+- **The execute and agent skills cover leases.** The execute skill's
+  fan-out step requests a lease before a task whose `Needs` names a daemon
+  pool and releases it after, on success or failure; the agent skill
+  documents the lease verbs, the waiting notice, the team form and the
+  lease-ended errors.
 
 ### Fixed
 

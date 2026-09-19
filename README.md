@@ -215,6 +215,20 @@ See **[The config file](#the-config-file)** for the file itself.
 
 See **[Hosting projects on a daemon](#hosting-projects-on-a-daemon)** for the model.
 
+### The agent pool
+
+These verbs need a daemon. `serve pool init` and `serve pool validate` work on the files under `--root`; the others run on the remote named by `--remote`, or on the only one registered, and are refused in a checkout with no remote. See **[The agent pool](#the-agent-pool)**.
+
+- `specflo serve --root <dir> pool init` - write a starting pool directory under the daemon root: `pool/pool.yaml`, every line a comment, and the five shipped agent definitions in `pool/definitions/`. A file that exists is kept.
+- `specflo serve --root <dir> pool validate` - check the whole pool directory without a daemon and print every fault in one run; exit 1 with any fault.
+- `specflo serve --root <dir> pool reload [--remote <name>]` - ask the running daemon, as the developer, to read its pool directory again. A directory with a fault changes nothing, and neither does a change that removes a member with a lease out.
+- `specflo lease request <pool> [--cwd <dir>] [--idle-limit <time>] [--label <text>] [--wait <seconds>] [--egress local|no-train|open] [--remote <name>] [--json]` - lease one member of a named pool; prints the lease id and the agent to drive with `specflo agent`, and keeps the lease token in `.specflo/leases/<agent>.token`. A full pool makes the request wait up to `--wait` seconds (600 by default; 0 refuses at once), with a notice on stderr.
+- `specflo lease request --team <name> [...]` - lease every role member of a team, all or nothing, under one team lease id. Exactly one of `<pool>` and `--team`.
+- `specflo lease release <lease> [--remote <name>] [--json]` - give a lease, or a whole team by its team lease id, back. A lease that has ended already is reported as it ended.
+- `specflo lease list [--remote <name>] [--json]` - the leases this checkout holds tokens for.
+- `specflo console attach <slot> <agent> [--remote <name>] [--json]` / `console detach <slot>` - attach your own running rpc agent on the daemon's host to a console slot the pool declares, or make the slot take no new lease. The developer identity only.
+- `specflo egress local|no-train|open [--json]` - pin the active project's egress class, in any phase. A lease request made from a hosted project is never served by a member more open than the pin.
+
 ### Gates
 
 - `specflo gate open <requester|developer> [--note <text>]` - hand the active project to a role: records the role waited on, the acting identity, the time and a one-line note of the open points. The project stays active. Opening while a gate is open is refused naming the open gate.
@@ -312,6 +326,10 @@ completion phrases stay controller-side.
 - `specflo agent wait <name> [--timeout S]` - block until the current run
   settles; exits 0 immediately when nothing is in flight.
 - `specflo agent last <name>` - print the most recent final assistant text.
+- `specflo agent reset <name>` - clear the agent's conversation context in
+  place (pi `new_session`). The pi process, its working directory, its model
+  and the prompt it was started with stay. A working agent refuses it (exit
+  10).
 - `specflo agent log <name> [--follow]` - print the agent's event log
   (events.jsonl); `--follow` streams new events as they land.
 - `specflo agent stop <name> [--timeout S]` - stop follows ownership. An rpc
@@ -322,6 +340,10 @@ completion phrases stay controller-side.
   pi pid; the extension's own shutdown removes the socket and record. An
   adopted session is never killed: stop detaches - it removes specflo's
   record, leaves pi running, says so, and exits `13`.
+
+`status`, `prompt`, `wait`, `last`, `reset`, `log` and `stop` take
+`--lease-token` for an agent leased from a daemon's pool; see
+**[Leases](#leases)**. An agent under no lease needs none.
 
 ### Exit codes
 
@@ -413,8 +435,9 @@ With the `serve` extra installed the daemon serves a web UI beside its API. A br
 - `/` - the signed-in identity's inbox: every hosted project with an open gate for their role, newest first, with its product, name, note and opened time. Below it, every product with the first line of its vision, its open work items and its active projects.
 - `/products/<slug>` - a product's vision, pieces, backlog and projects; complete projects are hidden until the archived filter (`?archived=1`) is on. A work item whose dev path is `full` and has no project carries a start-project control.
 - `/projects/<slug>` - a project's phase, status, execution mode, the role it waits on (from the open gate with its note, opener and time when there is one, from the phase otherwise), each artifact with the same text `doc show` prints, and, in the brainstorm phase, the agent section: the agent's state, its transport, and the chat.
+- `/pool` - the daemon's agent pool, and for the developer the pages under it that manage agent definitions and teams. See **[The pool in the web UI](#the-pool-in-the-web-ui)**.
 
-The UI has exactly four controls that change state, and a structural test pins the set: start project on a work item, send a message on a project, take a gate on a project, and start agent on a project. No control advances a phase, runs auto mode or edits an artifact; that stays with the CLI. Every form carries the session secret as a hidden field the route checks.
+The UI has exactly nine controls that change state, and a structural test pins the set: start project on a work item, send a message on a project, take a gate on a project, start agent on a project, and on the pool pages release a lease, save and delete a definition, and save and delete a team. No control advances a phase, runs auto mode or edits an artifact; that stays with the CLI. Every form carries the session secret as a hidden field the route checks.
 
 The pages are server-rendered Jinja2 templates shipped in the package. The browser scripts, htmx 4 and its sse extension, are vendored in the package's `assets` directory; there is no JavaScript build step.
 
@@ -425,6 +448,107 @@ Starting a project from its work item is one daemon operation, also callable wit
 The fresh agent gets an opening prompt naming its seat as the requester and pointing it at the brainstorm skill's requester mode: plain language, what and why rather than how, one early landscape scan presented plainly, decisions recorded in plain words, and the gate opened with a note of the open points when the requester says they are done. The open gate shows in the developer's inbox. When the developer takes it, from the take control on the project page or by their word in the pane (the agent relays it with `gate take --by developer`), the daemon tells the agent the developer seat is in the conversation and the skill goes back to its normal process.
 
 The chat is shared by the web and the pane. A message posted from the project page reaches the agent as a prompt prefixed with the poster's label; an agent mid-run takes it as a steer, and the post returns once the agent has the prompt. The daemon holds one subscription to each live agent's socket and appends every user message from any seat, every assistant message and every state change to a durable per-project chat log under its root, each entry with a monotonic id. The page follows the log over one server-sent-events stream with replay from the last id it saw, shows the agent's state (working, idle) and a needs-attention banner while a blocking dialog is open in the session, which says to answer in the pane. The log and the mapping survive a daemon restart: the daemon finds the live agent again without a new start. Advancing the project out of brainstorm stops the agent and clears the mapping; `specflo agent stop` does the same by hand.
+
+## The agent pool
+
+A daemon can hold an agent pool: a roster of pi agents that an admin declares ahead of time and that orchestrators in any checkout lease by name, use through the `specflo agent` verbs, and give back. Every pool on the daemon draws on one ledger, so two projects cannot both claim the same member, provider account slot or GPU room. The pool is a daemon feature. Local mode is unchanged: a checkout with no registered remote loads no pool code, and the `lease` and `console` verbs are refused there, naming `specflo remote add`.
+
+```bash
+specflo serve --root ~/specflo-daemon pool init       # a commented pool.yaml and the shipped definitions
+# edit ~/specflo-daemon/pool/pool.yaml: declare members and pools
+specflo serve --root ~/specflo-daemon pool validate
+specflo serve --root ~/specflo-daemon                 # a daemon that runs already: ... pool reload
+
+# from a checkout that registered the daemon
+specflo lease request workers --idle-limit 30m        # prints the lease id and the agent name
+specflo agent prompt coder-local "Run the tests and report what fails."
+specflo lease release <lease>
+```
+
+### The pool directory
+
+The configuration is the directory `pool/` under the daemon root, which an admin edits by hand:
+
+- `pool/pool.yaml` - four sections, and a key it does not know is refused:
+  - `llama_swap` - the path of the rig's llama-swap configuration file; a relative path is taken from the pool directory. A local member needs it.
+  - `accounts` - provider (OpenRouter) accounts: `name`, `cap` (the most leases that run through the account at once) and `key_env` (the name of the environment variable that holds its API key, never the key). There is no field for a management key, and the pool creates no keys.
+  - `members` - the whole roster; nothing that is not declared can be leased. A member has `name`, `command` (the harness command that starts it, for example `pi --mode rpc --provider llama-swap --model <id>`), `backing` (`local` or `hosted`), `model` (a local member: one llama-swap model ID) or `account` (a hosted member: a declared account), `labels`, `capacity` (how many leases it serves at once) and `egress` (`local` for a local member, `no-train` or `open` for a hosted one). `kind: console` declares a console slot instead (see **Consoles**): no `command`, capacity 1.
+  - `pools` - the named pools a request asks for: `name`, `definition`, `members`, `size` (the most leases the pool grants at once), `idle_default`, `idle_max` and an optional `preempt_after`. The three times are a whole number and a unit, `s`, `m` or `h` (`10m`, `4h`).
+- `pool/definitions/<name>.md` - an agent definition: what a role is, not what runs it. The YAML front matter carries `role`, `tools`, `skills`, `deny` (commands the member must not run), `env` and `credentials` (the environment variables it may be given), `needs` (the labels a member must have), `egress` (the most open class it accepts) and `project_context`; the body is the system prompt. Five ship with the package: `worker`, `critic`, `hermes-rebaser`, `model-update-checker` and `landscape-scanner`.
+- `pool/teams/<name>.md` - a team: front matter `roles`, each a `name`, a `pool` and a `count`; the body is free notes. `pool init` makes no `teams` directory.
+
+`serve pool init` writes `pool.yaml` with every line commented out, so it declares nothing, and copies the five definitions; a file that exists is kept. `serve pool validate` checks the whole directory without a daemon and prints every fault in one run, each naming the file, the entry and the field; it exits 1 with any fault. Whether a member meets its pool's definition (every label it needs, a class no more open than it accepts) is settled there and never while a request waits. A `no-train` hosted member on an `anthropic/` model is refused, because pi does not send the provider routing flags for those models.
+
+The daemon reads the directory when it starts. A configuration with a fault disables only the pool: projects are served as before, every pool route answers 400 with the full list of faults, and the pool page shows them. `serve pool reload` asks a running daemon to read the directory again with no restart, leases kept; it reaches the daemon through a remote registered in the checkout with the developer's token. A reload with a fault changes nothing, and so does one that removes a member with a lease out or changes that member's kind. A reload that passes also brings to life a pool that was invalid at start.
+
+Each lease on a started member runs a fresh pi, started through `specflo agent start` on the rpc transport in a herdr pane named for the member and stopped when the lease ends. The definition reaches pi as `--tools` (or `--no-tools`), `--skill`, `--append-system-prompt` and, unless `project_context` is true, `--no-context-files`. The member's environment is built from nothing: a short baseline (`PATH`, `HOME`, locale and terminal variables), what the definition lists, and the key of the member's own account; the prompt and the key never sit on a command line. A hosted member gets a generated pi configuration directory in place of `~/.pi/agent`, and for a `no-train` member its `models.json` carries the OpenRouter routing flags `data_collection: deny` and `zdr: true`.
+
+### Leases
+
+- `specflo lease request <pool>` asks for one member of a named pool and prints the lease id and the agent name. The member starts in the directory the request was made from, or in `--cwd`; it must be a directory on the daemon's host. `--label` is what the pool shows as the holder. A pool the configuration does not declare is refused.
+- The lease token is written to `.specflo/leases/<agent>.token` under the checkout (mode 0600, in a directory that ignores itself) and is never printed. Every `specflo agent` verb finds it upward from the working directory, or takes `--lease-token` or `SPECFLO_LEASE_TOKEN`. While a lease is out the member's host answers only its holder: a verb with no token or another token exits 1 with `agent '<name>' is leased to another holder` and shows nothing of the member, and the host sends its events only to connections that presented the holder's token or the pool's.
+- A request that does not fit waits on the daemon, up to `--wait` seconds (600 by default). It says so at once on stderr: the pool, what is full, its place among the waiting requests and the limit; with `--json` the notice is one JSON object on stderr and stdout carries only the result. `--wait 0` refuses a full pool at once, and interrupting the command cancels the request. Waiting requests are served in arrival order: a grant gives way to every earlier request that fits now, and a request that does not fit holds up no one behind it.
+- A lease has an idle limit: `--idle-limit`, which the pool's `idle_max` must allow, or the pool's `idle_default`. There is no renew verb. Every verb the holder runs on the member and every turn the member works renews the lease, and a member in a turn counts as active however long the turn is. A lease idle for its limit expires. Nothing runs in the background: the daemon ends expired leases at the start of the next pool request or pool page, whoever makes it.
+- `specflo agent reset <agent>` clears the member's conversation (pi `new_session`) on the same lease; the process, its directory and its model stay.
+- `specflo lease release <lease>` gives the lease back and removes the token file; a lease that has ended already is reported as it ended. `specflo lease list` prints the leases the checkout holds tokens for, and never another orchestrator's.
+- After a lease ends, the former holder's next agent verb exits 12 and stderr names how: `lease released`, `lease expired` or `lease preempted by <request id>`. The member and its context are gone.
+
+### Egress classes and closed accounts
+
+A member's egress class says where its prompts go: `local` (llama-swap on the daemon's host), `no-train` (a hosted provider that is told to collect and retain nothing) or `open` (any hosted provider). A request is served only by a member no more open than its ceiling, which is the strictest of three: the `--egress` of the request (`no-train` when none is given), the class the pool's definition accepts, and the class the requesting project pins. `specflo egress <class>` pins the active project; the client sends only the project's slug and the daemon reads the pin from its own record, so nothing in a request widens it. There is no unpin verb. A pool with no member under the ceiling is refused at once and never waited on.
+
+The provider can refuse a hosted member's call with a 402. When the key's credit limit or the account's credits are used up, the daemon reads the key (`GET /api/v1/key`, the one provider call it makes) and closes the account until the key's limit resets, or until the next midnight UTC when the read says nothing of a reset. A closed account ends no lease, but its members take no new one: a request that only closed accounts could serve is refused at once, naming each account and its reopen time. When the 402 is the in-flight spending budget, the account stays open and the daemon sends the member the same prompt again. A 429 is left to pi, which retries it.
+
+### The ledger
+
+One ledger admits every request. It counts the active leases against each pool's `size`, each member's `capacity` and each account's `cap`, across pools, so a member or an account that two pools share is counted once; nobody has a reserved share. A member of capacity above 1 runs each further lease under its name with a number (`m1.2`, `m1.3`). A local member also takes its model: it fits only when llama-swap's configuration (the sets of its `matrix`) lets that model stay loaded beside every model under lease. The pool only reads that file and llama-swap's `GET /api/events`, from which the pool page counts model reloads of leased members; it never asks llama-swap to load, unload or place a model, and a request that does not fit waits for a lease to end.
+
+The agents the daemon runs for hosted projects are no members, but they use the same rig and accounts. While one is alive it is a standing entry in the ledger with the model or account slot that two keys of the daemon root's `.specflo/config.yaml` name, `project_agent_model` and `project_agent_account`. A standing entry takes no pool slot, has no idle limit and is never ended by the pool.
+
+### Teams
+
+`specflo lease request --team <name>` takes no `<pool>`. A team is granted all or nothing: every member of every role must fit at once, a team that waits holds nothing, and one that would not fit an empty pool is refused at once. The grant prints one team lease id and, for each role member, an agent with a token file of its own. The team is kept as one: every member lease has the same idle limit (the shortest `idle_default` of its pools, or the asked value, which the shortest `idle_max` must allow), activity on any member renews all of them, and they expire together. `lease release <team lease id>` ends every member; a release of one member lease is refused naming the team lease id. The members have no way to message each other; the orchestrator relays.
+
+### Preemption
+
+Preemption is opt-in per pool. A lease of a pool that declares `preempt_after` may be taken once it has been idle for longer than that, never while its member is in a turn, and only by a request that already waits; a lease of a pool that declares none is never taken. There are no priorities. The fewest leases that make the waiting request fit are ended, the longest idle first, and a team is taken whole or not at all. A request does not take what would serve a request that arrived before it.
+
+### Consoles
+
+A member of `kind: console` is a slot for a developer's own running agent. `specflo console attach <slot> <agent>` binds an agent that runs on the daemon's host under `specflo agent start` on the rpc transport; a TUI agent is refused, and both verbs are served to the developer identity only. While attached, the slot is matched, counted and leased like any member, and the lease runs on the attached agent. A lease on a console starts nothing, stops nothing and does not apply the pool's definition: the developer's pi runs as it was started. When the lease ends the pool lowers the holder wall, aborts a turn the holder left running, and leaves the process alone. Between leases the host refuses the tokens of former holders. `specflo console detach <slot>` makes the slot take no new lease; a lease that is out stands. A slot with no agent attached, or whose host is gone, is offline, and a request that only such slots could serve waits.
+
+### The pool in the web UI
+
+`/pool` shows, to the requester and the developer alike: each pool with its size, leases in use, waiting requests and limits; the waiting requests; each member with its kind, state, backing, model or account, class and model reloads; each lease with its holder label, team lease id, idle time and time to expiry; each account's figures; the standing entries; and the latest lease transitions. It shows nothing a member wrote (no prompt, reply or log) and no token. With an invalid configuration it lists the faults and nothing else.
+
+The developer's page has a release control on every active lease, which ends the lease, or the whole team of a member lease, as `released by developer`; the former holder is told `lease released`. The developer also has pages that list, create, edit and delete agent definitions (`/pool/definitions`) and teams (`/pool/teams`). A save writes the same file an admin edits by hand, and only when the whole directory passes `pool validate` with the new file in place; otherwise the faults show beside the form and nothing is written. After a save the daemon reloads the pool. Deleting a definition that a pool binds is refused naming the pool. Every one of these posts checks the session secret and is recorded in `audit.jsonl` with the acting identity. Accounts, members and named pools have no edit pages, and no page runs an agent.
+
+### Plan `Needs` lines on a daemon
+
+For a hosted project, a task's `Needs` name that is one of the daemon's pools is counted by the daemon: the pool's `size`, and as many slots taken as the pool has leases out, whichever project holds them. The ready set of `task list` uses that count in place of the plan's own; other names keep the plan's `pool add` count. `validate plan` on a hosted project reports a `Needs` name that is neither a daemon pool nor declared in the plan. A local project reads no pool. The execute skill's fan-out step tells the orchestrator to request a lease before such a task and release it after, on success or failure.
+
+### Known limits
+
+- There is no sandbox. A member's pi runs as the daemon's user with the tools its definition lists; what the member is given (tools, environment, credentials) is the only hard limit on it.
+- The deny list is a guard against mistakes, not a security boundary. It matches the text of a bash command, so `git push` in the list stops `git push origin main` and does not stop `git -C repo push`, an alias or a script. A list that cannot be read blocks every bash call.
+- Stock pi does not carry a provider 402's `Retry-After`, so an in-flight budget refusal is sent again after a fixed 5 s, with no cap on the number of tries.
+- Account figures are read from the provider only when a 402 closes an account; nothing reads them on a schedule, so an exhausted daily free-request quota closes no account by itself.
+- pi sends the `no-train` routing flags only from its OpenAI-completions client. Validation refuses the known case (`anthropic/` models); a `no-train` member with no `--model` in its command passes and runs pi's provider default.
+- Token files do not record their remote, so with several remotes `lease list` and `lease release` present every stored token to the remote they run on.
+- Skill names in a definition are passed to `--skill` as written and not resolved to paths, and pi's own skill discovery stays on.
+- A definition's `credentials` entries are environment variable names, treated like `env`.
+- A local member's `model` must be the llama-swap configuration's model ID, not an alias, a profile or a selector.
+- The pool never loads a model, so a holder's first prompt pays the model's load time; give that prompt a `--timeout` that allows for it.
+- The llama-swap address comes from `SPECFLO_LLAMA_SWAP_URL` in the daemon's environment (default `http://127.0.0.1:8080`), not from `pool.yaml`.
+- `project_agent_model` and `project_agent_account` are written by hand; no verb sets them and `pool validate` does not check them.
+- `status`, `checkpoint` and the web project pages do not read daemon pool capacity; only `task list` and `validate plan` do.
+- A request from a checkout whose active project is local, or that has none, carries no project and gets no pin.
+- After a reload the llama-swap events reader and the provider-refusal watcher keep the configuration they started with until the daemon restarts, and a pool brought to life by a reload has neither.
+- A console host remembers the lease tokens it has cleared in memory only, so a host that was started again accepts a former holder's token until its next lease.
+- A host keeps the 16 newest ended records per member; an older former holder gets the plain refusal, exit 1.
+- A member's `events.jsonl` is a plain file that any process of the same user can read.
+- A save from the management pages that passes validation is written even when the reload that follows refuses the swap because a member with a lease out was removed.
+- A lease granted at the moment its request is cancelled stays out until it expires from idleness.
 
 ## The config file
 
