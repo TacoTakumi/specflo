@@ -15,6 +15,10 @@ A definition's command deny list is the one part that does not travel as a
 flag. Every member loads the pool's deny-list extension with ``-e``, and the
 list reaches it in one environment variable. That extension is a guard against
 mistakes, not a limit: see its header.
+
+A hosted member's egress class does not travel as a flag either. It is written
+into a pi configuration directory generated for the member (see ``piconfig``),
+and one environment variable points the member's pi at that directory.
 """
 
 from __future__ import annotations
@@ -47,6 +51,11 @@ DENY_EXTENSION = str(Path(__file__).resolve().parent / "pi_extension" / "deny.ts
 # The variable the extension reads the deny list from, as a JSON array of
 # strings. The name is fixed on both sides; deny.ts holds the other copy.
 DENY_ENV = "SPECFLO_POOL_DENY"
+
+# The variable that tells pi where its configuration directory is. It is set
+# only to a directory generated for the member, never from the caller: the
+# caller's own pi configuration carries no routing flags.
+AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 
 
 class LaunchError(SpecfloError):
@@ -82,6 +91,8 @@ def member_env(
     member: Member,
     accounts: Iterable[Account],
     environ: Mapping[str, str],
+    *,
+    config_dir: Path | None = None,
 ) -> dict[str, str]:
     """The environment *member* starts with in the role *definition* gives.
 
@@ -90,7 +101,9 @@ def member_env(
     variable is handed over because a definition lists it: an account's cap
     holds only if its key reaches its own members alone. The deny list comes
     from the definition alone, never from the caller; a definition that denies
-    nothing sets no variable.
+    nothing sets no variable. *config_dir* is the pi configuration directory
+    generated for the member, and nothing is written here: with none, the
+    variable that names it is not set.
 
     Raises ``LaunchError`` for a hosted member whose account is not among
     *accounts* or whose key variable is not set.
@@ -100,23 +113,34 @@ def member_env(
     allowed = [
         name
         for name in (*BASELINE_ENV, *definition.env, *definition.credentials)
-        if name not in key_vars and name != DENY_ENV
+        if name not in key_vars and name not in (DENY_ENV, AGENT_DIR_ENV)
     ]
     if member.account is not None:
         allowed.append(_key_var(member, accounts, environ))
     env = {name: environ[name] for name in allowed if name in environ}
     if definition.deny:
         env[DENY_ENV] = json.dumps(list(definition.deny))
+    if config_dir is not None:
+        env[AGENT_DIR_ENV] = str(config_dir)
     return env
 
 
-def _key_var(member: Member, accounts: tuple[Account, ...], environ: Mapping[str, str]) -> str:
-    """The name of the variable that holds the key of *member*'s account."""
+def member_account(member: Member, accounts: Iterable[Account]) -> Account:
+    """The declared account the hosted *member* runs through.
+
+    Raises ``LaunchError`` when it is not among *accounts*.
+    """
     account = next((a for a in accounts if a.name == member.account), None)
     if account is None:
         raise LaunchError(
             f"member '{member.name}': account '{member.account}' is not a declared account."
         )
+    return account
+
+
+def _key_var(member: Member, accounts: tuple[Account, ...], environ: Mapping[str, str]) -> str:
+    """The name of the variable that holds the key of *member*'s account."""
+    account = member_account(member, accounts)
     if not environ.get(account.key_env):
         raise LaunchError(
             f"member '{member.name}': the API key of account '{account.name}' is not set; "
