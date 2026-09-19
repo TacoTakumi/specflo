@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -388,8 +389,18 @@ def _authored_text(doc: str) -> str:
     return "".join(kept)
 
 
-def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
-    """Return a list of blocking lint issues (empty == ready). Read-only."""
+def validate_plan(
+    root: Path, cfg: SpecfloConfig, slug: str,
+    daemon_pools: Mapping[str, Mapping[str, int]] | None = None,
+) -> list[str]:
+    """Return a list of blocking lint issues (empty == ready). Read-only.
+
+    *daemon_pools* is given for a project a daemon hosts and names that
+    daemon's pools (see :func:`_progress_from_tasks`). There a Needs name asks
+    for a pool that more than this plan draws on, so a name that is neither
+    the daemon's nor declared in ``## Pools`` is an issue. Without it, as in a
+    checkout, an undeclared name is a one-slot pool of the plan's own.
+    """
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         return ["plan.md not found — run `specflo plan start`."]
@@ -505,6 +516,16 @@ def validate_plan(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
 
     if markdown.section_body(doc, "## Open questions") is None:
         issues.append("missing 'Open questions' section.")
+
+    if daemon_pools is not None:
+        known = {USER_POOL, *daemon_pools, *_declared_pools(doc)}
+        for t in active:
+            for name in t.needs:
+                if name not in known:
+                    issues.append(
+                        f"{t.id} needs '{name}', which is neither a pool of the daemon nor "
+                        f"declared in this plan (declare it: `specflo pool add {name} --size N`)."
+                    )
 
     return issues
 
@@ -1416,7 +1437,8 @@ def add_pool(
 
 
 def _progress_from_tasks(
-    active: list[Task], pools: dict[str, int] | None = None
+    active: list[Task], pools: dict[str, int] | None = None,
+    daemon_pools: Mapping[str, Mapping[str, int]] | None = None,
 ) -> dict:
     by_state = {s: 0 for s in PROGRESS_STATES}
     for t in active:
@@ -1436,6 +1458,12 @@ def _progress_from_tasks(
         if t.progress == "in_progress":
             for name in t.needs:
                 used[name] = used.get(name, 0) + 1
+    # A project a daemon hosts is given that daemon's pools, each with its
+    # ``size`` and the leases ``in_use``. A Needs name among them is counted
+    # by the daemon, across every project that draws on it, and this plan's
+    # own count of that name is set aside. A checkout gives none.
+    for name, pool in (daemon_pools or {}).items():
+        sizes[name], used[name] = pool["size"], pool["in_use"]
 
     def pools_full(t: Task) -> bool:
         return any(used.get(name, 0) >= sizes.get(name, 1) for name in t.needs)
@@ -1469,9 +1497,11 @@ def _progress_from_tasks(
     }
 
 
-def progress_from_doc(doc: str) -> dict:
+def progress_from_doc(
+    doc: str, daemon_pools: Mapping[str, Mapping[str, int]] | None = None
+) -> dict:
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    prog = _progress_from_tasks(active, parse_pools(doc))
+    prog = _progress_from_tasks(active, parse_pools(doc), daemon_pools)
     # Steer the ready-task ordering to the current milestone so status's "next"
     # line, the next-step hint, and checkpoint's next-task note all lead with the
     # same task `task show` picks (REQ-13); dormant on milestone-free plans (REQ-04).
@@ -1494,7 +1524,10 @@ def execution_graph(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     }
 
 
-def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+def frontier(
+    root: Path, cfg: SpecfloConfig, slug: str,
+    daemon_pools: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict:
     """The orchestrator's frontier (fan-out-plans REQ-10), read-only.
 
     ``tasks`` carries, per active task, its ``files`` and ``needs`` lists and
@@ -1505,11 +1538,16 @@ def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     than dispatching a second agent onto it (review round 1, F1). ``pools``
     maps each declared or needed pool to ``{size, holders}`` where holders are
     the in_progress tasks naming it.
+
+    With *daemon_pools* (a hosted project; see :func:`_progress_from_tasks`) a
+    pool of the daemon's is reported at the daemon's ``size`` and carries
+    ``in_use``, the leases it has out to anyone: a task needing it is held
+    back exactly while ``in_use`` has reached ``size``.
     """
     path = plan_path(root, cfg, slug)
     doc = path.read_text() if path.is_file() else ""
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    nexts = set(progress_from_doc(doc)["next_actionable"])
+    nexts = set(progress_from_doc(doc, daemon_pools)["next_actionable"])
     ready = {t.id for t in active if t.progress == "pending" and t.id in nexts}
     pools = {
         name: {
@@ -1519,6 +1557,9 @@ def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
         }
         for name, size in parse_pools(doc).items()
     }
+    for name, pool in (daemon_pools or {}).items():
+        if name in pools:
+            pools[name].update(size=pool["size"], in_use=pool["in_use"])
     return {
         "tasks": [
             {"id": t.id, "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
@@ -1528,9 +1569,12 @@ def frontier(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     }
 
 
-def plan_progress(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+def plan_progress(
+    root: Path, cfg: SpecfloConfig, slug: str,
+    daemon_pools: Mapping[str, Mapping[str, int]] | None = None,
+) -> dict:
     path = plan_path(root, cfg, slug)
-    return progress_from_doc(path.read_text() if path.is_file() else "")
+    return progress_from_doc(path.read_text() if path.is_file() else "", daemon_pools)
 
 
 def _milestone_rollups(milestones: list[Milestone], active: list[Task]) -> list[dict]:

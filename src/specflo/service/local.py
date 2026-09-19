@@ -61,6 +61,15 @@ class LocalProjectService:
         self.actor = actor
         self.hosted = hosted
 
+    def _daemon_pools(self) -> dict | None:
+        """What the daemon's pools have out, which a hosted plan's Needs lines
+        are read against; None in a checkout, where no pool code is loaded."""
+        if not self.hosted:
+            return None
+        from ..pool import planneeds
+
+        return planneeds.daemon_pools(self.root)
+
     # --- project lifecycle --------------------------------------------------
 
     def create_project(
@@ -137,6 +146,8 @@ class LocalProjectService:
         if validator is None:
             known = ", ".join(sorted(VALIDATORS))
             raise SpecfloError(f"Unknown artifact {artifact!r}. Known: {known}.")
+        if artifact == "plan" and self.hosted:
+            return validator(self.root, self.cfg, slug, daemon_pools=self._daemon_pools())
         return validator(self.root, self.cfg, slug)
 
     def complete_artifact(self, slug: str, artifact: str) -> None:
@@ -362,10 +373,10 @@ class LocalProjectService:
         )
 
     def plan_progress(self, slug: str) -> dict:
-        return plan.plan_progress(self.root, self.cfg, slug)
+        return plan.plan_progress(self.root, self.cfg, slug, self._daemon_pools())
 
     def frontier(self, slug: str) -> dict:
-        return plan.frontier(self.root, self.cfg, slug)
+        return plan.frontier(self.root, self.cfg, slug, self._daemon_pools())
 
     def task_brief(self, slug: str, task_id: str | None = None) -> dict:
         return plan.task_brief(self.root, self.cfg, slug, task_id)
