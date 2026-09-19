@@ -159,6 +159,10 @@ class PoolService:
     mint_token: Callable[[], str] = _mint_token
     # What a member's scoped environment is taken from; this process's when None.
     environ: Mapping[str, str] | None = None
+    # The standing entries that are live now: what the project agents take
+    # outside the pool, which the ledger counts beside the lease rows. The
+    # daemon hands the reader in; without one nothing stands.
+    standing: Callable[[], tuple[ledger.Standing, ...]] = tuple
     _turn: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     # True while the expiry check runs: the endings it makes do not check again.
     _checking: bool = field(default=False, init=False, repr=False)
@@ -337,6 +341,7 @@ class PoolService:
             return ledger.place(
                 self.config, store.list_leases(state="active"),
                 ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
+                standing=self.standing(),
             )
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full)) from full

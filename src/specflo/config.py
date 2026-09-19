@@ -415,7 +415,10 @@ def report_config(root: Path) -> dict:
             {"key": name, "value": value, "source": source}
             for name, (value, source) in _resolve(data).items()
         ],
-        "unknown": [name for name in data if name not in FIELDS_BY_NAME],
+        "unknown": [
+            name for name in data
+            if name not in FIELDS_BY_NAME and name not in DAEMON_FIELDS_BY_NAME
+        ],
     }
 
 
@@ -878,3 +881,70 @@ def forget_hosted_project(root: Path, slug: str) -> bool:
 def hosting_remote(root: Path, slug: str) -> str | None:
     """The remote holding ``slug``, or None for a project in the checkout."""
     return hosted_projects(root).get(slug)
+
+
+# --- the daemon root's own keys --------------------------------------------
+# A daemon root's config file is the file a checkout has, and the daemon reads
+# from it a few keys that mean nothing in a checkout. They are kept out of the
+# registry: no checkout's file is offered them, `config list` does not show
+# them, and the admin of a daemon writes them by hand. Every write leaves them
+# as they are, as it leaves any key the registry does not own.
+#
+# The two here say what the agent a daemon runs for each hosted project takes
+# while it is alive: a model of the rig's llama-swap configuration, for an
+# agent on a local model, or a provider account of the pool configuration, for
+# a hosted one. The pool counts a live project agent's model and account slot
+# beside its leases. A root that names neither has project agents that are
+# not counted.
+
+PROJECT_AGENT_MODEL = "project_agent_model"
+PROJECT_AGENT_ACCOUNT = "project_agent_account"
+
+DAEMON_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(
+        PROJECT_AGENT_MODEL,
+        str,
+        None,
+        "The llama-swap model a hosted project's agent runs on, counted by the pool.",
+        Text(optional=True),
+    ),
+    ConfigField(
+        PROJECT_AGENT_ACCOUNT,
+        str,
+        None,
+        "The pool account a hosted project's agent runs through, counted by the pool.",
+        Text(optional=True),
+    ),
+)
+DAEMON_FIELDS_BY_NAME = {f.name: f for f in DAEMON_FIELDS}
+
+
+@dataclass(frozen=True)
+class ProjectAgentUse:
+    """What one project agent of a daemon takes while it is alive; None for
+    what the root's config does not name."""
+
+    model: str | None = None
+    account: str | None = None
+
+
+def project_agent_use(root: Path) -> ProjectAgentUse:
+    """What the config of the daemon root ``root`` says a project's agent takes.
+
+    A missing key, and a directory with no config at all, name nothing. A
+    value that is no name degrades to nothing with the one stderr warning an
+    invalid registry value gets; reading never raises over it.
+    """
+    if not config_path(root).is_file():
+        return ProjectAgentUse()
+    data = _read_data(root)
+    named = {}
+    for spec in DAEMON_FIELDS:
+        raw = data.get(spec.name)
+        if spec.name in data and not spec.validate(raw):
+            _warn_invalid(spec, raw)
+            raw = None
+        named[spec.name] = raw.strip() if isinstance(raw, str) else None
+    return ProjectAgentUse(
+        model=named[PROJECT_AGENT_MODEL], account=named[PROJECT_AGENT_ACCOUNT]
+    )

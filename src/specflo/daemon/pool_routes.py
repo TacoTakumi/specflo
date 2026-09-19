@@ -43,13 +43,16 @@ from pathlib import Path
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
+from ..config import load_config
 from ..errors import SpecfloError
-from ..pool import egress, ledger, waiting
+from ..pool import egress, ledger, standing, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import Grant, PoolService, hash_token
+from ..projects import load_project, validate_slug
 from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH
+from . import seat
 from .poolstore import Lease, open_pool_store
 from .routes import audit, current_identity
 
@@ -102,6 +105,11 @@ def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
         open_store=lambda: open_pool_store(root),
         pool_token=pool_token(root),
         config_root=Path(root) / PI_CONFIG_DIRNAME,
+        # The project agents of this root that serve now, asked of agent
+        # discovery at each request: they take a model or an account slot.
+        standing=lambda: standing.entries(
+            root, seat.agent_mapping(root), lambda slug: seat.liveness(root, slug).alive
+        ),
     )
     # A request waits on a connection to the daemon that wrote its row: the
     # rows found now were left by one that stopped.

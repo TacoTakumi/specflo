@@ -42,9 +42,20 @@ under another name than its member's records it as a resource of the kind
 ``agent``; a row with none runs under the member's name, as every row did
 before a member served more than one lease.
 
-``place`` is a function of the configuration, the lease rows and the request.
-It opens no store, reads no clock and no file, and starts nothing: the pool
-service hands it the rows and acts on its answer.
+Not everything that runs on the rig and the accounts is a member. The daemon
+runs an agent for each hosted project, outside every pool, and while that
+agent is alive it stands in the ledger with the model or the account slot it
+takes: a standing entry. Its resources are counted with the rows', so a local
+member's model has to fit beside a standing model and a standing slot is one
+out of its account's cap. It takes no pool's slot and no member. A standing
+entry is no row: it has no idle limit and no state, nothing here ends it, and
+a refusal it is part of says that it is the project's agent that holds what
+is in the way, since no lease ending frees that.
+
+``place`` is a function of the configuration, the lease rows, the standing
+entries and the request. It opens no store, reads no clock and no file, and
+starts nothing: the pool service hands it the rows and the entries and acts
+on its answer.
 """
 
 from __future__ import annotations
@@ -100,15 +111,34 @@ class Placement:
     resources: tuple[Resource, ...]
 
 
-def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Placement:
-    """Where *request* fits, given the *leases* that are out.
+@dataclass(frozen=True)
+class Standing:
+    """What a live project agent takes outside the pool: the project, the
+    name its agent runs under, and the resources counted for it, a model or
+    an account. The id tells it from a lease's wherever both are listed."""
+
+    id: str
+    project: str
+    agent: str
+    resources: tuple[Resource, ...]
+
+
+def place(
+    config: PoolConfig,
+    leases: Iterable[Lease],
+    request: Request,
+    standing: Iterable[Standing] = (),
+) -> Placement:
+    """Where *request* fits, given the *leases* that are out and the
+    *standing* entries of the project agents that are alive.
 
     The member is the first the pool lists, in its order, that is of a class
     the request accepts, serves fewer leases than its capacity and, if it is
     hosted, whose account has fewer leases out than its cap, in whichever
     pools; if it is local, whose model may be loaded beside every model under
     lease. A member of another class is passed over however free it is.
-    *leases* may hold rows that have ended; they count for nothing.
+    *leases* may hold rows that have ended; they count for nothing. A standing
+    entry's account slot and model count as a lease's do.
 
     Raises ``NoRoom`` for a pool that is not declared, a pool with as many
     leases out as its size, and a pool whose members are all full, kept by a
@@ -133,6 +163,10 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
             + "."
         )
     out = [lease for lease in leases if lease.state == ACTIVE]
+    stood = list(standing)
+    # Whatever holds an account slot or a model: a lease that is out, or a
+    # project's agent.
+    holding = [*out, *stood]
     if _taken(out, POOL, pool.name) >= pool.size:
         raise NoRoom(f"pool '{pool.name}' is full: all {pool.size} of its leases are out.")
     accounts = {account.name: account for account in config.accounts}
@@ -145,12 +179,12 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
         resources = [Resource(POOL, pool.name), Resource(MEMBER, name)]
         if member.account is not None:
             account = accounts[member.account]
-            if _taken(out, ACCOUNT, account.name) >= account.cap:
+            if _taken(holding, ACCOUNT, account.name) >= account.cap:
                 full[account.name] = account.cap
                 continue
             resources.append(Resource(ACCOUNT, account.name))
         if member.backing == LOCAL and config.swap is not None:
-            in_the_way = _in_the_way(config, member.model, out)
+            in_the_way = _in_the_way(config, member.model, holding)
             if in_the_way:
                 apart[member.model] = in_the_way
                 continue
@@ -165,12 +199,12 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
     if full:
         kept.append(", ".join(
             f"account '{name}' is full: all {cap} of its leases are out"
+            + _slots_of(_stood_on(stood, ACCOUNT, name))
             for name, cap in full.items()
         ) + ", in this pool or another")
     if apart:
         kept.append(", ".join(
-            f"model '{model}' cannot be loaded beside the leased "
-            + ", ".join(f"'{other}'" for other in others)
+            f"model '{model}' cannot be loaded beside " + _beside(stood, others)
             for model, others in apart.items()
         ))
     if kept:
@@ -189,14 +223,43 @@ def agent_of(lease: Lease) -> str:
     return next((r.name for r in lease.resources if r.kind == AGENT), lease.member)
 
 
-def _taken(out: list[Lease], kind: str, name: str) -> int:
-    """How many of the leases *out* took the resource *kind* *name*."""
+def _taken(out: list[Lease | Standing], kind: str, name: str) -> int:
+    """How many of the leases and standing entries *out* took the resource *kind* *name*."""
     return sum(1 for lease in out if Resource(kind, name) in lease.resources)
 
 
-def _in_the_way(config: PoolConfig, model: str, out: list[Lease]) -> tuple[str, ...]:
-    """The leased models that keep *model* off the rig; none when it may be
-    loaded beside every model the leases *out* took.
+def _stood_on(stood: list[Standing], kind: str, name: str) -> list[str]:
+    """The project agents that hold the resource *kind* *name* as standing
+    entries, each as a refusal names it."""
+    return [
+        f"the agent of project '{entry.project}'"
+        for entry in stood if Resource(kind, name) in entry.resources
+    ]
+
+
+def _slots_of(agents: list[str]) -> str:
+    """What a full account's refusal adds for the *agents* that stand on it."""
+    if not agents:
+        return ""
+    return f", counting the slot{'s' if len(agents) > 1 else ''} of " + " and ".join(agents)
+
+
+def _beside(stood: list[Standing], others: tuple[str, ...]) -> str:
+    """The models in the way, *others*, by what holds each: the leased ones,
+    then each one a project's agent holds, which no lease ending frees."""
+    held = {other: _stood_on(stood, MODEL, other) for other in others}
+    leased = [f"'{other}'" for other in others if not held[other]]
+    parts = ["the leased " + ", ".join(leased)] if leased else []
+    parts += [
+        f"'{other}', which {' and '.join(agents)} hold{'s' if len(agents) == 1 else ''}"
+        for other, agents in held.items() if agents
+    ]
+    return " and ".join(parts)
+
+
+def _in_the_way(config: PoolConfig, model: str, out: list[Lease | Standing]) -> tuple[str, ...]:
+    """The models taken that keep *model* off the rig; none when it may be
+    loaded beside every model the leases and standing entries *out* took.
 
     They are the ones it may not be loaded beside two by two, and all of them
     when it is only the whole group that fits in no combination."""
