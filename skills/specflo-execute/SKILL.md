@@ -152,6 +152,21 @@ each *subagent* does for its task, and you drive the frontier:
 6. **Recovery.** A slot held by a **dead** or abandoned agent is released with
    `specflo task reopen T-NN` (→ pending): the task returns to the frontier and
    its files and pool slots free.
+7. **Daemon pools (hosted mode only).** In hosted mode a task whose `Needs`
+   names a daemon pool runs on a leased member of that pool. Run
+   `specflo lease request <pool>` before the task: the agent it prints is the
+   task's pool member, and you drive it with `specflo agent prompt <agent> <text>`.
+   Run `specflo lease release <lease>` after the task, success or failure:
+   also when the subagent or a prompt fails, and when you abandon the task or
+   `task reopen` it. A lease you keep holds a slot that other orchestrators
+   wait for. The ready set already counts the daemon's capacity for such a
+   name, whatever the plan's own `Pools` section says, so a task listed as
+   blocked on a pool is not dispatched. A request can still wait, up to 600 s
+   by default, when another orchestrator takes the slot first: run it as a
+   background task, or pass a `--wait` you can live with. The lease verbs, the
+   team form and the lease-ended errors are in the **specflo-agent** skill. In
+   local mode there is no daemon and `specflo lease request` is refused: a
+   local plan keeps its plan-level pools and its subagents as above.
 
 Re-read the frontier after every `task done` / `task reopen` — the ready set
 changes as slots and files free. Milestone boundaries still surface their Exit

@@ -97,6 +97,53 @@ def test_skill_fan_out_section_describes_the_dispatch_protocol():
     assert "dead" in low and "slot" in low
 
 
+def _flat(section: str) -> str:
+    # Prose wraps; a phrase is looked for in the text with its line breaks folded.
+    return " ".join(section.split())
+
+
+def test_skill_fan_out_takes_a_lease_before_a_daemon_pool_task_and_releases_it_after():
+    # A hosted plan's Needs line may name a pool the daemon holds. The member is
+    # then taken for the task and given back when the task is over, however it
+    # went: a lease that is kept holds a slot other orchestrators wait for.
+    section = _flat(_fan_out_section())
+    low = section.lower()
+    assert "hosted mode" in low
+    assert "daemon pool" in low
+    assert "`specflo lease request <pool>`" in section
+    assert "`specflo lease release <lease>`" in section
+    assert section.index("specflo lease request") < section.index("specflo lease release")
+    assert "before the task" in low
+    assert "after the task" in low
+    assert "success or failure" in low
+    # the failure paths are named, so none reads as an exception to the rule
+    assert "subagent" in low and "fails" in low
+    assert "abandon" in low
+
+
+def test_skill_fan_out_keeps_the_lease_step_out_of_local_mode():
+    # The lease verbs need a daemon; a local plan has none and keeps its own pools.
+    low = _flat(_fan_out_section()).lower()
+    assert "hosted mode only" in low
+    assert "local" in low and "refused" in low
+
+
+def test_skill_fan_out_says_the_ready_set_counts_the_daemons_capacity():
+    # The orchestrator does not second-guess the frontier: a task the CLI lists
+    # as blocked on a daemon pool is not dispatched to wait on the lease verb.
+    low = _flat(_fan_out_section()).lower()
+    assert "daemon's capacity" in low
+    assert "whatever the plan's own" in low
+    assert "blocked" in low and "not dispatched" in low
+
+
+def test_skill_fan_out_points_at_the_agent_skill_for_the_lease_verbs():
+    section = _flat(_fan_out_section())
+    assert "specflo-agent" in section
+    assert "--wait" in section            # a request can block; the bound is the orchestrator's
+    assert "specflo lease renew" not in section
+
+
 def test_skill_process_steps_are_kept_verbatim():
     # The fan-out section is additive: the existing per-task loop still reads
     # exactly as before.

@@ -100,6 +100,68 @@ there: a human can be typing in the very session you are prompting.
   `herdr pane send-text <pane> "..."` for input dialogs. The close lands in
   the event log and the state resumes.
 
+## Leased pool members
+
+On a hosted checkout (one with a registered daemon) you do not `start` a
+pooled agent: you lease a member of the daemon's pool, drive it with the verbs
+above, and give it back. In local mode there is no daemon and the lease verbs
+are refused - start your own agents as before.
+
+- `specflo lease request <pool> [--cwd DIR] [--idle-limit 30m] [--label TEXT] [--wait S] [--egress local|no-train|open] [--remote NAME] [--json]` -
+  take one member. It prints the lease id and the agent name; the lease token
+  goes to a token file under the checkout, where every agent verb finds it by
+  itself. Then drive the member: `specflo agent prompt <agent> "<text>"`.
+- `specflo lease release <lease> [--remote NAME] [--json]` - give the lease
+  back, always, when the work is over or has failed. A lease that has ended
+  already is reported as it ended.
+- `specflo lease list [--json]` - the leases this checkout holds. The leases
+  of another orchestrator are never shown.
+
+**A request can wait.** A pool that is full makes the request wait, up to
+`--wait` seconds (600 by default). It says so at once on stderr: the pool,
+what is full, its place among the waiting requests, and the limit. With
+`--json` that notice is one JSON object on stderr and stdout carries only the
+result. `--wait 0` refuses a full pool at once. Interrupt the command to
+cancel the request. So run `lease request` as a background task, like a
+blocking prompt, or pass a `--wait` you can live with.
+
+**Some requests are refused at once and never wait.** `--egress` is the most
+open class of member you accept; the default is `no-train`, and the pool's
+definition and the hosted project's pin can only make it stricter. A pool
+with no member under that ceiling is refused at once. When every such member
+runs through a closed account, the refusal names the account and its reopen
+time - request again after it.
+
+**The team form.** `specflo lease request --team <name>` takes no `<pool>`
+(exactly one of the two). A team is granted all or nothing and holds nothing
+while it waits. It prints one team lease id and one agent per role member,
+each with its own token file. `specflo lease release <team lease id>` ends
+every member; a release of one member lease of a team exits non-zero and
+names the team lease id. The orchestrator leads the team: the pool gives the
+members no way to message each other, so what one member must learn from
+another goes through your prompts.
+
+**Renewal is implicit.** Every verb you run on the member and every turn the
+member works renews the lease; there is no renew verb. An idle lease expires
+at its idle limit. `specflo agent reset <agent>` clears the member's context
+on the same lease: the process, its directory and its model stay, and only
+the lease holder may run it.
+
+**When a lease has ended** and the member's host is gone, every agent verb
+exits `12` and stderr names the cause (the one case where you read stderr):
+
+- `Error: lease released` - you, or a team release, gave it back.
+- `Error: lease expired` - it stayed idle past its idle limit.
+- `Error: lease preempted by <request id>` - the pool took the member for
+  another request.
+
+In each case the member and its context are gone: request a lease again and
+redo the task's prompt on the new member. Never retry the verb blindly on a
+preempted lease - without a new request there is nothing to reach. A verb
+with no token or the wrong token exits `1` with `agent '<name>' is leased to
+another holder` and shows nothing of the member: run it from the checkout
+that holds the token file, or pass `--lease-token` / set `SPECFLO_LEASE_TOKEN`.
+
 ## Monitoring
 
 - `specflo agent status <name> --json` is the cheap truth: lifecycle state
