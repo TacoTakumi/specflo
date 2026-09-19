@@ -6,6 +6,8 @@ Each agent owns one directory derived from its name alone:
         sock          Unix domain socket (bound by the host, T-03)
         events.jsonl  append-only timestamped event log
         status.json   atomic point-in-time snapshot
+        lease-ended.json  why the pool's last lease on this agent ended
+                          (written by the pool, see specflo.agent.lease)
 
 <base> is ``$SPECFLO_AGENT_STATE_DIR`` when set, else ``~/.specflo/agents``.
 The directory is persistent (not tmpfs): events.jsonl and status.json are
@@ -25,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from specflo.agent.lease import ENDED_FILE
 from specflo.agent.protocol import encode_frame
 
 ENV_STATE_DIR = "SPECFLO_AGENT_STATE_DIR"
@@ -75,6 +78,10 @@ class AgentPaths:
     @property
     def status(self) -> Path:
         return self.root / "status.json"
+
+    @property
+    def ended(self) -> Path:
+        return self.root / ENDED_FILE
 
     def ensure(self) -> "AgentPaths":
         self.root.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,11 @@ Exit codes (REQ-08), consistent across every verb:
     0 success, 10 busy, 11 timeout, 12 host unreachable / unknown agent,
     1 generic error.
 
+Under a pool lease the verbs that reach a member (prompt, wait, last, log,
+status, stop) present the holder's token, found by ``specflo.agent.lease``.
+Without the right token they exit 1 and show nothing of the member; once the
+lease has ended and its host is gone they exit 12 naming the cause.
+
 Imports nothing from specflo pipeline code (REQ-15) - only the agent
 subsystem and typer.
 """
@@ -27,7 +32,7 @@ from typing import Optional
 
 import typer
 
-from specflo.agent import tui
+from specflo.agent import lease, tui
 from specflo.agent.client import HostUnreachableError, connect
 from specflo.agent.herdr import HerdrAdapter, HerdrError
 from specflo.agent.statefiles import (
@@ -79,8 +84,17 @@ def _transport_fields(snapshot: dict | None) -> dict:
     }
 
 
-def _probe(name: str) -> dict:
+class _LeaseRefused(Exception):
+    """The host's wall turned the verb away. Not a RuntimeError on purpose:
+    the probe's except net must not read it as a dead host."""
+
+
+def _probe(name: str, lease_token: str | None = None) -> dict:
     """One agent's live-checked view: socket answer first, disk as fallback.
+
+    With no ``lease_token`` the probe is the bare liveness check every host
+    answers. With one - even an empty one - the host checks it against a
+    bound lease, and a refusal raises _LeaseRefused.
 
     Returns {"name", "state", "alive", "transport", "ownership", "status",
     "paths"} where "state" is the reported state: the live state when the
@@ -96,7 +110,10 @@ def _probe(name: str) -> dict:
     }
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
-            data = client.status(timeout=_PROBE_TIMEOUT)
+            if lease_token is None:
+                data = client.status(timeout=_PROBE_TIMEOUT)
+            else:
+                data = _walled_status(client, lease_token)
         status = data["status"]
         return {
             "name": name,
@@ -129,6 +146,25 @@ def _probe(name: str) -> dict:
     }
 
 
+def _walled_status(client, lease_token: str) -> dict:
+    """The status payload, asked for with a credential so the wall checks it.
+
+    A bare status frame is the open liveness probe; one that carries a
+    lease_token is refused while a lease is bound and the token is not the
+    holder's. An empty token is how a verb with none to present still learns
+    that the member is leased. The host answers status itself, so the field
+    never reaches pi, leased or not.
+    """
+    response = client.request(
+        {"type": "status", "lease_token": lease_token}, timeout=_PROBE_TIMEOUT
+    )
+    if not response.get("success"):
+        if lease.is_wall_refusal(response.get("error")):
+            raise _LeaseRefused(response["error"])
+        raise RuntimeError(f"status failed: {response.get('error')}")
+    return response["data"]
+
+
 def _echo_probe(probe: dict) -> None:
     status = probe["status"] or {}
     parts = [probe["name"], probe["state"]]
@@ -144,6 +180,15 @@ def _echo_probe(probe: dict) -> None:
 
 
 # -- verbs ------------------------------------------------------------------
+
+_LEASE_TOKEN_OPTION = typer.Option(
+    None,
+    "--lease-token",
+    help="The lease holder's token for a pooled agent (default: "
+    f"${lease.ENV_LEASE_TOKEN}, else .specflo/leases/<name>.token found "
+    "upward from the working directory).",
+    show_default=False,
+)
 
 
 @agent_app.command(
@@ -352,13 +397,18 @@ def _start_tui(
 def status(
     name: str = typer.Argument(help="Agent name."),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output."),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Live-checked status: REQ-05 fields plus the state-dir paths."""
     try:
-        probe = _probe(name)
+        probe = _probe(name, lease_token=lease.find_token(name, lease_token) or "")
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
+    except _LeaseRefused as exc:
+        _exit_refused(name, exc)
+    if not probe["alive"]:
+        _exit_if_lease_ended(name)
     if as_json:
         typer.echo(json.dumps(probe, indent=2))
     else:
@@ -401,15 +451,54 @@ EXIT_CODES_HELP = (
 )
 
 
-def _connect_or_exit(name: str):
+def _exit_refused(name: str, error) -> None:
+    """The wall turned this verb away: say so, show nothing of the member."""
+    typer.echo(
+        f"Error: agent '{name}' is leased to another holder ({error}); "
+        f"pass --lease-token, set {lease.ENV_LEASE_TOKEN}, or run from the "
+        "directory tree that holds its token file",
+        err=True,
+    )
+    raise typer.Exit(code=EXIT_GENERIC)
+
+
+def _exit_if_lease_ended(name: str) -> None:
+    """The host is gone: when the pool recorded why the lease ended, the
+    former holder is told the cause rather than 'unreachable'."""
+    record = lease.read_ended(AgentPaths.resolve(name).root)
+    if record is not None:
+        typer.echo(f"Error: {lease.ended_message(record)}", err=True)
+        raise typer.Exit(code=EXIT_UNREACHABLE)
+
+
+def _exit_failed(name: str, what: str, response: dict, code: int) -> None:
+    """A verb's frame came back unsuccessful; a wall refusal reads as one."""
+    if lease.is_wall_refusal(response.get("error")):
+        _exit_refused(name, response["error"])
+    typer.echo(f"Error: {what}: {response.get('error')}", err=True)
+    raise typer.Exit(code=code)
+
+
+def _connect_or_exit(name: str, lease_token: str | None = None):
     try:
-        return connect(name, connect_timeout=_PROBE_TIMEOUT)
+        return connect(
+            name, connect_timeout=_PROBE_TIMEOUT, lease_token=lease_token
+        )
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
     except HostUnreachableError as exc:
+        _exit_if_lease_ended(name)
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
+
+
+def _status_or_exit(client, name: str, lease_token: str | None) -> dict:
+    """The status snapshot, fetched through the wall (see _walled_status)."""
+    try:
+        return _walled_status(client, lease_token or "")["status"]
+    except _LeaseRefused as exc:
+        _exit_refused(name, exc)
 
 
 def _settled(frame) -> bool:
@@ -437,14 +526,10 @@ def _wait_for_settle(client, timeout: float | None) -> None:
         raise typer.Exit(code=EXIT_UNREACHABLE)
 
 
-def _print_last_text(client) -> None:
+def _print_last_text(client, name: str) -> None:
     response = client.request({"type": "get_last_assistant_text"}, timeout=10.0)
     if not response.get("success"):
-        typer.echo(
-            f"Error: get_last_assistant_text failed: {response.get('error')}",
-            err=True,
-        )
-        raise typer.Exit(code=EXIT_GENERIC)
+        _exit_failed(name, "get_last_assistant_text failed", response, EXIT_GENERIC)
     text = (response.get("data") or {}).get("text")
     if text is not None:
         typer.echo(text)
@@ -472,13 +557,15 @@ def prompt(
         "--follow-up",
         help="Queue for after the current run (pi streamingBehavior 'followUp').",
     ),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Send a prompt; block until settle and print the final assistant text."""
     if steer and follow_up:
         typer.echo("Error: --steer and --follow-up are mutually exclusive", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
-    with _connect_or_exit(name) as client:
-        status = client.status(timeout=_PROBE_TIMEOUT)["status"]
+    token = lease.find_token(name, lease_token)
+    with _connect_or_exit(name, token) as client:
+        status = _status_or_exit(client, name, token)
         if status["state"] in ("exited", "stopped"):
             typer.echo(
                 f"Error: agent '{name}' is {status['state']}; pi is not running",
@@ -500,13 +587,12 @@ def prompt(
             command["streamingBehavior"] = "followUp"
         response = client.request(command, timeout=10.0)
         if not response.get("success"):
-            typer.echo(f"Error: prompt refused: {response.get('error')}", err=True)
-            raise typer.Exit(code=EXIT_BUSY)
+            _exit_failed(name, "prompt refused", response, EXIT_BUSY)
         if no_wait:
             typer.echo("submitted; not waiting for settle", err=True)
             return
         _wait_for_settle(client, timeout)
-        _print_last_text(client)
+        _print_last_text(client, name)
 
 
 @agent_app.command(epilog=f"Example: specflo agent wait builder\n\n{EXIT_CODES_HELP}")
@@ -515,10 +601,14 @@ def wait(
     timeout: Optional[float] = typer.Option(
         None, "--timeout", help="Bound the wait, in seconds."
     ),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Block until the agent's current run settles (exit 0 if already idle)."""
-    with _connect_or_exit(name) as client:
-        status = client.status(timeout=_PROBE_TIMEOUT)["status"]
+    token = lease.find_token(name, lease_token)
+    with _connect_or_exit(name, token) as client:
+        # through the wall first: the host broadcasts a member's events to
+        # every connection, so nothing is read from it before this passes
+        status = _status_or_exit(client, name, token)
         if status["state"] != "working":
             return  # nothing in flight
         _wait_for_settle(client, timeout)
@@ -527,10 +617,11 @@ def wait(
 @agent_app.command(epilog=f"Example: specflo agent last builder\n\n{EXIT_CODES_HELP}")
 def last(
     name: str = typer.Argument(help="Agent name."),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Print the most recent final assistant text."""
-    with _connect_or_exit(name) as client:
-        _print_last_text(client)
+    with _connect_or_exit(name, lease.find_token(name, lease_token)) as client:
+        _print_last_text(client, name)
 
 
 @agent_app.command(epilog=f"Example: specflo agent stop builder\n\n{EXIT_CODES_HELP}")
@@ -539,6 +630,7 @@ def stop(
     timeout: float = typer.Option(
         30.0, "--timeout", help="Bound the wait for the host to shut down."
     ),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Gracefully stop an agent: abort its run, terminate pi, then the host."""
     try:
@@ -554,8 +646,13 @@ def stop(
             _stop_tui(name, snapshot, timeout)
             return
     try:
-        client = connect(name, connect_timeout=_PROBE_TIMEOUT)
+        client = connect(
+            name,
+            connect_timeout=_PROBE_TIMEOUT,
+            lease_token=lease.find_token(name, lease_token),
+        )
     except HostUnreachableError as exc:
+        _exit_if_lease_ended(name)
         if paths.status.exists() and read_status(paths.status).get("state") == "stopped":
             typer.echo(f"agent '{name}' is already stopped")
             return
@@ -564,8 +661,7 @@ def stop(
     with client:
         response = client.stop(timeout=timeout)
         if not response.get("success"):
-            typer.echo(f"Error: stop refused: {response.get('error')}", err=True)
-            raise typer.Exit(code=EXIT_GENERIC)
+            _exit_failed(name, "stop refused", response, EXIT_GENERIC)
 
     def down() -> bool:
         if not paths.status.exists():
@@ -627,6 +723,7 @@ def log(
     follow: bool = typer.Option(
         False, "--follow", help="Keep streaming new events as they land."
     ),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Print the agent's event log (events.jsonl)."""
     try:
@@ -634,6 +731,27 @@ def log(
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
+    # The log is a file, so the wall is asked before it is read: a live host
+    # under a lease refuses anyone but the holder. A host that is gone has no
+    # wall; its log stays readable unless the pool recorded a lease ending.
+    token = lease.find_token(name, lease_token)
+    try:
+        client = connect(name, connect_timeout=_PROBE_TIMEOUT, lease_token=token)
+    except HostUnreachableError:
+        _exit_if_lease_ended(name)
+    else:
+        # NB: typer.Exit subclasses RuntimeError - the refusal is raised
+        # outside this except net, never inside it
+        refusal = None
+        with client:
+            try:
+                _walled_status(client, token or "")
+            except _LeaseRefused as exc:
+                refusal = exc
+            except (TimeoutError, RuntimeError, OSError):
+                pass  # a host too sick to answer guards nothing
+        if refusal is not None:
+            _exit_refused(name, refusal)
     if not paths.events.exists():
         typer.echo(f"Error: unknown agent '{name}' (no event log)", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
