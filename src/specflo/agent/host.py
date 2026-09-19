@@ -26,6 +26,11 @@ holder's ``lease_token`` or the daemon's ``pool_token`` may drive the member;
 any other is refused before it reaches pi or the event log. A host that was
 never pool-bound has no wall and is a plain pipe.
 
+Lease activity: while a lease is bound, every command the holder's token lets
+through moves ``last_activity`` in status.json to now, and so does a turn that
+is running. The daemon reads a lease's idle time from that stamp, so nothing a
+refused frame, a bare liveness probe or the daemon itself does may move it.
+
 Stdlib only - the agent subsystem imports nothing from pipeline code (REQ-15).
 """
 
@@ -39,7 +44,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from specflo.agent.herdr import HerdrAdapter, HerdrError
 from specflo.agent.policy import DialogPolicy
@@ -47,6 +52,7 @@ from specflo.agent.protocol import FrameDecoder, encode_frame, read_frames, writ
 from specflo.agent.statefiles import (
     AgentPaths,
     EventLog,
+    now_iso,
     read_status,
     status_snapshot,
     write_status,
@@ -59,6 +65,11 @@ POOL_VERBS = ("pool_bind", "lease_bind", "lease_clear")
 
 # Credential fields on a frame; pi never sees them once a pool is bound.
 TOKEN_FIELDS = ("lease_token", "pool_token")
+
+# While a turn runs, pi's events refresh the activity stamp at most this often
+# (seconds): the stamp is read against idle limits of minutes, and every
+# refresh is an fsynced rewrite of status.json.
+_ACTIVITY_REFRESH = 5.0
 
 # How long a broadcast send may block on one slow client before it is dropped.
 _SUBSCRIBER_SEND_TIMEOUT = 5.0
@@ -96,6 +107,7 @@ class PiHost:
         herdr_workspace: str | None = None,
         herdr_tab: str | None = None,
         transcript: Any | None = None,
+        clock: Callable[[], str] = now_iso,
     ) -> None:
         self.name = name
         self.pi_cmd = list(pi_cmd)
@@ -130,6 +142,9 @@ class PiHost:
         self._wall_lock = threading.Lock()
         self._pool_digest: bytes | None = None
         self._lease_digest: bytes | None = None
+        self._clock = clock
+        self._last_activity = clock()
+        self._refreshed = time.monotonic()
 
     def start(self) -> "PiHost":
         self._set_state("starting")
@@ -199,19 +214,39 @@ class PiHost:
         with self._state_lock:
             self.state = state
             self._log_event({"type": "host_state", "state": state})
-            write_status(
-                self.paths.status,
-                status_snapshot(
-                    self.name,
-                    state,
-                    host_pid=os.getpid(),
-                    pi_pid=self.proc.pid if self.proc else None,
-                    herdr_workspace=self.herdr_workspace,
-                    herdr_tab=self.herdr_tab,
-                    herdr_pane=self.herdr_pane,
-                ),
-            )
+            self._write_status()
             self._push_herdr_state(state)
+
+    def _write_status(self) -> None:
+        """Snapshot the host into status.json, stamped now; state lock held."""
+        self._last_activity = self._clock()
+        self._refreshed = time.monotonic()
+        write_status(
+            self.paths.status,
+            status_snapshot(
+                self.name,
+                self.state,
+                host_pid=os.getpid(),
+                pi_pid=self.proc.pid if self.proc else None,
+                herdr_workspace=self.herdr_workspace,
+                herdr_tab=self.herdr_tab,
+                herdr_pane=self.herdr_pane,
+                last_activity=self._last_activity,
+            ),
+        )
+
+    def _stamp_activity(self) -> None:
+        """The holder acted: move last_activity to now, the state untouched."""
+        with self._state_lock:
+            self._write_status()
+
+    def _refresh_activity(self) -> None:
+        """A running turn under a lease keeps the stamp fresh, throttled."""
+        if self.state != "working" or self._lease_digest is None:
+            return
+        if time.monotonic() - self._refreshed < _ACTIVITY_REFRESH:
+            return
+        self._stamp_activity()
 
     def _push_herdr_state(self, state: str) -> None:
         """Report the lifecycle transition into herdr (REQ-13); never fatal."""
@@ -271,6 +306,7 @@ class PiHost:
                     self._set_state("idle")
                 elif etype == "extension_ui_request":
                     self._handle_dialog(event)
+                self._refresh_activity()
         except Exception as exc:  # a malformed frame is a protocol violation
             self._log_event({"type": "host_error", "error": str(exc)})
         rc = self.proc.wait()
@@ -402,13 +438,17 @@ class PiHost:
                 response.update(success=False, error=error)
             self._respond(conn, send_lock, response)
             return
-        if not self._authorised(request):
+        admitted = self._admitted_by(request)
+        if admitted is None:
             response.update(
                 success=False,
                 error="lease held: a valid lease token is required",
             )
             self._respond(conn, send_lock, response)
             return
+        if admitted == "lease_token":
+            # only the holder renews its lease, not the daemon and not a probe
+            self._stamp_activity()
         if self._pool_digest is not None:
             request = {k: v for k, v in request.items() if k not in TOKEN_FIELDS}
 
@@ -467,24 +507,28 @@ class PiHost:
             self._lease_digest = lease
             return None
 
-    def _authorised(self, request: dict[str, Any]) -> bool:
-        """The wall: may this frame act on the member right now?"""
+    def _admitted_by(self, request: dict[str, Any]) -> str | None:
+        """The wall: what lets this frame act on the member right now?
+
+        The token field that matched, "open" when no credential was needed,
+        None when the frame is refused.
+        """
         with self._wall_lock:
             expected = {
                 "lease_token": self._lease_digest,
                 "pool_token": self._pool_digest,
             }
         if expected["lease_token"] is None:
-            return True  # no lease bound, no wall
+            return "open"  # no lease bound, no wall
         presented = [f for f in TOKEN_FIELDS if f in request]
         if not presented:
             # the bare liveness probe stays open to everyone
-            return request["type"] == "status"
+            return "open" if request["type"] == "status" else None
         for field in presented:
             digest = _token_digest(request[field])
             if digest is not None and hmac.compare_digest(digest, expected[field]):
-                return True
-        return False
+                return field
+        return None
 
     def _status_data(self) -> dict[str, Any]:
         return {
