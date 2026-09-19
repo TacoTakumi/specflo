@@ -13,8 +13,9 @@ Exit codes (REQ-08), consistent across every verb:
 Under a pool lease the verbs that reach a member (prompt, wait, last, log,
 status, reset, stop) present the holder's token, found by
 ``specflo.agent.lease``. Without the right token they exit 1 and show nothing
-of the member; once the lease has ended and its host is gone they exit 12
-naming the cause.
+of the member; once the lease has ended they exit 12 naming the cause, when
+its host is gone and also when the member is leased again and the token is
+the ended lease's.
 
 Imports nothing from specflo pipeline code (REQ-15) - only the agent
 subsystem and typer.
@@ -401,15 +402,16 @@ def status(
     lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
 ) -> None:
     """Live-checked status: REQ-05 fields plus the state-dir paths."""
+    token = lease.find_token(name, lease_token)
     try:
-        probe = _probe(name, lease_token=lease.find_token(name, lease_token) or "")
+        probe = _probe(name, lease_token=token or "")
     except ValueError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
     except _LeaseRefused as exc:
-        _exit_refused(name, exc)
+        _exit_refused(name, exc, token)
     if not probe["alive"]:
-        _exit_if_lease_ended(name)
+        _exit_if_lease_ended(name, token)
     if as_json:
         typer.echo(json.dumps(probe, indent=2))
     else:
@@ -452,8 +454,15 @@ EXIT_CODES_HELP = (
 )
 
 
-def _exit_refused(name: str, error) -> None:
-    """The wall turned this verb away: say so, show nothing of the member."""
+def _exit_refused(name: str, error, token: str | None = None) -> None:
+    """The wall turned this verb away: say so, show nothing of the member.
+
+    The member may be leased again since the lease of *token*, the one this
+    verb presented, ended: its former holder is told how that lease ended, as
+    it is when the host is gone. Any other token finds no record of its own
+    and learns nothing of an ending."""
+    if token:
+        _exit_lease_ended(lease.read_ended(AgentPaths.resolve(name).root, token))
     typer.echo(
         f"Error: agent '{name}' is leased to another holder ({error}); "
         f"pass --lease-token, set {lease.ENV_LEASE_TOKEN}, or run from the "
@@ -463,19 +472,26 @@ def _exit_refused(name: str, error) -> None:
     raise typer.Exit(code=EXIT_GENERIC)
 
 
-def _exit_if_lease_ended(name: str) -> None:
+def _exit_if_lease_ended(name: str, token: str | None = None) -> None:
     """The host is gone: when the pool recorded why the lease ended, the
-    former holder is told the cause rather than 'unreachable'."""
-    record = lease.read_ended(AgentPaths.resolve(name).root)
+    former holder is told the cause rather than 'unreachable'. The record
+    kept for *token* comes first: the last ending may be a later lease's."""
+    root = AgentPaths.resolve(name).root
+    _exit_lease_ended((token and lease.read_ended(root, token)) or lease.read_ended(root))
+
+
+def _exit_lease_ended(record: dict | None) -> None:
     if record is not None:
         typer.echo(f"Error: {lease.ended_message(record)}", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
 
 
-def _exit_failed(name: str, what: str, response: dict, code: int) -> None:
+def _exit_failed(
+    name: str, what: str, response: dict, code: int, token: str | None = None
+) -> None:
     """A verb's frame came back unsuccessful; a wall refusal reads as one."""
     if lease.is_wall_refusal(response.get("error")):
-        _exit_refused(name, response["error"])
+        _exit_refused(name, response["error"], token)
     typer.echo(f"Error: {what}: {response.get('error')}", err=True)
     raise typer.Exit(code=code)
 
@@ -489,7 +505,7 @@ def _connect_or_exit(name: str, lease_token: str | None = None):
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_GENERIC)
     except HostUnreachableError as exc:
-        _exit_if_lease_ended(name)
+        _exit_if_lease_ended(name, lease_token)
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
 
@@ -499,7 +515,7 @@ def _status_or_exit(client, name: str, lease_token: str | None) -> dict:
     try:
         return _walled_status(client, lease_token or "")["status"]
     except _LeaseRefused as exc:
-        _exit_refused(name, exc)
+        _exit_refused(name, exc, lease_token)
 
 
 def _settled(frame) -> bool:
@@ -530,7 +546,9 @@ def _wait_for_settle(client, timeout: float | None) -> None:
 def _print_last_text(client, name: str) -> None:
     response = client.request({"type": "get_last_assistant_text"}, timeout=10.0)
     if not response.get("success"):
-        _exit_failed(name, "get_last_assistant_text failed", response, EXIT_GENERIC)
+        _exit_failed(
+            name, "get_last_assistant_text failed", response, EXIT_GENERIC, client.lease_token
+        )
     text = (response.get("data") or {}).get("text")
     if text is not None:
         typer.echo(text)
@@ -588,7 +606,7 @@ def prompt(
             command["streamingBehavior"] = "followUp"
         response = client.request(command, timeout=10.0)
         if not response.get("success"):
-            _exit_failed(name, "prompt refused", response, EXIT_BUSY)
+            _exit_failed(name, "prompt refused", response, EXIT_BUSY, token)
         if no_wait:
             typer.echo("submitted; not waiting for settle", err=True)
             return
@@ -654,7 +672,7 @@ def reset(
             raise typer.Exit(code=EXIT_BUSY)
         response = client.request({"type": "new_session"}, timeout=10.0)
         if not response.get("success"):
-            _exit_failed(name, "reset refused", response, EXIT_GENERIC)
+            _exit_failed(name, "reset refused", response, EXIT_GENERIC, token)
         if (response.get("data") or {}).get("cancelled"):
             typer.echo(
                 f"Error: reset of agent '{name}' was cancelled by a pi extension; "
@@ -686,14 +704,11 @@ def stop(
         if snapshot.get("transport") == "tui":
             _stop_tui(name, snapshot, timeout)
             return
+    token = lease.find_token(name, lease_token)
     try:
-        client = connect(
-            name,
-            connect_timeout=_PROBE_TIMEOUT,
-            lease_token=lease.find_token(name, lease_token),
-        )
+        client = connect(name, connect_timeout=_PROBE_TIMEOUT, lease_token=token)
     except HostUnreachableError as exc:
-        _exit_if_lease_ended(name)
+        _exit_if_lease_ended(name, token)
         if paths.status.exists() and read_status(paths.status).get("state") == "stopped":
             typer.echo(f"agent '{name}' is already stopped")
             return
@@ -702,7 +717,7 @@ def stop(
     with client:
         response = client.stop(timeout=timeout)
         if not response.get("success"):
-            _exit_failed(name, "stop refused", response, EXIT_GENERIC)
+            _exit_failed(name, "stop refused", response, EXIT_GENERIC, token)
 
     def down() -> bool:
         if not paths.status.exists():
@@ -779,7 +794,7 @@ def log(
     try:
         client = connect(name, connect_timeout=_PROBE_TIMEOUT, lease_token=token)
     except HostUnreachableError:
-        _exit_if_lease_ended(name)
+        _exit_if_lease_ended(name, token)
     else:
         # NB: typer.Exit subclasses RuntimeError - the refusal is raised
         # outside this except net, never inside it
@@ -792,7 +807,7 @@ def log(
             except (TimeoutError, RuntimeError, OSError):
                 pass  # a host too sick to answer guards nothing
         if refusal is not None:
-            _exit_refused(name, refusal)
+            _exit_refused(name, refusal, token)
     if not paths.events.exists():
         typer.echo(f"Error: unknown agent '{name}' (no event log)", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)

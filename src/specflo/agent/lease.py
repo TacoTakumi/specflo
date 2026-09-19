@@ -19,14 +19,28 @@ so the former holder's next verb can name the cause instead of reporting a
 host that is merely unreachable. The pool writes the record (``write_ended``)
 and clears it when it starts the member for a new lease (``clear_ended``).
 
+A member that is leased again has a host again, and its wall tells a former
+holder only that someone else holds the lease. So the pool, which knows a
+holder by the SHA-256 of its token, also keeps the same record for that holder:
+
+    <base>/<name>/lease-ended/<the token's hash>.json
+
+A new lease leaves these where they are, and a verb the wall turns away reads
+the one under the hash of the token it presented (``read_ended`` with a
+token): a former holder learns how its own lease ended, and any other token
+finds nothing. The newest ``ENDED_KEPT`` are kept for one agent; an older one
+is removed, and its holder then gets the wall's refusal like anyone else.
+
 Stdlib only, and nothing from the rest of the agent subsystem: this module
 knows files and strings, not the host's socket and not pi.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping
@@ -39,6 +53,14 @@ TOKEN_DIR = Path(".specflo") / "leases"
 ENDED_FILE = "lease-ended.json"
 
 ENDED_CAUSES = ("released", "expired", "preempted")
+
+#: The former holders' records, one file each, named by the token's hash.
+ENDED_DIR = "lease-ended"
+
+#: How many former holders' records are kept for one agent.
+ENDED_KEPT = 16
+
+_TOKEN_HASH = re.compile(r"[0-9a-f]{64}")
 
 # How the host words its refusal of a frame the wall turned away.
 _WALL_REFUSAL = "lease held"
@@ -77,6 +99,12 @@ def find_token(
     return None
 
 
+def token_hash(token: str) -> str:
+    """What the pool keeps of a lease token, and knows its holder by: its
+    SHA-256, in hex."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
 def is_wall_refusal(error: Any) -> bool:
     """Did the host refuse a frame because a lease is held by someone else?"""
     return isinstance(error, str) and error.startswith(_WALL_REFUSAL)
@@ -90,16 +118,29 @@ def write_ended(
     cause: str,
     request_id: str | None = None,
     ended_at: str | None = None,
+    holder: str | None = None,
 ) -> Path:
-    """Record why the lease on this agent ended; atomic, replaces any earlier."""
+    """Record why the lease on this agent ended; atomic, replaces any earlier.
+
+    *holder* is the hash of the lease's token (``token_hash``). With one the
+    record is also kept for that holder, past the agent's next lease.
+    """
     if cause not in ENDED_CAUSES:
         raise ValueError(f"invalid lease end cause {cause!r}: one of {ENDED_CAUSES}")
     if cause == "preempted" and not request_id:
         raise ValueError("a preempted lease records the preempting request's id")
+    if holder is not None and not _TOKEN_HASH.fullmatch(holder):
+        raise ValueError("a holder is named by the SHA-256 of its lease token, in hex")
     if ended_at is None:
         ended_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     record = {"cause": cause, "request_id": request_id, "ended_at": ended_at}
-    path = Path(state_dir) / ENDED_FILE
+    if holder is not None:
+        _write_record(Path(state_dir) / ENDED_DIR / f"{holder}.json", record)
+        _drop_oldest(Path(state_dir) / ENDED_DIR)
+    return _write_record(Path(state_dir) / ENDED_FILE, record)
+
+
+def _write_record(path: Path, record: Mapping[str, Any]) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(f"{path.name}.tmp.{os.getpid()}")
     with open(tmp, "w", encoding="utf-8") as f:
@@ -110,10 +151,31 @@ def write_ended(
     return path
 
 
-def read_ended(state_dir: Path | str) -> dict[str, Any] | None:
-    """The ended record, None when absent or not one this module can report."""
+def _drop_oldest(directory: Path) -> None:
+    """Keep the newest ``ENDED_KEPT`` holders' records; one that cannot be
+    read counts as the oldest."""
+    ended_at = {
+        path: str((_read_record(path) or {}).get("ended_at") or "")
+        for path in directory.glob("*.json")
+    }
+    for path in sorted(ended_at, key=lambda p: (ended_at[p], p.name))[:-ENDED_KEPT]:
+        path.unlink(missing_ok=True)
+
+
+def read_ended(state_dir: Path | str, token: str | None = None) -> dict[str, Any] | None:
+    """The ended record, None when absent or not one this module can report.
+
+    Without a *token* it is the agent's last ending. With one it is the record
+    kept for the holder of that token, and None for any other token.
+    """
+    if token is None:
+        return _read_record(Path(state_dir) / ENDED_FILE)
+    return _read_record(Path(state_dir) / ENDED_DIR / f"{token_hash(token)}.json")
+
+
+def _read_record(path: Path) -> dict[str, Any] | None:
     try:
-        with open(Path(state_dir) / ENDED_FILE, encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             record = json.load(f)
     except (OSError, ValueError):
         return None
@@ -123,7 +185,8 @@ def read_ended(state_dir: Path | str) -> dict[str, Any] | None:
 
 
 def clear_ended(state_dir: Path | str) -> None:
-    """Forget the last ending: the member is starting under a new lease."""
+    """Forget the last ending: the member is starting under a new lease. What
+    is kept for the former holders stays."""
     (Path(state_dir) / ENDED_FILE).unlink(missing_ok=True)
 
 

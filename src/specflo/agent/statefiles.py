@@ -8,6 +8,7 @@ Each agent owns one directory derived from its name alone:
         status.json   atomic point-in-time snapshot
         lease-ended.json  why the pool's last lease on this agent ended
                           (written by the pool, see specflo.agent.lease)
+        lease-ended/  the same record for each former holder, by token hash
 
 <base> is ``$SPECFLO_AGENT_STATE_DIR`` when set, else ``~/.specflo/agents``.
 The directory is persistent (not tmpfs): events.jsonl and status.json are

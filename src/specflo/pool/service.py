@@ -436,8 +436,11 @@ class PoolService:
             if store.record_transition(ending, expect="active") is None:
                 return _recorded_end(store, lease_id)
             # The host aborts a running turn itself before it stops pi.
-            agent = ledger.agent_of(store.get_lease(lease_id))
-            runner.stop(agent, kind, pool_token=self.pool_token, request_id=request_id)
+            ended = store.get_lease(lease_id)
+            runner.stop(
+                ledger.agent_of(ended), kind, pool_token=self.pool_token,
+                request_id=request_id, holder=ended.holder_hash,
+            )
         return Ended(lease_id=lease_id, state=kind, cause=cause, time=ending.time)
 
     def _pool(self, name: str) -> Pool:

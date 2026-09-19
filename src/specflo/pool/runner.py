@@ -156,20 +156,23 @@ def stop(
     *,
     pool_token: str,
     request_id: str | None = None,
+    holder: str | None = None,
     timeout: float = STOP_TIMEOUT,
 ) -> None:
     """Stop the agent *name*; its lease ended for *cause*.
 
     The cause is one of the agent subsystem's lease end causes, and
     *request_id* names the preempting request. The record is written first,
-    so a holder whose verb finds the host gone is told why. A host that is
+    so a holder whose verb finds the host gone is told why. With *holder*,
+    the hash of the lease's token, it is kept for that holder as well, so
+    that it is told why when the member is leased again too. A host that is
     already gone is not an error: the lease ends all the same.
 
     Raises ``RunnerError`` when the host does not stop; what the lease left
     on disk then stays, because the member may still run.
     """
     paths = _paths(name)
-    lease.write_ended(paths.root, cause, request_id)
+    lease.write_ended(paths.root, cause, request_id, holder=holder)
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             try:
