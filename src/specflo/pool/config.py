@@ -1,4 +1,4 @@
-"""The pool configuration file: provider accounts and the member roster.
+"""The pool configuration file: provider accounts, the member roster and named pools.
 
 An admin writes ``pool.yaml`` ahead of time and the roster in it is complete:
 nothing that is not declared can be leased. An account is a name, a cap on how
@@ -12,14 +12,23 @@ model ID from the rig's llama-swap configuration and its class is ``local``.
 A hosted member runs over the network, so it names a declared account and its
 class is ``no-train`` or ``open``.
 
+A named pool binds one agent definition to declared members, with the most
+leases it grants at once, a default and a maximum idle limit, and an optional
+``preempt_after``. The definitions are the markdown files in ``definitions/``
+beside the pool file. A consumer asks for a pool by name and nothing else, so
+whether each member meets the definition is settled here: a member that lacks
+a label the definition needs, or is more open than it accepts, is refused when
+the file is checked and never while a request waits.
+
 Loading is strict: a key this module does not know is refused rather than
 ignored, and every refusal names the entry and the field at fault. Accounts
-and members are lists of named entries, not mappings, because YAML drops a
+members and pools are lists of named entries, not mappings, because YAML drops a
 repeated mapping key without a word and a repeated name must be refused.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -27,7 +36,7 @@ import yaml
 
 from ..errors import SpecfloError
 from . import matrix
-from .definitions import EGRESS_CLASSES
+from .definitions import EGRESS_CLASSES, AgentDefinition, DefinitionError, load_definition
 
 # What backs a member: llama-swap on this host, or a provider over the network.
 LOCAL = "local"
@@ -40,11 +49,25 @@ HOSTED_CLASSES: tuple[str, ...] = tuple(c for c in EGRESS_CLASSES if c != LOCAL)
 # Every key the file may carry, in the order they are written. An account has
 # no field for a provider management key: such a key can mint spending keys,
 # which is more authority than the pool needs.
-SECTIONS: tuple[str, ...] = ("llama_swap", "accounts", "members")
+SECTIONS: tuple[str, ...] = ("llama_swap", "accounts", "members", "pools")
 ACCOUNT_FIELDS: tuple[str, ...] = ("name", "cap", "key_env")
 MEMBER_FIELDS: tuple[str, ...] = (
     "name", "command", "backing", "model", "account", "labels", "capacity", "egress",
 )
+# A pool has no field for a priority: any waiting request may take an idle
+# lease from a pool that declares preempt_after, and none from one that does not.
+POOL_FIELDS: tuple[str, ...] = (
+    "name", "definition", "members", "size", "idle_default", "idle_max", "preempt_after",
+)
+
+# The directory beside the pool file that holds the agent definitions, one
+# markdown file each; a pool binds a definition by the file's stem.
+DEFINITIONS_DIR = "definitions"
+
+# A limit is written as a whole number and a unit, "10m" or "4h". A bare
+# number is refused because nothing says whether it counts seconds or minutes.
+_DURATION = re.compile(r"\A([1-9][0-9]*)([smh])\Z")
+_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 
 # The llama-swap ways of naming a model that the pool does not use. A profile
 # is one server-wide rewrite table, and a selector picks the real model per
@@ -89,13 +112,31 @@ class Member:
 
 
 @dataclass(frozen=True)
+class Pool:
+    """One named pool. ``size`` is the most leases it grants at once; the
+    limits are in seconds, and ``preempt_after`` is None for a pool whose
+    leases are never preempted."""
+
+    name: str
+    definition: str
+    members: tuple[str, ...]
+    size: int
+    idle_default: int
+    idle_max: int
+    preempt_after: int | None = None
+
+
+@dataclass(frozen=True)
 class PoolConfig:
-    """What ``pool.yaml`` declares. ``swap`` is the llama-swap configuration at
-    ``llama_swap``; both are None when the file names none."""
+    """What ``pool.yaml`` declares, with the definitions beside it. ``swap`` is
+    the llama-swap configuration at ``llama_swap``; both are None when the
+    file names none."""
 
     path: Path
     accounts: tuple[Account, ...] = ()
     members: tuple[Member, ...] = ()
+    pools: tuple[Pool, ...] = ()
+    definitions: tuple[AgentDefinition, ...] = ()
     llama_swap: Path | None = None
     swap: matrix.SwapConfig | None = None
 
@@ -115,8 +156,9 @@ def load_pool_file(path: Path | str) -> PoolConfig:
 def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
     """The configuration in the file at *path*, with every fault found in it.
 
-    An entry with a fault is left out of the configuration, so what is
-    returned holds only entries that stand as written.
+    The definitions are read from ``definitions/`` beside the file. An entry
+    with a fault is left out of the configuration, so what is returned holds
+    only entries that stand as written.
     """
     path = Path(path)
     try:
@@ -141,6 +183,7 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
 
     account_entries = _entries(path, data, "accounts", errors)
     member_entries = _entries(path, data, "members", errors)
+    pool_entries = _entries(path, data, "pools", errors)
 
     accounts = []
     for position, fields in account_entries:
@@ -151,10 +194,7 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
             accounts.append(account)
     # A member is checked against every name an account entry gives, so an
     # account refused for another fault is not also reported as undeclared.
-    declared = {
-        f["name"] for _, f in account_entries
-        if isinstance(f, dict) and isinstance(f.get("name"), str)
-    }
+    declared = set(_names(account_entries))
 
     needs_swap = any(isinstance(f, dict) and f.get("backing") == LOCAL for _, f in member_entries)
     llama_swap, swap = _llama_swap(path, data.get("llama_swap"), needs_swap, errors)
@@ -167,13 +207,35 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
         if not found:
             members.append(member)
 
-    for kind, entries in (("account", account_entries), ("member", member_entries)):
+    definitions, definition_names = _definitions(path.parent / DEFINITIONS_DIR, errors)
+
+    # A pool is checked against the members that stand alone under their name.
+    # One it names that was refused for its own fault is not reported again,
+    # but the pool cannot stand without it.
+    member_names = _names(member_entries)
+    standing = {m.name: m for m in members if member_names.count(m.name) == 1}
+    pools = []
+    for position, fields in pool_entries:
+        found = []
+        pool = _pool(
+            _Entry(path, "pool", "pools", position, fields, found),
+            definitions, definition_names, standing, set(member_names),
+        )
+        errors.extend(found)
+        if not found and pool.definition in definitions and set(pool.members) <= set(standing):
+            pools.append(pool)
+
+    for kind, entries in (
+        ("account", account_entries), ("member", member_entries), ("pool", pool_entries),
+    ):
         errors.extend(_repeats(path, kind, entries))
     repeated = {e.entry for e in errors if e.field == "name"}
     return PoolConfig(
         path,
         tuple(a for a in accounts if f"account '{a.name}'" not in repeated),
         tuple(m for m in members if f"member '{m.name}'" not in repeated),
+        tuple(p for p in pools if f"pool '{p.name}'" not in repeated),
+        tuple(definitions.values()),
         llama_swap,
         swap,
     ), errors
@@ -194,10 +256,15 @@ def _entries(
     return list(enumerate(value, start=1))
 
 
+def _names(entries: list[tuple[int, object]]) -> list[str]:
+    """Every name the entries give, whether or not the entry stands."""
+    names = [f.get("name") for _, f in entries if isinstance(f, dict)]
+    return [n for n in names if isinstance(n, str)]
+
+
 def _repeats(path: Path, kind: str, entries: list[tuple[int, object]]) -> list[ConfigError]:
     """One error for each name that more than one entry of *kind* carries."""
-    names = [f.get("name") for _, f in entries if isinstance(f, dict)]
-    names = [n for n in names if isinstance(n, str)]
+    names = _names(entries)
     problem = f"declared more than once; each {kind} needs its own name."
     return [
         ConfigError(path, f"{kind} '{name}'", "name", problem)
@@ -229,8 +296,28 @@ def _llama_swap(
         return location, None
 
 
+def _definitions(
+    folder: Path, errors: list[ConfigError]
+) -> tuple[dict[str, AgentDefinition], set[str]]:
+    """The definitions in *folder* by name, and every name a file there gives.
+
+    A file that cannot be loaded is reported under its own path and name, so a
+    pool that binds it is not also told the definition is undeclared.
+    """
+    loaded: dict[str, AgentDefinition] = {}
+    names: set[str] = set()
+    for file in sorted(folder.glob("*.md")):
+        names.add(file.stem)
+        try:
+            loaded[file.stem] = load_definition(file)
+        except DefinitionError as exc:
+            problem = str(exc).removeprefix(f"{exc.path}: {exc.field}: ")
+            errors.append(ConfigError(file, f"definition '{file.stem}'", exc.field, problem))
+    return loaded, names
+
+
 class _Entry:
-    """One account or member entry being checked: reads its fields and notes
+    """One account, member or pool entry being checked: reads its fields and notes
     each fault against the entry's name, or its position when it has none."""
 
     def __init__(
@@ -293,6 +380,17 @@ class _Entry:
             return ()
         return tuple(value)
 
+    def seconds(self, field: str, why: str) -> int:
+        value = self.fields.get(field)
+        match = _DURATION.match(value) if isinstance(value, str) else None
+        if match is None:
+            self.fault(
+                field, "must be a whole number of at least 1 and a unit, s, m or h, "
+                f"such as '10m'; {why}."
+            )
+            return 0
+        return int(match.group(1)) * _UNIT_SECONDS[match.group(2)]
+
 
 def _account(entry: _Entry) -> Account:
     entry.known(ACCOUNT_FIELDS)
@@ -348,6 +446,94 @@ def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -
         model=model if isinstance(model, str) else None,
         account=account if isinstance(account, str) else None,
     )
+
+
+def _pool(
+    entry: _Entry,
+    definitions: dict[str, AgentDefinition],
+    definition_names: set[str],
+    members: dict[str, Member],
+    member_names: set[str],
+) -> Pool:
+    """The pool in *entry*. *members* holds the members that stand; a name in
+    *member_names* or *definition_names* alone has its fault reported already."""
+    entry.known(POOL_FIELDS)
+    bound = entry.text("definition", "the agent definition every member of the pool runs")
+    if bound and bound not in definition_names:
+        entry.fault(
+            "definition", f"'{bound}' is not a declared definition; there is no "
+            f"{DEFINITIONS_DIR}/{bound}.md beside the pool file."
+        )
+    definition = definitions.get(bound)
+
+    listed = entry.strings("members")
+    if not listed and not any(e.field == "members" for e in entry.errors):
+        entry.fault("members", "required; a list of at least one declared member.")
+    for name in dict.fromkeys(listed):
+        if listed.count(name) > 1:
+            entry.fault(
+                "members", f"'{name}' is listed more than once; its capacity counts once."
+            )
+        if name not in member_names:
+            entry.fault("members", f"'{name}' is not a declared member.")
+        elif name in members and definition is not None:
+            _fit(entry, members[name], definition)
+
+    size = entry.at_least_one("size", "the most leases the pool grants at once")
+    if size and listed and all(name in members for name in listed):
+        capacity = sum(members[name].capacity for name in dict.fromkeys(listed))
+        if size > capacity:
+            entry.fault(
+                "size", f"{size} is more than its members can serve at once; their "
+                f"capacities add up to {capacity}."
+            )
+
+    idle_default = entry.seconds(
+        "idle_default", "how long a lease may go without activity when the request does not say"
+    )
+    idle_max = entry.seconds("idle_max", "the longest idle limit a request may ask for")
+    if idle_default and idle_max and idle_default > idle_max:
+        entry.fault(
+            "idle_default", f"{entry.fields['idle_default']} is above the maximum, "
+            f"idle_max {entry.fields['idle_max']}."
+        )
+    preempt_after = None
+    if entry.fields.get("preempt_after") is not None:
+        preempt_after = entry.seconds(
+            "preempt_after", "how long a lease must be idle before a waiting request may take it"
+        )
+        if preempt_after and idle_default and preempt_after >= idle_default:
+            entry.fault(
+                "preempt_after", f"{entry.fields['preempt_after']} is not shorter than the "
+                f"default idle limit, idle_default {entry.fields['idle_default']}; the lease "
+                "would expire before it could be taken."
+            )
+
+    return Pool(
+        name=str(entry.fields.get("name")),
+        definition=bound,
+        members=listed,
+        size=size,
+        idle_default=idle_default,
+        idle_max=idle_max,
+        preempt_after=preempt_after or None,
+    )
+
+
+def _fit(entry: _Entry, member: Member, definition: AgentDefinition) -> None:
+    """Note each way *member* falls short of what *definition* asks of a member."""
+    for label in definition.needs:
+        if label not in member.labels:
+            entry.fault(
+                "members", f"member '{member.name}' lacks the label '{label}' that "
+                f"definition '{definition.name}' needs."
+            )
+    # The classes run strictest first, so a later one is more open.
+    if EGRESS_CLASSES.index(member.egress) > EGRESS_CLASSES.index(definition.egress):
+        entry.fault(
+            "members", f"member '{member.name}' is class '{member.egress}', more open than "
+            f"definition '{definition.name}' accepts, '{definition.egress}'."
+        )
 
 
 def _not_a_model_id(model: str, swap: matrix.SwapConfig) -> str:
