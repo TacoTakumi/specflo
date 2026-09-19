@@ -2983,6 +2983,9 @@ def workitem_spawn(
 
 # --- leases: members of a daemon's agent pool, driven by the agent verbs ------
 
+# How long `lease request` waits for a full pool when no time is named, in seconds.
+LEASE_WAIT_DEFAULT = 600
+
 
 @lease_app.command(
     "request", epilog="Example: specflo lease request workers --idle-limit 30m"
@@ -3003,9 +3006,10 @@ def lease_request(
         help="What the pool shows as the holder; the checkout's directory name otherwise.",
     ),
     wait: int = typer.Option(
-        0, "--wait", metavar="<seconds>", min=0,
-        help="How long to wait for a full pool, in seconds; a full pool is refused at once"
-        " otherwise.",
+        LEASE_WAIT_DEFAULT, "--wait", metavar="<seconds>", min=0,
+        help=f"How long to wait for a full pool, in seconds; {LEASE_WAIT_DEFAULT} otherwise,"
+        " and 0 refuses a full pool at once. A request that waits says so at once on"
+        " stderr; interrupt the command to cancel it.",
     ),
     egress: str = typer.Option(
         None, "--egress", metavar="<class>",

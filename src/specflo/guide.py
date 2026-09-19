@@ -230,7 +230,9 @@ COMMANDS: list[dict[str, str]] = [
                 "then the host."},
     {"name": "lease request", "group": "agents", "args": "<pool>",
      "summary": "Lease a member of a daemon's agent pool; prints the lease id and the "
-                "agent to drive with `agent` (--cwd, --idle-limit, --remote)."},
+                "agent to drive with `agent` (--cwd, --idle-limit, --remote). Waits up to "
+                "600 s for a full pool and says so at once on stderr; interrupt it to "
+                "cancel, or pass --wait 0 to be refused at once (--wait <seconds>)."},
     {"name": "lease release", "group": "agents", "args": "<lease>",
      "summary": "Give a lease back to its pool; only its holder may, and a lease "
                 "that has ended is reported as it ended."},

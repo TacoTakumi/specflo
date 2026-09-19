@@ -11,6 +11,12 @@ The token is also what makes a lease this checkout's. The listing shows the
 daemon the tokens kept here and prints the leases they hold, and a release
 presents the token of the lease it names; the file goes when the lease has.
 
+A request waits on the daemon for a full pool, and whoever runs the verb is
+most often an orchestrator that reads its error stream. So the verb says
+there, as soon as the daemon does, that the request waits, on what, in which
+place and for how long, and an interrupt calls the request off: the
+connection closes, and the daemon takes the request out of its queue.
+
 The command declarations are in the top-level CLI module, which every specflo
 command loads; each one calls into this module when it runs. What this module
 needs of the rest of specflo it imports when a verb runs, and it imports none
@@ -19,9 +25,12 @@ of the pool's own code at all: the pool is on the daemon.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
+import signal
+import threading
 from pathlib import Path
 
 import typer
@@ -40,7 +49,7 @@ def request(
     cwd: Path | None = None,
     idle_limit: str | None = None,
     label: str | None = None,
-    wait: int = 0,
+    wait: int,
     egress: str | None = None,
     remote: str | None = None,
     json_output: bool = False,
@@ -50,8 +59,10 @@ def request(
 
     *root* is the checkout the orchestrator works in. *wait* is how many
     seconds the request may wait on the daemon for a full pool; when they
-    pass, the daemon's refusal names what the pool is full of. With none a
-    full pool is refused at once. *egress* is the most open egress class of
+    pass, the daemon's refusal names what the pool is full of. With 0 a
+    full pool is refused at once. A request that has to wait says so once on
+    the error stream, as text or with *json_output* as one JSON object, and
+    SIGINT or SIGTERM calls it off. *egress* is the most open egress class of
     member the request takes; the daemon knows the classes, applies no-train
     without one, and refuses at once a pool with no member under it, however
     long the request may wait. The request names the active project when
@@ -67,12 +78,25 @@ def request(
     directory = member_directory(cwd)
     # The answer comes after the wait, and the grant after that.
     client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT + wait)
-    grant = client.request(
-        pool, cwd=str(directory), idle_limit=seconds,
-        label=label if label is not None else Path(root).name,
-        wait=wait or None, egress=egress,
-        project=requesting_project(root, registered.name),
-    )
+    project = requesting_project(root, registered.name)
+
+    def say_it_waits(notice) -> None:
+        _say_it_waits(notice, remote=registered.name, json_output=json_output)
+
+    try:
+        with _interruptible():
+            grant = client.request(
+                pool, cwd=str(directory), idle_limit=seconds,
+                label=label if label is not None else Path(root).name,
+                wait=wait or None, egress=egress, project=project,
+                on_waiting=say_it_waits,
+            )
+    except _Interrupted:
+        # The connection is closed by now, and that is what tells the daemon.
+        raise SpecfloError(
+            f"The request for pool '{pool}' on remote '{registered.name}' was cancelled:"
+            " it waits no longer."
+        )
     token_path = store_token(root, grant.agent, grant.token)
     if json_output:
         typer.echo(json.dumps({
@@ -88,6 +112,51 @@ def request(
         f"Drive it with `specflo agent prompt {grant.agent} <text>`;"
         f" its token is kept in {_shown(token_path, root)}."
     )
+
+
+def _say_it_waits(notice, *, remote: str, json_output: bool) -> None:
+    """Tell whoever reads the error stream that the request waits. The output
+    stream is left to the result."""
+    if json_output:
+        typer.echo(json.dumps({
+            "event": "waiting", "pool": notice.pool, "remote": remote,
+            "full": notice.full, "place": notice.place, "wait": notice.wait,
+        }), err=True)
+        return
+    typer.echo(
+        f"Waiting for a member of pool '{notice.pool}' on remote '{remote}', for up to"
+        f" {notice.wait} s: {notice.full} This request is number {notice.place} of those"
+        " that wait for the pool. Interrupt the command to cancel the request.",
+        err=True,
+    )
+
+
+class _Interrupted(BaseException):
+    """SIGINT or SIGTERM came while the request was out. Not an ``Exception``:
+    nothing between the socket and the verb takes it for a failure of its own."""
+
+
+@contextlib.contextmanager
+def _interruptible():
+    """While the request is out, SIGINT and SIGTERM raise ``_Interrupted``
+    where the verb waits. An orchestrator's background command may start with
+    SIGINT ignored, and SIGTERM otherwise ends the process with no word. Only
+    the main thread takes signals; elsewhere nothing changes."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def interrupt(signum, frame):
+        raise _Interrupted()
+
+    caught = (signal.SIGINT, signal.SIGTERM)
+    before = {number: signal.signal(number, interrupt) for number in caught}
+    try:
+        yield
+    finally:
+        for number, handler in before.items():
+            # None stands for a handler that was not set from Python.
+            signal.signal(number, signal.SIG_DFL if handler is None else handler)
 
 
 def release(

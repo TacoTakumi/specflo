@@ -371,7 +371,7 @@ def test_the_verb_asks_with_the_class_its_option_names(open_pool, checkout, pool
     assert json.loads(first.stdout)["agent"] == "local-1"
 
     # the local member is busy and the open one free: a default request does not fall to it
-    full = runner.invoke(app, ["lease", "request", "rebasers"])
+    full = runner.invoke(app, ["lease", "request", "rebasers", "--wait", "0"])
     assert full.exit_code != 0
     assert "local-1" in full.output
 

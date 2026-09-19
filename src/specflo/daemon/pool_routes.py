@@ -25,6 +25,14 @@ waits for an hour stalls no other. The route also sees its client go away,
 and a request no one waits for any more leaves the queue. The rows a stopped
 daemon left are cleared when the pool opens.
 
+A client may say that it reads notices. The answer to its request, when the
+request has to wait, is then sent as it comes, a JSON object to a line: first
+that it waits, on what, in which place and for how long, and at the end of
+the wait the result. The status of such an answer is sent with its first
+line, so a refusal that ends the wait is its last line, with the status and
+the detail it has anywhere else. A request that is granted or refused at its
+first look is answered as it always was, whoever asks.
+
 A request may name the project it is made from, by its slug and no more. The
 egress class that project pins is read here, from this daemon's own record of
 the project, and stands over the request as one more limit. A request has no
@@ -41,12 +49,15 @@ its hash, and neither goes back in a response or into the audit record.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
@@ -57,7 +68,7 @@ from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import Grant, PoolService, hash_token
 from ..projects import load_project, validate_slug
-from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH
+from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH, WAITING_MEDIA_TYPE
 from . import seat
 from .poolstore import Lease, open_pool_store
 from .routes import audit, current_identity
@@ -260,15 +271,82 @@ async def _granted(request: Request, asked: waiting.Waiting) -> Grant:
         asked.leave()
 
 
-@router.post(LEASES_PATH)
+def _first_look(asked: waiting.Waiting) -> tuple[Grant | None, int | None]:
+    """The grant of *asked* if it fits now, or its place among those that wait."""
+    grant = asked.attempt()
+    return grant, None if grant is not None else asked.place()
+
+
+def _failed(pool: str, exc: Exception) -> HTTPException:
+    """What a request for *pool* that ended in *exc* is answered with."""
+    if isinstance(exc, _ClientGone):
+        # No one reads this: the connection it would go down is closed.
+        return HTTPException(status_code=400, detail="The client went away while it waited.")
+    if isinstance(exc, RunnerError):
+        return _member_failed(pool, exc)
+    if isinstance(exc, SpecfloError):
+        return _refused(exc)
+    _log.error("lease_request failed on the daemon", exc_info=exc)
+    return HTTPException(
+        status_code=500,
+        detail=f"lease_request failed on the daemon: {type(exc).__name__}.",
+    )
+
+
+async def _answer(request: Request, identity: str, grant: Grant) -> dict:
+    """What a granted request is answered with, once the grant is audited."""
+    await run_in_threadpool(
+        audit, request.app.state.root, identity, "lease_request", None, grant.lease_id
+    )
+    # The one time the token is sent: the store and the audit record hold no copy.
+    return {"result": {"lease_id": grant.lease_id, "agent": grant.agent, "token": grant.token}}
+
+
+def _line(told: dict) -> bytes:
+    return (json.dumps(told) + "\n").encode("utf-8")
+
+
+async def _lines(
+    request: Request, identity: str, asked: waiting.Waiting, notice: dict
+) -> AsyncIterator[bytes]:
+    """The answer to a request that waits, for a client that reads notices:
+    that it waits, and when the wait is over the result or the refusal."""
+    yield _line({"waiting": notice})
+    try:
+        grant = await _granted(request, asked)
+    except Exception as exc:
+        refused = _failed(asked.pool, exc)
+        yield _line({"refused": {"status": refused.status_code, "detail": refused.detail}})
+        return
+    yield _line(await _answer(request, identity, grant))
+
+
+class _Waited(StreamingResponse):
+    """The lines of a request that waits. The client going away stops the
+    sending, and however the sending ends the request leaves the queue."""
+
+    def __init__(self, lines: AsyncIterator[bytes], asked: waiting.Waiting) -> None:
+        super().__init__(lines, media_type=WAITING_MEDIA_TYPE)
+        self._asked = asked
+
+    async def __call__(self, scope, receive, send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            # Not left to the lines: a client gone before the first is never asked for one.
+            self._asked.leave()
+
+
+@router.post(LEASES_PATH, response_model=None)
 async def lease_request(
     request: Request,
     body: dict = Body(default_factory=dict),
     identity: str = Depends(current_identity),
     service: PoolService = Depends(pool_service),
-) -> dict:
+) -> dict | StreamingResponse:
     """Grant a lease on a free member of the named pool, started in the named
-    directory; a request with a time to wait waits that long for one."""
+    directory; a request with a time to wait waits that long for one, and a
+    client that reads notices is told at once that it waits."""
     fields = _body(
         body, required=("pool", "cwd"),
         optional=("idle_limit", "label", "wait", "egress", "project"),
@@ -302,26 +380,24 @@ async def lease_request(
         service, pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit, wait=wait or 0,
         egress=asked_class, pinned=pinned, project=project,
     )
+    reads_notices = WAITING_MEDIA_TYPE in request.headers.get("accept", "")
+    waits_on = False
     try:
-        grant = await _granted(request, asked)
-    except _ClientGone:
-        # No one reads this: the connection it would go down is closed.
-        raise HTTPException(status_code=400, detail="The client went away while it waited.")
-    except RunnerError as exc:
-        raise _member_failed(pool, exc)
-    except SpecfloError as exc:
-        raise _refused(exc)
+        grant, place = await run_in_threadpool(_first_look, asked)
+        if grant is None and reads_notices:
+            # Nothing is sent yet, so what is refused above has the status it always had.
+            waits_on = True
+            notice = {"pool": pool, "full": asked.full, "place": place, "wait": wait}
+            return _Waited(_lines(request, identity, asked, notice), asked)
+        if grant is None:
+            grant = await _granted(request, asked)
     except Exception as exc:
-        _log.exception("lease_request failed on the daemon")
-        raise HTTPException(
-            status_code=500,
-            detail=f"lease_request failed on the daemon: {type(exc).__name__}.",
-        )
-    await run_in_threadpool(
-        audit, request.app.state.root, identity, "lease_request", None, grant.lease_id
-    )
-    # The one time the token is sent: the store and the audit record hold no copy.
-    return {"result": {"lease_id": grant.lease_id, "agent": grant.agent, "token": grant.token}}
+        raise _failed(pool, exc)
+    finally:
+        # A request that waits on in its lines leaves when they end.
+        if not waits_on:
+            asked.leave()
+    return await _answer(request, identity, grant)
 
 
 def _expire_due(service: PoolService) -> None:

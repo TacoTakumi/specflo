@@ -275,7 +275,7 @@ def test_a_pool_with_no_free_member_is_refused_and_the_held_token_is_kept(checko
     token_file = checkout / ".specflo" / "leases" / "local-1.token"
     held = token_file.read_text()
 
-    result = runner.invoke(app, ["lease", "request", "rebasers"])
+    result = runner.invoke(app, ["lease", "request", "rebasers", "--wait", "0"])
 
     assert result.exit_code != 0
     assert "rebasers" in result.output

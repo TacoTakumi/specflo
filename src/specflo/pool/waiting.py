@@ -20,6 +20,10 @@ the request named, or that it named none, and the class its project pinned
 when it arrived, so the service judges whether it fits as it judges the
 request itself.
 
+A request that waits can be told so: it keeps what the pool was full of, in
+the service's own words, and ``place`` reads where it stands among those that
+wait for its pool.
+
 The time a request may wait is counted on the service's clock, so a test
 drives it with a fake one.
 """
@@ -71,6 +75,8 @@ class Waiting:
     pinned: str | None = None
     project: str | None = None
     mint_id: Callable[[], str] = _mint_id
+    # What the pool was full of at the last look that found no room, as the service said it.
+    full: str | None = field(default=None, init=False)
     # The id of the request's row while it has one, and when its time is up.
     _id: str | None = field(default=None, init=False, repr=False)
     _until: datetime | None = field(default=None, init=False, repr=False)
@@ -95,6 +101,15 @@ class Waiting:
         self._id = None
         return grant
 
+    def place(self) -> int | None:
+        """Where the request stands among those that wait for its pool, in
+        arrival order: 1 for the next. None for a request that does not wait."""
+        if self._id is None:
+            return None
+        with self.service.open_store() as store:
+            ahead = [row.id for row in store.list_waiting(pool=self.pool)]
+        return ahead.index(self._id) + 1 if self._id in ahead else None
+
     def leave(self) -> None:
         """Stop waiting: the row goes. Nothing to do for a request with none."""
         if self._id is None:
@@ -105,6 +120,7 @@ class Waiting:
 
     def _wait_on(self, full: NoFreeMember) -> None:
         now = self.service.clock()
+        self.full = str(full)
         if self._id is None:
             if self.wait <= 0:
                 raise full
