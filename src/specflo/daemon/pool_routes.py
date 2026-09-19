@@ -5,6 +5,8 @@ directory under the daemon root, its leases are rows in the daemon's store,
 and its members run on the daemon's host. One pool service stands for the
 whole process, made when the application is and kept on ``app.state.pool``;
 a root with no pool directory has none, and every route here then refuses.
+A pool directory with faults gives none either: the faults are kept on
+``app.state.pool_errors``, and every route here answers with all of them.
 
 The routes are written out, like the product routes. Each one runs as the
 identity behind its bearer token, and one that changes the pool appends an
@@ -34,7 +36,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 
 from ..errors import SpecfloError
 from ..pool.cli_admin import pool_dir
-from ..pool.config import load_pool_config
+from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import PoolService, hash_token
 from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH
@@ -70,30 +72,49 @@ def pool_token(root: Path) -> str:
     return path.read_text(encoding="utf-8").strip()
 
 
-def open_pool(root: Path) -> PoolService | None:
-    """The pool service of the daemon root *root*; None when it declares no pool."""
+def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
+    """The pool service of the daemon root *root*, and the faults that stand in its way.
+
+    A root that declares no pool has neither. A pool directory is checked
+    whole, as ``pool validate`` checks it; one with faults gives no service
+    and every fault, and the daemon serves its projects all the same.
+    """
     directory = pool_dir(root)
     if not directory.is_dir():
-        return None
+        return None, ()
     config, errors = load_pool_config(directory)
     if errors:
         for error in errors:
             _log.warning("pool configuration: %s", error)
-        return None
-    return PoolService(
+        return None, tuple(errors)
+    service = PoolService(
         config=config,
         open_store=lambda: open_pool_store(root),
         pool_token=pool_token(root),
         config_root=Path(root) / PI_CONFIG_DIRNAME,
     )
+    return service, ()
 
 
 def pool_service(request: Request) -> PoolService:
-    """The pool a request is served by; a refusal when the daemon has none."""
+    """The pool a request is served by. Every pool route depends on this, so
+    it is where a daemon with no pool refuses: with every fault of a pool
+    configuration that did not stand, or because no pool is configured."""
     service = getattr(request.app.state, "pool", None)
-    if service is None:
-        raise HTTPException(status_code=400, detail="No pool is configured on this daemon.")
-    return service
+    if service is not None:
+        return service
+    errors = getattr(request.app.state, "pool_errors", ())
+    if errors:
+        # One string, a fault to a line: a client prints a 400's detail as it is.
+        raise HTTPException(
+            status_code=400,
+            detail="\n".join([
+                "The pool is off: the pool configuration on this daemon is not valid. "
+                "Correct what follows and start the daemon again.",
+                *(str(error) for error in errors),
+            ]),
+        )
+    raise HTTPException(status_code=400, detail="No pool is configured on this daemon.")
 
 
 router = APIRouter(dependencies=[Depends(current_identity)])

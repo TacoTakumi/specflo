@@ -37,7 +37,9 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     app.state.pumps = chat.Pumps(root)
     app.state.pumps.resume()
     # The agent pool the root's pool directory declares; None without one.
-    app.state.pool = pool_routes.open_pool(root)
+    # A directory with faults gives no pool either, and the faults are kept:
+    # the projects are served, and the pool routes answer with the faults.
+    app.state.pool, app.state.pool_errors = pool_routes.open_pool(root)
 
     @app.get(HEALTH_PATH)
     def health() -> dict:
