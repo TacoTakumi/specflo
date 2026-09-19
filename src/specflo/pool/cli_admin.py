@@ -1,11 +1,21 @@
 """The ``specflo serve pool`` commands: what an admin does to the pool directory.
 
 The pool directory lives under the daemon root, and an admin edits it by
-hand. These commands work on those files alone: they start no daemon, listen
-on nothing and need no ``serve`` extra.
+hand. ``init`` and ``validate`` work on those files alone: they start no
+daemon, listen on nothing and need no ``serve`` extra.
+
+A daemon reads the directory when it starts. ``reload`` asks a daemon that
+runs to read it again, so that a hand edit is in force with no restart. It is
+the one command here that reaches a daemon, and it reaches it as the lease
+verbs do: through a remote registered in the checkout it is run from, which
+holds where the daemon answers and the developer's token. A daemon root
+holds neither, and only the hash of a token. The daemon reads its own
+directory, whatever ``--root`` says, so the command prints which one that
+was, and says so when it is not the one under ``--root``.
 
 Every specflo command loads the ``serve`` group, and this group with it, so
-this module imports none of the pool's own code until a command runs.
+this module imports none of the pool's own code, and nothing that reaches a
+daemon, until a command runs.
 """
 
 from __future__ import annotations
@@ -163,6 +173,55 @@ def pool_init(ctx: typer.Context) -> None:
         target.write_text(text, encoding="utf-8")
         typer.echo(f"wrote  {target}")
     typer.echo(f"Edit {directory / _POOL_FILE}, then check it with 'pool validate'.")
+
+
+@pool_app.command(
+    "reload",
+    epilog="Example: specflo serve --root ~/specflo-daemon pool reload --remote home",
+)
+def pool_reload(
+    ctx: typer.Context,
+    remote: str = typer.Option(
+        None, "--remote", metavar="<name>",
+        help="The registered daemon to ask; the only one registered otherwise.",
+    ),
+) -> None:
+    """Ask the running daemon to read its pool directory again, as the developer."""
+    from .. import config
+    from ..errors import SpecfloError
+    from .cli_lease import pick_remote
+
+    try:
+        checkout = config.find_root(Path.cwd())
+        if checkout is None:
+            raise SpecfloError(
+                "A reload is asked of a running daemon, which is reached through a remote: "
+                "run it from a checkout where the daemon is registered with the developer's "
+                "token (`specflo remote add <name> <url> --token <secret>`)."
+            )
+        registered = pick_remote(checkout, remote)
+        from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
+
+        client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
+        read = client.reload()
+    except SpecfloError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    held = ", ".join(
+        _count(read[kind + "s"], kind)
+        for kind in ("definition", "account", "member", "pool", "team")
+    )
+    typer.echo(
+        f"The daemon on remote '{registered.name}' (process {read['pid']}) read "
+        f"{read['directory']} again, and it is in force: {held}."
+    )
+    expected = pool_dir(ctx.obj["root"])
+    if Path(read["directory"]) != expected and Path(read["directory"]) != expected.resolve():
+        typer.secho(
+            "note: that is the daemon's own pool directory, not the pool directory under "
+            f"--root, {expected}.",
+            fg=typer.colors.YELLOW, err=True,
+        )
 
 
 def _count(number: int, kind: str) -> str:

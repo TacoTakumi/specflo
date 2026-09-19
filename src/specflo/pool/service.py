@@ -100,6 +100,20 @@ the ending for the former holder, and the developer's pi runs on. Which
 leases end so is ``console.leased`` to say. A lease that is out on a host
 that died expires at its idle limit, as any lease whose pi went away.
 
+The configuration the service holds is the one in force, and it is put there
+whole (``swap``): when the daemon starts, and again when the pool directory
+was changed and stood the check. The swap is one assignment inside a turn,
+and a grant reads the configuration inside its own, so a request is served
+under the one before the swap or the one after it and never under parts of
+both. A lease that is out is not touched by a swap: its member's process was
+started under the configuration of its grant and runs on as it was started.
+Its row counts against the new configuration by the names it holds, a lease
+from a pool that is declared no more is given back as ever, and a request
+that waits for such a pool holds up no one and is told at its next look.
+What may stand in a swap's way is for the caller to say, from the two
+configurations and the store; the service still reads the lease rows only to
+place a request and to check expiry.
+
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
 from callables handed in, so a test drives it with a fake clock and counted
@@ -262,6 +276,27 @@ class PoolService:
             finally:
                 self._checking = False
 
+    def swap(
+        self,
+        config: PoolConfig,
+        in_the_way: Callable[[PoolConfig, PoolConfig, PoolStore], Sequence[SpecfloError]],
+    ) -> tuple[SpecfloError, ...]:
+        """Put *config* in force in place of the configuration held now, as
+        one assignment in a turn of its own: every request after it is served
+        under *config*, and no lease that is out is touched.
+
+        *in_the_way* is handed the configuration in force, *config* and the
+        store, inside that turn, and answers with what forbids the swap now.
+        With anything in the way nothing is swapped, and that is returned;
+        nothing is returned for a swap that was made.
+        """
+        self.expire_due()
+        with self._turn, self.open_store() as store:
+            found = tuple(in_the_way(self.config, config, store))
+            if not found:
+                self.config = config
+        return found
+
     def grant(
         self,
         pool_name: str,
@@ -301,10 +336,12 @@ class PoolService:
         then ended.
         """
         self.expire_due()
-        pool = self._pool(pool_name)
-        idle_limit = _idle_limit(pool, idle_limit)
-        definition = next(d for d in self.config.definitions if d.name == pool.definition)
         with self._turn, self.open_store() as store:
+            # Read inside the turn, as all that follows is: a swap of the
+            # configuration comes before this grant or after it.
+            pool = self._pool(pool_name)
+            idle_limit = _idle_limit(pool, idle_limit)
+            definition = next(d for d in self.config.definitions if d.name == pool.definition)
             # Placed before the queue is looked at: a request refused for
             # good is told so whoever waits ahead of it, and never joins them.
             try:
@@ -379,11 +416,11 @@ class PoolService:
         member granted before it has ended.
         """
         self.expire_due()
-        team = self._team(team_name)
-        limits = teamlease.idle_limits(
-            [self._pool(role.pool) for role in team.roles], idle_limit, _idle_limit
-        )
         with self._turn:
+            team = self._team(team_name)
+            limits = teamlease.idle_limits(
+                [self._pool(role.pool) for role in team.roles], idle_limit, _idle_limit
+            )
             with self.open_store() as store:
                 try:
                     self._place_team(team, store, egress, pinned, project)

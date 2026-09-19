@@ -8,6 +8,28 @@ a root with no pool directory has none, and every route here then refuses.
 A pool directory with faults gives none either: the faults are kept on
 ``app.state.pool_errors``, and every route here answers with all of them.
 
+The pool directory is read when the daemon starts, and again when the daemon
+is asked to (``reload_pool``): by the reload route, which the developer
+identity alone is served, and by whatever else in this process has changed
+the directory. The directory is checked whole, as at the start. One that
+stands is handed to the service, which puts it in force as one configuration
+for every request from then on; a daemon that had no pool for the faults of
+its directory gets its service then, in the same process. One with faults
+changes nothing: the service grants on under the last configuration that
+stood, and the faults are kept on ``app.state.pool_errors`` until a reload
+passes, where the pool's status tells them. So the reload route does not
+wait for a pool that stands, as every other route here does, and answers a
+directory that does not stand as they do: a 400 with every fault.
+
+A lease that is out ends as its member's kind says: a process the pool
+started is stopped, a developer's console is left running, and which it is
+the pool knows from the configuration alone. So a directory that declares
+the member of an active lease no more, or as the other kind, is not put in
+force, in any part: that is a fault of the reload, with the member and the
+lease named, and it passes once the lease has ended. A pool or a team that
+is declared no more stands in no one's way: its leases are given back as
+ever, and a request that waits for it is refused at its next look.
+
 The routes are written out, like the product routes. Each one runs as the
 identity behind its bearer token, and one that changes the pool appends an
 audit record with that identity and the lease it acted on. The service takes
@@ -76,7 +98,7 @@ from ..config import load_config
 from ..errors import SpecfloError
 from ..pool import console, egress, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
-from ..pool.config import ConfigError, load_pool_config
+from ..pool.config import ConfigError, PoolConfig, load_pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import Grant, PoolService, hash_token
 from ..projects import load_project, validate_slug
@@ -85,11 +107,12 @@ from ..service.pool_remote import (
     CONSOLE_DETACH_PATH,
     HELD_PATH,
     LEASES_PATH,
+    RELOAD_PATH,
     STATUS_PATH,
     WAITING_MEDIA_TYPE,
 )
 from . import seat
-from .poolstore import Lease, open_pool_store
+from .poolstore import Lease, PoolStore, open_pool_store
 from .routes import audit, current_identity
 
 # The daemon's own credential on its members' hosts, kept under the root so
@@ -100,6 +123,9 @@ PI_CONFIG_DIRNAME = "pool-piconfig"
 
 # The longest holder label a request may carry.
 LABEL_MAX = 80
+
+# What every route here answers on a daemon whose root declares no pool.
+NO_POOL = "No pool is configured on this daemon."
 
 _log = logging.getLogger(__name__)
 
@@ -167,11 +193,68 @@ def pool_service(request: Request) -> PoolService:
             status_code=400,
             detail="\n".join([
                 "The pool is off: the pool configuration on this daemon is not valid. "
-                "Correct what follows and start the daemon again.",
+                "Correct what follows and reload it with `specflo serve pool reload`; the "
+                "daemon need not be started again.",
                 *(str(error) for error in errors),
             ]),
         )
-    raise HTTPException(status_code=400, detail="No pool is configured on this daemon.")
+    raise HTTPException(status_code=400, detail=NO_POOL)
+
+
+def held_members(old: PoolConfig, new: PoolConfig, store: PoolStore) -> list[ConfigError]:
+    """What forbids *new* in place of *old* now: each active lease whose member
+    *new* declares no more, or as another kind than *old* does.
+
+    Such a lease could not end as it began. The ending of a lease stops a
+    process the pool started and leaves a console running, and tells the two
+    apart by the configuration in force when the lease ends.
+    """
+    before = {member.name: member.kind for member in old.members}
+    after = {member.name: member.kind for member in new.members}
+    faults = []
+    for lease in store.list_leases(state="active"):
+        kind = before.get(lease.member)
+        if kind is None or after.get(lease.member) == kind:
+            # A member *old* does not declare either is no worse off under *new*.
+            continue
+        now = after.get(lease.member)
+        now = "declared no more" if now is None else f"of kind '{now}'"
+        faults.append(ConfigError(
+            new.path, f"member '{lease.member}'", "kind",
+            f"{now}, and lease '{lease.id}' is out on it as a member of kind '{kind}'; a "
+            "lease ends as its member's kind says, so give the lease back or let it end, "
+            "then reload.",
+        ))
+    return faults
+
+
+def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
+    """Read the pool directory of the daemon application *app* again, as
+    *identity*, and put it in force; the faults that kept it from that, none
+    for a reload that passed.
+
+    The faults are kept on ``app.state.pool_errors`` either way. With any,
+    ``app.state.pool`` is what it was: no pool for a daemon that had none,
+    and the service under its last valid configuration otherwise. A reload
+    that passed is audited under *identity*. A root with no pool directory
+    and no pool has nothing to read, and nothing changes.
+    """
+    root = app.state.root
+    service = getattr(app.state, "pool", None)
+    if service is None:
+        if not pool_dir(root).is_dir():
+            return ()
+        # No configuration ever stood here, so the pool opens as at the start.
+        app.state.pool, faults = open_pool(root)
+    else:
+        config, errors = load_pool_config(pool_dir(root))
+        for error in errors:
+            _log.warning("pool configuration: %s", error)
+        faults = tuple(errors) or service.swap(config, held_members)
+    app.state.pool_errors = faults
+    if not faults:
+        audit(root, identity, "pool_reload", None, None)
+    return faults
 
 
 router = APIRouter(dependencies=[Depends(current_identity)])
@@ -571,12 +654,13 @@ def _team_release(
 CONSOLE_IDENTITY = "developer"
 
 
-def _developer(identity: str) -> None:
-    """Refuse a console route to any identity but the developer's."""
+def _developer(identity: str, act: str = "A console is attached and detached") -> None:
+    """Refuse a route to any identity but the developer's; *act* is what the
+    route does, as the refusal says it."""
     if identity != CONSOLE_IDENTITY:
         raise HTTPException(
             status_code=403,
-            detail=f"A console is attached and detached by the {CONSOLE_IDENTITY} identity "
+            detail=f"{act} by the {CONSOLE_IDENTITY} identity "
             f"only, and this token is the {identity} identity's.",
         )
 
@@ -629,16 +713,58 @@ def console_detach(
     return {"result": {"slot": slot, "state": state}}
 
 
+# --- the pool's configuration ---------------------------------------------------
+
+
+@router.post(RELOAD_PATH)
+def pool_reload(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+) -> dict:
+    """Read the pool directory again and put it in force: the daemon's process
+    id, the directory, and how much of each kind stands now. It does not
+    depend on a pool that stands, since it is what gives a daemon one."""
+    _developer(identity, "The pool configuration is reloaded")
+    _body(body, required=())
+    app = request.app
+    faults = reload_pool(app, identity)
+    if faults:
+        kept = (
+            "The pool stays off" if app.state.pool is None
+            else "The configuration that stood before stays in force"
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="\n".join([
+                "The pool configuration was not reloaded: the pool directory on this daemon "
+                f"cannot be put in force. {kept}. Correct what follows and reload again.",
+                *(str(fault) for fault in faults),
+            ]),
+        )
+    if app.state.pool is None:
+        raise HTTPException(status_code=400, detail=NO_POOL)
+    config = app.state.pool.config
+    return {"result": {
+        "pid": os.getpid(), "directory": str(pool_dir(app.state.root)),
+        "definitions": len(config.definitions), "accounts": len(config.accounts),
+        "members": len(config.members), "pools": len(config.pools),
+        "teams": len(config.teams),
+    }}
+
+
 # --- the pool's state ---------------------------------------------------------
 
 
 @router.get(STATUS_PATH)
-def pool_status(service: PoolService = Depends(pool_service)) -> dict:
+def pool_status(request: Request, service: PoolService = Depends(pool_service)) -> dict:
     """Each pool's size and how many of its leases are out; no lease is named
-    and no holder."""
+    and no holder. Beside them, the faults of the pool directory as it was
+    last read, when the configuration in force is an earlier one."""
     _expire_due(service)
+    errors = [str(error) for error in getattr(request.app.state, "pool_errors", ())]
     with service.open_store() as store:
-        return {"result": [
+        return {"errors": errors, "result": [
             {
                 "name": pool.name, "size": pool.size,
                 "in_use": len(store.list_leases(state="active", pool=pool.name)),

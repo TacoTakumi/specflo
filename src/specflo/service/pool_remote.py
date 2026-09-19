@@ -22,6 +22,11 @@ host that runs on the daemon's host is attached to it. The attach and the
 detach are asked of the daemon here, and the daemon serves them to the
 developer identity alone.
 
+The pool's configuration is the pool directory on the daemon's host, which
+an admin edits by hand. The daemon is asked here to read it again, and serves
+that to the developer identity alone; a directory that does not stand is
+refused with every fault in it, and the daemon serves on as it did.
+
 This module is the client's side only. It imports nothing of the pool's own
 code and no web framework; the daemon's routes take their paths from here.
 """
@@ -51,6 +56,9 @@ STATUS_PATH = POOL_PATH + "/status"
 # the body, so neither path names one.
 CONSOLE_ATTACH_PATH = POOL_PATH + "/consoles/attach"
 CONSOLE_DETACH_PATH = POOL_PATH + "/consoles/detach"
+# The daemon reads its pool directory again here. The directory is the
+# daemon's own, so the request names nothing.
+RELOAD_PATH = POOL_PATH + "/reload"
 
 # What a client that reads notices accepts, and what the answer to a request
 # that waits is then sent as: a JSON object to a line. The first says
@@ -290,3 +298,9 @@ class RemotePool(DaemonClient):
         """Detach the console *slot*, which then takes no new lease; the slot
         and its state, draining while a lease is out on it."""
         return self._request("POST", CONSOLE_DETACH_PATH, json={"slot": slot})
+
+    def reload(self) -> dict:
+        """Ask the daemon to read its pool directory again and put it in
+        force: the daemon's process id, the directory it read, and how many
+        definitions, accounts, members, pools and teams stand now."""
+        return self._request("POST", RELOAD_PATH, json={})

@@ -108,6 +108,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Check the pool configuration under the daemon root; prints every fault in one run."},
     {"name": "serve pool init", "group": "setup", "args": "--root <dir> ...",
      "summary": "Write a starting pool directory: a commented pool.yaml and the shipped agent definitions; keeps existing files."},
+    {"name": "serve pool reload", "group": "setup", "args": "--root <dir> ... [--remote <name>]",
+     "summary": "Ask the running daemon, as the developer, to read its pool directory again; a directory with faults changes nothing."},
     {"name": "remote add", "group": "setup", "args": "<name> <url> --token <secret>",
      "summary": "Register a daemon by name; changes nothing about local projects."},
     {"name": "remote list", "group": "setup", "args": "",
