@@ -28,15 +28,25 @@ def connect(
     name: str,
     base_dir: Path | str | None = None,
     connect_timeout: float = 5.0,
+    lease_token: str | None = None,
 ) -> "AgentClient":
     """Connect to the agent's socket, derived from its name alone."""
     paths = AgentPaths.resolve(name, base_dir)
-    return AgentClient(paths.socket, connect_timeout=connect_timeout)
+    return AgentClient(
+        paths.socket, connect_timeout=connect_timeout, lease_token=lease_token
+    )
 
 
 class AgentClient:
-    def __init__(self, socket_path: Path | str, connect_timeout: float = 5.0) -> None:
+    def __init__(
+        self,
+        socket_path: Path | str,
+        connect_timeout: float = 5.0,
+        lease_token: str | None = None,
+    ) -> None:
         self.socket_path = Path(socket_path)
+        # a lease holder's credential, presented on every frame sent
+        self.lease_token = lease_token
         self._sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self._sock.settimeout(connect_timeout)
         try:
@@ -67,6 +77,8 @@ class AgentClient:
         """
         if "id" not in obj:
             obj = {"id": f"c-{uuid.uuid4().hex[:12]}", **obj}
+        if self.lease_token is not None and "lease_token" not in obj:
+            obj = {**obj, "lease_token": self.lease_token}
         try:
             self._sock.sendall(encode_frame(obj))
         except OSError as exc:
@@ -153,3 +165,27 @@ class AgentClient:
 
     def stop(self, timeout: float | None = 5.0) -> Any:
         return self.request({"type": "stop"}, timeout=timeout)
+
+    # -- the pool daemon's verbs for the lease wall -------------------------
+
+    def pool_bind(self, pool_token: str, timeout: float | None = 5.0) -> None:
+        """Bind the daemon's pool token on the host; a host takes it once."""
+        self._pool_verb({"type": "pool_bind", "pool_token": pool_token}, timeout)
+
+    def lease_bind(
+        self, pool_token: str, lease_token: str, timeout: float | None = 5.0
+    ) -> None:
+        """Raise the wall: from now on only this lease's holder may drive."""
+        self._pool_verb(
+            {"type": "lease_bind", "pool_token": pool_token, "lease_token": lease_token},
+            timeout,
+        )
+
+    def lease_clear(self, pool_token: str, timeout: float | None = 5.0) -> None:
+        """Lower the wall when the lease ends."""
+        self._pool_verb({"type": "lease_clear", "pool_token": pool_token}, timeout)
+
+    def _pool_verb(self, obj: dict[str, Any], timeout: float | None) -> None:
+        response = self.request(obj, timeout=timeout)
+        if not response.get("success"):
+            raise RuntimeError(f"{obj['type']} failed: {response.get('error')}")

@@ -19,11 +19,20 @@ passed through to pi verbatim, and every event or response pi emits (plus the
 host's own lifecycle lines) is broadcast to all connected clients, so
 request/response correlation happens by the client's own ``id``.
 
+The lease wall: a pool daemon binds its pool token once (``pool_bind``), then
+binds a holder token per lease (``lease_bind``) and clears it when the lease
+ends (``lease_clear``). While a lease is bound, only frames carrying the
+holder's ``lease_token`` or the daemon's ``pool_token`` may drive the member;
+any other is refused before it reaches pi or the event log. A host that was
+never pool-bound has no wall and is a plain pipe.
+
 Stdlib only - the agent subsystem imports nothing from pipeline code (REQ-15).
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 import socket
 import subprocess
@@ -45,6 +54,12 @@ from specflo.agent.statefiles import (
 
 HOST_VERBS = ("status", "stop")
 
+# The pool daemon's verbs for raising and lowering the lease wall.
+POOL_VERBS = ("pool_bind", "lease_bind", "lease_clear")
+
+# Credential fields on a frame; pi never sees them once a pool is bound.
+TOKEN_FIELDS = ("lease_token", "pool_token")
+
 # How long a broadcast send may block on one slow client before it is dropped.
 _SUBSCRIBER_SEND_TIMEOUT = 5.0
 
@@ -58,6 +73,13 @@ HERDR_STATE_FOR = {
     "exited": "unknown",
     "stopped": None,
 }
+
+
+def _token_digest(token: Any) -> bytes | None:
+    """Digest of a presented token; None when it is not a usable token."""
+    if not isinstance(token, str) or not token:
+        return None
+    return hashlib.sha256(token.encode("utf-8")).digest()
 
 
 class PiHost:
@@ -104,6 +126,10 @@ class PiHost:
         self._subs_lock = threading.Lock()
         self._stopping = False
         self._stopped_evt = threading.Event()
+        # the wall keeps digests only, so no token sits in host memory
+        self._wall_lock = threading.Lock()
+        self._pool_digest: bytes | None = None
+        self._lease_digest: bytes | None = None
 
     def start(self) -> "PiHost":
         self._set_state("starting")
@@ -368,6 +394,24 @@ class PiHost:
         if "id" in request:
             response["id"] = request["id"]
 
+        if ctype in POOL_VERBS:
+            error = self._handle_pool_verb(request)
+            if error is None:
+                response.update(success=True)
+            else:
+                response.update(success=False, error=error)
+            self._respond(conn, send_lock, response)
+            return
+        if not self._authorised(request):
+            response.update(
+                success=False,
+                error="lease held: a valid lease token is required",
+            )
+            self._respond(conn, send_lock, response)
+            return
+        if self._pool_digest is not None:
+            request = {k: v for k, v in request.items() if k not in TOKEN_FIELDS}
+
         if ctype == "status":
             response.update(success=True, data=self._status_data())
             self._respond(conn, send_lock, response)
@@ -393,6 +437,54 @@ class PiHost:
                     )
             # on success, pi's own response frame reaches the client via
             # the broadcast stream, correlated by the request's id
+
+    def _handle_pool_verb(self, request: dict[str, Any]) -> str | None:
+        """Apply one pool verb; return the refusal reason, None on success."""
+        ctype = request["type"]
+        pool = _token_digest(request.get("pool_token"))
+        with self._wall_lock:
+            if ctype == "pool_bind":
+                if self._pool_digest is not None:
+                    return "a pool is already bound to this host"
+                if pool is None:
+                    return "pool_bind needs a pool_token"
+                self._pool_digest = pool
+                return None
+            if (
+                self._pool_digest is None
+                or pool is None
+                or not hmac.compare_digest(pool, self._pool_digest)
+            ):
+                return f"{ctype} needs the bound pool's pool_token"
+            if ctype == "lease_clear":
+                self._lease_digest = None
+                return None
+            lease = _token_digest(request.get("lease_token"))
+            if lease is None:
+                return "lease_bind needs a lease_token"
+            if self._lease_digest is not None:
+                return "a lease is already bound; clear it first"
+            self._lease_digest = lease
+            return None
+
+    def _authorised(self, request: dict[str, Any]) -> bool:
+        """The wall: may this frame act on the member right now?"""
+        with self._wall_lock:
+            expected = {
+                "lease_token": self._lease_digest,
+                "pool_token": self._pool_digest,
+            }
+        if expected["lease_token"] is None:
+            return True  # no lease bound, no wall
+        presented = [f for f in TOKEN_FIELDS if f in request]
+        if not presented:
+            # the bare liveness probe stays open to everyone
+            return request["type"] == "status"
+        for field in presented:
+            digest = _token_digest(request[field])
+            if digest is not None and hmac.compare_digest(digest, expected[field]):
+                return True
+        return False
 
     def _status_data(self) -> dict[str, Any]:
         return {
