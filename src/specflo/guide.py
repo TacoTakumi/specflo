@@ -104,6 +104,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mint a daemon bearer token for one identity; the secret prints once."},
     {"name": "serve pool validate", "group": "setup", "args": "--root <dir> ...",
      "summary": "Check the pool configuration under the daemon root; prints every fault in one run."},
+    {"name": "serve pool init", "group": "setup", "args": "--root <dir> ...",
+     "summary": "Write a starting pool directory: a commented pool.yaml and the shipped agent definitions; keeps existing files."},
     {"name": "remote add", "group": "setup", "args": "<name> <url> --token <secret>",
      "summary": "Register a daemon by name; changes nothing about local projects."},
     {"name": "remote list", "group": "setup", "args": "",

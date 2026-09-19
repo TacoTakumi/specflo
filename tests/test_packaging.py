@@ -159,6 +159,23 @@ def test_wheel_ships_the_pool_deny_extension_as_package_data(dist, relpath):
     assert f"specflo/pool/pi_extension/{relpath}" in dist["wheel_names"]
 
 
+# 'serve pool init' copies the shipped agent definitions out of the installed
+# package, so a wheel without them scaffolds a pool directory with no roles.
+POOL_DEFINITION_FILES = [
+    "worker.md",
+    "critic.md",
+    "hermes-rebaser.md",
+    "model-update-checker.md",
+    "landscape-scanner.md",
+]
+
+
+@pytest.mark.parametrize("relpath", POOL_DEFINITION_FILES)
+def test_wheel_ships_the_pool_agent_definitions_as_package_data(dist, relpath):
+    # Built from the sdist, so this proves both artifacts carry the definitions.
+    assert f"specflo/pool/shipped/{relpath}" in dist["wheel_names"]
+
+
 def test_wheel_requires_agentsquire_floor(dist):
     with zipfile.ZipFile(dist["wheel"]) as zf:
         meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))
