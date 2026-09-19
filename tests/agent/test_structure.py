@@ -36,6 +36,11 @@ POOL_RUNNER_ALLOWED = (
     "specflo.agent.statefiles",
 )
 
+# The lease verbs store a lease's token where the agent verbs look for it, so
+# they take that one layout from the agent's lease module and nothing else.
+POOL_LEASE_CLI = SRC / "pool" / "cli_lease.py"
+POOL_LEASE_CLI_ALLOWED = ("specflo.agent.lease",)
+
 # Controller-side sentinel conventions the HOST must never know about.
 SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
 
@@ -96,6 +101,12 @@ def test_pipeline_modules_import_no_agent_code():
                 n
                 for n in offending
                 if n != "specflo.agent" and not n.startswith(POOL_RUNNER_ALLOWED)
+            }
+        if path == POOL_LEASE_CLI:
+            offending = {
+                n
+                for n in offending
+                if n != "specflo.agent" and not n.startswith(POOL_LEASE_CLI_ALLOWED)
             }
         assert not offending, f"{path} imports the agent subsystem: {sorted(offending)}"
 
