@@ -26,9 +26,11 @@ from specflo.service.local import LocalProjectService
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# pi loads its extensions from a package.json plus TypeScript sources; that
-# directory is pi's contract, not a build of ours, and is the one exemption.
+# pi loads its extensions from a package.json plus TypeScript sources; such a
+# directory is pi's contract, not a build of ours, and these are the exemptions:
+# the pipeline extension, and the deny-list guard every pooled member loads.
 PI_EXTENSION = "src/specflo/extension/"
+PI_EXTENSIONS = (PI_EXTENSION, "src/specflo/pool/pi_extension/")
 
 NODE_FILES = {
     "package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock",
@@ -148,7 +150,7 @@ def test_no_node_toolchain_file_outside_the_pi_extension():
     offenders = [
         str(path)
         for path in tracked_files()
-        if looks_like_node_toolchain(path) and not str(path).startswith(PI_EXTENSION)
+        if looks_like_node_toolchain(path) and not str(path).startswith(PI_EXTENSIONS)
     ]
     assert offenders == [], offenders
 
@@ -159,7 +161,7 @@ def test_the_only_javascript_the_package_ships_is_vendored_in_the_assets_directo
         for path in tracked_files()
         if path.suffix in (".js", ".mjs", ".cjs")
         and str(path).startswith("src/")
-        and not str(path).startswith(PI_EXTENSION)
+        and not str(path).startswith(PI_EXTENSIONS)
     ]
     assets = str(web.ASSETS_DIR.relative_to(REPO_ROOT)) + "/"
     assert scripts, "no browser script is vendored at all"
