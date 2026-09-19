@@ -44,9 +44,10 @@ refusal a request waits on.
 Requests that did not fit wait as rows in the store, in the order they came.
 A grant gives way to every request that came before its own and fits now, so
 the earliest waiting request that fits is the one served, and one that does
-not fit holds up no one behind it. The service only reads those rows and
-takes the granted one out; the request that waits writes its row and comes
-back to ask again (see ``waiting``).
+not fit holds up no one behind it. A row keeps the egress class its request
+named, so an earlier request fits under its own ceiling and not the asker's.
+The service only reads those rows and takes the granted one out; the request
+that waits writes its row and comes back to ask again (see ``waiting``).
 
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
@@ -311,10 +312,10 @@ class PoolService:
 
     def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
         """Could the waiting *request* be granted now? One that names no
-        declared pool could not. A waiting row keeps no egress class, so the
-        request is read as one that named none."""
+        declared pool could not. It is placed under the egress class its row
+        keeps, the one it named or none, as it is when it asks again."""
         try:
-            self._place(request.pool, store)
+            self._place(request.pool, store, request.egress)
         except (NoFreeMember, EgressRefused):
             return False
         return True

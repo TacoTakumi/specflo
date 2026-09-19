@@ -88,13 +88,21 @@ class Transition:
 
 @dataclasses.dataclass(frozen=True)
 class WaitingRequest:
-    """One request that waits, for a pool or for a team; the caller mints ``id``."""
+    """One request that waits, for a pool or for a team; the caller mints ``id``.
+
+    After ``arrived`` comes what the request said of itself that decides
+    where it fits, as it was said: ``egress`` is the egress class the request
+    named, None when it named none. It is not the request's ceiling, which
+    also stands under limits the request does not set and is worked out by
+    whoever reads the row. A row from before a value was kept reads as None.
+    """
 
     id: str
     pool: str | None
     team: str | None
     holder_label: str
     arrived: str
+    egress: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -266,7 +274,8 @@ CREATE TABLE IF NOT EXISTS pool_waiting (
     pool         TEXT,
     team         TEXT,
     holder_label TEXT NOT NULL,
-    arrived      TEXT NOT NULL
+    arrived      TEXT NOT NULL,
+    egress       TEXT
 );
 CREATE TABLE IF NOT EXISTS pool_accounts (
     name          TEXT PRIMARY KEY,
@@ -297,10 +306,16 @@ CREATE TABLE IF NOT EXISTS pool_notes (
 );
 """
 
+# Columns added after their table's first shape, as (table, column, type):
+# CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a store
+# opened from before the column gains it here.
+ADDED_COLUMNS = (("pool_waiting", "egress", "TEXT"),)
+
 _LEASE_COLUMNS = (
     "id, team_lease_id, holder_hash, holder_label, member, pool,"
     " resources, acquired, last_activity, idle_limit, state"
 )
+_WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress"
 _ACCOUNT_COLUMNS = (
     "name, closed, reopen, usage, spend_limit, remaining, free_requests, read_at, read_error"
 )
@@ -317,6 +332,10 @@ class SqlitePoolStore:
         self.connection.execute("PRAGMA foreign_keys = ON")
         with self.connection:
             self.connection.executescript(SCHEMA)
+            for table, column, kind in ADDED_COLUMNS:
+                columns = self.connection.execute(f"PRAGMA table_info({table})")
+                if column not in {row["name"] for row in columns}:
+                    self.connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
 
     def add_lease(self, lease: Lease) -> None:
         resources = json.dumps([[resource.kind, resource.name] for resource in lease.resources])
@@ -419,9 +438,11 @@ class SqlitePoolStore:
         try:
             with self.connection:
                 self.connection.execute(
-                    "INSERT INTO pool_waiting (id, pool, team, holder_label, arrived)"
-                    " VALUES (?, ?, ?, ?, ?)",
-                    (request.id, request.pool, request.team, request.holder_label, request.arrived),
+                    f"INSERT INTO pool_waiting ({_WAITING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        request.id, request.pool, request.team,
+                        request.holder_label, request.arrived, request.egress,
+                    ),
                 )
         except sqlite3.IntegrityError as exc:
             raise Conflict(request.id) from exc
@@ -432,13 +453,12 @@ class SqlitePoolStore:
             where = " WHERE pool = ?"
             values.append(pool)
         rows = self.connection.execute(
-            f"SELECT id, pool, team, holder_label, arrived FROM pool_waiting{where} ORDER BY seq",
-            values,
+            f"SELECT {_WAITING_COLUMNS} FROM pool_waiting{where} ORDER BY seq", values
         ).fetchall()
         return [
             WaitingRequest(
                 id=row["id"], pool=row["pool"], team=row["team"],
-                holder_label=row["holder_label"], arrived=row["arrived"],
+                holder_label=row["holder_label"], arrived=row["arrived"], egress=row["egress"],
             )
             for row in rows
         ]

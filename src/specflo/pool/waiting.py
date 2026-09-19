@@ -15,7 +15,9 @@ that waits for its slot, with no other client and no reaper.
 
 The order among those that wait is the service's: a grant gives way to the
 requests that arrived before it and fit now. This module writes the row that
-order is read from, and takes it out again.
+order is read from, and takes it out again. The row keeps the egress class
+the request named, or that it named none, so the service judges whether it
+fits as it judges the request itself.
 
 The time a request may wait is counted on the service's clock, so a test
 drives it with a fake one.
@@ -104,7 +106,7 @@ class Waiting:
             with self.service.open_store() as store:
                 store.add_waiting(WaitingRequest(
                     id=request_id, pool=self.pool, team=None,
-                    holder_label=self.holder_label, arrived=_text(now),
+                    holder_label=self.holder_label, arrived=_text(now), egress=self.egress,
                 ))
             self._id, self._until = request_id, now + timedelta(seconds=self.wait)
         elif now >= self._until:
