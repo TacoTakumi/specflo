@@ -22,6 +22,12 @@ told the agent's name. At the end the pool records why the lease ended in the
 agent's state directory, lowers the wall with its own token and stops the
 host; the host's exit ends the pane.
 
+A member's event log is the host's record of the lease, and the daemon reads
+it for one thing: the turns that ended in a provider error. ``read_log`` gives
+those errors' text and where the prompts stand in the log, and nothing else
+that is in it; ``resend_prompt`` has the host forward one of those prompts
+again, under the pool's token.
+
 This is the one pool module that reaches the agent subsystem: its client, for
 the wall's verbs, and its state directory layout. It talks to the agent host
 and never to pi.
@@ -35,6 +41,7 @@ import shlex
 import subprocess
 import sys
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..agent import lease
@@ -195,6 +202,108 @@ def status(name: str) -> dict | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return record
+
+
+@dataclass(frozen=True)
+class LogRead:
+    """What one read of a member's event log found. ``offset`` is where the
+    next read starts and ``prompt_at`` where the last prompt the host forwarded
+    is written. ``failures`` has one entry for each turn that ended in a
+    provider error: where the prompt of that turn is written, and the error's
+    text. None of it is the member's output."""
+
+    offset: int
+    prompt_at: int | None
+    failures: tuple[tuple[int | None, str], ...]
+
+
+def log_end(name: str) -> int:
+    """Where the event log of the agent *name* ends now; 0 without one."""
+    try:
+        return _paths(name).events.stat().st_size
+    except OSError:
+        return 0
+
+
+def lease_log_start(name: str) -> int:
+    """Where the running host's part of the event log of *name* begins.
+
+    The log outlives a lease, and a host is started for each one: its part
+    begins at the last record of a host starting.
+    """
+    start = at = 0
+    try:
+        with open(_paths(name).events, "rb") as f:
+            for line in f:
+                event = _event(line)
+                if event.get("type") == "host_state" and event.get("state") == "starting":
+                    start = at
+                at += len(line)
+    except OSError:
+        return 0
+    return start
+
+
+def read_log(name: str, offset: int, prompt_at: int | None = None) -> LogRead:
+    """Read the event log of the agent *name* from *offset* on.
+
+    *prompt_at* is what the read before this one gave. Only whole lines are
+    taken; one still being written is left for the next read.
+    """
+    failures: list[tuple[int | None, str]] = []
+    try:
+        with open(_paths(name).events, "rb") as f:
+            f.seek(offset)
+            for line in f:
+                if not line.endswith(b"\n"):
+                    break
+                event = _event(line)
+                message = event.get("message")
+                if event.get("type") == "host_forward" and event.get("command") == "prompt":
+                    prompt_at = offset
+                elif (
+                    event.get("type") == "message_end"
+                    and isinstance(message, dict)
+                    and message.get("role") == "assistant"
+                    and message.get("stopReason") == "error"
+                ):
+                    failures.append((prompt_at, str(message.get("errorMessage") or "")))
+                offset += len(line)
+    except OSError:
+        pass
+    return LogRead(offset=offset, prompt_at=prompt_at, failures=tuple(failures))
+
+
+def resend_prompt(name: str, prompt_at: int, *, pool_token: str) -> bool:
+    """Have the host of *name* forward again the prompt written at *prompt_at*
+    in its event log; whether the member took it.
+
+    It goes in under the pool's token, which the lease wall admits and which
+    does not count as the holder's activity. A member that is in a turn, or
+    whose host is gone, does not take it.
+    """
+    try:
+        with open(_paths(name).events, "rb") as f:
+            f.seek(prompt_at)
+            message = _event(f.readline()).get("message")
+        if not isinstance(message, str):
+            return False
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            answer = client.request(
+                {"type": "prompt", "message": message, "pool_token": pool_token}
+            )
+    except (HostUnreachableError, TimeoutError, OSError):
+        return False
+    return bool(answer.get("success"))
+
+
+def _event(line: bytes) -> dict:
+    """One line of an event log; an empty record for a line that is not one."""
+    try:
+        event = json.loads(line)
+    except ValueError:
+        return {}
+    return event if isinstance(event, dict) else {}
 
 
 def _paths(name: str) -> AgentPaths:

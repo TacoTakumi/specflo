@@ -27,6 +27,18 @@ Scenario keys:
                   and forgets them (without it new_session is unhandled)
   cancel_new_session  bool - with recall: answer new_session as cancelled
                       by an extension, forgetting nothing
+  provider_errors  list - while one is left, a prompt takes the next and its
+                   provider call fails with it:
+                   {"status": 402, "error": {...}, "retry_after": 3}, where
+                   "error" is the error object of the provider's answer. The
+                   turn ends in an assistant message with stopReason "error"
+                   and errorMessage "<status>: <error as JSON>", which is how
+                   pi 0.85.1 reports a failed call. A 402 is not retried by
+                   pi and the run settles there; a 429 is, so the run goes on
+                   through auto_retry_start / auto_retry_end to the reply.
+                   "retry_after" adds a "Retry-After: <seconds>" line to the
+                   errorMessage. pi by itself drops that header; the line
+                   stands for whatever carries it into the error text.
 
 The stub is the spec-sanctioned test double for pi (spec In scope); it mirrors
 the real event shapes from pi docs/rpc.md: a correlated "response" per command,
@@ -73,6 +85,8 @@ class Stub:
         self.run_open = False
         self.last_text: str | None = None
         self.heard: list[str] = []  # this session's prompt messages ("recall")
+        self.provider_errors = list(scenario.get("provider_errors", []))
+        self.retrying = False  # between auto_retry_start and auto_retry_end
 
     def _captured_frames(self) -> Iterator[Any]:
         for frame in read_frames(sys.stdin.buffer):
@@ -122,9 +136,41 @@ class Stub:
                 "assistantMessageEvent": {"type": "text_end", "contentIndex": 0, "content": text},
             })
         emit({"type": "message_end", "message": message})
+        if self.retrying:
+            self.retrying = False
+            emit({"type": "auto_retry_end", "success": True, "attempt": 1})
         emit({"type": "turn_end", "message": message, "toolResults": []})
         emit({"type": "agent_settled"})
         self.run_open = False
+
+    def fail_provider_call(self, failure: dict) -> bool:
+        """End the turn in the provider error *failure*; True when pi retries
+        the call by itself, and the open run goes on to its reply."""
+        status = int(failure.get("status", 402))
+        text = f"{status}: {json.dumps(failure.get('error', {}), separators=(',', ':'))}"
+        if failure.get("retry_after") is not None:
+            text += f"\nRetry-After: {failure['retry_after']}"
+        message = {
+            "role": "assistant", "content": [], "stopReason": "error", "errorMessage": text,
+        }
+        retried = status == 429
+        emit({"type": "message_start", "message": {"role": "assistant", "content": []}})
+        emit({"type": "message_end", "message": message})
+        emit({"type": "turn_end", "message": message, "toolResults": []})
+        emit({"type": "agent_end", "messages": [message], "willRetry": retried})
+        if not retried:
+            emit({"type": "agent_settled"})
+            self.run_open = False
+            return False
+        # the stub does not wait out the delay real pi would
+        emit({
+            "type": "auto_retry_start", "attempt": 1, "maxAttempts": 3, "delayMs": 0,
+            "errorMessage": text,
+        })
+        self.retrying = True
+        emit({"type": "agent_start"})
+        emit({"type": "turn_start"})
+        return True
 
     def run_dialogs(self) -> None:
         for n, template in enumerate(self.scenario.get("dialogs", []), start=1):
@@ -172,6 +218,8 @@ class Stub:
             return
         if self.mode == "dialog":
             self.run_dialogs()
+        if self.provider_errors and not self.fail_provider_call(self.provider_errors.pop(0)):
+            return
         self.settle_run(self.recalling(cmd))
 
     def recalling(self, cmd: dict) -> str:

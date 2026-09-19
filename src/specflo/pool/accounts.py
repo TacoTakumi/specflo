@@ -13,6 +13,11 @@ that fails closes nothing: the account is left as it was and the failure is
 kept in place of the figures. The store makes no decision, so whether a
 closed account is open again is computed here, from its reopen time.
 
+The provider can also refuse a member's call outright, for the key's credit
+limit or for the account's credits. The account is then closed until the
+key's limit resets: daily, weekly or monthly, as the key read says, on the
+UTC day, the UTC week from Monday and the UTC month.
+
 The key goes into the request's authorization header and nowhere else: no
 record, error or message carries it.
 """
@@ -81,11 +86,7 @@ def read_account(
     try:
         figures = _figures(_read_key(account, client, environ), read_at)
     except _ReadError as exc:
-        failed = AccountFigures(
-            usage=None, limit=None, remaining=None, free_requests=None,
-            read_at=read_at, read_error=str(exc),
-        )
-        return store.set_account_figures(account.name, failed)
+        return store.set_account_figures(account.name, _failed(read_at, exc))
     record = store.set_account_figures(account.name, figures)
     if figures.free_requests == 0:
         return store.set_account_closed(account.name, reopen=_text(next_daily_reset(now)))
@@ -94,6 +95,53 @@ def read_account(
     if record.closed and is_open(record, now):
         return store.set_account_open(account.name)
     return record
+
+
+def close_for_limit(
+    account: Account,
+    store: PoolStore,
+    *,
+    clock: Clock,
+    client: httpx.Client | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> poolstore.Account:
+    """Close ``account`` after the provider refused a call for its key's
+    limit or its credits; the record as stored.
+
+    The key is read for its figures and for when its limit resets, which is
+    the reopen time. A limit that never resets, and a read that fails, give
+    the next daily reset instead: an account closed with no reopen time would
+    stay closed, so it is tried again when the provider's day turns.
+    """
+    environ = os.environ if environ is None else environ
+    own = client is None
+    client = httpx.Client(base_url=PROVIDER_URL, timeout=READ_TIMEOUT) if own else client
+    now = clock()
+    reset = None
+    try:
+        answer = _read_key(account, client, environ)
+        store.set_account_figures(account.name, _figures(answer, _text(now)))
+        reset = next_key_reset(answer["data"].get("limit_reset"), now)
+    except _ReadError as exc:
+        store.set_account_figures(account.name, _failed(_text(now), exc))
+    finally:
+        if own:
+            client.close()
+    return store.set_account_closed(account.name, reopen=_text(reset or next_daily_reset(now)))
+
+
+def next_key_reset(period: object, now: datetime) -> datetime | None:
+    """When a key's credit limit resets next after ``now``, for the reset
+    period its key read names; None for a limit that never resets, and for a
+    period that is not one of the provider's."""
+    today = now.astimezone(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "daily":
+        return today + timedelta(days=1)
+    if period == "weekly":
+        return today + timedelta(days=7 - today.weekday())
+    if period == "monthly":
+        return (today.replace(day=1) + timedelta(days=32)).replace(day=1)
+    return None
 
 
 def next_daily_reset(now: datetime) -> datetime:
@@ -111,6 +159,14 @@ def is_open(record: poolstore.Account | None, now: datetime) -> bool:
     if record is None or not record.closed:
         return True
     return record.reopen is not None and now >= datetime.fromisoformat(record.reopen)
+
+
+def _failed(read_at: str, exc: _ReadError) -> AccountFigures:
+    """What is stored in place of the figures of a read that failed."""
+    return AccountFigures(
+        usage=None, limit=None, remaining=None, free_requests=None,
+        read_at=read_at, read_error=str(exc),
+    )
 
 
 def _text(time: datetime) -> str:

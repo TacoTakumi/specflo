@@ -9,7 +9,8 @@ The health probe is the one open route. The API lives on the router in
 pool's part of it on the router in :mod:`specflo.daemon.pool_routes`; the web
 UI in :mod:`specflo.daemon.web` serves its pages behind a browser session.
 While a daemon with a pool serves, it reads llama-swap's event stream
-(:mod:`specflo.pool.events`).
+(:mod:`specflo.pool.events`) and the event logs of its leased hosted members
+(:mod:`specflo.pool.watch`).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from ..pool import events
+from ..pool import events, watch
 from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
 from .routes import router
 
@@ -31,17 +32,19 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
     """What runs while the daemon serves, and no longer.
 
     A daemon with a pool reads llama-swap's event stream for the model
-    reloads of leased members. The reader is a task on the server's event
-    loop, cancelled when the server shuts down; a daemon with no pool, or
-    with a pool configuration that did not stand, reads nothing.
+    reloads of leased members, and the event logs of leased hosted members
+    for the calls their provider refused. Each is a task on the server's
+    event loop, cancelled when the server shuts down; a daemon with no pool,
+    or with a pool configuration that did not stand, reads nothing.
     """
-    reader = events.reader_for(app.state.pool)
-    task = asyncio.create_task(reader.run()) if reader is not None else None
+    readers = (events.reader_for(app.state.pool), watch.watcher_for(app.state.pool))
+    tasks = [asyncio.create_task(reader.run()) for reader in readers if reader is not None]
     try:
         yield
     finally:
-        if task is not None:
+        for task in tasks:
             task.cancel()
+        for task in tasks:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
