@@ -17,6 +17,11 @@ and, for each role member, an ordinary lease with its agent and its token.
 The team lease id is given back where a lease is, and that ends every member
 lease.
 
+A developer's console is a slot of the pool that serves only while an agent
+host that runs on the daemon's host is attached to it. The attach and the
+detach are asked of the daemon here, and the daemon serves them to the
+developer identity alone.
+
 This module is the client's side only. It imports nothing of the pool's own
 code and no web framework; the daemon's routes take their paths from here.
 """
@@ -42,6 +47,10 @@ LEASES_PATH = POOL_PATH + "/leases"
 HELD_PATH = LEASES_PATH + "/held"
 # What each pool has out, with no word of who holds it.
 STATUS_PATH = POOL_PATH + "/status"
+# A console slot is attached and detached here. The slot and the agent go in
+# the body, so neither path names one.
+CONSOLE_ATTACH_PATH = POOL_PATH + "/consoles/attach"
+CONSOLE_DETACH_PATH = POOL_PATH + "/consoles/detach"
 
 # What a client that reads notices accepts, and what the answer to a request
 # that waits is then sent as: a JSON object to a line. The first says
@@ -271,3 +280,13 @@ class RemotePool(DaemonClient):
     def status(self) -> list[dict]:
         """Each pool's name, size and leases in use."""
         return self._request("GET", STATUS_PATH)
+
+    def console_attach(self, slot: str, agent: str) -> dict:
+        """Attach the agent host *agent*, which runs on the daemon's host, to
+        the console *slot*; the slot, the agent and the slot's state."""
+        return self._request("POST", CONSOLE_ATTACH_PATH, json={"slot": slot, "agent": agent})
+
+    def console_detach(self, slot: str) -> dict:
+        """Detach the console *slot*, which then takes no new lease; the slot
+        and its state, draining while a lease is out on it."""
+        return self._request("POST", CONSOLE_DETACH_PATH, json={"slot": slot})

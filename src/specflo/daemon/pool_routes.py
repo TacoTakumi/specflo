@@ -46,6 +46,11 @@ every member lease; a token of any member lease proves the team's holder. One
 member lease of a team is not released by itself: that is refused with the
 team lease id named. No route here takes anything from one member to another.
 
+A developer's console is attached to its slot, and detached, by the
+developer identity and no other: a requester or an agent that asks is
+answered 403. The agent attached is a host that runs on this host, named in
+the body, and both acts are audited under the slot.
+
 A lease is its holder's, and the holder is whoever presents the lease token:
 the bearer token says which identity asks, not which orchestrator. So a
 release ends an active lease for that token only, and the listing answers for
@@ -69,13 +74,20 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
 from ..errors import SpecfloError
-from ..pool import egress, ledger, standing, teamlease, waiting
+from ..pool import console, egress, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import Grant, PoolService, hash_token
 from ..projects import load_project, validate_slug
-from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH, WAITING_MEDIA_TYPE
+from ..service.pool_remote import (
+    CONSOLE_ATTACH_PATH,
+    CONSOLE_DETACH_PATH,
+    HELD_PATH,
+    LEASES_PATH,
+    STATUS_PATH,
+    WAITING_MEDIA_TYPE,
+)
 from . import seat
 from .poolstore import Lease, open_pool_store
 from .routes import audit, current_identity
@@ -551,6 +563,70 @@ def _team_release(
         audit(request.app.state.root, identity, "lease_release", None, team_lease_id)
     state = "released" if released else ended[-1].state
     return {"result": {"lease_id": team_lease_id, "state": state, "held": True}}
+
+
+# --- consoles -----------------------------------------------------------------
+
+# The one identity that attaches and detaches a console.
+CONSOLE_IDENTITY = "developer"
+
+
+def _developer(identity: str) -> None:
+    """Refuse a console route to any identity but the developer's."""
+    if identity != CONSOLE_IDENTITY:
+        raise HTTPException(
+            status_code=403,
+            detail=f"A console is attached and detached by the {CONSOLE_IDENTITY} identity "
+            f"only, and this token is the {identity} identity's.",
+        )
+
+
+def _required(fields: dict, name: str) -> str:
+    value = _text(fields, name)
+    if value is None:
+        raise _invalid(f"Field {name!r} must be a string that is not empty.")
+    return value
+
+
+@router.post(CONSOLE_ATTACH_PATH)
+def console_attach(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+    service: PoolService = Depends(pool_service),
+) -> dict:
+    """Attach the named agent host, which runs on this host, to the named
+    console slot; from then on the slot is matched like any member."""
+    _developer(identity)
+    fields = _body(body, required=("slot", "agent"))
+    slot, agent = _required(fields, "slot"), _required(fields, "agent")
+    try:
+        attached = console.attach(service, slot, agent)
+    except SpecfloError as exc:
+        raise _refused(exc)
+    audit(request.app.state.root, identity, "console_attach", None, slot)
+    return {"result": {
+        "slot": attached.slot, "agent": attached.agent, "state": console.ATTACHED,
+    }}
+
+
+@router.post(CONSOLE_DETACH_PATH)
+def console_detach(
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+    service: PoolService = Depends(pool_service),
+) -> dict:
+    """Detach the named console slot: it takes no new lease, and the lease
+    that is out on it stands."""
+    _developer(identity)
+    slot = _required(_body(body, required=("slot",)), "slot")
+    try:
+        state = console.detach(service, slot)
+    except SpecfloError as exc:
+        raise _refused(exc)
+    audit(request.app.state.root, identity, "console_detach", None, slot)
+    return {"result": {"slot": slot, "state": state}}
 
 
 # --- the pool's state ---------------------------------------------------------

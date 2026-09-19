@@ -59,15 +59,23 @@ every accepted member runs through a closed account has no room to wait for
 either, and its refusal names each account and when it reopens. A lease that
 is out on a closed account is a row like any other: nothing here ends it.
 
+A member may be one that is not to be matched now: a console that no agent
+is attached to, or one that was detached. It is passed over for the next
+member the pool lists, and a pool whose other members are all full has no
+room. That is a refusal a request waits on, since an attach cures it as a
+lease ending cures a full pool. Which members those are is handed in by name;
+the ledger reads no console's state.
+
 ``place`` is a function of the configuration, the lease rows, the standing
-entries, the accounts closed now and the request. It opens no store, reads no
-clock and no file, and starts nothing: the pool service hands it the rows,
-the entries and the closed accounts and acts on its answer.
+entries, the accounts closed now, the members not to be matched now and the
+request. It opens no store, reads no clock and no file, and starts nothing:
+the pool service hands it the rows, the entries, the closed accounts and
+those members and acts on its answer.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from itertools import count
 
@@ -142,23 +150,26 @@ def place(
     request: Request,
     standing: Iterable[Standing] = (),
     closed: Mapping[str, str | None] | None = None,
+    unmatched: Collection[str] = (),
 ) -> Placement:
     """Where *request* fits, given the *leases* that are out, the *standing*
-    entries of the project agents that are alive and the accounts *closed*
-    now, each with the time it reopens, or None when none is set.
+    entries of the project agents that are alive, the accounts *closed* now,
+    each with the time it reopens, or None when none is set, and the members
+    *unmatched* now, by name: the consoles that no agent is attached to.
 
     The member is the first the pool lists, in its order, that is of a class
     the request accepts, serves fewer leases than its capacity and, if it is
     hosted, whose account has fewer leases out than its cap, in whichever
     pools; if it is local, whose model may be loaded beside every model under
     lease. A member of another class is passed over however free it is, and
-    so is a member whose account is closed.
+    so is a member whose account is closed and one that is not to be matched.
     *leases* may hold rows that have ended; they count for nothing. A standing
     entry's account slot and model count as a lease's do.
 
     Raises ``NoRoom`` for a pool that is not declared, a pool with as many
     leases out as its size, and a pool whose members are all full, kept by a
-    full account or kept by the leased models, which it names. Raises
+    full account, kept by the leased models or not to be matched now, which
+    it names. Raises
     ``NoMemberAllowed`` instead, and before anything is counted, for a pool
     with no member of a class the request accepts: that is not a matter of
     room. Nor is a pool whose accepted members all run through closed
@@ -203,7 +214,7 @@ def place(
     apart: dict[str, tuple[str, ...]] = {}  # the models kept off the rig, and by which
     for name in usable:
         member = members[name]
-        if _taken(out, MEMBER, name) >= member.capacity:
+        if name in unmatched or _taken(out, MEMBER, name) >= member.capacity:
             continue
         resources = [Resource(POOL, pool.name), Resource(MEMBER, name)]
         if member.account is not None:
@@ -225,6 +236,12 @@ def place(
     # Only the members the request may have: the others are not what it waits for.
     listed = ", ".join(f"'{name}'" for name in accepted)
     kept = [_closed(shut)] if shut else []
+    away = [f"'{name}'" for name in usable if name in unmatched]
+    if away:
+        kept.append(
+            ", ".join(away) + " cannot be matched now: a console takes a lease only "
+            "while an agent is attached to it"
+        )
     if full:
         kept.append(", ".join(
             f"account '{name}' is full: all {cap} of its leases are out"

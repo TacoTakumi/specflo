@@ -22,6 +22,13 @@ told the agent's name. At the end the pool records why the lease ended in the
 agent's state directory, lowers the wall with its own token and stops the
 host; the host's exit ends the pane.
 
+A console is the one member whose host the pool does not start. A developer
+attaches an agent host that runs already: ``attach_console`` checks that one
+answers under the name on the rpc transport and binds the pool's token on it,
+and ``bind_console`` raises the wall on it for one lease. Neither starts
+anything. An agent on the TUI transport has no host to bind a token on, so
+it is not attachable.
+
 A member's event log is the host's record of the lease, and the daemon reads
 it for one thing: the turns that ended in a provider error. ``read_log`` gives
 those errors' text and where the prompts stand in the log, and nothing else
@@ -75,6 +82,11 @@ _PROBE_TIMEOUT = 2.0
 
 class RunnerError(SpecfloError):
     """A member's process that could not be started or stopped."""
+
+
+class NotAttachable(SpecfloError):
+    """An agent that cannot be attached as a console; the message says why,
+    and names nothing of this host but the agent."""
 
 
 def start(
@@ -205,6 +217,65 @@ def status(name: str) -> dict | None:
     except (OSError, ValueError, KeyError, TypeError):
         return None
     return record
+
+
+def attach_console(name: str, *, pool_token: str) -> None:
+    """Bind the pool's token on the agent host *name*, which runs already and
+    which a developer attaches as a console. Nothing is started.
+
+    Raises ``NotAttachable`` for a name that names no agent, an agent on the
+    TUI transport, one whose host does not answer, and a host that does not
+    take the token: a host takes a pool's token once.
+    """
+    try:
+        paths = AgentPaths.resolve(name)
+    except ValueError as exc:
+        raise NotAttachable(f"'{name}' cannot name an agent: {exc}") from exc
+    try:
+        # A TUI agent answers on no host's socket, so its record is read first.
+        _refuse_tui(name, read_status(paths.status))
+    except (OSError, ValueError):
+        pass  # no record to go by; the socket says the rest
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            _refuse_tui(name, client.status(timeout=_PROBE_TIMEOUT).get("status"))
+            client.pool_bind(pool_token)
+    except RuntimeError as exc:
+        raise NotAttachable(
+            f"agent '{name}': its host did not take the pool's token: {exc}. A host takes "
+            "one pool's token once; start a fresh agent host to attach."
+        ) from exc
+    except (HostUnreachableError, TimeoutError, OSError) as exc:
+        raise NotAttachable(
+            f"agent '{name}' is not running: no agent host answers under that name on the "
+            f"daemon's host. Start it there with `specflo agent start {name}`."
+        ) from exc
+
+
+def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
+    """Raise the lease wall on the attached console host *name* for one lease;
+    the agent's name. The pool's token is bound on it since the attach, and
+    nothing is started.
+
+    Raises ``RunnerError`` for a host that is gone or does not take the lease.
+    """
+    try:
+        with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            client.lease_bind(pool_token, lease_token)
+    except (HostUnreachableError, TimeoutError, RuntimeError, OSError) as exc:
+        raise RunnerError(f"console '{name}': its host did not take the lease: {exc}") from exc
+    return name
+
+
+def _refuse_tui(name: str, record: object) -> None:
+    """Raise ``NotAttachable`` when *record*, a status record of the agent
+    *name*, says the TUI transport. A record that names no transport is an
+    rpc host's."""
+    if isinstance(record, dict) and record.get("transport", "rpc") != "rpc":
+        raise NotAttachable(
+            f"agent '{name}' runs on the TUI transport, which has no agent host to hold a "
+            "lease's wall; a console is an agent started on the rpc transport."
+        )
 
 
 @dataclass(frozen=True)

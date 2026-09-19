@@ -85,6 +85,13 @@ lease is, by the same function, with the team lease id on its row; a member
 that does not start ends the members granted before it, and no lease of the
 team stays out.
 
+A console is a member whose process is its developer's (see ``console``). At
+every placement the service reads which consoles have an agent attached and
+hands the ledger the others, which it passes over, so a pool that only they
+serve has no room and its request waits for an attach. A lease on a console
+is written as any other, under the attached agent's name, and its grant binds
+the lease on that agent's host and starts nothing.
+
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
 from callables handed in, so a test drives it with a fake clock and counted
@@ -110,8 +117,8 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, expiry, ledger, preempt, runner, teamlease
-from .config import Pool, PoolConfig
+from . import accounts, console, expiry, ledger, preempt, runner, teamlease
+from .config import CONSOLE, Pool, PoolConfig
 from .teams import Team
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
@@ -312,13 +319,20 @@ class PoolService:
                 acquired=now, last_activity=now, idle_limit=idle_limit, state="active",
             ))
             try:
-                # The runner names the agent for the member it is handed, so a
-                # further lease on a member is handed over under its own name.
-                agent = runner.start(
-                    definition, replace(placed.member, name=placed.agent), self.config.accounts,
-                    cwd=cwd, pool_token=self.pool_token, lease_token=token,
-                    config_root=self.config_root, environ=self.environ,
-                )
+                if placed.member.kind == CONSOLE:
+                    # A console's process is its developer's: the lease is
+                    # bound on the attached host and nothing is started.
+                    agent = runner.bind_console(
+                        placed.agent, pool_token=self.pool_token, lease_token=token
+                    )
+                else:
+                    # The runner names the agent for the member it is handed, so a
+                    # further lease on a member is handed over under its own name.
+                    agent = runner.start(
+                        definition, replace(placed.member, name=placed.agent),
+                        self.config.accounts, cwd=cwd, pool_token=self.pool_token,
+                        lease_token=token, config_root=self.config_root, environ=self.environ,
+                    )
             except Exception as exc:
                 self.end_lease(lease_id, "released", cause=f"member did not start: {exc}")
                 raise
@@ -616,7 +630,9 @@ class PoolService:
         take, to say whether it fits with them gone. *pinned* is the class
         the requesting project *project* pins, when there is one. The accounts the store holds as
         closed, and that are not open again by the service's clock, go to the
-        ledger with their reopen times. Raises ``NoFreeMember``,
+        ledger with their reopen times, and so do the consoles that no agent
+        is attached to now, which it passes over; a placement on a console is
+        on the agent attached to it (see ``console``). Raises ``NoFreeMember``,
         ``EgressRefused`` for a pool with no member under the request's
         ceiling, and ``ClosedAccount`` for one whose members under it all run
         through closed accounts."""
@@ -637,12 +653,15 @@ class PoolService:
         out = [] if alone else [
             lease for lease in store.list_leases(state="active") if lease.id not in leave_out
         ]
+        consoles = store.list_consoles()
         try:
-            return ledger.place(
+            return console.placement(ledger.place(
                 self.config, [*out, *also],
                 ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
                 standing=() if alone else self.standing(), closed=closed,
-            )
+                # An attach cures a console with no agent, so with *alone* it counts.
+                unmatched=() if alone else console.unmatched(self.config, consoles),
+            ), consoles)
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full), out) from full
         except ledger.AccountClosed as shut:

@@ -232,6 +232,13 @@ app.add_typer(workitem_app, name="workitem")
 lease_app = typer.Typer(help="Take and give back members of a daemon's agent pool.")
 app.add_typer(lease_app, name="lease")
 
+# The console verbs are declared and run the same way, in the pool package's
+# console verbs module.
+console_app = typer.Typer(
+    help="Attach your own running agent to a console slot of a daemon's agent pool."
+)
+app.add_typer(console_app, name="console")
+
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback
 # bridges the pipeline `agent_space` config value into the env var the agent
@@ -3066,6 +3073,48 @@ def lease_list(
     root = _require_root()
     try:
         cli_lease.list_held(root, remote=remote, json_output=json_output)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+
+# --- consoles: a developer's own agent as a member of a daemon's pool ----------
+
+
+@console_app.command("attach", epilog="Example: specflo console attach desk-1 my-pi")
+def console_attach(
+    slot: str = typer.Argument(
+        ..., metavar="<slot>", help="The console slot the pool declares."
+    ),
+    agent: str = typer.Argument(
+        ..., metavar="<agent>",
+        help="The running agent to attach: one started on the daemon's host with"
+        " `specflo agent start`, on the rpc transport.",
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Attach <agent> to the console <slot>, as the developer; the pool then leases it."""
+    from .pool import cli_console
+
+    root = _require_root()
+    try:
+        cli_console.attach(root, slot, agent, remote=remote, json_output=json_output)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+
+@console_app.command("detach", epilog="Example: specflo console detach desk-1")
+def console_detach(
+    slot: str = typer.Argument(..., metavar="<slot>", help="The console slot to detach."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Detach the console <slot>: it takes no new lease, and a lease that is out stands."""
+    from .pool import cli_console
+
+    root = _require_root()
+    try:
+        cli_console.detach(root, slot, remote=remote, json_output=json_output)
     except SpecfloError as exc:
         raise _die(str(exc))
 

@@ -12,6 +12,14 @@ model ID from the rig's llama-swap configuration and its class is ``local``.
 A hosted member runs over the network, so it names a declared account and its
 class is ``no-train`` or ``open``.
 
+A member is of one of two kinds. The pool starts a process for each lease on
+a member of kind ``started``, which is what an entry that names no kind is. A
+member of kind ``console`` is a slot for a developer's own running agent: the
+pool never starts its process, so it has no command, and one agent serves
+one lease at a time, so its capacity is 1. What backs it, its labels and its
+class are declared as any member's are, since it is matched and counted as
+one while an agent is attached to it (see ``console``).
+
 A named pool binds one agent definition to declared members, with the most
 leases it grants at once, a default and a maximum idle limit, and an optional
 ``preempt_after``. The definitions are the markdown files in ``definitions/``
@@ -51,6 +59,12 @@ LOCAL = "local"
 HOSTED = "hosted"
 BACKINGS: tuple[str, ...] = (LOCAL, HOSTED)
 
+# The kinds of member: one the pool starts a process for at each lease, and a
+# console, a slot a developer attaches a running agent host to.
+STARTED = "started"
+CONSOLE = "console"
+KINDS: tuple[str, ...] = (STARTED, CONSOLE)
+
 # The egress classes a hosted member may declare: every class but "local".
 HOSTED_CLASSES: tuple[str, ...] = tuple(c for c in EGRESS_CLASSES if c != LOCAL)
 
@@ -76,7 +90,7 @@ _PROVIDER_PREFIX = "openrouter/"
 SECTIONS: tuple[str, ...] = ("llama_swap", "accounts", "members", "pools")
 ACCOUNT_FIELDS: tuple[str, ...] = ("name", "cap", "key_env")
 MEMBER_FIELDS: tuple[str, ...] = (
-    "name", "command", "backing", "model", "account", "labels", "capacity", "egress",
+    "name", "kind", "command", "backing", "model", "account", "labels", "capacity", "egress",
 )
 # A pool has no field for a priority: any waiting request may take an idle
 # lease from a pool that declares preempt_after, and none from one that does not.
@@ -126,7 +140,8 @@ class Account:
 
 @dataclass(frozen=True)
 class Member:
-    """One roster entry. A local member has a ``model``, a hosted one an ``account``."""
+    """One roster entry. A local member has a ``model``, a hosted one an
+    ``account``. A console has no ``command``: the pool never starts it."""
 
     name: str
     command: str
@@ -136,6 +151,7 @@ class Member:
     egress: str
     model: str | None = None
     account: str | None = None
+    kind: str = STARTED
 
 
 @dataclass(frozen=True)
@@ -464,10 +480,24 @@ def _account(entry: _Entry) -> Account:
 
 def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -> Member:
     entry.known(MEMBER_FIELDS)
-    command = entry.text("command", "the harness command that starts the member")
+    kind = entry.one_of("kind", KINDS) if "kind" in entry.fields else STARTED
+    if kind == CONSOLE:
+        command = ""
+        if "command" in entry.fields:
+            entry.fault(
+                "command", "not for a console; the pool never starts a console's process, "
+                "a developer attaches a running agent host to the slot."
+            )
+    else:
+        command = entry.text("command", "the harness command that starts the member")
     backing = entry.one_of("backing", BACKINGS)
     labels = entry.strings("labels")
     capacity = entry.at_least_one("capacity", "how many leases the member serves at once")
+    if kind == CONSOLE and capacity > 1:
+        entry.fault(
+            "capacity", f"{capacity} is more than a console serves; it is one running "
+            "agent, so its capacity is 1."
+        )
     egress = entry.one_of("egress", EGRESS_CLASSES)
 
     model = entry.fields.get("model")
@@ -509,6 +539,7 @@ def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -
         egress=egress,
         model=model if isinstance(model, str) else None,
         account=account if isinstance(account, str) else None,
+        kind=kind or STARTED,
     )
 
 

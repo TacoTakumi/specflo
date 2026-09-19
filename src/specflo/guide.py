@@ -239,6 +239,12 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "lease list", "group": "agents", "args": "",
      "summary": "List the leases this checkout holds tokens for; no other "
                 "orchestrator's lease is shown (--remote, --json)."},
+    {"name": "console attach", "group": "agents", "args": "<slot> <agent>",
+     "summary": "Attach your own running rpc agent on the daemon's host to a console "
+                "slot the pool declares; the developer identity only (--remote, --json)."},
+    {"name": "console detach", "group": "agents", "args": "<slot>",
+     "summary": "Detach a console slot: it takes no new lease, and a lease that is "
+                "out on it stands (--remote, --json)."},
 ]
 
 
