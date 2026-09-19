@@ -5,8 +5,9 @@ the daemon root and returns the application bound to it; the root is kept
 on ``app.state.root`` so every route reads and writes under it.
 
 The health probe is the one open route. The API lives on the router in
-:mod:`specflo.daemon.routes`, behind the bearer token guard; the web UI in
-:mod:`specflo.daemon.web` serves its pages behind a browser session.
+:mod:`specflo.daemon.routes`, behind the bearer token guard, and the agent
+pool's part of it on the router in :mod:`specflo.daemon.pool_routes`; the web
+UI in :mod:`specflo.daemon.web` serves its pages behind a browser session.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from . import HEALTH_PATH, chat, prepare_root, web
+from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
 from .routes import router
 
 
@@ -35,11 +36,14 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     # project, so a daemon restart follows every live conversation again.
     app.state.pumps = chat.Pumps(root)
     app.state.pumps.resume()
+    # The agent pool the root's pool directory declares; None without one.
+    app.state.pool = pool_routes.open_pool(root)
 
     @app.get(HEALTH_PATH)
     def health() -> dict:
         return {"status": "ok"}
 
     app.include_router(router)
+    app.include_router(pool_routes.router)
     web.install(app)
     return app

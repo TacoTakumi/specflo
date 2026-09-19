@@ -226,6 +226,12 @@ workitem_app = typer.Typer(
 )
 app.add_typer(workitem_app, name="workitem")
 
+# The lease verbs are declared here and run in the pool package's lease
+# module, which is loaded when one of them runs: a local command pays nothing
+# for the agent pool.
+lease_app = typer.Typer(help="Take and give back members of a daemon's agent pool.")
+app.add_typer(lease_app, name="lease")
+
 # Composition point only: the agent subsystem stays import-independent of
 # pipeline code (REQ-15); the top-level CLI is where both meet. The callback
 # bridges the pipeline `agent_space` config value into the env var the agent
@@ -2947,6 +2953,43 @@ def workitem_spawn(
     typer.echo(
         f"Scaffolded {_locator(spawned.project.slug, spawned.brainstorm)} (ready to work)."
     )
+
+
+# --- leases: members of a daemon's agent pool, driven by the agent verbs ------
+
+
+@lease_app.command(
+    "request", epilog="Example: specflo lease request workers --idle-limit 30m"
+)
+def lease_request(
+    pool: str = typer.Argument(..., metavar="<pool>", help="The pool to take a member of."),
+    cwd: Path = typer.Option(
+        None, "--cwd", metavar="<dir>",
+        help="Where the member starts; the current directory otherwise.",
+    ),
+    idle_limit: str = typer.Option(
+        None, "--idle-limit", metavar="<time>",
+        help="How long the lease may stay idle, such as 30m, up to the pool's maximum;"
+        " the pool's default otherwise.",
+    ),
+    label: str = typer.Option(
+        None, "--label", metavar="<text>",
+        help="What the pool shows as the holder; the checkout's directory name otherwise.",
+    ),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Lease a member of <pool>: prints the lease id and the agent to drive with `specflo agent`."""
+    from .pool import cli_lease
+
+    root = _require_root()
+    try:
+        cli_lease.request(
+            root, pool, cwd=cwd, idle_limit=idle_limit, label=label,
+            remote=remote, json_output=json_output,
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
 
 
 def build_cli():

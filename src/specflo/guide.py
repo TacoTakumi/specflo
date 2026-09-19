@@ -226,6 +226,9 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "agent stop", "group": "agents", "args": "<name>",
      "summary": "Gracefully stop an agent: abort its run, terminate pi, "
                 "then the host."},
+    {"name": "lease request", "group": "agents", "args": "<pool>",
+     "summary": "Lease a member of a daemon's agent pool; prints the lease id and the "
+                "agent to drive with `agent` (--cwd, --idle-limit, --remote)."},
 ]
 
 
