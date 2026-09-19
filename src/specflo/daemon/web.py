@@ -80,6 +80,12 @@ DEFINITIONS_PATH = POOL_PATH + "/definitions"
 NEW_DEFINITION_PATH = DEFINITIONS_PATH + "/new"
 EDIT_DEFINITION_PATH = DEFINITIONS_PATH + "/{name}/edit"
 DELETE_DEFINITION_PATH = DEFINITIONS_PATH + "/{name}/delete"
+# The developer's pages for the teams of the pool directory, laid out as the
+# pages for the definitions are; their routes live in the pool_manage module too.
+TEAMS_PATH = POOL_PATH + "/teams"
+NEW_TEAM_PATH = TEAMS_PATH + "/new"
+EDIT_TEAM_PATH = TEAMS_PATH + "/{name}/edit"
+DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
@@ -126,6 +132,14 @@ _templates.globals.update(
         DEFINITIONS_PATH if name is None else EDIT_DEFINITION_PATH.format(name=quote(name, safe=""))
     ),
     definition_delete_url=lambda name: DELETE_DEFINITION_PATH.format(name=quote(name, safe="")),
+    teams_path=TEAMS_PATH,
+    new_team_path=NEW_TEAM_PATH,
+    team_url=lambda name: EDIT_TEAM_PATH.format(name=quote(name, safe="")),
+    # Where the form of the team *name* posts; of a new one, with no name yet.
+    team_save_url=lambda name: (
+        TEAMS_PATH if name is None else EDIT_TEAM_PATH.format(name=quote(name, safe=""))
+    ),
+    team_delete_url=lambda name: DELETE_TEAM_PATH.format(name=quote(name, safe="")),
 )
 
 
@@ -831,5 +845,6 @@ def install(app: FastAPI) -> None:
     from . import pool_manage
 
     app.include_router(pool_manage.pages)
+    app.include_router(pool_manage.team_pages)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")

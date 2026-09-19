@@ -147,3 +147,22 @@ def _role(entry: _Entry, pools: dict[str, Pool], refused: set[str]) -> Role:
             "count", f"{count} is more than pool '{pool}' grants at once, {pools[pool].size}."
         )
     return Role(name=str(entry.fields.get("name")), pool=pool, count=count)
+
+
+def serialise_team(team: Team) -> str:
+    """The markdown file of *team*, as an admin writes one by hand.
+
+    A role is one line of the ``roles`` list, its keys in the order of
+    ``ROLE_FIELDS``, and a value YAML would read as something else, or as a
+    comment, is quoted. The notes are the body, and a team with none has no
+    body. What comes back from ``check_team`` is *team*.
+    """
+    lines = ["roles:\n" if team.roles else "roles: []\n"]
+    for role in team.roles:
+        fields = {key: getattr(role, key) for key in ROLE_FIELDS}
+        lines.append("  - " + yaml.safe_dump(
+            fields, default_flow_style=True, sort_keys=False, width=float("inf"),
+            allow_unicode=True,
+        ))
+    notes = team.notes.strip()
+    return "---\n" + "".join(lines) + "---\n" + (f"\n{notes}\n" if notes else "")

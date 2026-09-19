@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}{{ name or "New team" }} - Teams - specflo{% endblock %}
+{% macro problems(field) %}
+{% for problem in field_errors.get(field, []) %}
+<p class="error" data-field="{{ field }}">{{ problem }}</p>
+{% endfor %}
+{% endmacro %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a> / <a href="{{ pool_path }}">Pool</a> / <a href="{{ teams_path }}">Teams</a></p>
+<h1>{% if name is none %}New team{% else %}Team {{ name }}{% endif %}</h1>
+{% if errors or field_errors %}
+<section id="refused">
+  <p class="error">Nothing was saved: the pool directory would not stand with this team. The file is as it was.</p>
+  {% if errors %}
+  <ul class="errors">
+    {% for error in errors %}
+    <li class="error">{{ error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+<form method="post" action="{{ team_save_url(name) }}">
+  <input type="hidden" name="session" value="{{ session }}">
+  <fieldset>
+    <legend>What the team is</legend>
+    {% if name is none %}
+    <label>Name, which is the file's name and what a request asks for the team by
+      <input type="text" name="name" value="{{ values.name }}" required>
+    </label>
+    {{ problems("name") }}
+    {% endif %}
+    <label>Roles, one role to a line: its name, the pool its leases come from, and how many of them it takes, such as "critic critics 1"
+      <textarea name="roles" rows="8" cols="60">{{ values.roles }}</textarea>
+    </label>
+    {{ problems("roles") }}
+  </fieldset>
+  <fieldset>
+    <legend>Notes for whoever leads the team, which are the body of the file</legend>
+    <textarea name="notes" rows="12" cols="90">{{ values.notes }}</textarea>
+  </fieldset>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

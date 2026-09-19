@@ -3,7 +3,7 @@
 The templates are scanned as text, so a control added later shows up here
 before it ships: the mutating controls are exactly start project, send
 message, take gate, start agent and, on the pool pages, release lease and
-save and delete definition, each behind the session secret; the sign-in form is the front door, not a control on the workflow. The chat
+save and delete definition and team, each behind the session secret; the sign-in form is the front door, not a control on the workflow. The chat
 routes are async handlers and the stream's request timeout is lifted past
 htmx 4's default, since a turn can outlast it. The transcript template
 renders author, time and text per entry inside the monospace region.
@@ -27,6 +27,8 @@ CONTROLS = {
     "release lease": "release_url(",
     "save definition": "definition_save_url(",
     "delete definition": "definition_delete_url(",
+    "save team": "team_save_url(",
+    "delete team": "team_delete_url(",
 }
 FRONT_DOOR = "signin_path"
 # htmx 4 aborts a request after this many milliseconds unless told otherwise.
