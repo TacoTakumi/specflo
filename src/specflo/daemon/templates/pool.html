@@ -3,10 +3,13 @@
 {% block content %}
 <p class="crumbs"><a href="{{ home_path }}">Products</a></p>
 <h1>Pool</h1>
+{% if identity == "developer" %}
+<p class="manage"><a href="{{ definitions_path }}">Agent definitions</a></p>
+{% endif %}
 {% if view is none and errors %}
 <section id="pool-errors">
   <h2>The pool is off</h2>
-  <p class="error">The pool configuration on this daemon is not valid. Correct what follows and start the daemon again.</p>
+  <p class="error">The pool configuration on this daemon is not valid. Correct what follows, then run `specflo serve pool reload`.</p>
   <ul class="errors">
     {% for error in errors %}
     <li class="error">{{ error }}</li>

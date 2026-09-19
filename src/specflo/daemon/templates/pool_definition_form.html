@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}{{ name or "New definition" }} - Agent definitions - specflo{% endblock %}
+{% macro problems(field) %}
+{% for problem in field_errors.get(field, []) %}
+<p class="error" data-field="{{ field }}">{{ problem }}</p>
+{% endfor %}
+{% endmacro %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a> / <a href="{{ pool_path }}">Pool</a> / <a href="{{ definitions_path }}">Agent definitions</a></p>
+<h1>{% if name is none %}New definition{% else %}Definition {{ name }}{% endif %}</h1>
+{% if errors or field_errors %}
+<section id="refused">
+  <p class="error">Nothing was saved: the pool directory would not stand with this definition. The file is as it was.</p>
+  {% if errors %}
+  <ul class="errors">
+    {% for error in errors %}
+    <li class="error">{{ error }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+<form method="post" action="{{ definition_save_url(name) }}">
+  <input type="hidden" name="session" value="{{ session }}">
+  <fieldset>
+    <legend>What the role is</legend>
+    {% if name is none %}
+    <label>Name, which is the file's name and what a pool binds
+      <input type="text" name="name" value="{{ values.name }}" required>
+    </label>
+    {{ problems("name") }}
+    {% endif %}
+    <label>Role, in one line
+      <input type="text" name="role" value="{{ values.role }}" size="80">
+    </label>
+    {{ problems("role") }}
+    <label>Egress, the most open class the role accepts
+      <select name="egress">
+        {% for class in egress_classes %}
+        <option value="{{ class }}"{% if class == values.egress %} selected{% endif %}>{{ class }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    {{ problems("egress") }}
+    <label>
+      <input type="checkbox" name="project_context"{% if values.project_context %} checked{% endif %}>
+      Give the role the project's context files
+    </label>
+    {{ problems("project_context") }}
+  </fieldset>
+  <fieldset>
+    <legend>What the role may use, one item to a line</legend>
+    {% for field in list_fields %}
+    <label>{{ field }}
+      <textarea name="{{ field }}" rows="4" cols="40">{{ values[field] }}</textarea>
+    </label>
+    {{ problems(field) }}
+    {% endfor %}
+  </fieldset>
+  <fieldset>
+    <legend>The system prompt, which is the body of the file</legend>
+    <textarea name="prompt" rows="20" cols="90">{{ values.prompt }}</textarea>
+    {{ problems(body_field) }}
+  </fieldset>
+  <button type="submit">Save</button>
+</form>
+{% endblock %}

@@ -28,7 +28,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, quote
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -73,6 +73,13 @@ AGENT_STATUS_TARGET = "#agent-status"
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
 # The agent pool's page; its routes live in the pool_web module.
 POOL_PATH = "/pool"
+# The developer's pages for the agent definitions of the pool directory; their
+# routes live in the pool_manage module. A new definition is posted to the
+# list's own path, so no name a definition can carry is taken by a route.
+DEFINITIONS_PATH = POOL_PATH + "/definitions"
+NEW_DEFINITION_PATH = DEFINITIONS_PATH + "/new"
+EDIT_DEFINITION_PATH = DEFINITIONS_PATH + "/{name}/edit"
+DELETE_DEFINITION_PATH = DEFINITIONS_PATH + "/{name}/delete"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
@@ -111,6 +118,14 @@ _templates.globals.update(
     line_label=lambda entry: entry.kind if entry.kind == chat.STATE_KIND else entry.author,
     attention_banner=lambda kind: ATTENTION_BANNER.format(kind=kind),
     start_project_url=lambda slug, item_id: START_PROJECT_PATH.format(slug=slug, item_id=item_id),
+    definitions_path=DEFINITIONS_PATH,
+    new_definition_path=NEW_DEFINITION_PATH,
+    definition_url=lambda name: EDIT_DEFINITION_PATH.format(name=quote(name, safe="")),
+    # Where the form of the definition *name* posts; of a new one, with no name yet.
+    definition_save_url=lambda name: (
+        DEFINITIONS_PATH if name is None else EDIT_DEFINITION_PATH.format(name=quote(name, safe=""))
+    ),
+    definition_delete_url=lambda name: DELETE_DEFINITION_PATH.format(name=quote(name, safe="")),
 )
 
 
@@ -812,5 +827,9 @@ def install(app: FastAPI) -> None:
     from . import pool_web
 
     app.include_router(pool_web.pages)
+    # The management pages of the pool directory, imported here for the same reason.
+    from . import pool_manage
+
+    app.include_router(pool_manage.pages)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")

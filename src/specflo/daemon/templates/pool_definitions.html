@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}Agent definitions - specflo{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a> / <a href="{{ pool_path }}">Pool</a></p>
+<h1>Agent definitions</h1>
+{% if rows is none %}
+<p class="empty">{{ no_pool }}</p>
+{% else %}
+{% if refused %}
+<section id="refused">
+  <p class="error">{{ refused }}</p>
+  {% if refused_faults %}
+  <ul class="errors">
+    {% for fault in refused_faults %}
+    <li class="error">{{ fault }}</li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+{% endif %}
+{% if faults %}
+<section id="directory-faults">
+  <h2>The pool directory has faults</h2>
+  <p class="error">A save is refused while a fault stands, unless it is the save that mends it.</p>
+  <ul class="errors">
+    {% for fault in faults %}
+    <li class="error">{{ fault }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% elif reload_faults %}
+<section id="reload-faults">
+  <h2>The last reload was refused</h2>
+  <p class="error">The running pool is as it was before it. The files stand now; a save reloads them.</p>
+  <ul class="errors">
+    {% for fault in reload_faults %}
+    <li class="error">{{ fault }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+<section id="definitions">
+  <p>Each definition is one markdown file in the pool directory. The files are the source of truth: a save here writes the file an admin edits by hand, and a hand edit shows here on the next read.</p>
+  <p><a href="{{ new_definition_path }}">New definition</a></p>
+  {% if rows %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Definition</th>
+        <th scope="col">Role</th>
+        <th scope="col">Egress</th>
+        <th scope="col">Bound by</th>
+        <th scope="col"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr data-definition="{{ row.name }}">
+        {% if row.definition %}
+        <td><a href="{{ definition_url(row.name) }}">{{ row.name }}</a></td>
+        <td>{{ row.definition.role }}</td>
+        <td>{{ row.definition.egress }}</td>
+        {% else %}
+        <td>{{ row.name }}</td>
+        <td class="error" colspan="2">{{ row.fault }}</td>
+        {% endif %}
+        <td>{{ row.pools | join(", ") }}</td>
+        <td>
+          <form method="post" action="{{ definition_delete_url(row.name) }}">
+            <input type="hidden" name="session" value="{{ session }}">
+            <button type="submit">Delete</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No definition file is in the pool directory.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

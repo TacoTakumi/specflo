@@ -143,3 +143,30 @@ def _string_list(path: Path, key: str, value: object) -> tuple[str, ...]:
     if not isinstance(value, list) or not all(isinstance(item, str) and item for item in value):
         raise DefinitionError(path, key, "must be a list of strings.")
     return tuple(value)
+
+
+def serialise_definition(definition: AgentDefinition) -> str:
+    """The markdown file of *definition*, as an admin writes one by hand.
+
+    The keys stand in the order of ``FIELDS``, a list on one line in brackets.
+    A list with nothing in it is left out, and so is ``project_context`` unless
+    it is true; the egress class is always written, since it is what a reader
+    looks for first. What comes back from ``parse_definition`` is *definition*.
+    """
+    values = {"role": definition.role}
+    values.update({key: list(getattr(definition, key)) for key in LIST_FIELDS})
+    values["egress"] = definition.egress
+    values["project_context"] = definition.project_context
+    lines = []
+    for key in FIELDS:
+        value = values[key]
+        if value == [] or value is False:
+            continue
+        # One key to a call, so that every key is one line of a block mapping:
+        # a list goes in brackets, and a value YAML would read as something
+        # else, or as a comment, is quoted.
+        lines.append(yaml.safe_dump(
+            {key: value}, default_flow_style=None if isinstance(value, list) else False,
+            width=float("inf"), allow_unicode=True,
+        ))
+    return "---\n" + "".join(lines) + "---\n\n" + definition.prompt.strip() + "\n"
