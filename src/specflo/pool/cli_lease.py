@@ -7,6 +7,10 @@ and tells the orchestrator the lease id and the name of the agent to drive.
 The token is a credential: it is written for this user alone and never
 printed.
 
+The token is also what makes a lease this checkout's. The listing shows the
+daemon the tokens kept here and prints the leases they hold, and a release
+presents the token of the lease it names; the file goes when the lease has.
+
 The command declarations are in the top-level CLI module, which every specflo
 command loads; each one calls into this module when it runs. What this module
 needs of the rest of specflo it imports when a verb runs, and it imports none
@@ -71,6 +75,81 @@ def request(
         f"Drive it with `specflo agent prompt {grant.agent} <text>`;"
         f" its token is kept in {_shown(token_path, root)}."
     )
+
+
+def release(
+    root: Path, lease_id: str, *, remote: str | None = None, json_output: bool = False
+) -> None:
+    """Give the lease *lease_id* back, forget its token, and print how it ended.
+
+    The token is looked for among those kept under the checkout *root*. With
+    none for this lease the daemon is asked all the same: a lease that has
+    ended is reported as it ended, and one that is active is another's, which
+    the daemon refuses.
+    """
+    from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
+
+    registered = pick_remote(root, remote)
+    client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
+    kept = next(
+        (path for path, lease in held_leases(root, client) if lease.lease_id == lease_id), None
+    )
+    ended = client.release(lease_id, token=None if kept is None else _token(kept))
+    if kept is not None and ended.held:
+        # The lease is over, so what proved its holder opens nothing now.
+        kept.unlink(missing_ok=True)
+    if json_output:
+        typer.echo(json.dumps({"lease": ended.lease_id, "state": ended.state}))
+        return
+    typer.echo(f"Lease {ended.lease_id} on remote '{registered.name}': {ended.state}.")
+
+
+def list_held(root: Path, *, remote: str | None = None, json_output: bool = False) -> None:
+    """Print the leases this checkout holds: those the tokens under *root* hold."""
+    from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
+
+    registered = pick_remote(root, remote)
+    client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
+    leases = [lease for _path, lease in held_leases(root, client)]
+    if json_output:
+        typer.echo(json.dumps([
+            {
+                "lease": lease.lease_id, "agent": lease.agent, "pool": lease.pool,
+                "state": lease.state, "acquired": lease.acquired,
+                "last_activity": lease.last_activity, "idle_limit": lease.idle_limit,
+            }
+            for lease in leases
+        ]))
+        return
+    if not leases:
+        typer.echo(f"No leases held from remote '{registered.name}'.")
+        return
+    for lease in leases:
+        typer.echo(
+            f"{lease.lease_id}  {lease.agent}  pool '{lease.pool}'  {lease.state}"
+            f"  acquired {lease.acquired}"
+        )
+
+
+def held_leases(root: Path, client) -> list[tuple[Path, object]]:
+    """Each token file under the checkout *root* that holds a lease on the
+    daemon behind *client*, with that lease. The daemon answers for the tokens
+    it is shown, so no other orchestrator's lease is among them."""
+    from ..agent import lease
+
+    paths = sorted((Path(root) / lease.TOKEN_DIR).glob("*.token"))
+    kept = [(path, token) for path in paths if (token := _token(path))]
+    if not kept:
+        return []
+    answered = client.held([token for _, token in kept])
+    return [(path, held) for (path, _), held in zip(kept, answered) if held is not None]
+
+
+def _token(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def pick_remote(root: Path, remote: str | None):

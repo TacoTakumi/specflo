@@ -3018,6 +3018,37 @@ def lease_request(
         raise _die(str(exc))
 
 
+@lease_app.command("release", epilog="Example: specflo lease release lease-4f2a9c0d1b7e3a55")
+def lease_release(
+    lease: str = typer.Argument(..., metavar="<lease>", help="The id of the lease to give back."),
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Give <lease> back to its pool; a lease that has ended already is reported as it ended."""
+    from .pool import cli_lease
+
+    root = _require_root()
+    try:
+        cli_lease.release(root, lease, remote=remote, json_output=json_output)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+
+@lease_app.command("list", epilog="Example: specflo lease list --json")
+def lease_list(
+    remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List the leases this checkout holds; another orchestrator's leases are never shown."""
+    from .pool import cli_lease
+
+    root = _require_root()
+    try:
+        cli_lease.list_held(root, remote=remote, json_output=json_output)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+
+
 def build_cli():
     """The specflo click command with agentsquire's skills group mounted.
 

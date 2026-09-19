@@ -231,6 +231,12 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "lease request", "group": "agents", "args": "<pool>",
      "summary": "Lease a member of a daemon's agent pool; prints the lease id and the "
                 "agent to drive with `agent` (--cwd, --idle-limit, --remote)."},
+    {"name": "lease release", "group": "agents", "args": "<lease>",
+     "summary": "Give a lease back to its pool; only its holder may, and a lease "
+                "that has ended is reported as it ended."},
+    {"name": "lease list", "group": "agents", "args": "",
+     "summary": "List the leases this checkout holds tokens for; no other "
+                "orchestrator's lease is shown (--remote, --json)."},
 ]
 
 

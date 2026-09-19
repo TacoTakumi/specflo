@@ -14,11 +14,18 @@ from __future__ import annotations
 
 import dataclasses
 
+from urllib.parse import quote
+
 from ..daemon.products import DaemonClient
 
 POOL_PATH = "/api/pool"
 # A lease is made by a POST here; the verbs on one lease live below it.
 LEASES_PATH = POOL_PATH + "/leases"
+# The leases held by the tokens a client presents. The tokens go in a body,
+# so the question is a POST: a credential is never part of a URL.
+HELD_PATH = LEASES_PATH + "/held"
+# What each pool has out, with no word of who holds it.
+STATUS_PATH = POOL_PATH + "/status"
 
 # How long a client waits for an answer, in seconds. A grant starts the
 # member's process before it answers, which the pool gives most of a minute.
@@ -34,6 +41,34 @@ class LeaseGrant:
     agent: str
     # The credential itself: it is stored for the agent verbs, never shown.
     token: str = dataclasses.field(repr=False)
+
+
+def release_path(lease_id: str) -> str:
+    """Where the lease *lease_id* is given back."""
+    return f"{LEASES_PATH}/{quote(lease_id, safe='')}/release"
+
+
+@dataclasses.dataclass(frozen=True)
+class HeldLease:
+    """A lease as its holder is told of it."""
+
+    lease_id: str
+    agent: str
+    pool: str
+    state: str
+    acquired: str
+    last_activity: str
+    # In seconds.
+    idle_limit: int
+
+
+@dataclasses.dataclass(frozen=True)
+class LeaseEnd:
+    """How a lease ended. ``held`` says the token presented was its holder's."""
+
+    lease_id: str
+    state: str
+    held: bool
 
 
 class RemotePool(DaemonClient):
@@ -61,3 +96,23 @@ class RemotePool(DaemonClient):
         return LeaseGrant(
             lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]
         )
+
+    def held(self, tokens: list[str]) -> list[HeldLease | None]:
+        """The lease each of *tokens* holds, in their order; None for a token
+        that holds none. The daemon answers for these tokens and no others."""
+        answered = self._request("POST", HELD_PATH, json={"tokens": list(tokens)})
+        return [None if lease is None else HeldLease(**lease) for lease in answered]
+
+    def release(self, lease_id: str, *, token: str | None = None) -> LeaseEnd:
+        """Give back the lease *lease_id*, as the holder *token* proves.
+
+        A lease that has ended already is reported as it ended, with or
+        without a token; an active one is ended for its holder only.
+        """
+        body = {} if token is None else {"token": token}
+        ended = self._request("POST", release_path(lease_id), json=body)
+        return LeaseEnd(lease_id=ended["lease_id"], state=ended["state"], held=ended["held"])
+
+    def status(self) -> list[dict]:
+        """Each pool's name, size and leases in use."""
+        return self._request("GET", STATUS_PATH)

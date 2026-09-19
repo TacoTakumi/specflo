@@ -15,6 +15,12 @@ A refusal from the pool is a 400 carrying its message. A member that does not
 start or stop is a 502: what the agent CLI said of it can name paths on this
 host, so that goes to the daemon's log and the response names the pool only.
 No route here carries anything a member wrote.
+
+A lease is its holder's, and the holder is whoever presents the lease token:
+the bearer token says which identity asks, not which orchestrator. So a
+release ends an active lease for that token only, and the listing answers for
+the tokens in its body and no others. What stands for a token in the store is
+its hash, and neither goes back in a response or into the audit record.
 """
 
 from __future__ import annotations
@@ -30,9 +36,9 @@ from ..errors import SpecfloError
 from ..pool.cli_admin import pool_dir
 from ..pool.config import load_pool_config
 from ..pool.runner import RunnerError
-from ..pool.service import PoolService
-from ..service.pool_remote import LEASES_PATH
-from .poolstore import open_pool_store
+from ..pool.service import PoolService, hash_token
+from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH
+from .poolstore import Lease, open_pool_store
 from .routes import audit, current_identity
 
 # The daemon's own credential on its members' hosts, kept under the root so
@@ -145,6 +151,13 @@ def _holder_label(identity: str, label: str | None) -> str:
     return f"{label} ({identity})"
 
 
+def _tokens(fields: dict, name: str) -> list[str]:
+    value = fields[name]
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise _invalid(f"Field {name!r} must be a list of strings.")
+    return value
+
+
 def _refused(exc: SpecfloError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
@@ -198,3 +211,99 @@ def lease_request(
     audit(request.app.state.root, identity, "lease_request", None, grant.lease_id)
     # The one time the token is sent: the store and the audit record hold no copy.
     return {"result": {"lease_id": grant.lease_id, "agent": grant.agent, "token": grant.token}}
+
+
+def _expire_due(service: PoolService) -> None:
+    """End the leases that are due before the pool's state is read. A member
+    that does not stop is the log's matter: its lease has ended all the same."""
+    try:
+        service.expire_due()
+    except RunnerError as exc:
+        _log.warning("an expired lease: %s", exc)
+
+
+def _holds(lease: Lease, token: str | None) -> bool:
+    """Is *token* the one issued when *lease* was granted?"""
+    return token is not None and secrets.compare_digest(hash_token(token), lease.holder_hash)
+
+
+def _held(lease: Lease) -> dict:
+    """A lease as its holder is told of it: nothing of the token, nor its hash."""
+    return {
+        "lease_id": lease.id, "agent": lease.member, "pool": lease.pool,
+        "state": lease.state, "acquired": lease.acquired,
+        "last_activity": lease.last_activity, "idle_limit": lease.idle_limit,
+    }
+
+
+@router.post(HELD_PATH)
+def leases_held(
+    body: dict = Body(default_factory=dict),
+    service: PoolService = Depends(pool_service),
+) -> dict:
+    """The lease each presented token holds, in the order of the tokens; null
+    for a token that holds none. A lease no presented token holds is not told."""
+    tokens = _tokens(_body(body, required=("tokens",)), "tokens")
+    _expire_due(service)
+    with service.open_store() as store:
+        leases = store.list_leases()
+    # A token is minted for one lease, so a hash names at most one.
+    by_holder = {lease.holder_hash: lease for lease in leases}
+    held = [by_holder.get(hash_token(token)) for token in tokens]
+    return {"result": [None if lease is None else _held(lease) for lease in held]}
+
+
+@router.post(LEASES_PATH + "/{lease_id}/release")
+def lease_release(
+    lease_id: str,
+    request: Request,
+    body: dict = Body(default_factory=dict),
+    identity: str = Depends(current_identity),
+    service: PoolService = Depends(pool_service),
+) -> dict:
+    """End the lease for the holder its token proves; an ended lease is
+    reported as it ended to whoever asks, and nothing changes."""
+    token = _text(_body(body, required=(), optional=("token",)), "token")
+    _expire_due(service)
+    with service.open_store() as store:
+        lease = store.get_lease(lease_id)
+    if lease is None:
+        raise HTTPException(status_code=400, detail=f"There is no lease '{lease_id}'.")
+    held = _holds(lease, token)
+    if lease.state != "active":
+        return {"result": {"lease_id": lease.id, "state": lease.state, "held": held}}
+    if not held:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Lease '{lease_id}' is held by another; only its holder releases it.",
+        )
+    try:
+        ended = service.end_lease(lease_id, "released")
+    except RunnerError as exc:
+        # The lease has ended all the same, and this identity ended it.
+        audit(request.app.state.root, identity, "lease_release", None, lease_id)
+        raise _member_failed(lease.pool, exc)
+    except SpecfloError as exc:
+        raise _refused(exc)
+    # A lease that ended some other way in between was not released by this call.
+    if ended.state == "released":
+        audit(request.app.state.root, identity, "lease_release", None, lease_id)
+    return {"result": {"lease_id": lease_id, "state": ended.state, "held": True}}
+
+
+# --- the pool's state ---------------------------------------------------------
+
+
+@router.get(STATUS_PATH)
+def pool_status(service: PoolService = Depends(pool_service)) -> dict:
+    """Each pool's size and how many of its leases are out; no lease is named
+    and no holder."""
+    _expire_due(service)
+    with service.open_store() as store:
+        return {"result": [
+            {
+                "name": pool.name, "size": pool.size,
+                "in_use": len(store.list_leases(state="active", pool=pool.name)),
+            }
+            for pool in service.config.pools
+        ]}
