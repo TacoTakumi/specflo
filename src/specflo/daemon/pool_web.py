@@ -1,7 +1,7 @@
 """The pool page: what the daemon's agent pool holds now, for a signed-in browser.
 
-The page is read by the requester and the developer alike, and it changes
-nothing. It shows each pool with its size, the leases out of it and the
+The page is read by the requester and the developer alike, and reading it
+changes nothing. It shows each pool with its size, the leases out of it and the
 requests that wait; each member with its state, what backs it and the model
 reloads seen on it; each lease with its holder, how long it has been idle and
 how long it has left; each provider account with its figures; what the project
@@ -26,6 +26,13 @@ and its holder by the label the request gave.
 
 With a pool configuration that did not stand, the page lists the faults and
 nothing else of the pool; on a root that declares no pool it says so.
+
+One control changes the pool: the developer's page, and no other, has on each
+active lease a form that releases it, and the whole team of a member lease of
+one. Its route runs the session-secret guard first, as every mutating route of
+the web UI does, then refuses any identity but the developer's; the lease ends
+through the service's one function that ends a lease, with the developer as
+the cause, and the release is audited. Nothing else on the page has a control.
 """
 
 from __future__ import annotations
@@ -33,15 +40,21 @@ from __future__ import annotations
 import dataclasses
 import logging
 from datetime import timedelta
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, Response
+from fastapi.responses import RedirectResponse
+from starlette.concurrency import run_in_threadpool
 
-from ..pool import accounts, console, expiry, ledger, runner
+from ..pool import accounts, console, expiry, ledger, runner, teamlease
 from ..pool import config as pool_config
 from ..pool.runner import RunnerError
-from ..pool.service import PoolService
+from ..pool.service import PoolService, UnknownLease
 from . import poolstore
-from .web import POOL_PATH, current_session, render
+from .routes import audit
+from .web import (
+    POOL_PATH, current_session, form_fields, render, session_refused, session_secret,
+)
 
 # How many of the latest transitions the page lists.
 RECENT_TRANSITIONS = 20
@@ -51,6 +64,12 @@ IDLE = "idle"
 LEASED = "leased"
 
 NO_POOL = "No pool is configured on this daemon."
+
+# The route of the control that releases a lease, the one identity that is
+# shown it and may post it, and the cause its transition records.
+RELEASE_PATH = POOL_PATH + "/leases/{lease_id}/release"
+RELEASER = "developer"
+RELEASED_BY_DEVELOPER = "released by developer"
 
 _log = logging.getLogger(__name__)
 
@@ -124,6 +143,11 @@ class PoolView:
     transitions: list[poolstore.Transition]
     reload_data: bool
 
+    @property
+    def releases(self) -> bool:
+        """Whether the viewer is shown the control that releases a lease."""
+        return self.viewer == RELEASER
+
 
 def span(delta: timedelta) -> str:
     """*delta* in hours, minutes and seconds, "1h 5m" or "45s"; nothing below zero."""
@@ -154,6 +178,11 @@ def cause_shown(cause: str) -> str:
     """
     head, cut, _ = cause.partition(": ")
     return f"{head} (the daemon's log has the detail)" if cut else head
+
+
+def release_url(lease_id: str) -> str:
+    """Where the control on the lease *lease_id* posts."""
+    return RELEASE_PATH.format(lease_id=quote(lease_id, safe=""))
 
 
 def _taken(holding, kind: str, name: str) -> int:
@@ -258,5 +287,80 @@ def pool_page(request: Request, identity: str = Depends(current_session)) -> Res
     _expire_due(service)
     return render(
         "pool.html", identity=identity, view=pool_view(service, identity), limit=limit,
-        amount=amount, cause_shown=cause_shown,
+        amount=amount, cause_shown=cause_shown, release_url=release_url,
+        session=session_secret(request),
     )
+
+
+def _release(service: PoolService, lease_id: str) -> str | None:
+    """Release the lease *lease_id* as the developer, and the whole team of a
+    member lease of one: the id the release is audited under, the team lease's
+    for a team, or None when nothing was there to release.
+
+    Which leases are a team's is read from the store, never from the form. A
+    lease that has ended is left as it ended. Raises ``UnknownLease`` for an id
+    that names no lease. A member that does not stop is the log's matter: its
+    lease has ended all the same, and the developer ended it.
+    """
+    _expire_due(service)
+    with service.open_store() as store:
+        lease = store.get_lease(lease_id)
+    if lease is None:
+        raise UnknownLease(f"There is no lease '{lease_id}'.")
+    if lease.state != ledger.ACTIVE:
+        return None
+    target, lease_ids = lease.id, [lease.id]
+    if lease.team_lease_id:
+        target = lease.team_lease_id
+        lease_ids = [member.id for member in teamlease.team_leases(service, target)]
+    try:
+        ended = teamlease.end_members(
+            service, lease_ids, "released", cause=RELEASED_BY_DEVELOPER
+        )
+    except RunnerError as exc:
+        _log.warning("a lease released by %s: %s", RELEASER, exc)
+        return target
+    # A lease that ended some other way in between was not released by this post.
+    mine = [end for end in ended if (end.state, end.cause) == ("released", RELEASED_BY_DEVELOPER)]
+    return target if mine else None
+
+
+@pages.post(RELEASE_PATH, include_in_schema=False)
+async def release_lease(
+    request: Request, lease_id: str, identity: str = Depends(current_session)
+) -> Response:
+    """End the lease *lease_id* for the developer, and come back to the page.
+
+    The form echoes the session secret; a post without it is refused before
+    anything is read, and then any identity but the developer's. The lease
+    ends through the service's one function that ends a lease, as the release
+    verb's does, with the developer as the cause, and the release is audited
+    like one over the API. What a runner said of a member that did not stop
+    is not shown: it can name paths on this host and repeat a member's output.
+    """
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
+    if identity != RELEASER:
+        return render(
+            "error.html", status_code=403, identity=identity,
+            message=f"A lease is released from this page by the {RELEASER} identity only, "
+            f"and this session is the {identity} identity's.",
+        )
+    service = getattr(request.app.state, "pool", None)
+    if service is None:
+        return render(
+            "error.html", status_code=409, identity=identity,
+            message="The pool is off on this daemon: there is no lease to release.",
+        )
+    try:
+        released = await run_in_threadpool(_release, service, lease_id)
+    except UnknownLease:
+        return render(
+            "missing.html", status_code=404, identity=identity,
+            message=f"No lease {lease_id!r}.",
+        )
+    if released is not None:
+        audit(request.app.state.root, identity, "lease_release", None, released)
+    return RedirectResponse(POOL_PATH, status_code=303)

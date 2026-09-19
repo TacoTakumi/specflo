@@ -2,7 +2,8 @@
 
 The templates are scanned as text, so a control added later shows up here
 before it ships: the mutating controls are exactly start project, send
-message, take gate and start agent, each behind the session secret; the
+message, take gate, start agent and, on the pool page, release lease, each
+behind the session secret; the
 sign-in form is the front door, not a control on the workflow. The chat
 routes are async handlers and the stream's request timeout is lifted past
 htmx 4's default, since a turn can outlast it. The transcript template
@@ -18,12 +19,13 @@ from specflo.daemon import web
 
 TEMPLATES = sorted(web.TEMPLATES_DIR.glob("*.html"))
 
-# The four controls, by the URL helper each form posts to.
+# The controls, by the URL helper each form posts to.
 CONTROLS = {
     "start project": "start_project_url(",
     "send message": "chat_url(",
     "take gate": "take_url(",
     "start agent": "start_agent_url(",
+    "release lease": "release_url(",
 }
 FRONT_DOOR = "signin_path"
 # htmx 4 aborts a request after this many milliseconds unless told otherwise.
@@ -37,7 +39,7 @@ def forms(text):
     return re.findall(r"(<form[^>]*>)(.*?)</form>", text, re.S)
 
 
-def test_the_mutating_controls_are_exactly_the_four_and_the_front_door():
+def test_the_mutating_controls_are_exactly_the_listed_ones_and_the_front_door():
     seen = {}
     for path in TEMPLATES:
         for tag, body in forms(path.read_text()):

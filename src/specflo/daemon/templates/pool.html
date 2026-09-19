@@ -128,6 +128,7 @@
         <th scope="col">State</th>
         <th scope="col">Idle</th>
         <th scope="col">Expires in</th>
+        {% if view.releases %}<th scope="col">Release</th>{% endif %}
       </tr>
     </thead>
     <tbody>
@@ -142,6 +143,14 @@
         <td>{{ row.lease.state }}</td>
         <td>{{ row.idle }}</td>
         <td>{{ row.to_expiry }}</td>
+        {% if view.releases %}
+        <td>
+          <form method="post" action="{{ release_url(row.lease.id) }}">
+            <input type="hidden" name="session" value="{{ session }}">
+            <button type="submit">Release{% if row.lease.team_lease_id %} the team{% endif %}</button>
+          </form>
+        </td>
+        {% endif %}
       </tr>
       {% endfor %}
     </tbody>

@@ -413,10 +413,10 @@ def test_the_navigation_links_the_page_for_a_signed_in_identity_only(tmp_path):
     assert link in re.search(r"<header>(.*?)</header>", home.text, re.S).group(1)
 
 
-def test_the_page_adds_no_route_that_changes_the_pool():
+def test_the_only_route_that_changes_the_pool_is_the_release_of_a_lease():
     routes = {route.path: route.methods for route in pool_web.pages.routes}
 
-    assert routes == {POOL_PAGE: {"GET"}}
+    assert routes == {POOL_PAGE: {"GET"}, pool_web.RELEASE_PATH: {"POST"}}
     assert web.POOL_PATH == POOL_PAGE
 
 
