@@ -22,6 +22,11 @@ Scenario keys:
   ignore_abort    bool - acknowledge abort but never settle the run
   tool            {"name": ..., "args": {...}} - emit one tool_execution
                   start/end pair before the reply
+  recall          bool - keep the session's prompt messages and append the
+                  earlier ones to each reply; new_session is then answered
+                  and forgets them (without it new_session is unhandled)
+  cancel_new_session  bool - with recall: answer new_session as cancelled
+                      by an extension, forgetting nothing
 
 The stub is the spec-sanctioned test double for pi (spec In scope); it mirrors
 the real event shapes from pi docs/rpc.md: a correlated "response" per command,
@@ -67,6 +72,7 @@ class Stub:
         self.frames: Iterator[Any] = self._captured_frames()
         self.run_open = False
         self.last_text: str | None = None
+        self.heard: list[str] = []  # this session's prompt messages ("recall")
 
     def _captured_frames(self) -> Iterator[Any]:
         for frame in read_frames(sys.stdin.buffer):
@@ -166,7 +172,22 @@ class Stub:
             return
         if self.mode == "dialog":
             self.run_dialogs()
-        self.settle_run(self.reply)
+        self.settle_run(self.recalling(cmd))
+
+    def recalling(self, cmd: dict) -> str:
+        """The reply, with what this session was told before under "recall"."""
+        if not self.scenario.get("recall"):
+            return self.reply
+        earlier = "; ".join(self.heard) or "nothing"
+        self.heard.append(str(cmd.get("message")))
+        return f"{self.reply} [recalls: {earlier}]"
+
+    def handle_new_session(self, cmd: dict) -> None:
+        cancelled = bool(self.scenario.get("cancel_new_session"))
+        if not cancelled:
+            self.heard.clear()
+            self.last_text = None
+        respond(cmd, "new_session", data={"cancelled": cancelled})
 
     def main(self) -> None:
         for cmd in self.frames:
@@ -185,6 +206,8 @@ class Stub:
                 )
             elif ctype == "extension_ui_response":
                 pass  # stale/unsolicited; ignore like pi does
+            elif ctype == "new_session" and self.scenario.get("recall"):
+                self.handle_new_session(cmd)
             else:
                 respond(cmd, str(ctype), success=False, error="stub: unhandled command")
 

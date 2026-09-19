@@ -11,9 +11,10 @@ Exit codes (REQ-08), consistent across every verb:
     1 generic error.
 
 Under a pool lease the verbs that reach a member (prompt, wait, last, log,
-status, stop) present the holder's token, found by ``specflo.agent.lease``.
-Without the right token they exit 1 and show nothing of the member; once the
-lease has ended and its host is gone they exit 12 naming the cause.
+status, reset, stop) present the holder's token, found by
+``specflo.agent.lease``. Without the right token they exit 1 and show nothing
+of the member; once the lease has ended and its host is gone they exit 12
+naming the cause.
 
 Imports nothing from specflo pipeline code (REQ-15) - only the agent
 subsystem and typer.
@@ -622,6 +623,45 @@ def last(
     """Print the most recent final assistant text."""
     with _connect_or_exit(name, lease.find_token(name, lease_token)) as client:
         _print_last_text(client, name)
+
+
+@agent_app.command(epilog=f"Example: specflo agent reset builder\n\n{EXIT_CODES_HELP}")
+def reset(
+    name: str = typer.Argument(help="Agent name."),
+    lease_token: Optional[str] = _LEASE_TOKEN_OPTION,
+) -> None:
+    """Clear the agent's conversation context in place (pi new_session).
+
+    The pi process, its working directory, its model and the prompt it was
+    started with all stay; only what it was told since is gone.
+    """
+    token = lease.find_token(name, lease_token)
+    with _connect_or_exit(name, token) as client:
+        status = _status_or_exit(client, name, token)
+        if status["state"] in ("exited", "stopped"):
+            typer.echo(
+                f"Error: agent '{name}' is {status['state']}; pi is not running",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_UNREACHABLE)
+        if status["state"] == "working":
+            typer.echo(
+                f"Error: agent '{name}' is busy (working); "
+                "wait for the run to settle before a reset",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_BUSY)
+        response = client.request({"type": "new_session"}, timeout=10.0)
+        if not response.get("success"):
+            _exit_failed(name, "reset refused", response, EXIT_GENERIC)
+        if (response.get("data") or {}).get("cancelled"):
+            typer.echo(
+                f"Error: reset of agent '{name}' was cancelled by a pi extension; "
+                "its context is kept",
+                err=True,
+            )
+            raise typer.Exit(code=EXIT_GENERIC)
+    typer.echo(f"reset agent '{name}'")
 
 
 @agent_app.command(epilog=f"Example: specflo agent stop builder\n\n{EXIT_CODES_HELP}")

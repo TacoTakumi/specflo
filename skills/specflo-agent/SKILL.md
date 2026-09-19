@@ -33,6 +33,9 @@ specflo feature request, not a workaround to script.
 - `specflo agent last <name>` - the most recent final assistant text.
 - `specflo agent log <name> [--follow]` - the agent's event log; `--follow`
   streams.
+- `specflo agent reset <name>` - start a new pi session in the same process:
+  the context is cleared, the process and its launch flags are kept. Exit 10
+  while the agent is working.
 - `specflo agent stop <name> [--timeout S]` - stop follows ownership: an rpc
   agent gets the graceful host stop (abort, terminate, logs retained); a
   managed tui agent gets SIGTERM and the extension cleans up; an adopted

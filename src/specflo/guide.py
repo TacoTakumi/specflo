@@ -218,6 +218,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Print the most recent final assistant text."},
     {"name": "agent log", "group": "agents", "args": "<name>",
      "summary": "Print the agent's event log; --follow streams new events."},
+    {"name": "agent reset", "group": "agents", "args": "<name>",
+     "summary": "Clear the agent's conversation context in place (pi "
+                "new_session); under a lease only the holder may."},
     {"name": "agent stop", "group": "agents", "args": "<name>",
      "summary": "Gracefully stop an agent: abort its run, terminate pi, "
                 "then the host."},
