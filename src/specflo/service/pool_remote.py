@@ -82,13 +82,15 @@ class RemotePool(DaemonClient):
         idle_limit: int | None = None,
         label: str | None = None,
         wait: int | None = None,
+        egress: str | None = None,
     ) -> LeaseGrant:
         """Ask for a member of *pool*, to run in *cwd* on the daemon's host.
 
         *idle_limit* is in seconds; without one the pool's default applies.
         *label* is what the pool shows a person as the holder. *wait* is how
         many seconds the request may wait for a full pool; without one it is
-        refused at once.
+        refused at once. *egress* is the most open egress class of member the
+        request takes; without one the pool's default applies.
         """
         body: dict = {"pool": pool, "cwd": cwd}
         if idle_limit is not None:
@@ -97,6 +99,8 @@ class RemotePool(DaemonClient):
             body["label"] = label
         if wait is not None:
             body["wait"] = wait
+        if egress is not None:
+            body["egress"] = egress
         granted = self._request("POST", LEASES_PATH, json=body)
         return LeaseGrant(
             lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]

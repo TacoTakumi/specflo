@@ -3007,6 +3007,11 @@ def lease_request(
         help="How long to wait for a full pool, in seconds; a full pool is refused at once"
         " otherwise.",
     ),
+    egress: str = typer.Option(
+        None, "--egress", metavar="<class>",
+        help="The most open class of member to take: local, no-train or open; no-train"
+        " otherwise. The pool's definition may accept less, and that stands.",
+    ),
     remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
@@ -3017,7 +3022,7 @@ def lease_request(
     try:
         cli_lease.request(
             root, pool, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
-            remote=remote, json_output=json_output,
+            egress=egress, remote=remote, json_output=json_output,
         )
     except SpecfloError as exc:
         raise _die(str(exc))

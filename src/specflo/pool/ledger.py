@@ -18,6 +18,11 @@ slot of the account too, and an account that two pools' members share is
 counted once, as a shared member is. A local member runs through no account
 and takes no slot of one.
 
+A request also says which egress classes of member it accepts, and a member
+of another class is not there for it: a free one is passed over and a busy
+one is not waited for. A pool with no member of an accepted class has no room
+to wait for, which is another refusal than a full pool's.
+
 A member of capacity above 1 serves that many leases at once, and one agent
 name runs one process, so each of them runs under a name of its own. The
 first is the member's name. The further ones are the member's name with a
@@ -57,11 +62,20 @@ class NoRoom(SpecfloError):
     """A request that does not fit now; the message names what is full."""
 
 
+class NoMemberAllowed(SpecfloError):
+    """A request that no lease ending would make fit: every member of its pool
+    is of an egress class it does not accept. The message names the classes."""
+
+
 @dataclass(frozen=True)
 class Request:
-    """What is asked for: one member of the pool named."""
+    """What is asked for: one member of the pool named, of one of the egress
+    classes named. With no classes named a member of any class will do; the
+    pool service works out which classes a request accepts and always names
+    them."""
 
     pool: str
+    egress: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -77,25 +91,39 @@ class Placement:
 def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Placement:
     """Where *request* fits, given the *leases* that are out.
 
-    The member is the first the pool lists, in its order, that serves fewer
-    leases than its capacity and, if it is hosted, whose account has fewer
-    leases out than its cap, in whichever pools. *leases* may hold rows that
-    have ended; they count for nothing.
+    The member is the first the pool lists, in its order, that is of a class
+    the request accepts, serves fewer leases than its capacity and, if it is
+    hosted, whose account has fewer leases out than its cap, in whichever
+    pools. A member of another class is passed over however free it is.
+    *leases* may hold rows that have ended; they count for nothing.
 
     Raises ``NoRoom`` for a pool that is not declared, a pool with as many
     leases out as its size, and a pool whose members are all full or kept by
-    a full account, which it names.
+    a full account, which it names. Raises ``NoMemberAllowed`` instead, and
+    before anything is counted, for a pool with no member of a class the
+    request accepts: that is not a matter of room.
     """
     pool = next((p for p in config.pools if p.name == request.pool), None)
     if pool is None:
         raise NoRoom(f"pool '{request.pool}' is not declared.")
+    members = {member.name: member for member in config.members}
+    accepted = [
+        name for name in pool.members
+        if request.egress is None or members[name].egress in request.egress
+    ]
+    if not accepted:
+        raise NoMemberAllowed(
+            f"pool '{pool.name}' has no member of an egress class the request accepts, "
+            + ", ".join(f"'{name}'" for name in request.egress) + ": "
+            + ", ".join(f"'{name}' is class '{members[name].egress}'" for name in pool.members)
+            + "."
+        )
     out = [lease for lease in leases if lease.state == ACTIVE]
     if _taken(out, POOL, pool.name) >= pool.size:
         raise NoRoom(f"pool '{pool.name}' is full: all {pool.size} of its leases are out.")
-    members = {member.name: member for member in config.members}
     accounts = {account.name: account for account in config.accounts}
     full: dict[str, int] = {}  # the accounts that keep a member with room, and their caps
-    for name in pool.members:
+    for name in accepted:
         member = members[name]
         if _taken(out, MEMBER, name) >= member.capacity:
             continue
@@ -110,7 +138,8 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
         if agent != name:
             resources.append(Resource(AGENT, agent))
         return Placement(member=member, agent=agent, resources=tuple(resources))
-    listed = ", ".join(f"'{name}'" for name in pool.members)
+    # Only the members the request may have: the others are not what it waits for.
+    listed = ", ".join(f"'{name}'" for name in accepted)
     if full:
         kept = ", ".join(
             f"account '{name}' is full: all {cap} of its leases are out"

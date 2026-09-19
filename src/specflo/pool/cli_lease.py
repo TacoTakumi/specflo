@@ -41,6 +41,7 @@ def request(
     idle_limit: str | None = None,
     label: str | None = None,
     wait: int = 0,
+    egress: str | None = None,
     remote: str | None = None,
     json_output: bool = False,
 ) -> None:
@@ -50,7 +51,10 @@ def request(
     *root* is the checkout the orchestrator works in. *wait* is how many
     seconds the request may wait on the daemon for a full pool; when they
     pass, the daemon's refusal names what the pool is full of. With none a
-    full pool is refused at once. Raises ``SpecfloError`` with the words to
+    full pool is refused at once. *egress* is the most open egress class of
+    member the request takes; the daemon knows the classes, applies no-train
+    without one, and refuses at once a pool with no member under it, however
+    long the request may wait. Raises ``SpecfloError`` with the words to
     print for anything that is refused, here or on the daemon.
     """
     # A checkout with no daemon is refused before anything else is looked at.
@@ -64,7 +68,7 @@ def request(
     grant = client.request(
         pool, cwd=str(directory), idle_limit=seconds,
         label=label if label is not None else Path(root).name,
-        wait=wait or None,
+        wait=wait or None, egress=egress,
     )
     token_path = store_token(root, grant.agent, grant.token)
     if json_output:

@@ -33,6 +33,14 @@ capacity above 1 serves several leases, each under an agent name the ledger
 chose and the lease row keeps, and that is the name a lease's process is
 stopped and its status read by.
 
+A request is served only by a member whose egress class is not more open
+than the request's ceiling: the strictest of the class it names, no-train
+when it names none, and the class the pool's definition accepts (see
+``egress``). The service works the ceiling out and the ledger passes over the
+members above it. A pool with no member under the ceiling is refused for
+good, as ``EgressRefused``: no lease ending would cure it, so it is not the
+refusal a request waits on.
+
 Requests that did not fit wait as rows in the store, in the order they came.
 A grant gives way to every request that came before its own and fits now, so
 the earliest waiting request that fits is the one served, and one that does
@@ -64,6 +72,7 @@ from ..daemon.poolstore import (
     WaitingRequest,
 )
 from ..errors import SpecfloError
+from . import egress as egress_classes
 from . import expiry, ledger, runner
 from .config import Pool, PoolConfig
 
@@ -88,6 +97,11 @@ class IdleLimitError(SpecfloError):
 
 class NoFreeMember(SpecfloError):
     """A pool with no slot or no member free for one more lease."""
+
+
+class EgressRefused(SpecfloError):
+    """A pool with no member under the request's egress ceiling. It never will
+    have one, so the request is refused at once and does not wait."""
 
 
 @dataclass(frozen=True)
@@ -181,6 +195,7 @@ class PoolService:
         cwd: Path | str,
         idle_limit: int | None = None,
         waiting_id: str | None = None,
+        egress: str | None = None,
     ) -> Grant:
         """Lease a free member of the pool *pool_name* to *holder_label*.
 
@@ -188,11 +203,14 @@ class PoolService:
         one the pool's default applies. *waiting_id* is the id of the
         request's own waiting row, when it has one: the requests that wait
         ahead of that row go first, all of them when there is none, and a
-        grant takes the row out.
+        grant takes the row out. *egress* is the most open class of member
+        the request takes, no-train without one; the definition's own class
+        stands over it.
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
-        pool's maximum, ``NoFreeMember`` also when an earlier request is
-        served first, and what the runner raises for a member that does not
+        pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
+        with no member under the ceiling, ``NoFreeMember`` also when an
+        earlier request is served first, and what the runner raises for a member that does not
         start; the lease written for it is then ended.
         """
         self.expire_due()
@@ -200,8 +218,10 @@ class PoolService:
         idle_limit = _idle_limit(pool, idle_limit)
         definition = next(d for d in self.config.definitions if d.name == pool.definition)
         with self._turn, self.open_store() as store:
+            # Placed before the queue is looked at: a request refused for
+            # good is told so whoever waits ahead of it, and never joins them.
+            placed = self._place(pool.name, store, egress)
             self._give_way(pool, store, waiting_id)
-            placed = self._place(pool.name, store)
             if waiting_id is not None:
                 store.remove_waiting(waiting_id)
             lease_id, token = self.mint_id(), self.mint_token()
@@ -291,22 +311,44 @@ class PoolService:
 
     def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
         """Could the waiting *request* be granted now? One that names no
-        declared pool could not."""
+        declared pool could not. A waiting row keeps no egress class, so the
+        request is read as one that named none."""
         try:
             self._place(request.pool, store)
-        except NoFreeMember:
+        except (NoFreeMember, EgressRefused):
             return False
         return True
 
-    def _place(self, pool_name: str, store: PoolStore) -> ledger.Placement:
-        """Where a request for the pool *pool_name* fits now, as the ledger
-        answers from the active lease rows. Raises ``NoFreeMember``."""
+    def _place(
+        self, pool_name: str, store: PoolStore, asked: str | None = None
+    ) -> ledger.Placement:
+        """Where a request for the pool *pool_name* that names the egress
+        class *asked*, or none, fits now, as the ledger answers from the
+        active lease rows. Raises ``NoFreeMember``, and ``EgressRefused`` for
+        a pool with no member under the request's ceiling."""
+        accepts = [
+            (definition.name, definition.egress)
+            for pool in self.config.pools if pool.name == pool_name
+            for definition in self.config.definitions if definition.name == pool.definition
+        ]
+        ceiling = egress_classes.ceiling(asked, [accepted for _, accepted in accepts])
         try:
             return ledger.place(
-                self.config, store.list_leases(state="active"), ledger.Request(pool=pool_name)
+                self.config, store.list_leases(state="active"),
+                ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
             )
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full)) from full
+        except ledger.NoMemberAllowed as never:
+            named = "no class, which stands for" if asked is None else "the class"
+            limits = "".join(
+                f", and definition '{name}' accepts '{accepted}'" for name, accepted in accepts
+            )
+            raise EgressRefused(
+                f"{never} The request's egress ceiling is '{ceiling}': it names {named} "
+                f"'{egress_classes.ceiling(asked, [])}'{limits}; the strictest of them stands, "
+                "and no member more open than it is leased."
+            ) from never
 
 
 def _idle_limit(pool: Pool, asked: int | None) -> int:

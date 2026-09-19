@@ -44,7 +44,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..errors import SpecfloError
-from ..pool import ledger, waiting
+from ..pool import egress, ledger, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
@@ -238,7 +238,9 @@ async def lease_request(
 ) -> dict:
     """Grant a lease on a free member of the named pool, started in the named
     directory; a request with a time to wait waits that long for one."""
-    fields = _body(body, required=("pool", "cwd"), optional=("idle_limit", "label", "wait"))
+    fields = _body(
+        body, required=("pool", "cwd"), optional=("idle_limit", "label", "wait", "egress")
+    )
     pool = _text(fields, "pool")
     cwd = _text(fields, "cwd")
     idle_limit = _seconds(fields, "idle_limit")
@@ -246,6 +248,12 @@ async def lease_request(
     if wait is not None and wait < 0:
         raise _invalid("Field 'wait' must be a whole number of seconds, 0 or more.")
     holder_label = _holder_label(identity, _text(fields, "label"))
+    asked_class = _text(fields, "egress")
+    if asked_class is not None and asked_class not in egress.EGRESS_CLASSES:
+        raise _invalid(
+            f"Field 'egress' must be an egress class, and '{asked_class}' is not one; "
+            "the classes, strictest first: " + ", ".join(egress.EGRESS_CLASSES) + "."
+        )
     if pool is None or cwd is None:
         raise _invalid("Fields 'pool' and 'cwd' must be strings that are not empty.")
     # The member runs on this host, so the directory is one of this host's.
@@ -257,6 +265,7 @@ async def lease_request(
         )
     asked = waiting.Waiting(
         service, pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit, wait=wait or 0,
+        egress=asked_class,
     )
     try:
         grant = await _granted(request, asked)

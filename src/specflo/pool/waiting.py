@@ -61,6 +61,8 @@ class Waiting:
     cwd: Path | str
     idle_limit: int | None = None
     wait: float = 0
+    # The most open egress class of member the request takes; the grant's default without one.
+    egress: str | None = None
     mint_id: Callable[[], str] = _mint_id
     # The id of the request's row while it has one, and when its time is up.
     _id: str | None = field(default=None, init=False, repr=False)
@@ -77,7 +79,7 @@ class Waiting:
         try:
             grant = self.service.grant(
                 self.pool, holder_label=self.holder_label, cwd=self.cwd,
-                idle_limit=self.idle_limit, waiting_id=self._id,
+                idle_limit=self.idle_limit, waiting_id=self._id, egress=self.egress,
             )
         except NoFreeMember as full:
             return self._wait_on(full)
