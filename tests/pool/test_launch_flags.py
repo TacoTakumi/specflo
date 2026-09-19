@@ -46,6 +46,7 @@ def test_the_argv_is_the_harness_command_plus_the_definition_flags():
 
     assert argv == [
         *HARNESS,
+        "-e", launch.DENY_EXTENSION,
         "--tools", "read,bash",
         "--skill", "model-update-check",
         "--append-system-prompt", PROMPT,

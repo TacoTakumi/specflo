@@ -148,6 +148,17 @@ def test_sdist_carries_the_pi_extension_source(dist, relpath):
     assert f"{dist['sdist_root']}/src/specflo/extension/{relpath}" in dist["sdist_names"]
 
 
+# The pool's deny-list extension is loaded by path from inside the installed
+# package, so a wheel without it starts no pooled member.
+POOL_EXTENSION_FILES = ["package.json", "deny.ts"]
+
+
+@pytest.mark.parametrize("relpath", POOL_EXTENSION_FILES)
+def test_wheel_ships_the_pool_deny_extension_as_package_data(dist, relpath):
+    # Built from the sdist, so this proves both artifacts carry the extension.
+    assert f"specflo/pool/pi_extension/{relpath}" in dist["wheel_names"]
+
+
 def test_wheel_requires_agentsquire_floor(dist):
     with zipfile.ZipFile(dist["wheel"]) as zf:
         meta_name = next(n for n in zf.namelist() if n.endswith(".dist-info/METADATA"))

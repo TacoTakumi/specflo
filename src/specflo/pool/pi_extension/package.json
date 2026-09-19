@@ -1,0 +1,15 @@
+{
+  "name": "specflo-pool-deny",
+  "version": "0.0.0",
+  "description": "specflo pool deny list for pi: blocks a bash tool call that matches a rule of the member's agent definition",
+  "type": "module",
+  "main": "deny.ts",
+  "files": ["deny.ts"],
+  "private": true,
+  "scripts": {
+    "test": "node --test"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.81.0"
+  }
+}
