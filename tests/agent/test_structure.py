@@ -25,6 +25,16 @@ COMPOSITION_FILES = {SRC / "cli.py"}
 # the daemon back.
 DAEMON_DIR = SRC / "daemon"
 DAEMON_ALLOWED_PREFIX = "specflo.agent.client"
+# The pool's runner starts and stops a member's agent host, so it is the one
+# pool module that reaches the agent subsystem: the client for the lease
+# wall's verbs, the ended record, and the state directory layout. Never the
+# host, the CLI or the pi protocol module.
+POOL_RUNNER = SRC / "pool" / "runner.py"
+POOL_RUNNER_ALLOWED = (
+    "specflo.agent.client",
+    "specflo.agent.lease",
+    "specflo.agent.statefiles",
+)
 
 # Controller-side sentinel conventions the HOST must never know about.
 SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
@@ -81,6 +91,12 @@ def test_pipeline_modules_import_no_agent_code():
         }
         if DAEMON_DIR in path.parents:
             offending = {n for n in offending if not n.startswith(DAEMON_ALLOWED_PREFIX)}
+        if path == POOL_RUNNER:
+            offending = {
+                n
+                for n in offending
+                if n != "specflo.agent" and not n.startswith(POOL_RUNNER_ALLOWED)
+            }
         assert not offending, f"{path} imports the agent subsystem: {sorted(offending)}"
 
 
