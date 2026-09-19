@@ -1,0 +1,247 @@
+{% extends "base.html" %}
+{% block title %}Pool - specflo{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a></p>
+<h1>Pool</h1>
+{% if view is none and errors %}
+<section id="pool-errors">
+  <h2>The pool is off</h2>
+  <p class="error">The pool configuration on this daemon is not valid. Correct what follows and start the daemon again.</p>
+  <ul class="errors">
+    {% for error in errors %}
+    <li class="error">{{ error }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% elif view is none %}
+<p class="empty">{{ no_pool }}</p>
+{% else %}
+<section id="pools">
+  <h2>Pools</h2>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Pool</th>
+        <th scope="col">Size</th>
+        <th scope="col">Leases in use</th>
+        <th scope="col">Waiting requests</th>
+        <th scope="col">Idle default</th>
+        <th scope="col">Idle max</th>
+        <th scope="col">Preempt after</th>
+        <th scope="col">Members</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.pools %}
+      <tr data-pool="{{ row.pool.name }}">
+        <td>{{ row.pool.name }}</td>
+        <td class="count">{{ row.pool.size }}</td>
+        <td class="count">{{ row.in_use }}</td>
+        <td class="count">{{ row.waiting }}</td>
+        <td>{{ limit(row.pool.idle_default) }}</td>
+        <td>{{ limit(row.pool.idle_max) }}</td>
+        <td>{{ limit(row.pool.preempt_after) or "never" }}</td>
+        <td>{{ row.pool.members | join(", ") }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section id="waiting">
+  <h2>Waiting requests</h2>
+  {% if view.waiting %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Request</th>
+        <th scope="col">Holder</th>
+        <th scope="col">Pool</th>
+        <th scope="col">Team</th>
+        <th scope="col">Arrived</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for request in view.waiting %}
+      <tr data-waiting="{{ request.id }}">
+        <td>{{ request.id }}</td>
+        <td>{{ request.holder_label }}</td>
+        <td>{{ request.pool or "" }}</td>
+        <td>{{ request.team or "" }}</td>
+        <td><time datetime="{{ request.arrived }}">{{ request.arrived }}</time></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No request waits.</p>
+  {% endif %}
+</section>
+
+<section id="members">
+  <h2>Members</h2>
+  {% if not view.reload_data %}
+  <p class="notice">reload data unavailable: the reader of llama-swap's events is down, so a reload of a leased member's model may be missing below.</p>
+  {% endif %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Member</th>
+        <th scope="col">Kind</th>
+        <th scope="col">State</th>
+        <th scope="col">Backing</th>
+        <th scope="col">Model or account</th>
+        <th scope="col">Egress class</th>
+        <th scope="col">Leases of capacity</th>
+        <th scope="col">Reloads</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.members %}
+      <tr data-member="{{ row.member.name }}">
+        <td>{{ row.member.name }}</td>
+        <td>{{ row.member.kind }}</td>
+        <td>{{ row.state }}</td>
+        <td>{{ row.member.backing }}</td>
+        <td>{{ row.runs_on }}</td>
+        <td>{{ row.member.egress }}</td>
+        <td class="count">{{ row.in_use }} of {{ row.member.capacity }}</td>
+        <td>{% if row.reloads %}{{ row.reloads | length }} - last {{ row.reloads[-1].model }} at <time datetime="{{ row.reloads[-1].time }}">{{ row.reloads[-1].time }}</time>{% else %}0{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section id="leases">
+  <h2>Leases</h2>
+  {% if view.leases %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Lease</th>
+        <th scope="col">Holder</th>
+        <th scope="col">Pool</th>
+        <th scope="col">Member</th>
+        <th scope="col">Team lease</th>
+        <th scope="col">Acquired</th>
+        <th scope="col">State</th>
+        <th scope="col">Idle</th>
+        <th scope="col">Expires in</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.leases %}
+      <tr data-lease="{{ row.lease.id }}">
+        <td>{{ row.lease.id }}</td>
+        <td>{{ row.lease.holder_label }}</td>
+        <td>{{ row.lease.pool }}</td>
+        <td>{{ row.lease.member }}</td>
+        <td>{{ row.lease.team_lease_id or "" }}</td>
+        <td><time datetime="{{ row.lease.acquired }}">{{ row.lease.acquired }}</time></td>
+        <td>{{ row.lease.state }}</td>
+        <td>{{ row.idle }}</td>
+        <td>{{ row.to_expiry }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No lease is out.</p>
+  {% endif %}
+</section>
+
+<section id="accounts">
+  <h2>Accounts</h2>
+  {% if view.accounts %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Account</th>
+        <th scope="col">Cap</th>
+        <th scope="col">Slots in use</th>
+        <th scope="col">Usage</th>
+        <th scope="col">Limit</th>
+        <th scope="col">Remaining</th>
+        <th scope="col">Open or closed</th>
+        <th scope="col">Last read</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in view.accounts %}
+      <tr data-account="{{ row.account.name }}">
+        <td>{{ row.account.name }}</td>
+        <td class="count">{{ row.account.cap }}</td>
+        <td class="count">{{ row.in_use }}</td>
+        <td class="count">{{ amount(row.figures.usage) if row.figures else "" }}</td>
+        <td class="count">{{ amount(row.figures.limit) if row.figures else "" }}</td>
+        <td class="count">{{ amount(row.figures.remaining) if row.figures else "" }}</td>
+        <td>{% if row.open %}open{% elif row.reopen %}closed until {{ row.reopen }}{% else %}closed, with no time set for it to reopen{% endif %}</td>
+        <td>{% if row.figures %}<time datetime="{{ row.figures.read_at }}">{{ row.figures.read_at }}</time>{% if row.figures.read_error %} <span class="error">{{ row.figures.read_error }}</span>{% endif %}{% else %}never{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No account is declared.</p>
+  {% endif %}
+</section>
+
+<section id="standing">
+  <h2>Standing entries</h2>
+  {% if view.standing %}
+  <p>What the project agents take outside the pool. An entry ends when its project's agent does.</p>
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Entry</th>
+        <th scope="col">Project</th>
+        <th scope="col">Agent</th>
+        <th scope="col">Takes</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for entry in view.standing %}
+      <tr data-standing="{{ entry.id }}">
+        <td>{{ entry.id }}</td>
+        <td>{{ entry.project }}</td>
+        <td>{{ entry.agent }}</td>
+        <td>{% for resource in entry.resources %}{{ resource.kind }} {{ resource.name }}{% if not loop.last %}, {% endif %}{% endfor %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">No project agent takes a model or an account slot.</p>
+  {% endif %}
+</section>
+
+<section id="transitions">
+  <h2>Recent transitions</h2>
+  {% if view.transitions %}
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Time</th>
+        <th scope="col">Kind</th>
+        <th scope="col">Lease</th>
+        <th scope="col">Cause</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for transition in view.transitions %}
+      <tr data-transition="{{ transition.id }}">
+        <td><time datetime="{{ transition.time }}">{{ transition.time }}</time></td>
+        <td>{{ transition.kind }}</td>
+        <td>{{ transition.lease_id }}</td>
+        <td>{{ cause_shown(transition.cause) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="empty">Nothing has happened to a lease yet.</p>
+  {% endif %}
+</section>
+{% endif %}
+{% endblock %}

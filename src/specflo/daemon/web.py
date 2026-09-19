@@ -71,6 +71,8 @@ ATTENTION_BANNER = "The agent waits on a {kind} dialog: answer it in the pane."
 # The element the stream refreshes with the agent's state line and banner.
 AGENT_STATUS_TARGET = "#agent-status"
 START_PROJECT_PATH = "/products/{slug}/items/{item_id}/start"
+# The agent pool's page; its routes live in the pool_web module.
+POOL_PATH = "/pool"
 SESSION_COOKIE = "specflo_session"
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
@@ -98,6 +100,7 @@ _templates.globals.update(
     home_path=HOME_PATH,
     signin_path=SIGNIN_PATH,
     assets_path=ASSETS_PATH,
+    pool_path=POOL_PATH,
     identities=BROWSER_IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
@@ -804,5 +807,10 @@ def install(app: FastAPI) -> None:
     app.add_exception_handler(SignInRequired, _to_sign_in)
     app.add_exception_handler(SpecfloError, _to_error_page)
     app.include_router(front_door)
+    # The pool page is built on this module, so it is imported only here. Its
+    # path is a fixed one, matched before the pages that take a slug.
+    from . import pool_web
+
+    app.include_router(pool_web.pages)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")
