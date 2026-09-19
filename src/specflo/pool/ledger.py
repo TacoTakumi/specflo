@@ -18,6 +18,16 @@ slot of the account too, and an account that two pools' members share is
 counted once, as a shared member is. A local member runs through no account
 and takes no slot of one.
 
+A local member runs one model on the rig's cards, and llama-swap keeps loaded
+side by side only the models that one expansion of one matrix set of its
+configuration holds. So a lease on a local member takes its model too, and a
+local member fits only when its model may be loaded beside every model under
+lease, in whichever pool; a model is always at home beside itself. The pool
+only reads that table. It asks llama-swap to load, unload or place nothing: a
+request that does not fit waits for a lease to end. A hosted member runs on
+no card here, so it is not checked and takes no model. A row written before a
+lease took its model says nothing of one, and nothing is read into it.
+
 A request also says which egress classes of member it accepts, and a member
 of another class is not there for it: a free one is passed over and a busy
 one is not waited for. A pool with no member of an accepted class has no room
@@ -45,13 +55,15 @@ from itertools import count
 
 from ..daemon.poolstore import Lease, Resource
 from ..errors import SpecfloError
-from .config import Member, PoolConfig
+from .config import LOCAL, Member, PoolConfig
 
 # The kinds of resource a lease takes here. The account is on the row only for
-# a hosted member, and the agent name only when it is not the member's name.
+# a hosted member, the model only for a local one, and the agent name only
+# when it is not the member's name.
 POOL = "pool"
 MEMBER = "member"
 ACCOUNT = "account"
+MODEL = "model"
 AGENT = "agent"
 
 # The state of a lease that holds what it took.
@@ -94,14 +106,16 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
     The member is the first the pool lists, in its order, that is of a class
     the request accepts, serves fewer leases than its capacity and, if it is
     hosted, whose account has fewer leases out than its cap, in whichever
-    pools. A member of another class is passed over however free it is.
+    pools; if it is local, whose model may be loaded beside every model under
+    lease. A member of another class is passed over however free it is.
     *leases* may hold rows that have ended; they count for nothing.
 
     Raises ``NoRoom`` for a pool that is not declared, a pool with as many
-    leases out as its size, and a pool whose members are all full or kept by
-    a full account, which it names. Raises ``NoMemberAllowed`` instead, and
-    before anything is counted, for a pool with no member of a class the
-    request accepts: that is not a matter of room.
+    leases out as its size, and a pool whose members are all full, kept by a
+    full account or kept by the leased models, which it names. Raises
+    ``NoMemberAllowed`` instead, and before anything is counted, for a pool
+    with no member of a class the request accepts: that is not a matter of
+    room.
     """
     pool = next((p for p in config.pools if p.name == request.pool), None)
     if pool is None:
@@ -123,6 +137,7 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
         raise NoRoom(f"pool '{pool.name}' is full: all {pool.size} of its leases are out.")
     accounts = {account.name: account for account in config.accounts}
     full: dict[str, int] = {}  # the accounts that keep a member with room, and their caps
+    apart: dict[str, tuple[str, ...]] = {}  # the models kept off the rig, and by which
     for name in accepted:
         member = members[name]
         if _taken(out, MEMBER, name) >= member.capacity:
@@ -134,20 +149,34 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
                 full[account.name] = account.cap
                 continue
             resources.append(Resource(ACCOUNT, account.name))
+        if member.backing == LOCAL and config.swap is not None:
+            in_the_way = _in_the_way(config, member.model, out)
+            if in_the_way:
+                apart[member.model] = in_the_way
+                continue
+            resources.append(Resource(MODEL, member.model))
         agent = _agent_name(member, config, out)
         if agent != name:
             resources.append(Resource(AGENT, agent))
         return Placement(member=member, agent=agent, resources=tuple(resources))
     # Only the members the request may have: the others are not what it waits for.
     listed = ", ".join(f"'{name}'" for name in accepted)
+    kept = []
     if full:
-        kept = ", ".join(
+        kept.append(", ".join(
             f"account '{name}' is full: all {cap} of its leases are out"
             for name, cap in full.items()
-        )
+        ) + ", in this pool or another")
+    if apart:
+        kept.append(", ".join(
+            f"model '{model}' cannot be loaded beside the leased "
+            + ", ".join(f"'{other}'" for other in others)
+            for model, others in apart.items()
+        ))
+    if kept:
         raise NoRoom(
-            f"pool '{pool.name}' has no free member: {listed} - {kept}, in this pool "
-            "or another, and any other member serves as many leases as it has capacity for."
+            f"pool '{pool.name}' has no free member: {listed} - {'; '.join(kept)}, "
+            "and any other member serves as many leases as it has capacity for."
         )
     raise NoRoom(
         f"pool '{pool.name}' has no free member: {listed} - each one serves as many "
@@ -163,6 +192,28 @@ def agent_of(lease: Lease) -> str:
 def _taken(out: list[Lease], kind: str, name: str) -> int:
     """How many of the leases *out* took the resource *kind* *name*."""
     return sum(1 for lease in out if Resource(kind, name) in lease.resources)
+
+
+def _in_the_way(config: PoolConfig, model: str, out: list[Lease]) -> tuple[str, ...]:
+    """The leased models that keep *model* off the rig; none when it may be
+    loaded beside every model the leases *out* took.
+
+    They are the ones it may not be loaded beside two by two, and all of them
+    when it is only the whole group that fits in no combination."""
+    leased = {r.name for lease in out for r in lease.resources if r.kind == MODEL}
+    others = sorted(leased - {model})
+    if not others or _together(config, [model, *others]):
+        return ()
+    return tuple(o for o in others if not _together(config, [model, o])) or tuple(others)
+
+
+def _together(config: PoolConfig, models: list[str]) -> bool:
+    """Whether the llama-swap configuration keeps *models* loaded side by side.
+    A model it does not have is in no set of it, so it only runs alone."""
+    try:
+        return config.swap.fits(models)
+    except SpecfloError:
+        return False
 
 
 def _agent_name(member: Member, config: PoolConfig, out: list[Lease]) -> str:
