@@ -18,7 +18,9 @@ the configuration no longer declares is no slot's, and is never read.
 An attached host is the developer's to end, and one that is gone serves no
 one. Whoever reads the states hands in what the hosts last wrote of
 themselves, by agent name, with None for a host that is gone (``statuses``):
-the slot of such a host is offline, whatever its row says. The lease that was
+the slot of such a host is offline, whatever its row says. So is the slot of
+an agent whose record names another transport than rpc: the name came back
+as a TUI agent, which has no host to hold a lease's wall. The lease that was
 out on it stands until it has been idle for its limit, as the lease of any
 member whose pi went away. With no statuses handed in, the rows are taken at
 their word.
@@ -88,7 +90,7 @@ def state(
 
     *leases* may hold rows that have ended; they count for nothing. With
     *statuses*, what each attached host last wrote of itself by agent name, a
-    slot whose host is gone, or is not among them, is offline.
+    slot whose host is gone, is not among them, or is no rpc host is offline.
     """
     row = next((row for row in rows if row.slot == slot), None)
     if row is None or _gone(row, statuses):
@@ -107,7 +109,7 @@ def unmatched(
 ) -> frozenset[str]:
     """The console slots of *config* that take no new lease now: those with no
     agent attached, those that were detached and, with *statuses* (see
-    ``state``), those whose host is gone."""
+    ``state``), those whose host is gone or is no rpc host."""
     serving = {row.slot for row in rows if not row.draining and not _gone(row, statuses)}
     return frozenset(member.name for member in slots(config) if member.name not in serving)
 
@@ -125,7 +127,13 @@ def leased(lease: Lease, config: PoolConfig, rows: Iterable[ConsoleAttachment]) 
 
 
 def _gone(row: ConsoleAttachment, statuses: Mapping[str, object] | None) -> bool:
-    return statuses is not None and statuses.get(row.agent) is None
+    if statuses is None:
+        return False
+    record = statuses.get(row.agent)
+    if isinstance(record, Mapping):
+        # A record that names no transport is an rpc host's.
+        return record.get("transport", "rpc") != "rpc"
+    return record is None
 
 
 def placement(

@@ -19,12 +19,22 @@ passed through to pi verbatim, and every event or response pi emits (plus the
 host's own lifecycle lines) is broadcast to all connected clients, so
 request/response correlation happens by the client's own ``id``.
 
-The lease wall: a pool daemon binds its pool token once (``pool_bind``), then
+The lease wall: a pool daemon binds its pool token (``pool_bind``), then
 binds a holder token per lease (``lease_bind``) and clears it when the lease
-ends (``lease_clear``). While a lease is bound, only frames carrying the
-holder's ``lease_token`` or the daemon's ``pool_token`` may drive the member;
-any other is refused before it reaches pi or the event log. A host that was
-never pool-bound has no wall and is a plain pipe.
+ends (``lease_clear``). A host is one pool's: a bind of the token it has
+succeeds and changes nothing, and any other token is refused. While a lease
+is bound, only frames carrying the holder's ``lease_token`` or the daemon's
+``pool_token`` may drive the member; any other is refused before it reaches
+pi or the event log. A host that was never pool-bound has no wall and is a
+plain pipe.
+
+Between leases no lease is bound and a frame needs no token, which is how a
+developer drives a console the pool leases out. A host that runs on past a
+lease still faces that lease's former holder, so it remembers the tokens of
+the leases it has cleared, as digests and the newest ``ENDED_REMEMBERED`` of
+them, and refuses a frame that carries one as its ``lease_token``, with a
+lease bound or with none. The memory is this process's alone: a host that is
+started again knows nothing of the leases before it.
 
 The wall covers the way out as well: a member's output, pi's answers and the
 holder's prompt text all travel in the broadcast. While a lease is bound, an
@@ -51,6 +61,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections import deque
 from pathlib import Path
 from typing import Any, Callable
 
@@ -73,6 +84,10 @@ POOL_VERBS = ("pool_bind", "lease_bind", "lease_clear")
 
 # Credential fields on a frame; pi never sees them once a pool is bound.
 TOKEN_FIELDS = ("lease_token", "pool_token")
+
+# How many cleared leases' tokens a host remembers, to turn their former
+# holders away; the oldest is forgotten first.
+ENDED_REMEMBERED = 256
 
 # While a turn runs, pi's events refresh the activity stamp at most this often
 # (seconds): the stamp is read against idle limits of minutes, and every
@@ -152,6 +167,8 @@ class PiHost:
         self._wall_lock = threading.Lock()
         self._pool_digest: bytes | None = None
         self._lease_digest: bytes | None = None
+        # the leases cleared on this host, oldest first, each digest once
+        self._ended: deque[bytes] = deque(maxlen=ENDED_REMEMBERED)
         self._clock = clock
         self._last_activity = clock()
         self._refreshed = time.monotonic()
@@ -530,6 +547,9 @@ class PiHost:
             ):
                 return f"{ctype} needs the bound pool's pool_token"
             if ctype == "lease_clear":
+                if self._lease_digest is not None:
+                    # its holder is a former one from now on
+                    self._ended.append(self._lease_digest)
                 self._lease_digest = None
                 return None
             lease = _token_digest(request.get("lease_token"))
@@ -537,6 +557,9 @@ class PiHost:
                 return "lease_bind needs a lease_token"
             if self._lease_digest is not None:
                 return "a lease is already bound; clear it first"
+            if lease in self._ended:
+                # the pool leases under this token again: it is no former one
+                self._ended.remove(lease)
             self._lease_digest = lease
             return None
 
@@ -551,6 +574,12 @@ class PiHost:
                 "lease_token": self._lease_digest,
                 "pool_token": self._pool_digest,
             }
+            ended = tuple(self._ended)
+        former = _token_digest(request.get("lease_token"))
+        if former is not None and any(hmac.compare_digest(former, e) for e in ended):
+            # a lease that was cleared here opens nothing, with none bound
+            # either: this host and its pi ran on past it
+            return None
         if expected["lease_token"] is None:
             return "open"  # no lease bound, no wall
         presented = [f for f in TOKEN_FIELDS if f in request]

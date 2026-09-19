@@ -26,11 +26,14 @@ A console is the one member whose host the pool does not start. A developer
 attaches an agent host that runs already: ``attach_console`` checks that one
 answers under the name on the rpc transport and binds the pool's token on it,
 and ``bind_console`` raises the wall on it for one lease. Neither starts
-anything. An agent on the TUI transport has no host to bind a token on, so
-it is not attachable. The end of a console's lease is ``release_console``
-and never ``stop``: the ending is recorded as for any member, the wall is
-lowered and a turn the holder left running is aborted, and the host and its
-pi run on, the developer's as they were.
+anything. A developer may have stopped the host since the attach and started
+it again under the same name, and that host knows no pool: so ``bind_console``
+makes the checks of an attach and binds the pool's token again before the
+lease's. An agent on the TUI transport has no host to bind a token on, so it
+is not attachable and takes no lease. The end of a console's lease is
+``release_console`` and never ``stop``: the ending is recorded as for any
+member, the wall is lowered and a turn the holder left running is aborted,
+and the host and its pi run on, the developer's as they were.
 
 A member's event log is the host's record of the lease, and the daemon reads
 it for one thing: the turns that ended in a provider error. ``read_log`` gives
@@ -81,6 +84,8 @@ STOP_TIMEOUT = 30.0
 # Added to a verb's own bound before the subprocess itself is given up on.
 _CLI_GRACE = 15.0
 _PROBE_TIMEOUT = 2.0
+# Where the pool's own stop verb runs: no token file is found upward from it.
+_NO_CHECKOUT = os.path.abspath(os.sep)
 
 
 class RunnerError(SpecfloError):
@@ -159,7 +164,7 @@ def start(
     except RunnerError:
         # The CLI may have brought up a host that never answered in time and
         # left it running; it goes, so the name is free for the next start.
-        _agent_cli("stop", name, "--timeout", str(STOP_TIMEOUT), timeout=STOP_TIMEOUT + _CLI_GRACE)
+        _stop_cli(name, STOP_TIMEOUT)
         _forget(paths)
         raise
     return name
@@ -198,7 +203,7 @@ def stop(
     except (HostUnreachableError, TimeoutError, OSError):
         _forget(paths)
         return
-    stopped = _agent_cli("stop", name, "--timeout", str(timeout), timeout=timeout + _CLI_GRACE)
+    stopped = _stop_cli(name, timeout)
     if stopped is None or stopped.returncode != 0:
         detail = _detail(stopped) if stopped is not None else f"no answer in {timeout:.0f}s"
         raise RunnerError(f"member '{name}' did not stop: {detail}")
@@ -257,18 +262,33 @@ def attach_console(name: str, *, pool_token: str) -> None:
 
 def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
     """Raise the lease wall on the attached console host *name* for one lease;
-    the agent's name. The pool's token is bound on it since the attach, and
-    nothing is started.
+    the agent's name. Nothing is started.
 
-    Raises ``RunnerError`` for a host that is gone or does not take the lease.
+    The host that answers may not be the one that was attached: a developer
+    can stop it and start it again under the same name. So the pool's token is
+    bound first, after the checks of an attach. A host that has the token
+    takes it again, which changes nothing, and a fresh one is bound by it.
+
+    Raises ``RunnerError`` for an agent on the TUI transport, and for a host
+    that is gone, is bound to another pool or does not take the lease.
     """
+    paths = _paths(name)
     try:
+        try:
+            # As at an attach: a TUI agent answers on no host's socket.
+            _refuse_tui(name, read_status(paths.status))
+        except (OSError, ValueError):
+            pass  # no record to go by; the socket says the rest
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+            _refuse_tui(name, client.status(timeout=_PROBE_TIMEOUT).get("status"))
+            client.pool_bind(pool_token)
             client.lease_bind(pool_token, lease_token)
-    except (HostUnreachableError, TimeoutError, RuntimeError, OSError) as exc:
+    except (
+        NotAttachable, HostUnreachableError, TimeoutError, RuntimeError, OSError
+    ) as exc:
         raise RunnerError(f"console '{name}': its host did not take the lease: {exc}") from exc
     # As at a start: the last ending was a former lease's, not this one's.
-    lease.clear_ended(_paths(name).root)
+    lease.clear_ended(paths.root)
     return name
 
 
@@ -436,8 +456,29 @@ def _serving(name: str) -> bool:
     return True
 
 
-def _agent_cli(*args: str, timeout: float) -> subprocess.CompletedProcess | None:
-    """Run one ``specflo agent`` verb as a subprocess of this interpreter.
+def _stop_cli(name: str, timeout: float) -> subprocess.CompletedProcess | None:
+    """Run ``specflo agent stop`` as the pool, which holds no lease.
+
+    The verb presents a lease token it finds in the environment or in a token
+    file above its working directory, and a host turns away the token of a
+    lease it has cleared. A daemon may run inside a holder's checkout, so the
+    verb is given no such variable and a directory with no checkout above it.
+    """
+    environ = {k: v for k, v in os.environ.items() if k != lease.ENV_LEASE_TOKEN}
+    return _agent_cli(
+        "stop", name, "--timeout", str(timeout), timeout=timeout + _CLI_GRACE,
+        cwd=_NO_CHECKOUT, env=environ,
+    )
+
+
+def _agent_cli(
+    *args: str,
+    timeout: float,
+    cwd: str | None = None,
+    env: Mapping[str, str] | None = None,
+) -> subprocess.CompletedProcess | None:
+    """Run one ``specflo agent`` verb as a subprocess of this interpreter, in
+    this process's working directory and environment unless others are given.
 
     None when the verb outran *timeout*; the subprocess is then gone.
     """
@@ -449,6 +490,8 @@ def _agent_cli(*args: str, timeout: float) -> subprocess.CompletedProcess | None
             capture_output=True,
             text=True,
             timeout=timeout,
+            cwd=cwd,
+            env=env,
         )
     except subprocess.TimeoutExpired:
         return None

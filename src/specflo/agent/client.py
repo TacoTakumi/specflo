@@ -169,7 +169,8 @@ class AgentClient:
     # -- the pool daemon's verbs for the lease wall -------------------------
 
     def pool_bind(self, pool_token: str, timeout: float | None = 5.0) -> None:
-        """Bind the daemon's pool token on the host; a host takes it once."""
+        """Bind the daemon's pool token on the host. A host is one pool's: it
+        takes the token it has again, which changes nothing, and no other."""
         self._pool_verb({"type": "pool_bind", "pool_token": pool_token}, timeout)
 
     def lease_bind(
