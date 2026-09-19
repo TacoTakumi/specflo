@@ -10,8 +10,13 @@ has a field for a quota or a reserved slot.
 What is counted is what the lease rows say they took. A grant writes every
 resource of its lease on the row, a kind and a name each, and the ledger
 counts the active rows that name a resource against what the configuration
-allows of it: a pool's ``size``, a member's ``capacity``. A row's other
-columns are not read for the count.
+allows of it: a pool's ``size``, a member's ``capacity``, an account's
+``cap``. A row's other columns are not read for the count.
+
+A hosted member runs through a provider account, so a lease on it takes a
+slot of the account too, and an account that two pools' members share is
+counted once, as a shared member is. A local member runs through no account
+and takes no slot of one.
 
 A member of capacity above 1 serves that many leases at once, and one agent
 name runs one process, so each of them runs under a name of its own. The
@@ -37,10 +42,11 @@ from ..daemon.poolstore import Lease, Resource
 from ..errors import SpecfloError
 from .config import Member, PoolConfig
 
-# The kinds of resource a lease takes here. The agent name is on the row only
-# when it is not the member's name.
+# The kinds of resource a lease takes here. The account is on the row only for
+# a hosted member, and the agent name only when it is not the member's name.
 POOL = "pool"
 MEMBER = "member"
+ACCOUNT = "account"
 AGENT = "agent"
 
 # The state of a lease that holds what it took.
@@ -72,11 +78,13 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
     """Where *request* fits, given the *leases* that are out.
 
     The member is the first the pool lists, in its order, that serves fewer
-    leases than its capacity, in whichever pools. *leases* may hold rows that
+    leases than its capacity and, if it is hosted, whose account has fewer
+    leases out than its cap, in whichever pools. *leases* may hold rows that
     have ended; they count for nothing.
 
     Raises ``NoRoom`` for a pool that is not declared, a pool with as many
-    leases out as its size, and a pool whose members are all full.
+    leases out as its size, and a pool whose members are all full or kept by
+    a full account, which it names.
     """
     pool = next((p for p in config.pools if p.name == request.pool), None)
     if pool is None:
@@ -85,15 +93,33 @@ def place(config: PoolConfig, leases: Iterable[Lease], request: Request) -> Plac
     if _taken(out, POOL, pool.name) >= pool.size:
         raise NoRoom(f"pool '{pool.name}' is full: all {pool.size} of its leases are out.")
     members = {member.name: member for member in config.members}
+    accounts = {account.name: account for account in config.accounts}
+    full: dict[str, int] = {}  # the accounts that keep a member with room, and their caps
     for name in pool.members:
         member = members[name]
-        if _taken(out, MEMBER, name) < member.capacity:
-            agent = _agent_name(member, config, out)
-            resources = [Resource(POOL, pool.name), Resource(MEMBER, name)]
-            if agent != name:
-                resources.append(Resource(AGENT, agent))
-            return Placement(member=member, agent=agent, resources=tuple(resources))
+        if _taken(out, MEMBER, name) >= member.capacity:
+            continue
+        resources = [Resource(POOL, pool.name), Resource(MEMBER, name)]
+        if member.account is not None:
+            account = accounts[member.account]
+            if _taken(out, ACCOUNT, account.name) >= account.cap:
+                full[account.name] = account.cap
+                continue
+            resources.append(Resource(ACCOUNT, account.name))
+        agent = _agent_name(member, config, out)
+        if agent != name:
+            resources.append(Resource(AGENT, agent))
+        return Placement(member=member, agent=agent, resources=tuple(resources))
     listed = ", ".join(f"'{name}'" for name in pool.members)
+    if full:
+        kept = ", ".join(
+            f"account '{name}' is full: all {cap} of its leases are out"
+            for name, cap in full.items()
+        )
+        raise NoRoom(
+            f"pool '{pool.name}' has no free member: {listed} - {kept}, in this pool "
+            "or another, and any other member serves as many leases as it has capacity for."
+        )
     raise NoRoom(
         f"pool '{pool.name}' has no free member: {listed} - each one serves as many "
         "leases as it has capacity for, in this pool or another."
