@@ -32,6 +32,7 @@ directory, and ``load_pool_config`` reads the whole of it as one configuration.
 from __future__ import annotations
 
 import re
+import shlex
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -52,6 +53,22 @@ BACKINGS: tuple[str, ...] = (LOCAL, HOSTED)
 
 # The egress classes a hosted member may declare: every class but "local".
 HOSTED_CLASSES: tuple[str, ...] = tuple(c for c in EGRESS_CLASSES if c != LOCAL)
+
+# The hosted class whose members run with provider routing flags that deny
+# data collection and demand zero data retention.
+NO_TRAIN = "no-train"
+
+# The vendor prefixes of the OpenRouter model IDs a no-train member may not
+# name. pi sends the routing flags only from its OpenAI-completions client, and
+# it reaches these vendors' models through another client, which sends none:
+# the member would run with the flags in its file and in no request. The whole
+# vendor is refused, not the model IDs pi lists today, so a model pi adds later
+# is refused until it is known to send the flags.
+NO_ROUTING_PREFIXES: tuple[str, ...] = ("anthropic/",)
+
+# pi's name for the provider a hosted member runs through; a model may be
+# written with it in front, "openrouter/vendor/model".
+_PROVIDER_PREFIX = "openrouter/"
 
 # Every key the file may carry, in the order they are written. An account has
 # no field for a provider management key: such a key can mint spending keys,
@@ -477,6 +494,11 @@ def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -
                 "egress", "a hosted member sends data off this host, so its class is one of "
                 + ", ".join(HOSTED_CLASSES) + "."
             )
+        if egress == NO_TRAIN:
+            if isinstance(model, str):
+                _routed(entry, "model", model)
+            for named in _command_models(command):
+                _routed(entry, "command", named)
 
     return Member(
         name=str(entry.fields.get("name")),
@@ -575,6 +597,39 @@ def _fit(entry: _Entry, member: Member, definition: AgentDefinition) -> None:
         entry.fault(
             "members", f"member '{member.name}' is class '{member.egress}', more open than "
             f"definition '{definition.name}' accepts, '{definition.egress}'."
+        )
+
+
+def _command_models(command: str) -> list[str]:
+    """Every model *command* selects, as ``--model <value>`` or ``--model=<value>``.
+
+    The command is split the way the launch splits it. One that cannot be
+    split selects nothing here; it cannot start a member either.
+    """
+    try:
+        argv = shlex.split(command)
+    except ValueError:
+        return []
+    models = [after for arg, after in zip(argv, argv[1:]) if arg == "--model"]
+    return models + [arg.removeprefix("--model=") for arg in argv if arg.startswith("--model=")]
+
+
+def _routed(entry: _Entry, field: str, model: str) -> None:
+    """Note a fault on *field* unless the no-train flags reach the provider
+    when a member runs *model*. pi matches a model ID without regard to case."""
+    full = model.strip().lower().removeprefix(_PROVIDER_PREFIX)
+    if "/" not in full:
+        # pi takes a name with no vendor as a pattern and picks the model
+        # itself, so nothing here can tell which client the member would use.
+        entry.fault(
+            field, f"'{model}' is a partial model name, which can resolve to a model whose "
+            f"client does not send the {NO_TRAIN} flags; the full 'vendor/model' ID is required."
+        )
+    elif full.startswith(NO_ROUTING_PREFIXES):
+        entry.fault(
+            field, f"'{model}' is a model pi reaches through a client that sends no provider "
+            f"routing, so the {NO_TRAIN} flags would not reach the provider. Name another "
+            "vendor's model, or declare the member 'open'."
         )
 
 
