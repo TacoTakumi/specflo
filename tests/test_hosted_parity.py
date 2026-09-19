@@ -31,6 +31,7 @@ def _pipeline():
     is resolved against the ids captured from earlier output."""
     return [
         (["brainstorm", "start"], None),
+        (["egress", "local"], None),
         (["decision", "add", "--text", "Use one facade", "--rationale", "one seam"], None),
         (["validate", "brainstorm"], None),
         (["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "No auth.\n"),
@@ -67,6 +68,7 @@ def _pipeline():
         (["advance"], None),
         (["status"], None),
         (["hook", "reseed"], None),
+        (["egress", "local", "--json"], None),
     ]
 
 
@@ -210,3 +212,43 @@ def test_the_scenario_reaches_completion_and_prints_every_seam(local_run):
         "<where>",
     ):
         assert expected in outputs, expected
+
+
+def _steps(run, *args):
+    """The ``(exit code, stdout)`` of every step of ``run`` invoked with ``args``."""
+    return [(code, text) for step, code, text in run[1:] if step == list(args)]
+
+
+def test_the_egress_pin_is_recorded_and_shown_for_a_local_and_a_hosted_project(
+    local_run, hosted_run, live_daemon
+):
+    for run in (local_run, hosted_run):
+        assert _steps(run, "egress", "local") == [(0, "Egress class for 'parity-thing': local\n")]
+        # The pin was set in the first phase; the record shown three advances
+        # later still carries it, and setting it again changes nothing.
+        ((code, shown),) = _steps(run, "doc", "show", "project")
+        assert code == 0 and "\negress: local\n" in shown
+        assert _steps(run, "egress", "local", "--json") == [
+            (0, '{"egress": "local", "changed": false}\n')
+        ]
+    # The hosted pin is on the daemon's record of the project, where the
+    # daemon reads it; the pipeline ran on to completion with it in place.
+    record = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG / "project.md"
+    assert "\negress: local\n" in record.read_text()
+    assert "\nstatus: complete\n" in record.read_text()
+
+
+def test_an_unknown_egress_class_is_refused_the_same_way_locally_and_hosted(
+    tmp_path, monkeypatch, local_run, hosted_run, live_daemon
+):
+    refusals = []
+    for checkout in ("hosted", "local"):
+        monkeypatch.chdir(tmp_path / checkout)
+        result = runner.invoke(app, ["egress", "public"])
+        assert result.exit_code == 1, result.output
+        refusals.append(result.output)
+    assert refusals[0] == refusals[1]
+    assert "'public'" in refusals[0]
+    assert all(name in refusals[0] for name in ("local", "no-train", "open"))
+    record = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG / "project.md"
+    assert "\negress: local\n" in record.read_text()

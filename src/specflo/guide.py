@@ -66,6 +66,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Set a project's one-line summary and refresh the index."},
     {"name": "execution", "group": "setup", "args": "linear|fan-out",
      "summary": "Switch the active project's execution mode (any phase)."},
+    {"name": "egress", "group": "setup", "args": "local|no-train|open",
+     "summary": "Pin the active project's egress class (any phase)."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "leave", "group": "setup", "args": "",

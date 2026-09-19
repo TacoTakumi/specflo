@@ -576,6 +576,32 @@ def execution(
         typer.echo(f"Execution mode for '{slug}' unchanged: {mode}")
 
 
+@app.command(epilog="Example: specflo egress local")
+def egress(
+    egress_class: str = typer.Argument(
+        ...,
+        metavar="local|no-train|open",
+        help="The egress class to pin on the active project.",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Pin the active project's egress class (any phase)."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    svc = _service(root, cfg)
+    slug = _require_active(cfg)
+    try:
+        egress_class, changed = svc.set_egress(slug, egress_class)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"egress": egress_class, "changed": changed}))
+    elif changed:
+        typer.echo(f"Egress class for '{slug}': {egress_class}")
+    else:
+        typer.echo(f"Egress class for '{slug}' unchanged: {egress_class}")
+
+
 @app.command(epilog="Example: specflo index")
 def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""

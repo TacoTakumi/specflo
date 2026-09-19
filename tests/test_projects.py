@@ -585,3 +585,117 @@ def test_reopen_and_execution_mode_keep_the_gate(root, cfg):
     assert projects.reopen_project(root, cfg, "thing").gate == gate
     projects.set_execution(root, cfg, "thing", projects.FAN_OUT_EXECUTION)
     assert projects.load_project(root, cfg, "thing").gate == gate
+
+
+# --- the egress pin ------------------------------------------------------------
+
+
+def _project_file(root):
+    return root / "docs" / "projects" / "thing" / "project.md"
+
+
+def test_a_project_without_an_egress_pin_reads_and_rewrites_as_before(root, cfg):
+    created = projects.create_project(root, cfg, "Thing", created="2026-06-15")
+    assert created.egress == ""
+    assert "egress" not in _project_file(root).read_text()
+
+    assert projects.load_project(root, cfg, "thing").egress == ""
+    # A rewrite of a record with no pin does not sprout the key.
+    projects.shelve_project(root, cfg, "thing", reason="later")
+    projects.resume_project(root, cfg, "thing")
+    projects.advance_project(root, cfg, "thing")
+    assert "egress" not in _project_file(root).read_text()
+
+
+def test_set_egress_writes_only_the_egress_key(root, cfg):
+    projects.create_project(root, cfg, "Thing", created="2026-06-15", summary="One line")
+    path = _project_file(root)
+    # A hand-edited body must survive the pin verbatim.
+    before = path.read_text() + "\nSome hand-written notes.\n"
+    path.write_text(before)
+
+    assert projects.set_egress(root, cfg, "thing", "local") == ("local", True)
+    pinned = path.read_text()
+    assert pinned.replace("egress: local\n", "") == before
+    assert projects.load_project(root, cfg, "thing").egress == "local"
+
+    assert projects.set_egress(root, cfg, "thing", "no-train") == ("no-train", True)
+    assert path.read_text() == pinned.replace("egress: local", "egress: no-train")
+    assert projects.load_project(root, cfg, "thing").egress == "no-train"
+
+
+def test_set_egress_reports_unchanged_when_the_class_already_matches(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    projects.set_egress(root, cfg, "thing", "open")
+    before = _project_file(root).read_text()
+
+    assert projects.set_egress(root, cfg, "thing", "open") == ("open", False)
+    assert _project_file(root).read_text() == before
+
+
+def test_set_egress_rejects_an_unknown_class(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    before = _project_file(root).read_text()
+    with pytest.raises(SpecfloError) as exc:
+        projects.set_egress(root, cfg, "thing", "public")
+    assert all(name in str(exc.value) for name in ("'public'", "local", "no-train", "open"))
+    assert _project_file(root).read_text() == before
+
+
+def test_a_pinned_class_outside_the_known_ones_is_refused_on_read(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = _project_file(root)
+    path.write_text(path.read_text().replace("execution:", "egress: public\nexecution:"))
+    with pytest.raises(SpecfloError) as exc:
+        projects.load_project(root, cfg, "thing")
+    assert "'public'" in str(exc.value) and "no-train" in str(exc.value)
+
+
+def test_the_egress_pin_survives_shelve_and_resume(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    projects.set_egress(root, cfg, "thing", "local")
+
+    shelved = projects.shelve_project(root, cfg, "thing", reason="later")
+    assert shelved.egress == "local" and shelved.status == "shelved"
+    assert projects.load_project(root, cfg, "thing").egress == "local"
+
+    resumed = projects.resume_project(root, cfg, "thing")
+    assert resumed.egress == "local" and resumed.status == "active"
+    assert projects.load_project(root, cfg, "thing").egress == "local"
+
+
+def test_the_egress_pin_survives_advance_reopen_and_completion(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    projects.set_egress(root, cfg, "thing", "local")
+
+    advanced = projects.advance_project(root, cfg, "thing")
+    assert advanced.phase == "spec" and advanced.egress == "local"
+    assert projects.load_project(root, cfg, "thing").egress == "local"
+
+    assert projects.reopen_project(root, cfg, "thing").egress == "local"
+    for _ in range(3):
+        projects.advance_project(root, cfg, "thing")
+    completed = projects.complete_project(root, cfg, "thing")
+    assert completed.status == "complete" and completed.egress == "local"
+    assert projects.load_project(root, cfg, "thing").egress == "local"
+
+
+def test_the_egress_pin_survives_the_other_project_setters(root, cfg):
+    gate = _open_gate(root, cfg)
+    projects.set_egress(root, cfg, "thing", "local")
+
+    assert projects.set_summary(root, cfg, "thing", "Ships help").egress == "local"
+    projects.set_execution(root, cfg, "thing", projects.FAN_OUT_EXECUTION)
+    assert projects.take_gate(root, cfg, "thing", taken_by="developer").egress == "local"
+
+    loaded = projects.load_project(root, cfg, "thing")
+    assert loaded.egress == "local" and loaded.execution == projects.FAN_OUT_EXECUTION
+    assert loaded.gate.role == gate.role and not loaded.gate.is_open
+
+
+def test_the_project_record_names_the_same_classes_as_the_pool():
+    # The record keeps its own list so that reading a project loads no pool
+    # code; the two must still name the same classes, strictest first.
+    from specflo.pool.definitions import EGRESS_CLASSES
+
+    assert projects.EGRESS_CLASSES == EGRESS_CLASSES

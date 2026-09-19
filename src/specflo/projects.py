@@ -33,6 +33,10 @@ NEEDS_SUMMARY = "(needs summary)"
 LINEAR_EXECUTION = "linear"
 FAN_OUT_EXECUTION = "fan-out"
 EXECUTION_MODES = (LINEAR_EXECUTION, FAN_OUT_EXECUTION)
+# The egress classes a project can pin, strictest first. The agent pool
+# defines the same names; they are repeated here so that reading a project
+# record loads no pool code.
+EGRESS_CLASSES = ("local", "no-train", "open")
 
 
 @dataclass
@@ -80,6 +84,9 @@ class Project:
     # piece it targets. A project made with `new` has neither.
     work_item: int | None = None
     piece: str = ""
+    # The egress class the project pins, empty for no pin; a project file
+    # without the key reads as no pin.
+    egress: str = ""
     # The project's gate record; a project file without one reads as no gate,
     # so files written before gates existed keep their behaviour.
     gate: Gate | None = None
@@ -123,6 +130,16 @@ def validate_execution(mode: str) -> str:
     return mode
 
 
+def validate_egress(egress_class: str) -> str:
+    """Return ``egress_class`` if it is a known egress class, else raise naming them."""
+    if egress_class not in EGRESS_CLASSES:
+        raise SpecfloError(
+            f"Unknown egress class {egress_class!r}: expected one of "
+            + ", ".join(repr(c) for c in EGRESS_CLASSES) + "."
+        )
+    return egress_class
+
+
 def create_project(
     root: Path,
     cfg: SpecfloConfig,
@@ -162,6 +179,11 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         raise ProjectNotFound(f"No project {slug!r}.")
     try:
         fields = _parse_frontmatter(path.read_text())
+        # A pin that names no known class is refused, never read as no pin:
+        # a misspelt pin must not widen what the project allows.
+        egress = str(fields.get("egress", "") or "")
+        if egress:
+            validate_egress(egress)
     except SpecfloError as exc:
         raise SpecfloError(f"Project {slug!r} cannot be read. {exc}") from exc
     return Project(
@@ -177,6 +199,7 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         execution=str(fields.get("execution") or LINEAR_EXECUTION),
         work_item=int(fields["work_item"]) if fields.get("work_item") is not None else None,
         piece=str(fields.get("piece", "") or ""),
+        egress=egress,
         gate=_parse_gate(fields.get("gate")),
     )
 
@@ -416,6 +439,37 @@ def set_execution(
     return mode, True
 
 
+def set_egress(
+    root: Path, cfg: SpecfloConfig, slug: str, egress_class: str
+) -> tuple[str, bool]:
+    """Pin the project's egress class, rewriting only that frontmatter key.
+
+    Returns ``(egress_class, changed)``; ``changed`` is False when the file
+    already pins ``egress_class``. The rewrite is textual, as for the
+    execution mode, so every other frontmatter key and the body survive
+    byte-for-byte. A missing key is appended to the frontmatter.
+    """
+    egress_class = validate_egress(egress_class)
+    path = project_dir(root, cfg, slug) / PROJECT_FILENAME
+    with locked(lock_path_for(root, slug, path)):
+        if load_project(root, cfg, slug).egress == egress_class:
+            return egress_class, False
+        text = path.read_text()
+        head, sep, rest = text.partition("---")
+        front, sep2, body = rest.partition("---")
+        lines = front.split("\n")
+        for i, line in enumerate(lines):
+            if line.startswith("egress:"):
+                lines[i] = f"egress: {egress_class}"
+                break
+        else:
+            # No key yet: add it as the last frontmatter line (front ends
+            # with the newline that precedes the closing fence).
+            lines.insert(len(lines) - 1, f"egress: {egress_class}")
+        path.write_text(head + sep + "\n".join(lines) + sep2 + body)
+    return egress_class, True
+
+
 def resume_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
     """Un-shelve a project: status -> active, clear the reason, phase untouched.
 
@@ -445,6 +499,8 @@ def _render(project: Project) -> str:
         fields["work_item"] = project.work_item
     if project.piece:
         fields["piece"] = project.piece
+    if project.egress:
+        fields["egress"] = project.egress
     if project.summary:
         fields["summary"] = project.summary
     if project.completed:

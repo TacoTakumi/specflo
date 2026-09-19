@@ -221,6 +221,9 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert svc.set_summary(slug, "Ships help").summary == "Ships help"
     assert svc.set_execution(slug, "fan-out") == ("fan-out", True)
     assert svc.set_execution(slug, "fan-out") == ("fan-out", False)
+    assert svc.set_egress(slug, "local") == ("local", True)
+    assert svc.set_egress(slug, "local") == ("local", False)
+    assert svc.load_project(slug).egress == "local"
     assert svc.shelve_project(slug, reason="later").shelved_reason == "later"
     assert svc.resume_project(slug).status == "active"
 

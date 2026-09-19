@@ -86,6 +86,10 @@ class ProjectService(Protocol):
         """Set the execution mode; ``(mode, changed)``."""
         ...
 
+    def set_egress(self, slug: str, egress_class: str) -> tuple[str, bool]:
+        """Pin the project's egress class; ``(egress_class, changed)``."""
+        ...
+
     def open_gate(self, slug: str, role: str, *, note: str = "") -> Project:
         """Open a gate for ``role`` as the service's identity; refused while one is open."""
         ...

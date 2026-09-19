@@ -104,6 +104,9 @@ class LocalProjectService:
     def set_execution(self, slug: str, mode: str) -> tuple[str, bool]:
         return projects.set_execution(self.root, self.cfg, slug, mode)
 
+    def set_egress(self, slug: str, egress_class: str) -> tuple[str, bool]:
+        return projects.set_egress(self.root, self.cfg, slug, egress_class)
+
     def open_gate(self, slug: str, role: str, *, note: str = "") -> Project:
         return projects.open_gate(
             self.root, self.cfg, slug, role, opened_by=self.actor or "", note=note
