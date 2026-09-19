@@ -44,7 +44,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Request
 from starlette.concurrency import run_in_threadpool
 
 from ..errors import SpecfloError
-from ..pool import waiting
+from ..pool import ledger, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
@@ -297,7 +297,7 @@ def _holds(lease: Lease, token: str | None) -> bool:
 def _held(lease: Lease) -> dict:
     """A lease as its holder is told of it: nothing of the token, nor its hash."""
     return {
-        "lease_id": lease.id, "agent": lease.member, "pool": lease.pool,
+        "lease_id": lease.id, "agent": ledger.agent_of(lease), "pool": lease.pool,
         "state": lease.state, "acquired": lease.acquired,
         "last_activity": lease.last_activity, "idle_limit": lease.idle_limit,
     }

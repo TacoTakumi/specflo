@@ -1,7 +1,8 @@
 """The pool service: a lease is granted on a free member and ended in one place.
 
-A consumer asks for a pool by name. The service finds a member of that pool
-with no lease on it, writes the lease row, starts a fresh pi for the member
+A consumer asks for a pool by name. The service asks the ledger whether the
+request fits and which member it gets, writes the lease row with every
+resource the ledger says the lease takes, starts a fresh pi for the member
 through the runner and records the grant. What goes back is the lease's id,
 the name of the agent to drive and the lease token; the store keeps only the
 token's hash. The row is written before the process starts, so there is never
@@ -25,8 +26,12 @@ reads as free from the moment its lease leaves the active state, while its
 process may take some seconds more to stop; a grant that ran in between would
 find the member still running.
 
-A member serves one lease at a time here whatever capacity it declares: the
-agent is named for the member, and one name runs one process.
+Whether a request fits is the ledger's to say and nothing here counts: the
+service reads the active lease rows, hands them over with the configuration
+and the request, and acts on the answer (see ``ledger``). A member of
+capacity above 1 serves several leases, each under an agent name the ledger
+chose and the lease row keeps, and that is the name a lease's process is
+stopped and its status read by.
 
 Requests that did not fit wait as rows in the store, in the order they came.
 A grant gives way to every request that came before its own and fits now, so
@@ -47,7 +52,7 @@ import hashlib
 import secrets
 import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,13 +60,12 @@ from ..daemon.poolstore import (
     TRANSITION_KINDS,
     Lease,
     PoolStore,
-    Resource,
     Transition,
     WaitingRequest,
 )
 from ..errors import SpecfloError
-from . import expiry, runner
-from .config import Member, Pool, PoolConfig
+from . import expiry, ledger, runner
+from .config import Pool, PoolConfig
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
 ENDINGS: tuple[str, ...] = tuple(kind for kind in TRANSITION_KINDS if kind != "granted")
@@ -163,7 +167,7 @@ class PoolService:
                 with self.open_store() as store:
                     due = [
                         lease.id for lease in store.list_leases(state="active")
-                        if expiry.expired(lease, runner.status(lease.member), now)
+                        if expiry.expired(lease, runner.status(ledger.agent_of(lease)), now)
                     ]
                 return [self.end_lease(lease_id, "expired") for lease_id in due]
             finally:
@@ -197,7 +201,7 @@ class PoolService:
         definition = next(d for d in self.config.definitions if d.name == pool.definition)
         with self._turn, self.open_store() as store:
             self._give_way(pool, store, waiting_id)
-            member = self._free_member(pool, store)
+            placed = self._place(pool.name, store)
             if waiting_id is not None:
                 store.remove_waiting(waiting_id)
             lease_id, token = self.mint_id(), self.mint_token()
@@ -205,13 +209,14 @@ class PoolService:
             store.add_lease(Lease(
                 id=lease_id, team_lease_id=None,
                 holder_hash=hash_token(token), holder_label=holder_label,
-                member=member.name, pool=pool.name,
-                resources=(Resource("pool", pool.name), Resource("member", member.name)),
+                member=placed.member.name, pool=pool.name, resources=placed.resources,
                 acquired=now, last_activity=now, idle_limit=idle_limit, state="active",
             ))
             try:
+                # The runner names the agent for the member it is handed, so a
+                # further lease on a member is handed over under its own name.
                 agent = runner.start(
-                    definition, member, self.config.accounts,
+                    definition, replace(placed.member, name=placed.agent), self.config.accounts,
                     cwd=cwd, pool_token=self.pool_token, lease_token=token,
                     config_root=self.config_root, environ=self.environ,
                 )
@@ -257,9 +262,8 @@ class PoolService:
             )
             if store.record_transition(ending, expect="active") is None:
                 return _recorded_end(store, lease_id)
-            # The agent is named for the member. The host aborts a running
-            # turn itself before it stops pi.
-            agent = store.get_lease(lease_id).member
+            # The host aborts a running turn itself before it stops pi.
+            agent = ledger.agent_of(store.get_lease(lease_id))
             runner.stop(agent, kind, pool_token=self.pool_token, request_id=request_id)
         return Ended(lease_id=lease_id, state=kind, cause=cause, time=ending.time)
 
@@ -289,23 +293,20 @@ class PoolService:
         """Could the waiting *request* be granted now? One that names no
         declared pool could not."""
         try:
-            self._free_member(self._pool(request.pool), store)
-        except (UnknownPool, NoFreeMember):
+            self._place(request.pool, store)
+        except NoFreeMember:
             return False
         return True
 
-    def _free_member(self, pool: Pool, store: PoolStore) -> Member:
-        """The first member of *pool*, in the order it lists them, with no
-        active lease in any pool."""
-        if len(store.list_leases(state="active", pool=pool.name)) >= pool.size:
-            raise NoFreeMember(
-                f"pool '{pool.name}' is full: all {pool.size} of its leases are out."
+    def _place(self, pool_name: str, store: PoolStore) -> ledger.Placement:
+        """Where a request for the pool *pool_name* fits now, as the ledger
+        answers from the active lease rows. Raises ``NoFreeMember``."""
+        try:
+            return ledger.place(
+                self.config, store.list_leases(state="active"), ledger.Request(pool=pool_name)
             )
-        members = {member.name: member for member in self.config.members}
-        for name in pool.members:
-            if not store.list_leases(state="active", member=name):
-                return members[name]
-        raise NoFreeMember(f"pool '{pool.name}' has no free member: each one serves a lease.")
+        except ledger.NoRoom as full:
+            raise NoFreeMember(str(full)) from full
 
 
 def _idle_limit(pool: Pool, asked: int | None) -> int:
