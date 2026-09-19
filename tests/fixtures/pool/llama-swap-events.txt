@@ -1,0 +1,105 @@
+: A replay of llama-swap's GET /api/events stream, in the framing the server
+: writes: every message is "event:message", one "data:" line and a blank line.
+: The data is an envelope {"type", "data"} whose data is JSON text again. A
+: modelStatus message is a whole snapshot, every configured model with its
+: state (stopped, starting, ready, stopping, shutdown), sent on each change of
+: a process state; no message carries a time. The models are the ones of the
+: fixture llama-swap.yaml beside this file. Lines that start with a colon are
+: comments to an event-stream reader, and the server sends none.
+:
+: What happens: model-a is ready. A client outside the pool asks for model-b,
+: which may not run beside model-a, so llama-swap unloads model-a for it.
+: model-c comes and goes twice along the way. Then model-a is asked for again:
+: model-b is unloaded and model-a loads a second time.
+
+: What a new connection is sent first: the log history, the snapshot, and the rest.
+
+event:message
+data:{"type":"logData","data":"{\"data\":\"[INFO] llama-swap listening on http://127.0.0.1:8080\\n[INFO] \\u003cmodel-a\\u003e Health check passed on http://localhost:10001/health\\n\",\"source\":\"proxy\"}"}
+
+event:message
+data:{"type":"logData","data":"{\"data\":\"\",\"source\":\"upstream\"}"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"uiConfig","data":"{\"activity\":{\"session_id\":[\"X-Session-ID\"]}}"}
+
+event:message
+data:{"type":"profileChanged","data":"{\"active\":null}"}
+
+event:message
+data:{"type":"inflight","data":"{\"operation\":\"snapshot\",\"requests\":[]}"}
+
+: model-c loads beside model-a.
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"starting\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+: A request for model-b arrives from outside the pool: model-a is unloaded for it.
+
+event:message
+data:{"type":"inflight","data":"{\"operation\":\"upsert\",\"request\":{\"id\":\"req-1\",\"timestamp\":\"2026-03-01T12:00:00Z\",\"model\":\"model-b\",\"req_path\":\"/v1/chat/completions\",\"method\":\"POST\",\"req_headers\":{},\"remote_ip\":\"127.0.0.1\",\"resp_headers\":{},\"resp_bytes\":0,\"elapsed_ms\":0}}"}
+
+event:message
+data:{"type":"logData","data":"{\"data\":\"[INFO] matrix: model=model-b starting, evicting model-a\\n\",\"source\":\"proxy\"}"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopping\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"starting\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"inflight","data":"{\"operation\":\"remove\",\"id\":\"req-1\"}"}
+
+event:message
+data:{"type":"activity","data":"{\"id\":41}"}
+
+: model-c is unloaded and loads again; no lease is on it.
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"stopping\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"starting\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+: The next request for model-a: model-b is unloaded and model-a loads again.
+
+event:message
+data:{"type":"inflight","data":"{\"operation\":\"upsert\",\"request\":{\"id\":\"req-2\",\"timestamp\":\"2026-03-01T12:00:00Z\",\"model\":\"model-a\",\"req_path\":\"/v1/chat/completions\",\"method\":\"POST\",\"req_headers\":{},\"remote_ip\":\"127.0.0.1\",\"resp_headers\":{},\"resp_bytes\":0,\"elapsed_ms\":0}}"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopping\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"starting\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"modelStatus","data":"[{\"id\":\"model-a\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-b\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-c\",\"name\":\"\",\"description\":\"\",\"state\":\"ready\",\"unlisted\":false,\"peerID\":\"\"},{\"id\":\"model-d\",\"name\":\"\",\"description\":\"\",\"state\":\"stopped\",\"unlisted\":false,\"peerID\":\"\"}]"}
+
+event:message
+data:{"type":"inflight","data":"{\"operation\":\"remove\",\"id\":\"req-2\"}"}
+
+event:message
+data:{"type":"activity","data":"{\"id\":42}"}
+

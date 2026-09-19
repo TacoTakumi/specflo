@@ -83,6 +83,13 @@ class PoolRig(Rig):
         return read_status(AgentPaths.resolve(agent).status)
 
 
+@pytest.fixture(autouse=True)
+def no_real_llama_swap(monkeypatch):
+    # A test daemon that serves starts the events reader; point it at a closed
+    # port so no test reads a real llama-swap, whatever runs on this machine.
+    monkeypatch.setenv("SPECFLO_LLAMA_SWAP_URL", "http://127.0.0.1:1")
+
+
 @pytest.fixture
 def pool_rig(tmp_path, monkeypatch):
     rig = PoolRig(tmp_path, monkeypatch)

@@ -8,16 +8,42 @@ The health probe is the one open route. The API lives on the router in
 :mod:`specflo.daemon.routes`, behind the bearer token guard, and the agent
 pool's part of it on the router in :mod:`specflo.daemon.pool_routes`; the web
 UI in :mod:`specflo.daemon.web` serves its pages behind a browser session.
+While a daemon with a pool serves, it reads llama-swap's event stream
+(:mod:`specflo.pool.events`).
 """
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
 
+from ..pool import events
 from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
 from .routes import router
+
+
+@contextlib.asynccontextmanager
+async def _serving(app: FastAPI) -> AsyncIterator[None]:
+    """What runs while the daemon serves, and no longer.
+
+    A daemon with a pool reads llama-swap's event stream for the model
+    reloads of leased members. The reader is a task on the server's event
+    loop, cancelled when the server shuts down; a daemon with no pool, or
+    with a pool configuration that did not stand, reads nothing.
+    """
+    reader = events.reader_for(app.state.pool)
+    task = asyncio.create_task(reader.run()) if reader is not None else None
+    try:
+        yield
+    finally:
+        if task is not None:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def create_app(root: Path, *, url: str | None = None) -> FastAPI:
@@ -29,7 +55,10 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     root = prepare_root(root)
     # No generated docs or schema routes: those would serve every API path
     # to a browser without a token, and the token guard is the contract.
-    app = FastAPI(title="specflo daemon", docs_url=None, redoc_url=None, openapi_url=None)
+    app = FastAPI(
+        title="specflo daemon", docs_url=None, redoc_url=None, openapi_url=None,
+        lifespan=_serving,
+    )
     app.state.root = root
     app.state.url = url
     # The chat pumps: one per agent discovery finds alive for a mapped
