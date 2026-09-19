@@ -1,0 +1,362 @@
+"""The pool configuration file: provider accounts and the member roster.
+
+An admin writes ``pool.yaml`` ahead of time and the roster in it is complete:
+nothing that is not declared can be leased. An account is a name, a cap on how
+many leases may run through it at once, and the name of the environment
+variable that holds its one API key. A member is what runs a role: the harness
+command that starts it, what backs it, its capability labels, how many leases
+it serves at once, and its egress class.
+
+A local member runs against llama-swap on this host, so it names one concrete
+model ID from the rig's llama-swap configuration and its class is ``local``.
+A hosted member runs over the network, so it names a declared account and its
+class is ``no-train`` or ``open``.
+
+Loading is strict: a key this module does not know is refused rather than
+ignored, and every refusal names the entry and the field at fault. Accounts
+and members are lists of named entries, not mappings, because YAML drops a
+repeated mapping key without a word and a repeated name must be refused.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+import yaml
+
+from ..errors import SpecfloError
+from . import matrix
+from .definitions import EGRESS_CLASSES
+
+# What backs a member: llama-swap on this host, or a provider over the network.
+LOCAL = "local"
+HOSTED = "hosted"
+BACKINGS: tuple[str, ...] = (LOCAL, HOSTED)
+
+# The egress classes a hosted member may declare: every class but "local".
+HOSTED_CLASSES: tuple[str, ...] = tuple(c for c in EGRESS_CLASSES if c != LOCAL)
+
+# Every key the file may carry, in the order they are written. An account has
+# no field for a provider management key: such a key can mint spending keys,
+# which is more authority than the pool needs.
+SECTIONS: tuple[str, ...] = ("llama_swap", "accounts", "members")
+ACCOUNT_FIELDS: tuple[str, ...] = ("name", "cap", "key_env")
+MEMBER_FIELDS: tuple[str, ...] = (
+    "name", "command", "backing", "model", "account", "labels", "capacity", "egress",
+)
+
+# The llama-swap ways of naming a model that the pool does not use. A profile
+# is one server-wide rewrite table, and a selector picks the real model per
+# request, after the pool has checked which models fit together.
+_NOT_A_MODEL: tuple[str, ...] = ("profile", "selector")
+
+# The entry an error names when the fault is not in one account or member.
+FILE = "file"
+
+
+class ConfigError(SpecfloError):
+    """A pool configuration that cannot be used, with the entry and the field at fault."""
+
+    def __init__(self, path: Path, entry: str, field: str, problem: str) -> None:
+        super().__init__(f"{path}: {entry}: {field}: {problem}")
+        self.path = path
+        self.entry = entry
+        self.field = field
+
+
+@dataclass(frozen=True)
+class Account:
+    """One provider account. ``key_env`` names the variable, never the key."""
+
+    name: str
+    cap: int
+    key_env: str
+
+
+@dataclass(frozen=True)
+class Member:
+    """One roster entry. A local member has a ``model``, a hosted one an ``account``."""
+
+    name: str
+    command: str
+    backing: str
+    labels: tuple[str, ...]
+    capacity: int
+    egress: str
+    model: str | None = None
+    account: str | None = None
+
+
+@dataclass(frozen=True)
+class PoolConfig:
+    """What ``pool.yaml`` declares. ``swap`` is the llama-swap configuration at
+    ``llama_swap``; both are None when the file names none."""
+
+    path: Path
+    accounts: tuple[Account, ...] = ()
+    members: tuple[Member, ...] = ()
+    llama_swap: Path | None = None
+    swap: matrix.SwapConfig | None = None
+
+
+def load_pool_file(path: Path | str) -> PoolConfig:
+    """The configuration in the file at *path*.
+
+    Raises ``ConfigError`` for the first fault; ``check_pool_file`` gives all
+    of them.
+    """
+    config, errors = check_pool_file(path)
+    if errors:
+        raise errors[0]
+    return config
+
+
+def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
+    """The configuration in the file at *path*, with every fault found in it.
+
+    An entry with a fault is left out of the configuration, so what is
+    returned holds only entries that stand as written.
+    """
+    path = Path(path)
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        problem = f"cannot be read ({exc.strerror})."
+        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)]
+    except yaml.YAMLError:
+        return PoolConfig(path), [ConfigError(path, FILE, "file", "not valid YAML.")]
+    if data is None:
+        data = {}
+    if not isinstance(data, dict):
+        problem = "not a mapping of " + ", ".join(SECTIONS) + "."
+        return PoolConfig(path), [ConfigError(path, FILE, "file", problem)]
+
+    errors: list[ConfigError] = []
+    for key in data:
+        if key not in SECTIONS:
+            errors.append(ConfigError(
+                path, FILE, str(key), "unknown key; expected one of " + ", ".join(SECTIONS) + "."
+            ))
+
+    account_entries = _entries(path, data, "accounts", errors)
+    member_entries = _entries(path, data, "members", errors)
+
+    accounts = []
+    for position, fields in account_entries:
+        found: list[ConfigError] = []
+        account = _account(_Entry(path, "account", "accounts", position, fields, found))
+        errors.extend(found)
+        if not found:
+            accounts.append(account)
+    # A member is checked against every name an account entry gives, so an
+    # account refused for another fault is not also reported as undeclared.
+    declared = {
+        f["name"] for _, f in account_entries
+        if isinstance(f, dict) and isinstance(f.get("name"), str)
+    }
+
+    needs_swap = any(isinstance(f, dict) and f.get("backing") == LOCAL for _, f in member_entries)
+    llama_swap, swap = _llama_swap(path, data.get("llama_swap"), needs_swap, errors)
+
+    members = []
+    for position, fields in member_entries:
+        found = []
+        member = _member(_Entry(path, "member", "members", position, fields, found), declared, swap)
+        errors.extend(found)
+        if not found:
+            members.append(member)
+
+    for kind, entries in (("account", account_entries), ("member", member_entries)):
+        errors.extend(_repeats(path, kind, entries))
+    repeated = {e.entry for e in errors if e.field == "name"}
+    return PoolConfig(
+        path,
+        tuple(a for a in accounts if f"account '{a.name}'" not in repeated),
+        tuple(m for m in members if f"member '{m.name}'" not in repeated),
+        llama_swap,
+        swap,
+    ), errors
+
+
+def _entries(
+    path: Path, data: dict, section: str, errors: list[ConfigError]
+) -> list[tuple[int, object]]:
+    """The entries under *section* with their positions, counted from 1."""
+    value = data.get(section)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        errors.append(ConfigError(
+            path, FILE, section, "must be a list of entries, each with a name."
+        ))
+        return []
+    return list(enumerate(value, start=1))
+
+
+def _repeats(path: Path, kind: str, entries: list[tuple[int, object]]) -> list[ConfigError]:
+    """One error for each name that more than one entry of *kind* carries."""
+    names = [f.get("name") for _, f in entries if isinstance(f, dict)]
+    names = [n for n in names if isinstance(n, str)]
+    problem = f"declared more than once; each {kind} needs its own name."
+    return [
+        ConfigError(path, f"{kind} '{name}'", "name", problem)
+        for name in dict.fromkeys(names)
+        if names.count(name) > 1
+    ]
+
+
+def _llama_swap(
+    path: Path, value: object, needed: bool, errors: list[ConfigError]
+) -> tuple[Path | None, matrix.SwapConfig | None]:
+    """The llama-swap configuration the file names; a relative path is taken
+    from the file's own directory."""
+    if value is None:
+        if needed:
+            errors.append(ConfigError(
+                path, FILE, "llama_swap",
+                "required; a local member needs the path of the rig's llama-swap configuration.",
+            ))
+        return None, None
+    if not isinstance(value, str) or not value.strip():
+        errors.append(ConfigError(path, FILE, "llama_swap", "must be a path."))
+        return None, None
+    location = path.parent / Path(value).expanduser()
+    try:
+        return location, matrix.read(location)
+    except SpecfloError as exc:
+        errors.append(ConfigError(path, FILE, "llama_swap", f"{exc}."))
+        return location, None
+
+
+class _Entry:
+    """One account or member entry being checked: reads its fields and notes
+    each fault against the entry's name, or its position when it has none."""
+
+    def __init__(
+        self, path: Path, kind: str, section: str, position: int, fields: object,
+        errors: list[ConfigError],
+    ) -> None:
+        self.path = path
+        self.fields = fields if isinstance(fields, dict) else {}
+        self.errors = errors
+        name = self.fields.get("name")
+        named = isinstance(name, str) and name.strip()
+        self.label = f"{kind} '{name}'" if named else f"{section}[{position}]"
+        if not isinstance(fields, dict):
+            self.fault("entry", "not a mapping of keys to values.")
+        elif not named:
+            self.fault("name", "required; a name other entries can refer to.")
+
+    def fault(self, field: str, problem: str) -> None:
+        self.errors.append(ConfigError(self.path, self.label, field, problem))
+
+    def known(self, allowed: tuple[str, ...]) -> None:
+        for key in self.fields:
+            if key in _NOT_A_MODEL and "model" in allowed:
+                self.fault(
+                    key, "not used by the pool; a local member names one concrete "
+                    "llama-swap model ID under 'model'."
+                )
+            elif key not in allowed:
+                self.fault(str(key), "unknown key; expected one of " + ", ".join(allowed) + ".")
+
+    def text(self, field: str, why: str) -> str:
+        value = self.fields.get(field)
+        if not isinstance(value, str) or not value.strip():
+            self.fault(field, f"required; {why}.")
+            return ""
+        return value.strip()
+
+    def at_least_one(self, field: str, why: str) -> int:
+        value = self.fields.get(field)
+        # A bool is an int to Python, and "cap: true" is not a count.
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            self.fault(field, f"must be a whole number of at least 1; {why}.")
+            return 0
+        return value
+
+    def one_of(self, field: str, allowed: tuple[str, ...]) -> str:
+        value = self.fields.get(field)
+        if value not in allowed:
+            expected = ", ".join(allowed)
+            self.fault(field, f"unknown value {value!r}; expected one of {expected}.")
+            return ""
+        return value
+
+    def strings(self, field: str) -> tuple[str, ...]:
+        value = self.fields.get(field)
+        if value is None:
+            return ()
+        if not isinstance(value, list) or not all(isinstance(i, str) and i for i in value):
+            self.fault(field, "must be a list of strings.")
+            return ()
+        return tuple(value)
+
+
+def _account(entry: _Entry) -> Account:
+    entry.known(ACCOUNT_FIELDS)
+    return Account(
+        name=str(entry.fields.get("name")),
+        cap=entry.at_least_one("cap", "how many leases may run through the account at once"),
+        key_env=entry.text(
+            "key_env", "the name of the environment variable that holds the API key"
+        ),
+    )
+
+
+def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -> Member:
+    entry.known(MEMBER_FIELDS)
+    command = entry.text("command", "the harness command that starts the member")
+    backing = entry.one_of("backing", BACKINGS)
+    labels = entry.strings("labels")
+    capacity = entry.at_least_one("capacity", "how many leases the member serves at once")
+    egress = entry.one_of("egress", EGRESS_CLASSES)
+
+    model = entry.fields.get("model")
+    account = entry.fields.get("account")
+    if backing == LOCAL:
+        if not any(key in entry.fields for key in _NOT_A_MODEL):
+            model = entry.text("model", "one concrete llama-swap model ID")
+            if model and swap is not None and model not in swap.model_ids:
+                entry.fault("model", _not_a_model_id(model, swap))
+        if account is not None:
+            entry.fault(
+                "account", "not for a local member; only a hosted member runs through an account."
+            )
+        if egress and egress != LOCAL:
+            entry.fault(
+                "egress", f"a local member's data stays on this host, so its class is '{LOCAL}'."
+            )
+    elif backing == HOSTED:
+        account = entry.text("account", "the declared account the member runs through")
+        if account and account not in accounts:
+            entry.fault("account", f"'{account}' is not a declared account.")
+        if egress and egress not in HOSTED_CLASSES:
+            entry.fault(
+                "egress", "a hosted member sends data off this host, so its class is one of "
+                + ", ".join(HOSTED_CLASSES) + "."
+            )
+
+    return Member(
+        name=str(entry.fields.get("name")),
+        command=command,
+        backing=backing,
+        labels=labels,
+        capacity=capacity,
+        egress=egress,
+        model=model if isinstance(model, str) else None,
+        account=account if isinstance(account, str) else None,
+    )
+
+
+def _not_a_model_id(model: str, swap: matrix.SwapConfig) -> str:
+    if model in swap.vars:
+        return (
+            f"'{model}' is a matrix var, not a model ID; name the model it stands for, "
+            f"'{swap.vars[model]}'."
+        )
+    return (
+        f"'{model}' is not a model ID in the llama-swap configuration; a profile or a "
+        "selector is not one either. Expected one of " + ", ".join(swap.model_ids) + "."
+    )

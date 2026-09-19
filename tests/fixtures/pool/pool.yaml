@@ -1,0 +1,29 @@
+# A cut-down pool configuration in the shape an admin writes: where the rig's
+# llama-swap configuration is, the provider accounts, and the member roster.
+# A relative llama_swap path is taken from this file's directory.
+llama_swap: llama-swap.yaml
+
+accounts:
+  - name: openrouter-main
+    cap: 4
+    key_env: OPENROUTER_API_KEY
+
+members:
+  # A local member runs one concrete llama-swap model ID and never leaves
+  # this host.
+  - name: coder-a
+    command: pi --mode rpc --provider llama-swap --model model-a
+    backing: local
+    model: model-a
+    labels: [code]
+    capacity: 1
+    egress: local
+
+  # A hosted member runs over the network through a declared account.
+  - name: strong-hosted
+    command: pi --mode rpc --provider openrouter --model vendor/strong
+    backing: hosted
+    account: openrouter-main
+    labels: [strong-model, long-context]
+    capacity: 2
+    egress: no-train
