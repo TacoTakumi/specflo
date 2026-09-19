@@ -53,11 +53,12 @@ def request(
     full pool is refused at once. Raises ``SpecfloError`` with the words to
     print for anything that is refused, here or on the daemon.
     """
+    # A checkout with no daemon is refused before anything else is looked at.
+    registered = pick_remote(root, remote)
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
     seconds = None if idle_limit is None else idle_seconds(idle_limit)
     directory = member_directory(cwd)
-    registered = pick_remote(root, remote)
     # The answer comes after the wait, and the grant after that.
     client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT + wait)
     grant = client.request(
@@ -92,9 +93,9 @@ def release(
     ended is reported as it ended, and one that is active is another's, which
     the daemon refuses.
     """
+    registered = pick_remote(root, remote)
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
-    registered = pick_remote(root, remote)
     client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
     kept = next(
         (path for path, lease in held_leases(root, client) if lease.lease_id == lease_id), None
@@ -111,9 +112,9 @@ def release(
 
 def list_held(root: Path, *, remote: str | None = None, json_output: bool = False) -> None:
     """Print the leases this checkout holds: those the tokens under *root* hold."""
+    registered = pick_remote(root, remote)
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
-    registered = pick_remote(root, remote)
     client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
     leases = [lease for _path, lease in held_leases(root, client)]
     if json_output:
@@ -165,7 +166,8 @@ def pick_remote(root: Path, remote: str | None):
         remotes = config.list_remotes(root)
         if not remotes:
             raise SpecfloError(
-                "No remotes. A pool is held by a daemon; register it with"
+                "Pools need a daemon, and this checkout has no remote. Register the"
+                " daemon that holds the pool with"
                 " `specflo remote add <name> <url> --token <secret>`."
             )
         if len(remotes) > 1:
