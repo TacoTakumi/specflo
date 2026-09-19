@@ -52,15 +52,22 @@ entry is no row: it has no idle limit and no state, nothing here ends it, and
 a refusal it is part of says that it is the project's agent that holds what
 is in the way, since no lease ending frees that.
 
+An account can be closed: its provider gives it nothing more until a reset. A
+member on a closed account serves no new lease, so it is passed over as one
+of another class is, for the next member the pool lists. A request whose
+every accepted member runs through a closed account has no room to wait for
+either, and its refusal names each account and when it reopens. A lease that
+is out on a closed account is a row like any other: nothing here ends it.
+
 ``place`` is a function of the configuration, the lease rows, the standing
-entries and the request. It opens no store, reads no clock and no file, and
-starts nothing: the pool service hands it the rows and the entries and acts
-on its answer.
+entries, the accounts closed now and the request. It opens no store, reads no
+clock and no file, and starts nothing: the pool service hands it the rows,
+the entries and the closed accounts and acts on its answer.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from itertools import count
 
@@ -88,6 +95,12 @@ class NoRoom(SpecfloError):
 class NoMemberAllowed(SpecfloError):
     """A request that no lease ending would make fit: every member of its pool
     is of an egress class it does not accept. The message names the classes."""
+
+
+class AccountClosed(SpecfloError):
+    """A request that no lease ending would make fit: every member of its pool
+    that it accepts runs through a closed account. The message names each
+    account and when it reopens."""
 
 
 @dataclass(frozen=True)
@@ -128,15 +141,18 @@ def place(
     leases: Iterable[Lease],
     request: Request,
     standing: Iterable[Standing] = (),
+    closed: Mapping[str, str | None] | None = None,
 ) -> Placement:
-    """Where *request* fits, given the *leases* that are out and the
-    *standing* entries of the project agents that are alive.
+    """Where *request* fits, given the *leases* that are out, the *standing*
+    entries of the project agents that are alive and the accounts *closed*
+    now, each with the time it reopens, or None when none is set.
 
     The member is the first the pool lists, in its order, that is of a class
     the request accepts, serves fewer leases than its capacity and, if it is
     hosted, whose account has fewer leases out than its cap, in whichever
     pools; if it is local, whose model may be loaded beside every model under
-    lease. A member of another class is passed over however free it is.
+    lease. A member of another class is passed over however free it is, and
+    so is a member whose account is closed.
     *leases* may hold rows that have ended; they count for nothing. A standing
     entry's account slot and model count as a lease's do.
 
@@ -145,7 +161,8 @@ def place(
     full account or kept by the leased models, which it names. Raises
     ``NoMemberAllowed`` instead, and before anything is counted, for a pool
     with no member of a class the request accepts: that is not a matter of
-    room.
+    room. Nor is a pool whose accepted members all run through closed
+    accounts, which raises ``AccountClosed``, before anything is counted too.
     """
     pool = next((p for p in config.pools if p.name == request.pool), None)
     if pool is None:
@@ -162,6 +179,18 @@ def place(
             + ", ".join(f"'{name}' is class '{members[name].egress}'" for name in pool.members)
             + "."
         )
+    # The closed accounts that keep an accepted member, and when each reopens.
+    shut = {
+        members[name].account: closed[members[name].account]
+        for name in accepted if closed and members[name].account in closed
+    }
+    usable = [name for name in accepted if members[name].account not in shut]
+    if not usable:
+        raise AccountClosed(
+            f"pool '{pool.name}' can be served only through a closed account now: "
+            + ", ".join(f"'{name}'" for name in accepted) + " - " + _closed(shut)
+            + ". No lease ending makes room for the request, so it does not wait."
+        )
     out = [lease for lease in leases if lease.state == ACTIVE]
     stood = list(standing)
     # Whatever holds an account slot or a model: a lease that is out, or a
@@ -172,7 +201,7 @@ def place(
     accounts = {account.name: account for account in config.accounts}
     full: dict[str, int] = {}  # the accounts that keep a member with room, and their caps
     apart: dict[str, tuple[str, ...]] = {}  # the models kept off the rig, and by which
-    for name in accepted:
+    for name in usable:
         member = members[name]
         if _taken(out, MEMBER, name) >= member.capacity:
             continue
@@ -195,7 +224,7 @@ def place(
         return Placement(member=member, agent=agent, resources=tuple(resources))
     # Only the members the request may have: the others are not what it waits for.
     listed = ", ".join(f"'{name}'" for name in accepted)
-    kept = []
+    kept = [_closed(shut)] if shut else []
     if full:
         kept.append(", ".join(
             f"account '{name}' is full: all {cap} of its leases are out"
@@ -235,6 +264,15 @@ def _stood_on(stood: list[Standing], kind: str, name: str) -> list[str]:
         f"the agent of project '{entry.project}'"
         for entry in stood if Resource(kind, name) in entry.resources
     ]
+
+
+def _closed(shut: Mapping[str, str | None]) -> str:
+    """What a refusal says of the closed accounts *shut*, each with its reopen time."""
+    return ", ".join(
+        f"account '{name}' is closed "
+        + (f"until {reopen}" if reopen is not None else "with no time set for it to reopen")
+        for name, reopen in shut.items()
+    )
 
 
 def _slots_of(agents: list[str]) -> str:

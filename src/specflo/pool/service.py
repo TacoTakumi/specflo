@@ -43,6 +43,13 @@ over the members above it. A pool with no member under the ceiling is refused
 for good, as ``EgressRefused``: no lease ending would cure it, so it is not
 the refusal a request waits on.
 
+Nor is a pool whose members under the ceiling all run through closed
+accounts. Which accounts are closed now is read from the store at each
+request and judged on the service's clock (see ``accounts``), and the ledger
+passes their members over. That request is refused at once as
+``ClosedAccount``, with each account and its reopen time named. Closing an
+account ends no lease.
+
 Requests that did not fit wait as rows in the store, in the order they came.
 A grant gives way to every request that came before its own and fits now, so
 the earliest waiting request that fits is the one served, and one that does
@@ -77,7 +84,7 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import expiry, ledger, runner
+from . import accounts, expiry, ledger, runner
 from .config import Pool, PoolConfig
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
@@ -106,6 +113,13 @@ class NoFreeMember(SpecfloError):
 class EgressRefused(SpecfloError):
     """A pool with no member under the request's egress ceiling. It never will
     have one, so the request is refused at once and does not wait."""
+
+
+class ClosedAccount(SpecfloError):
+    """A pool whose members under the request's egress ceiling all run through
+    closed accounts. No lease ending would cure it, so the request is refused
+    at once and does not wait; the message names each account and when it
+    reopens."""
 
 
 @dataclass(frozen=True)
@@ -221,9 +235,11 @@ class PoolService:
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
         pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
-        with no member under the ceiling, ``NoFreeMember`` also when an
-        earlier request is served first, and what the runner raises for a member that does not
-        start; the lease written for it is then ended.
+        with no member under the ceiling, ``ClosedAccount`` for one whose
+        members under it all run through closed accounts, ``NoFreeMember``
+        also when an earlier request is served first, and what the runner
+        raises for a member that does not start; the lease written for it is
+        then ended.
         """
         self.expire_due()
         pool = self._pool(pool_name)
@@ -328,7 +344,7 @@ class PoolService:
         when it asks again."""
         try:
             self._place(request.pool, store, request.egress, request.pinned)
-        except (NoFreeMember, EgressRefused):
+        except (NoFreeMember, EgressRefused, ClosedAccount):
             return False
         return True
 
@@ -343,9 +359,12 @@ class PoolService:
         """Where a request for the pool *pool_name* that names the egress
         class *asked*, or none, fits now, as the ledger answers from the
         active lease rows. *pinned* is the class the requesting project
-        *project* pins, when there is one. Raises ``NoFreeMember``, and
+        *project* pins, when there is one. The accounts the store holds as
+        closed, and that are not open again by the service's clock, go to the
+        ledger with their reopen times. Raises ``NoFreeMember``,
         ``EgressRefused`` for a pool with no member under the request's
-        ceiling."""
+        ceiling, and ``ClosedAccount`` for one whose members under it all run
+        through closed accounts."""
         accepts = [
             (definition.name, definition.egress)
             for pool in self.config.pools if pool.name == pool_name
@@ -355,14 +374,21 @@ class PoolService:
         if pinned is not None:
             limits.append(pinned)
         ceiling = egress_classes.ceiling(asked, limits)
+        now = self.clock()
+        closed = {
+            record.name: record.reopen
+            for record in store.list_accounts() if not accounts.is_open(record, now)
+        }
         try:
             return ledger.place(
                 self.config, store.list_leases(state="active"),
                 ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
-                standing=self.standing(),
+                standing=self.standing(), closed=closed,
             )
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full)) from full
+        except ledger.AccountClosed as shut:
+            raise ClosedAccount(str(shut)) from shut
         except ledger.NoMemberAllowed as never:
             named = "no class, which stands for" if asked is None else "the class"
             named_limits = "".join(
