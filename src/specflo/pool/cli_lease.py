@@ -40,25 +40,30 @@ def request(
     cwd: Path | None = None,
     idle_limit: str | None = None,
     label: str | None = None,
+    wait: int = 0,
     remote: str | None = None,
     json_output: bool = False,
 ) -> None:
     """Ask a daemon for a member of *pool*, keep the lease's token, and print
     the lease id and the agent's name.
 
-    *root* is the checkout the orchestrator works in. Raises ``SpecfloError``
-    with the words to print for anything that is refused, here or on the
-    daemon.
+    *root* is the checkout the orchestrator works in. *wait* is how many
+    seconds the request may wait on the daemon for a full pool; when they
+    pass, the daemon's refusal names what the pool is full of. With none a
+    full pool is refused at once. Raises ``SpecfloError`` with the words to
+    print for anything that is refused, here or on the daemon.
     """
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
     seconds = None if idle_limit is None else idle_seconds(idle_limit)
     directory = member_directory(cwd)
     registered = pick_remote(root, remote)
-    client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
+    # The answer comes after the wait, and the grant after that.
+    client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT + wait)
     grant = client.request(
         pool, cwd=str(directory), idle_limit=seconds,
         label=label if label is not None else Path(root).name,
+        wait=wait or None,
     )
     token_path = store_token(root, grant.agent, grant.token)
     if json_output:

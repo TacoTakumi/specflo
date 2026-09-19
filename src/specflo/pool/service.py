@@ -28,6 +28,13 @@ find the member still running.
 A member serves one lease at a time here whatever capacity it declares: the
 agent is named for the member, and one name runs one process.
 
+Requests that did not fit wait as rows in the store, in the order they came.
+A grant gives way to every request that came before its own and fits now, so
+the earliest waiting request that fits is the one served, and one that does
+not fit holds up no one behind it. The service only reads those rows and
+takes the granted one out; the request that waits writes its row and comes
+back to ask again (see ``waiting``).
+
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
 from callables handed in, so a test drives it with a fake clock and counted
@@ -44,7 +51,14 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
-from ..daemon.poolstore import TRANSITION_KINDS, Lease, PoolStore, Resource, Transition
+from ..daemon.poolstore import (
+    TRANSITION_KINDS,
+    Lease,
+    PoolStore,
+    Resource,
+    Transition,
+    WaitingRequest,
+)
 from ..errors import SpecfloError
 from . import expiry, runner
 from .config import Member, Pool, PoolConfig
@@ -162,22 +176,30 @@ class PoolService:
         holder_label: str,
         cwd: Path | str,
         idle_limit: int | None = None,
+        waiting_id: str | None = None,
     ) -> Grant:
         """Lease a free member of the pool *pool_name* to *holder_label*.
 
         The member's pi runs in *cwd*. *idle_limit* is in seconds; without
-        one the pool's default applies.
+        one the pool's default applies. *waiting_id* is the id of the
+        request's own waiting row, when it has one: the requests that wait
+        ahead of that row go first, all of them when there is none, and a
+        grant takes the row out.
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
-        pool's maximum, ``NoFreeMember``, and what the runner raises for a
-        member that does not start; the lease written for it is then ended.
+        pool's maximum, ``NoFreeMember`` also when an earlier request is
+        served first, and what the runner raises for a member that does not
+        start; the lease written for it is then ended.
         """
         self.expire_due()
         pool = self._pool(pool_name)
         idle_limit = _idle_limit(pool, idle_limit)
         definition = next(d for d in self.config.definitions if d.name == pool.definition)
         with self._turn, self.open_store() as store:
+            self._give_way(pool, store, waiting_id)
             member = self._free_member(pool, store)
+            if waiting_id is not None:
+                store.remove_waiting(waiting_id)
             lease_id, token = self.mint_id(), self.mint_token()
             now = _text(self.clock())
             store.add_lease(Lease(
@@ -247,6 +269,30 @@ class PoolService:
                 return pool
         declared = ", ".join(p.name for p in self.config.pools) or "none"
         raise UnknownPool(f"pool '{name}' is not declared; the declared pools: {declared}.")
+
+    def _give_way(self, pool: Pool, store: PoolStore, waiting_id: str | None) -> None:
+        """Refuse a request for *pool* while a request that came before it fits.
+
+        The requests before it are the rows ahead of its own, *waiting_id*,
+        and every row when it has none. One that does not fit is passed over.
+        """
+        for ahead in store.list_waiting():
+            if ahead.id == waiting_id:
+                return
+            if self._fits(ahead, store):
+                raise NoFreeMember(
+                    f"pool '{pool.name}': a request that came earlier, for pool "
+                    f"'{ahead.pool}', is served first."
+                )
+
+    def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
+        """Could the waiting *request* be granted now? One that names no
+        declared pool could not."""
+        try:
+            self._free_member(self._pool(request.pool), store)
+        except (UnknownPool, NoFreeMember):
+            return False
+        return True
 
     def _free_member(self, pool: Pool, store: PoolStore) -> Member:
         """The first member of *pool*, in the order it lists them, with no

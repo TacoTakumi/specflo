@@ -3002,6 +3002,11 @@ def lease_request(
         None, "--label", metavar="<text>",
         help="What the pool shows as the holder; the checkout's directory name otherwise.",
     ),
+    wait: int = typer.Option(
+        0, "--wait", metavar="<seconds>", min=0,
+        help="How long to wait for a full pool, in seconds; a full pool is refused at once"
+        " otherwise.",
+    ),
     remote: str = typer.Option(None, "--remote", metavar="<name>", help=PRODUCT_REMOTE_HELP),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
@@ -3011,7 +3016,7 @@ def lease_request(
     root = _require_root()
     try:
         cli_lease.request(
-            root, pool, cwd=cwd, idle_limit=idle_limit, label=label,
+            root, pool, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
             remote=remote, json_output=json_output,
         )
     except SpecfloError as exc:

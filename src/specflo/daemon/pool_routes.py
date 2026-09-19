@@ -18,6 +18,13 @@ start or stop is a 502: what the agent CLI said of it can name paths on this
 host, so that goes to the daemon's log and the response names the pool only.
 No route here carries anything a member wrote.
 
+A request the pool has no room for may wait, for as long as its body says.
+It waits in its own route, which is async: between two looks at the pool it
+holds no thread, and each look runs in a worker thread, so a request that
+waits for an hour stalls no other. The route also sees its client go away,
+and a request no one waits for any more leaves the queue. The rows a stopped
+daemon left are cleared when the pool opens.
+
 A lease is its holder's, and the holder is whoever presents the lease token:
 the bearer token says which identity asks, not which orchestrator. So a
 release ends an active lease for that token only, and the listing answers for
@@ -27,18 +34,21 @@ its hash, and neither goes back in a response or into the audit record.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
 from pathlib import Path
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 
 from ..errors import SpecfloError
+from ..pool import waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
-from ..pool.service import PoolService, hash_token
+from ..pool.service import Grant, PoolService, hash_token
 from ..service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH
 from .poolstore import Lease, open_pool_store
 from .routes import audit, current_identity
@@ -93,6 +103,9 @@ def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
         pool_token=pool_token(root),
         config_root=Path(root) / PI_CONFIG_DIRNAME,
     )
+    # A request waits on a connection to the daemon that wrote its row: the
+    # rows found now were left by one that stopped.
+    waiting.forget_all(service)
     return service, ()
 
 
@@ -195,18 +208,43 @@ def _member_failed(pool: str, exc: RunnerError) -> HTTPException:
 # --- leases -------------------------------------------------------------------
 
 
+class _ClientGone(Exception):
+    """The client of a waiting request closed its connection."""
+
+
+async def _granted(request: Request, asked: waiting.Waiting) -> Grant:
+    """The grant of *asked*, looked for until there is one, the request's time
+    is up or its client is gone. However the wait ends, the request leaves the
+    queue."""
+    try:
+        while True:
+            grant = await run_in_threadpool(asked.attempt)
+            if grant is not None:
+                return grant
+            if await request.is_disconnected():
+                raise _ClientGone()
+            await asyncio.sleep(waiting.POLL_INTERVAL)
+    finally:
+        # Not awaited: a route that is cancelled still takes its row out.
+        asked.leave()
+
+
 @router.post(LEASES_PATH)
-def lease_request(
+async def lease_request(
     request: Request,
     body: dict = Body(default_factory=dict),
     identity: str = Depends(current_identity),
     service: PoolService = Depends(pool_service),
 ) -> dict:
-    """Grant a lease on a free member of the named pool, started in the named directory."""
-    fields = _body(body, required=("pool", "cwd"), optional=("idle_limit", "label"))
+    """Grant a lease on a free member of the named pool, started in the named
+    directory; a request with a time to wait waits that long for one."""
+    fields = _body(body, required=("pool", "cwd"), optional=("idle_limit", "label", "wait"))
     pool = _text(fields, "pool")
     cwd = _text(fields, "cwd")
     idle_limit = _seconds(fields, "idle_limit")
+    wait = _seconds(fields, "wait")
+    if wait is not None and wait < 0:
+        raise _invalid("Field 'wait' must be a whole number of seconds, 0 or more.")
     holder_label = _holder_label(identity, _text(fields, "label"))
     if pool is None or cwd is None:
         raise _invalid("Fields 'pool' and 'cwd' must be strings that are not empty.")
@@ -217,8 +255,14 @@ def lease_request(
             detail=f"The working directory '{cwd}' is not a directory on the daemon's host; "
             "a member starts in an absolute path that is there.",
         )
+    asked = waiting.Waiting(
+        service, pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit, wait=wait or 0,
+    )
     try:
-        grant = service.grant(pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit)
+        grant = await _granted(request, asked)
+    except _ClientGone:
+        # No one reads this: the connection it would go down is closed.
+        raise HTTPException(status_code=400, detail="The client went away while it waited.")
     except RunnerError as exc:
         raise _member_failed(pool, exc)
     except SpecfloError as exc:
@@ -229,7 +273,9 @@ def lease_request(
             status_code=500,
             detail=f"lease_request failed on the daemon: {type(exc).__name__}.",
         )
-    audit(request.app.state.root, identity, "lease_request", None, grant.lease_id)
+    await run_in_threadpool(
+        audit, request.app.state.root, identity, "lease_request", None, grant.lease_id
+    )
     # The one time the token is sent: the store and the audit record hold no copy.
     return {"result": {"lease_id": grant.lease_id, "agent": grant.agent, "token": grant.token}}
 

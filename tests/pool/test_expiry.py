@@ -286,7 +286,11 @@ BACKGROUND = {
     "Thread", "Timer", "start_new_thread", "create_task", "ensure_future",
     "call_later", "call_at", "run_in_executor", "submit", "add_task", "scheduler",
 }
-LEASE_MODULES = (SRC / "pool" / "service.py", SRC / "pool" / "expiry.py")
+LEASE_MODULES = (
+    SRC / "pool" / "service.py",
+    SRC / "pool" / "expiry.py",
+    SRC / "pool" / "waiting.py",
+)
 
 
 def called_names(tree: ast.AST) -> set[str]:
