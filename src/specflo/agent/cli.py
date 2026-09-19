@@ -607,8 +607,9 @@ def wait(
     """Block until the agent's current run settles (exit 0 if already idle)."""
     token = lease.find_token(name, lease_token)
     with _connect_or_exit(name, token) as client:
-        # through the wall first: the host broadcasts a member's events to
-        # every connection, so nothing is read from it before this passes
+        # through the wall first: a leased host streams a member's events
+        # only to a connection that has shown a valid token, and this frame
+        # is what shows it
         status = _status_or_exit(client, name, token)
         if status["state"] != "working":
             return  # nothing in flight

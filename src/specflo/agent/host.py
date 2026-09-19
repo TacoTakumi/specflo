@@ -26,6 +26,14 @@ holder's ``lease_token`` or the daemon's ``pool_token`` may drive the member;
 any other is refused before it reaches pi or the event log. A host that was
 never pool-bound has no wall and is a plain pipe.
 
+The wall covers the way out as well: a member's output, pi's answers and the
+holder's prompt text all travel in the broadcast. While a lease is bound, an
+event goes only to a connection that has shown the holder's ``lease_token`` or
+the ``pool_token`` on some frame of its own; it is sent from that frame on,
+with nothing replayed. A connection that showed the token of an earlier lease
+is a stranger to the next one; the pool token holds across leases. When the
+lease is cleared every connection receives again, as on an unbound host.
+
 Lease activity: while a lease is bound, every command the holder's token lets
 through moves ``last_activity`` in status.json to now, and so does a turn that
 is running. The daemon reads a lease's idle time from that stamp, so nothing a
@@ -135,6 +143,8 @@ class PiHost:
         self._listener: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
         self._subscribers: dict[socket.socket, threading.Lock] = {}
+        # per connection, the digests of the valid tokens it has shown
+        self._shown: dict[socket.socket, set[bytes]] = {}
         self._subs_lock = threading.Lock()
         self._stopping = False
         self._stopped_evt = threading.Event()
@@ -199,6 +209,7 @@ class PiHost:
         with self._subs_lock:
             conns = list(self._subscribers)
             self._subscribers.clear()
+            self._shown.clear()
         for conn in conns:
             conn.close()
         if self.proc is not None:
@@ -276,8 +287,21 @@ class PiHost:
                     pass
 
     def _broadcast(self, frame: dict[str, Any]) -> None:
+        with self._wall_lock:
+            lease, pool = self._lease_digest, self._pool_digest
         with self._subs_lock:
             subscribers = list(self._subscribers.items())
+            if lease is not None:
+                # a lease is bound: only the holder's connections and the
+                # daemon's may read the member. The check is made per event,
+                # so a bystander falls silent the moment the lease is bound
+                # and hears again the moment it is cleared.
+                cleared = {lease, pool}
+                subscribers = [
+                    (conn, lock)
+                    for conn, lock in subscribers
+                    if not cleared.isdisjoint(self._shown.get(conn, ()))
+                ]
         data = encode_frame(frame)
         for conn, lock in subscribers:
             try:
@@ -290,6 +314,7 @@ class PiHost:
     def _drop_subscriber(self, conn: socket.socket) -> None:
         with self._subs_lock:
             self._subscribers.pop(conn, None)
+            self._shown.pop(conn, None)
         conn.close()
 
     def _pump(self) -> None:
@@ -432,12 +457,16 @@ class PiHost:
 
         if ctype in POOL_VERBS:
             error = self._handle_pool_verb(request)
+            # the daemon's connection reads the members it binds
+            self._note_tokens(conn, request)
             if error is None:
                 response.update(success=True)
             else:
                 response.update(success=False, error=error)
             self._respond(conn, send_lock, response)
             return
+        # before the frame can reach pi: its answer comes back in the broadcast
+        self._note_tokens(conn, request)
         admitted = self._admitted_by(request)
         if admitted is None:
             response.update(
@@ -529,6 +558,32 @@ class PiHost:
             if digest is not None and hmac.compare_digest(digest, expected[field]):
                 return field
         return None
+
+    def _note_tokens(self, conn: socket.socket, request: dict[str, Any]) -> None:
+        """Remember which bound tokens this connection has shown.
+
+        What is kept is the digest the token matched, never a yes or no, so a
+        token of a lease that has ended opens nothing under the next one.
+        """
+        with self._wall_lock:
+            expected = {
+                "lease_token": self._lease_digest,
+                "pool_token": self._pool_digest,
+            }
+        matched = set()
+        for field in TOKEN_FIELDS:
+            digest = _token_digest(request.get(field))
+            if (
+                digest is not None
+                and expected[field] is not None
+                and hmac.compare_digest(digest, expected[field])
+            ):
+                matched.add(digest)
+        if not matched:
+            return
+        with self._subs_lock:
+            if conn in self._subscribers:
+                self._shown.setdefault(conn, set()).update(matched)
 
     def _status_data(self) -> dict[str, Any]:
         return {
