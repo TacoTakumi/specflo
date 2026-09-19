@@ -7,7 +7,8 @@ may serve the request.
 
 The ceiling is the strictest of a list of classes: the one the request names,
 and every limit that stands over the request whatever it names - the class
-the pool's definition accepts is one. A request that names no class names the
+the pool's definition accepts is one, and the class the requesting project
+pins on its record is another. A request that names no class names the
 default, so the most open class is never reached by saying nothing. A limit
 more can only make the ceiling stricter; nothing a request says widens one.
 

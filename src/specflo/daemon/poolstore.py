@@ -94,7 +94,10 @@ class WaitingRequest:
     where it fits, as it was said: ``egress`` is the egress class the request
     named, None when it named none. It is not the request's ceiling, which
     also stands under limits the request does not set and is worked out by
-    whoever reads the row. A row from before a value was kept reads as None.
+    whoever reads the row. ``pinned`` is one of those limits: the egress class
+    the requesting project pinned when the request arrived, None when no
+    project stood behind the request or it pinned none. A row from before a
+    value was kept reads as None.
     """
 
     id: str
@@ -103,6 +106,7 @@ class WaitingRequest:
     holder_label: str
     arrived: str
     egress: str | None = None
+    pinned: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -275,7 +279,8 @@ CREATE TABLE IF NOT EXISTS pool_waiting (
     team         TEXT,
     holder_label TEXT NOT NULL,
     arrived      TEXT NOT NULL,
-    egress       TEXT
+    egress       TEXT,
+    pinned       TEXT
 );
 CREATE TABLE IF NOT EXISTS pool_accounts (
     name          TEXT PRIMARY KEY,
@@ -309,13 +314,13 @@ CREATE TABLE IF NOT EXISTS pool_notes (
 # Columns added after their table's first shape, as (table, column, type):
 # CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a store
 # opened from before the column gains it here.
-ADDED_COLUMNS = (("pool_waiting", "egress", "TEXT"),)
+ADDED_COLUMNS = (("pool_waiting", "egress", "TEXT"), ("pool_waiting", "pinned", "TEXT"))
 
 _LEASE_COLUMNS = (
     "id, team_lease_id, holder_hash, holder_label, member, pool,"
     " resources, acquired, last_activity, idle_limit, state"
 )
-_WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress"
+_WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress, pinned"
 _ACCOUNT_COLUMNS = (
     "name, closed, reopen, usage, spend_limit, remaining, free_requests, read_at, read_error"
 )
@@ -438,10 +443,10 @@ class SqlitePoolStore:
         try:
             with self.connection:
                 self.connection.execute(
-                    f"INSERT INTO pool_waiting ({_WAITING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)",
+                    f"INSERT INTO pool_waiting ({_WAITING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         request.id, request.pool, request.team,
-                        request.holder_label, request.arrived, request.egress,
+                        request.holder_label, request.arrived, request.egress, request.pinned,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -459,6 +464,7 @@ class SqlitePoolStore:
             WaitingRequest(
                 id=row["id"], pool=row["pool"], team=row["team"],
                 holder_label=row["holder_label"], arrived=row["arrived"], egress=row["egress"],
+                pinned=row["pinned"],
             )
             for row in rows
         ]

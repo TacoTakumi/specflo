@@ -83,6 +83,7 @@ class RemotePool(DaemonClient):
         label: str | None = None,
         wait: int | None = None,
         egress: str | None = None,
+        project: str | None = None,
     ) -> LeaseGrant:
         """Ask for a member of *pool*, to run in *cwd* on the daemon's host.
 
@@ -90,7 +91,10 @@ class RemotePool(DaemonClient):
         *label* is what the pool shows a person as the holder. *wait* is how
         many seconds the request may wait for a full pool; without one it is
         refused at once. *egress* is the most open egress class of member the
-        request takes; without one the pool's default applies.
+        request takes; without one the pool's default applies. *project* is
+        the slug of the project on this daemon the request is made from; the
+        daemon holds the request to the egress class its own record of that
+        project pins, which the request cannot say.
         """
         body: dict = {"pool": pool, "cwd": cwd}
         if idle_limit is not None:
@@ -101,6 +105,8 @@ class RemotePool(DaemonClient):
             body["wait"] = wait
         if egress is not None:
             body["egress"] = egress
+        if project is not None:
+            body["project"] = project
         granted = self._request("POST", LEASES_PATH, json=body)
         return LeaseGrant(
             lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]

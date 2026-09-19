@@ -16,8 +16,9 @@ that waits for its slot, with no other client and no reaper.
 The order among those that wait is the service's: a grant gives way to the
 requests that arrived before it and fit now. This module writes the row that
 order is read from, and takes it out again. The row keeps the egress class
-the request named, or that it named none, so the service judges whether it
-fits as it judges the request itself.
+the request named, or that it named none, and the class its project pinned
+when it arrived, so the service judges whether it fits as it judges the
+request itself.
 
 The time a request may wait is counted on the service's clock, so a test
 drives it with a fake one.
@@ -65,6 +66,10 @@ class Waiting:
     wait: float = 0
     # The most open egress class of member the request takes; the grant's default without one.
     egress: str | None = None
+    # The class the requesting project pins, as its record said when the request
+    # arrived, and that project; neither for a request with no pin over it.
+    pinned: str | None = None
+    project: str | None = None
     mint_id: Callable[[], str] = _mint_id
     # The id of the request's row while it has one, and when its time is up.
     _id: str | None = field(default=None, init=False, repr=False)
@@ -82,6 +87,7 @@ class Waiting:
             grant = self.service.grant(
                 self.pool, holder_label=self.holder_label, cwd=self.cwd,
                 idle_limit=self.idle_limit, waiting_id=self._id, egress=self.egress,
+                pinned=self.pinned, project=self.project,
             )
         except NoFreeMember as full:
             return self._wait_on(full)
@@ -107,6 +113,7 @@ class Waiting:
                 store.add_waiting(WaitingRequest(
                     id=request_id, pool=self.pool, team=None,
                     holder_label=self.holder_label, arrived=_text(now), egress=self.egress,
+                    pinned=self.pinned,
                 ))
             self._id, self._until = request_id, now + timedelta(seconds=self.wait)
         elif now >= self._until:

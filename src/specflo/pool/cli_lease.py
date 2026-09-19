@@ -54,8 +54,10 @@ def request(
     full pool is refused at once. *egress* is the most open egress class of
     member the request takes; the daemon knows the classes, applies no-train
     without one, and refuses at once a pool with no member under it, however
-    long the request may wait. Raises ``SpecfloError`` with the words to
-    print for anything that is refused, here or on the daemon.
+    long the request may wait. The request names the active project when
+    the daemon holds it, and the daemon holds the request to the class that
+    project pins. Raises ``SpecfloError`` with the words to print for
+    anything that is refused, here or on the daemon.
     """
     # A checkout with no daemon is refused before anything else is looked at.
     registered = pick_remote(root, remote)
@@ -69,6 +71,7 @@ def request(
         pool, cwd=str(directory), idle_limit=seconds,
         label=label if label is not None else Path(root).name,
         wait=wait or None, egress=egress,
+        project=requesting_project(root, registered.name),
     )
     token_path = store_token(root, grant.agent, grant.token)
     if json_output:
@@ -181,6 +184,29 @@ def pick_remote(root: Path, remote: str | None):
             )
         (remote,) = remotes
     return config.load_remote(root, remote)
+
+
+def requesting_project(root: Path, remote: str) -> str | None:
+    """The project a request to the remote *remote* is made from: the
+    checkout's active project, when that remote holds it; None with no active
+    project, or one kept in the checkout.
+
+    Only the slug goes out. The pin is read by the daemon from its own record
+    of the project, so nothing sent from here can widen it. A project held by
+    another remote is refused: the pool's daemon could not read its pin, and a
+    request served with none might leave the class the project pins.
+    """
+    from .. import config
+
+    slug = config.load_config(root).active_project
+    holder = config.hosting_remote(root, slug) if slug else None
+    if holder is not None and holder != remote:
+        raise SpecfloError(
+            f"The active project '{slug}' is held by remote '{holder}', and the pool is"
+            f" asked of remote '{remote}', which cannot read the egress class the project"
+            " pins. Ask the pool of the remote that holds the project."
+        )
+    return slug if holder is not None else None
 
 
 def idle_seconds(text: str) -> int:

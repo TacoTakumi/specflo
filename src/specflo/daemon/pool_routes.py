@@ -25,6 +25,12 @@ waits for an hour stalls no other. The route also sees its client go away,
 and a request no one waits for any more leaves the queue. The rows a stopped
 daemon left are cleared when the pool opens.
 
+A request may name the project it is made from, by its slug and no more. The
+egress class that project pins is read here, from this daemon's own record of
+the project, and stands over the request as one more limit. A request has no
+field to say a pin with, so no client widens one; a project this daemon does
+not hold is refused, not served as a request with no pin.
+
 A lease is its holder's, and the holder is whoever presents the lease token:
 the bearer token says which identity asks, not which orchestrator. So a
 release ends an active lease for that token only, and the listing answers for
@@ -193,6 +199,23 @@ def _holder_label(identity: str, label: str | None) -> str:
     return f"{label} ({identity})"
 
 
+def _pinned(root: Path, slug: str | None) -> str | None:
+    """The egress class the project *slug* pins, as this daemon's own record of
+    the project says now; None for a request that names no project, and for a
+    project that pins none. A project this daemon does not hold, or whose
+    record cannot be read, is refused: its request is never served unpinned."""
+    if slug is None:
+        return None
+    try:
+        project = load_project(root, load_config(root), validate_slug(slug))
+    except SpecfloError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"The project the request is made from cannot be held to its egress pin. {exc}",
+        )
+    return project.egress or None
+
+
 def _tokens(fields: dict, name: str) -> list[str]:
     value = fields[name]
     if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
@@ -247,7 +270,8 @@ async def lease_request(
     """Grant a lease on a free member of the named pool, started in the named
     directory; a request with a time to wait waits that long for one."""
     fields = _body(
-        body, required=("pool", "cwd"), optional=("idle_limit", "label", "wait", "egress")
+        body, required=("pool", "cwd"),
+        optional=("idle_limit", "label", "wait", "egress", "project"),
     )
     pool = _text(fields, "pool")
     cwd = _text(fields, "cwd")
@@ -271,9 +295,12 @@ async def lease_request(
             detail=f"The working directory '{cwd}' is not a directory on the daemon's host; "
             "a member starts in an absolute path that is there.",
         )
+    # Read once, as the request arrives: the pin it waits under is the one it came under.
+    project = _text(fields, "project")
+    pinned = await run_in_threadpool(_pinned, request.app.state.root, project)
     asked = waiting.Waiting(
         service, pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit, wait=wait or 0,
-        egress=asked_class,
+        egress=asked_class, pinned=pinned, project=project,
     )
     try:
         grant = await _granted(request, asked)

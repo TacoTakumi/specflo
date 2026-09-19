@@ -35,19 +35,22 @@ stopped and its status read by.
 
 A request is served only by a member whose egress class is not more open
 than the request's ceiling: the strictest of the class it names, no-train
-when it names none, and the class the pool's definition accepts (see
-``egress``). The service works the ceiling out and the ledger passes over the
-members above it. A pool with no member under the ceiling is refused for
-good, as ``EgressRefused``: no lease ending would cure it, so it is not the
-refusal a request waits on.
+when it names none, the class the pool's definition accepts, and the class
+the requesting project pins, when there is one (see ``egress``). The pin is
+handed in by whoever holds the project's record; nothing the request itself
+says can widen it. The service works the ceiling out and the ledger passes
+over the members above it. A pool with no member under the ceiling is refused
+for good, as ``EgressRefused``: no lease ending would cure it, so it is not
+the refusal a request waits on.
 
 Requests that did not fit wait as rows in the store, in the order they came.
 A grant gives way to every request that came before its own and fits now, so
 the earliest waiting request that fits is the one served, and one that does
 not fit holds up no one behind it. A row keeps the egress class its request
-named, so an earlier request fits under its own ceiling and not the asker's.
-The service only reads those rows and takes the granted one out; the request
-that waits writes its row and comes back to ask again (see ``waiting``).
+named and the class its project pinned when it arrived, so an earlier request
+fits under its own ceiling and not the asker's. The service only reads those
+rows and takes the granted one out; the request that waits writes its row and
+comes back to ask again (see ``waiting``).
 
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
@@ -201,6 +204,8 @@ class PoolService:
         idle_limit: int | None = None,
         waiting_id: str | None = None,
         egress: str | None = None,
+        pinned: str | None = None,
+        project: str | None = None,
     ) -> Grant:
         """Lease a free member of the pool *pool_name* to *holder_label*.
 
@@ -210,7 +215,9 @@ class PoolService:
         ahead of that row go first, all of them when there is none, and a
         grant takes the row out. *egress* is the most open class of member
         the request takes, no-train without one; the definition's own class
-        stands over it.
+        stands over it, and so does *pinned*, the class the requesting
+        project pins on its record, when there is one. *project* is that
+        project, for a refusal to name.
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
         pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
@@ -225,7 +232,7 @@ class PoolService:
         with self._turn, self.open_store() as store:
             # Placed before the queue is looked at: a request refused for
             # good is told so whoever waits ahead of it, and never joins them.
-            placed = self._place(pool.name, store, egress)
+            placed = self._place(pool.name, store, egress, pinned, project)
             self._give_way(pool, store, waiting_id)
             if waiting_id is not None:
                 store.remove_waiting(waiting_id)
@@ -317,26 +324,37 @@ class PoolService:
     def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
         """Could the waiting *request* be granted now? One that names no
         declared pool could not. It is placed under the egress class its row
-        keeps, the one it named or none, as it is when it asks again."""
+        keeps, the one it named or none, and the pin its row keeps, as it is
+        when it asks again."""
         try:
-            self._place(request.pool, store, request.egress)
+            self._place(request.pool, store, request.egress, request.pinned)
         except (NoFreeMember, EgressRefused):
             return False
         return True
 
     def _place(
-        self, pool_name: str, store: PoolStore, asked: str | None = None
+        self,
+        pool_name: str,
+        store: PoolStore,
+        asked: str | None = None,
+        pinned: str | None = None,
+        project: str | None = None,
     ) -> ledger.Placement:
         """Where a request for the pool *pool_name* that names the egress
         class *asked*, or none, fits now, as the ledger answers from the
-        active lease rows. Raises ``NoFreeMember``, and ``EgressRefused`` for
-        a pool with no member under the request's ceiling."""
+        active lease rows. *pinned* is the class the requesting project
+        *project* pins, when there is one. Raises ``NoFreeMember``, and
+        ``EgressRefused`` for a pool with no member under the request's
+        ceiling."""
         accepts = [
             (definition.name, definition.egress)
             for pool in self.config.pools if pool.name == pool_name
             for definition in self.config.definitions if definition.name == pool.definition
         ]
-        ceiling = egress_classes.ceiling(asked, [accepted for _, accepted in accepts])
+        limits = [accepted for _, accepted in accepts]
+        if pinned is not None:
+            limits.append(pinned)
+        ceiling = egress_classes.ceiling(asked, limits)
         try:
             return ledger.place(
                 self.config, store.list_leases(state="active"),
@@ -347,13 +365,15 @@ class PoolService:
             raise NoFreeMember(str(full)) from full
         except ledger.NoMemberAllowed as never:
             named = "no class, which stands for" if asked is None else "the class"
-            limits = "".join(
+            named_limits = "".join(
                 f", and definition '{name}' accepts '{accepted}'" for name, accepted in accepts
             )
+            if pinned is not None:
+                named_limits += f", and project '{project}' pins '{pinned}'"
             raise EgressRefused(
                 f"{never} The request's egress ceiling is '{ceiling}': it names {named} "
-                f"'{egress_classes.ceiling(asked, [])}'{limits}; the strictest of them stands, "
-                "and no member more open than it is leased."
+                f"'{egress_classes.ceiling(asked, [])}'{named_limits}; the strictest of them "
+                "stands, and no member more open than it is leased."
             ) from never
 
 
