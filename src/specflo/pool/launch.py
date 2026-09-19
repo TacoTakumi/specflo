@@ -1,18 +1,41 @@
-"""Starting a member: a definition becomes pi startup flags.
+"""Starting a member: a definition becomes pi startup flags and a scoped environment.
 
 A definition reaches pi by one route only, the command line: its tools go to
 ``--tools``, each skill to ``--skill`` and the prompt body to
 ``--append-system-prompt``. The project's AGENTS.md and CLAUDE.md are kept out
 with ``--no-context-files`` unless the definition asks for them, so a project
 cannot silently rewrite a member's role.
+
+What a member is given is the only hard limit on it, so its environment is
+built from nothing: the baseline below, the variables and credentials its
+definition lists, and the API key of its own account for a hosted member.
+Nothing else in the caller's environment reaches it.
 """
 
 from __future__ import annotations
 
 import shlex
+from collections.abc import Iterable, Mapping
 
-from .config import Member
+from ..errors import SpecfloError
+from .config import Account, Member
 from .definitions import AgentDefinition
+
+# The variables every member gets, and the whole of what it gets unasked. pi is
+# a node program started through "env node", so it needs PATH to be found and
+# HOME for its settings, models and sessions; the rest are what a program
+# expects of any login: who it runs as, the shell its bash tool starts, the
+# locale, the time zone, the terminal type and the temp directory. None of
+# them holds a secret. Proxy settings, editor choices and anything a version
+# manager exports are not here; a definition that needs one lists it.
+BASELINE_ENV: tuple[str, ...] = (
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL",
+    "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "TMPDIR",
+)
+
+
+class LaunchError(SpecfloError):
+    """A member that cannot be started as configured. Names variables, never their values."""
 
 
 def pi_argv(definition: AgentDefinition, member: Member) -> list[str]:
@@ -34,3 +57,46 @@ def pi_argv(definition: AgentDefinition, member: Member) -> list[str]:
     if not definition.project_context:
         argv.append("--no-context-files")
     return argv
+
+
+def member_env(
+    definition: AgentDefinition,
+    member: Member,
+    accounts: Iterable[Account],
+    environ: Mapping[str, str],
+) -> dict[str, str]:
+    """The environment *member* starts with in the role *definition* gives.
+
+    Values come from *environ*, the caller's environment, which is read and
+    never changed; a name it does not hold is left out. No account's key
+    variable is handed over because a definition lists it: an account's cap
+    holds only if its key reaches its own members alone.
+
+    Raises ``LaunchError`` for a hosted member whose account is not among
+    *accounts* or whose key variable is not set.
+    """
+    accounts = tuple(accounts)
+    key_vars = {account.key_env for account in accounts}
+    allowed = [
+        name
+        for name in (*BASELINE_ENV, *definition.env, *definition.credentials)
+        if name not in key_vars
+    ]
+    if member.account is not None:
+        allowed.append(_key_var(member, accounts, environ))
+    return {name: environ[name] for name in allowed if name in environ}
+
+
+def _key_var(member: Member, accounts: tuple[Account, ...], environ: Mapping[str, str]) -> str:
+    """The name of the variable that holds the key of *member*'s account."""
+    account = next((a for a in accounts if a.name == member.account), None)
+    if account is None:
+        raise LaunchError(
+            f"member '{member.name}': account '{member.account}' is not a declared account."
+        )
+    if not environ.get(account.key_env):
+        raise LaunchError(
+            f"member '{member.name}': the API key of account '{account.name}' is not set; "
+            f"export {account.key_env} where the pool runs."
+        )
+    return account.key_env
