@@ -11,7 +11,10 @@ request, and ``attempt`` is one look at it: whoever serves the request - the
 daemon's route - calls it, pauses, and calls it again. Each look is a grant
 asked of the pool service, and the service checks expiry before it serves
 anything. So a lease that passes its idle limit is ended by the very request
-that waits for its slot, with no other client and no reaper.
+that waits for its slot, with no other client and no reaper. A look of a
+request that has its row may also take an idle lease that stands in its way,
+when the lease's pool allows that; the service decides it (see ``preempt``),
+and the row's id is the request the ended lease records.
 
 The order among those that wait is the service's: a grant gives way to the
 requests that arrived before it and fit now. This module writes the row that

@@ -61,6 +61,19 @@ fits under its own ceiling and not the asker's. The service only reads those
 rows and takes the granted one out; the request that waits writes its row and
 comes back to ask again (see ``waiting``).
 
+A request that waits may take an idle lease (see ``preempt``). At a look that
+finds no room the service reads which of the active leases may be taken, each
+by its pool's ``preempt_after``, its own idle time and its member's state, and
+a team only as a whole. It asks the ledger, as ever, whether the request fits
+with some of them gone. The fewest that make it fit, the longest idle first,
+are ended as preempted: each through ``end_lease``, with the id of the
+request's waiting row as the request that took it. The request is then placed
+again and granted in the same turn. When nothing that may be taken makes it
+fit, nothing is ended. A request with no waiting row takes nothing, so there
+is always an id to record. Nor does a request take what would serve a request
+that arrived before it: that one takes it at its own look, so the request a
+transition names is the one that got the member.
+
 A request may name a team instead of a pool (see ``teamlease``). A team fits
 when every member of every role fits at once: the members are placed one
 after the other, each with those placed before it counted as if they were
@@ -83,7 +96,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import threading
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -97,7 +110,7 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, expiry, ledger, runner, teamlease
+from . import accounts, expiry, ledger, preempt, runner, teamlease
 from .config import Pool, PoolConfig
 from .teams import Team
 
@@ -125,7 +138,13 @@ class IdleLimitError(SpecfloError):
 
 
 class NoFreeMember(SpecfloError):
-    """A pool with no slot or no member free for one more lease."""
+    """A pool with no slot or no member free for one more lease. ``out`` is
+    the active leases the request was judged against, for a waiting request
+    that may take an idle one; none when an earlier request is served first."""
+
+    def __init__(self, message: str, out: Sequence[Lease] = ()) -> None:
+        super().__init__(message)
+        self.out = tuple(out)
 
 
 class EgressRefused(SpecfloError):
@@ -254,7 +273,9 @@ class PoolService:
         project, for a refusal to name. *team_lease_id* makes the lease one
         member of that team: the team's request gave way to those before it
         and its waiting row is the team grant's to take out, so neither is
-        done again for a member.
+        done again for a member. A request that has a waiting row and finds
+        no room takes the idle leases that stand in its way, when there are
+        such, and is granted in the same call.
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
         pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
@@ -271,7 +292,13 @@ class PoolService:
         with self._turn, self.open_store() as store:
             # Placed before the queue is looked at: a request refused for
             # good is told so whoever waits ahead of it, and never joins them.
-            placed = self._place(pool.name, store, egress, pinned, project)
+            try:
+                placed = self._place(pool.name, store, egress, pinned, project)
+            except NoFreeMember as full:
+                self._take_idle(full, store, waiting_id, lambda gone: self._place(
+                    pool.name, store, egress, pinned, project, leave_out=gone
+                ))
+                placed = self._place(pool.name, store, egress, pinned, project)
             if team_lease_id is None:
                 self._give_way(f"pool '{pool.name}'", store, waiting_id)
                 if waiting_id is not None:
@@ -320,6 +347,7 @@ class PoolService:
         every member's pi runs in *cwd*, and the egress ceiling stands over
         each member's pool as it does over a single request. *idle_limit* is
         checked against every pool of the team before anything is granted.
+        A team that waits takes idle leases as a single request does.
 
         Raises ``UnknownTeam``, ``IdleLimitError``, and for any role what
         ``grant`` raises for its pool; ``NoFreeMember`` names the team, the
@@ -339,7 +367,9 @@ class PoolService:
                     self._place_team(team, store, egress, pinned, project)
                 except NoFreeMember as full:
                     self._never_fits(team, store, egress, pinned, project)
-                    raise full
+                    self._take_idle(full, store, waiting_id, lambda gone: self._place_team(
+                        team, store, egress, pinned, project, leave_out=gone
+                    ))
                 self._give_way(f"team '{team.name}'", store, waiting_id)
                 if waiting_id is not None:
                     store.remove_waiting(waiting_id)
@@ -442,18 +472,72 @@ class PoolService:
                     f"{asked}: a request that came earlier, for {earlier}, is served first."
                 )
 
-    def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
+    def _take_idle(
+        self,
+        full: NoFreeMember,
+        store: PoolStore,
+        waiting_id: str | None,
+        place: Callable[[Collection[str]], object],
+    ) -> None:
+        """End the idle leases that stand in the way of the request that
+        waits under the row *waiting_id*, or raise *full*, the refusal it got.
+
+        *place* places the request with the leases of the ids it is handed
+        left out, and raises ``NoFreeMember`` when it does not fit even so.
+        Which leases may be taken, and the fewest of them to take, is the
+        rule in ``preempt``; a team goes whole. Nothing is ended for a
+        request with no waiting row, when no leases that may be taken make
+        room, and when what would be taken would serve a request that
+        arrived before this one. Each lease taken ends as preempted, with
+        *waiting_id* as the request that took it.
+        """
+        if waiting_id is None:
+            raise full
+        ahead: list[WaitingRequest] = []
+        for row in store.list_waiting():
+            if row.id == waiting_id:
+                break
+            ahead.append(row)
+        else:
+            raise full
+
+        def fits(gone: Collection[str]) -> bool:
+            try:
+                place(gone)
+            except NoFreeMember:
+                return False
+            return True
+
+        read = [(lease, runner.status(ledger.agent_of(lease))) for lease in full.out]
+        taken = preempt.fewest(preempt.units(read, self.config.pools, self.clock()), fits)
+        gone = {lease.id for unit in taken for lease in unit.leases}
+        if not taken or any(self._fits(earlier, store, gone) for earlier in ahead):
+            raise full
+        for unit in taken:
+            ids = [lease.id for lease in unit.leases]
+            if unit.team_lease_id is None:
+                self.end_lease(ids[0], "preempted", request_id=waiting_id)
+            else:
+                teamlease.end_members(self, ids, "preempted", request_id=waiting_id)
+
+    def _fits(
+        self, request: WaitingRequest, store: PoolStore, leave_out: Collection[str] = ()
+    ) -> bool:
         """Could the waiting *request* be granted now? One that names no
         declared pool or team could not. It is placed under the egress class
         its row keeps, the one it named or none, and the pin its row keeps,
-        as it is when it asks again; a team is placed all at once."""
+        as it is when it asks again; a team is placed all at once. With
+        *leave_out*, could it be with the leases of those ids gone?"""
         try:
             if request.team is not None:
                 self._place_team(
-                    self._team(request.team), store, request.egress, request.pinned
+                    self._team(request.team), store, request.egress, request.pinned,
+                    leave_out=leave_out,
                 )
             else:
-                self._place(request.pool, store, request.egress, request.pinned)
+                self._place(
+                    request.pool, store, request.egress, request.pinned, leave_out=leave_out
+                )
         except (NoFreeMember, EgressRefused, ClosedAccount, UnknownTeam):
             return False
         return True
@@ -466,6 +550,7 @@ class PoolService:
         pinned: str | None = None,
         project: str | None = None,
         alone: bool = False,
+        leave_out: Collection[str] = (),
     ) -> list[ledger.Placement]:
         """Where every member of *team* fits now, all at once: each is placed
         with those placed before it counted as if they were out. Nothing is
@@ -477,12 +562,13 @@ class PoolService:
         for role in teamlease.slots(team):
             try:
                 placement = self._place(
-                    role.pool, store, asked, pinned, project, also=beside, alone=alone
+                    role.pool, store, asked, pinned, project, also=beside, alone=alone,
+                    leave_out=leave_out,
                 )
             except NoFreeMember as full:
                 raise NoFreeMember(
                     f"team '{team.name}' does not fit at once, and it is leased all or "
-                    f"nothing: no room for its role '{role.name}' - {full}"
+                    f"nothing: no room for its role '{role.name}' - {full}", full.out,
                 ) from full
             placed.append(placement)
             beside.append(teamlease.placed_lease(role.pool, placement))
@@ -515,14 +601,17 @@ class PoolService:
         project: str | None = None,
         also: Sequence[Lease] = (),
         alone: bool = False,
+        leave_out: Collection[str] = (),
     ) -> ledger.Placement:
         """Where a request for the pool *pool_name* that names the egress
         class *asked*, or none, fits now, as the ledger answers from the
         active lease rows. *also* are leases counted with the rows: the
         members of a team placed before this one and not yet written. With
         *alone* they are all that is counted, no row and no standing entry,
-        which says whether a team could ever fit. *pinned* is the class the requesting project
-        *project* pins, when there is one. The accounts the store holds as
+        which says whether a team could ever fit. *leave_out* are the ids of
+        lease rows that are not counted: the leases a waiting request may
+        take, to say whether it fits with them gone. *pinned* is the class
+        the requesting project *project* pins, when there is one. The accounts the store holds as
         closed, and that are not open again by the service's clock, go to the
         ledger with their reopen times. Raises ``NoFreeMember``,
         ``EgressRefused`` for a pool with no member under the request's
@@ -542,7 +631,9 @@ class PoolService:
             record.name: record.reopen
             for record in store.list_accounts() if not accounts.is_open(record, now)
         }
-        out = [] if alone else store.list_leases(state="active")
+        out = [] if alone else [
+            lease for lease in store.list_leases(state="active") if lease.id not in leave_out
+        ]
         try:
             return ledger.place(
                 self.config, [*out, *also],
@@ -550,7 +641,7 @@ class PoolService:
                 standing=() if alone else self.standing(), closed=closed,
             )
         except ledger.NoRoom as full:
-            raise NoFreeMember(str(full)) from full
+            raise NoFreeMember(str(full), out) from full
         except ledger.AccountClosed as shut:
             raise ClosedAccount(str(shut)) from shut
         except ledger.NoMemberAllowed as never:

@@ -158,15 +158,23 @@ def release_team(service: PoolService, team_lease_id: str) -> list[Ended]:
 
 
 def end_members(
-    service: PoolService, lease_ids: Iterable[str], kind: str, *, cause: str | None = None
+    service: PoolService,
+    lease_ids: Iterable[str],
+    kind: str,
+    *,
+    cause: str | None = None,
+    request_id: str | None = None,
 ) -> list[Ended]:
     """End each of *lease_ids* as *kind*, through the service's one function
-    that ends a lease. A member whose process does not stop has ended all the
+    that ends a lease; *request_id* is the request that took them, for members
+    that are preempted. A member whose process does not stop has ended all the
     same, so the others are ended too before that failure is raised."""
     ended, failed = [], None
     for lease_id in lease_ids:
         try:
-            ended.append(service.end_lease(lease_id, kind, cause=cause))
+            ended.append(
+                service.end_lease(lease_id, kind, cause=cause, request_id=request_id)
+            )
         except SpecfloError as exc:
             failed = failed or exc
     if failed is not None:
