@@ -24,6 +24,11 @@ A request that waits can be told so: it keeps what the pool was full of, in
 the service's own words, and ``place`` reads where it stands among those that
 wait for its pool.
 
+A request may name a team instead of a pool. It waits the same way, as one
+row that names the team and no pool, and each look asks the service for the
+whole team. A team draws on several pools, so its place is read among all
+that wait.
+
 The time a request may wait is counted on the service's clock, so a test
 drives it with a fake one.
 """
@@ -39,6 +44,7 @@ from pathlib import Path
 from ..daemon.poolstore import WaitingRequest
 from ..errors import SpecfloError
 from .service import Grant, NoFreeMember, PoolService, _text
+from .teamlease import TeamGrant
 
 # How long whoever serves a waiting request pauses between two looks, in
 # seconds. A slot that frees is granted within this, and the time the member
@@ -56,14 +62,15 @@ def _mint_id() -> str:
 
 @dataclass
 class Waiting:
-    """One request for a member of *pool*, and the *wait* it may last, in seconds.
+    """One request for a member of *pool*, or for the whole of *team* when
+    *pool* is None, and the *wait* it may last, in seconds.
 
     The rest is what the grant takes. With no time to wait the request is
     refused as the service refuses it, and no row is written.
     """
 
     service: PoolService
-    pool: str
+    pool: str | None
     holder_label: str
     cwd: Path | str
     idle_limit: int | None = None
@@ -74,6 +81,8 @@ class Waiting:
     # arrived, and that project; neither for a request with no pin over it.
     pinned: str | None = None
     project: str | None = None
+    # The team asked for, by a request that names no pool.
+    team: str | None = None
     mint_id: Callable[[], str] = _mint_id
     # What the pool was full of at the last look that found no room, as the service said it.
     full: str | None = field(default=None, init=False)
@@ -81,17 +90,20 @@ class Waiting:
     _id: str | None = field(default=None, init=False, repr=False)
     _until: datetime | None = field(default=None, init=False, repr=False)
 
-    def attempt(self) -> Grant | None:
-        """One look: the grant, or None for a request that waits on.
+    def attempt(self) -> Grant | TeamGrant | None:
+        """One look: the grant, a team's for a request that names one, or None
+        for a request that waits on.
 
         The first look that finds no room writes the waiting row. Raises
         ``WaitTimeout``, naming what the pool is full of, at the first look
         at or after the time is up; the row is gone then. Raises whatever the
         grant raises besides; ``leave`` takes the row out after those.
         """
+        ask = self.service.grant if self.team is None else self.service.grant_team
         try:
-            grant = self.service.grant(
-                self.pool, holder_label=self.holder_label, cwd=self.cwd,
+            grant = ask(
+                self.pool if self.team is None else self.team,
+                holder_label=self.holder_label, cwd=self.cwd,
                 idle_limit=self.idle_limit, waiting_id=self._id, egress=self.egress,
                 pinned=self.pinned, project=self.project,
             )
@@ -103,7 +115,8 @@ class Waiting:
 
     def place(self) -> int | None:
         """Where the request stands among those that wait for its pool, in
-        arrival order: 1 for the next. None for a request that does not wait."""
+        arrival order: 1 for the next; a team's request stands among all that
+        wait. None for a request that does not wait."""
         if self._id is None:
             return None
         with self.service.open_store() as store:
@@ -127,7 +140,7 @@ class Waiting:
             request_id = self.mint_id()
             with self.service.open_store() as store:
                 store.add_waiting(WaitingRequest(
-                    id=request_id, pool=self.pool, team=None,
+                    id=request_id, pool=self.pool, team=self.team,
                     holder_label=self.holder_label, arrived=_text(now), egress=self.egress,
                     pinned=self.pinned,
                 ))

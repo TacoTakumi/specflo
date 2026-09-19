@@ -11,6 +11,13 @@ The token is also what makes a lease this checkout's. The listing shows the
 daemon the tokens kept here and prints the leases they hold, and a release
 presents the token of the lease it names; the file goes when the lease has.
 
+A request names a pool, or with ``--team`` a team. A team is granted all or
+nothing: one team lease id, and for each role member a lease, an agent to
+drive and a token, kept here like any other, one file to an agent. The team
+is given back under the team lease id, which ends every member lease and
+forgets every member's token; one member lease of a team is not given back
+by itself, and the daemon's refusal names the team lease id.
+
 A request waits on the daemon for a full pool, and whoever runs the verb is
 most often an orchestrator that reads its error stream. So the verb says
 there, as soon as the daemon does, that the request waits, on what, in which
@@ -44,8 +51,9 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 
 def request(
     root: Path,
-    pool: str,
+    pool: str | None,
     *,
+    team: str | None = None,
     cwd: Path | None = None,
     idle_limit: str | None = None,
     label: str | None = None,
@@ -55,7 +63,9 @@ def request(
     json_output: bool = False,
 ) -> None:
     """Ask a daemon for a member of *pool*, keep the lease's token, and print
-    the lease id and the agent's name.
+    the lease id and the agent's name. With *team* and no pool, ask for every
+    role member of the team, keep each member's token, and print the team
+    lease id and each role's agent.
 
     *root* is the checkout the orchestrator works in. *wait* is how many
     seconds the request may wait on the daemon for a full pool; when they
@@ -74,6 +84,12 @@ def request(
     registered = pick_remote(root, remote)
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
+    if (pool is None) == (team is None):
+        raise SpecfloError(
+            "A request names a pool or a team, one of the two: `specflo lease request"
+            " <pool>` or `specflo lease request --team <name>`."
+        )
+
     seconds = None if idle_limit is None else idle_seconds(idle_limit)
     directory = member_directory(cwd)
     # The answer comes after the wait, and the grant after that.
@@ -83,10 +99,11 @@ def request(
     def say_it_waits(notice) -> None:
         _say_it_waits(notice, remote=registered.name, json_output=json_output)
 
+    asked = f"pool '{pool}'" if team is None else f"team '{team}'"
     try:
         with _interruptible():
-            grant = client.request(
-                pool, cwd=str(directory), idle_limit=seconds,
+            grant = (client.request if team is None else client.request_team)(
+                pool if team is None else team, cwd=str(directory), idle_limit=seconds,
                 label=label if label is not None else Path(root).name,
                 wait=wait or None, egress=egress, project=project,
                 on_waiting=say_it_waits,
@@ -94,9 +111,12 @@ def request(
     except _Interrupted:
         # The connection is closed by now, and that is what tells the daemon.
         raise SpecfloError(
-            f"The request for pool '{pool}' on remote '{registered.name}' was cancelled:"
+            f"The request for {asked} on remote '{registered.name}' was cancelled:"
             " it waits no longer."
         )
+    if team is not None:
+        _say_team(root, team, grant, remote=registered.name, json_output=json_output)
+        return
     token_path = store_token(root, grant.agent, grant.token)
     if json_output:
         typer.echo(json.dumps({
@@ -114,9 +134,41 @@ def request(
     )
 
 
+def _say_team(root: Path, team: str, grant, *, remote: str, json_output: bool) -> None:
+    """Keep the token of every member of the granted team, and print the team
+    lease id and each role's agent; no token is printed."""
+    paths = [store_token(root, member.agent, member.token) for member in grant.members]
+    if json_output:
+        typer.echo(json.dumps({
+            "team_lease": grant.team_lease_id, "team": team, "remote": remote,
+            "members": [
+                {
+                    "role": member.role, "agent": member.agent,
+                    "pool": member.pool, "lease": member.lease_id,
+                }
+                for member in grant.members
+            ],
+        }))
+        return
+    typer.echo(f"Leased team '{team}' on remote '{remote}': team lease {grant.team_lease_id}.")
+    for member in grant.members:
+        typer.echo(
+            f"  {member.role}: '{member.agent}' from pool '{member.pool}',"
+            f" lease {member.lease_id}."
+        )
+    typer.echo(
+        "Drive each with `specflo agent prompt <agent> <text>`; their tokens are kept in"
+        f" {_shown(paths[0].parent, root)}. Give the team back as one with"
+        f" `specflo lease release {grant.team_lease_id}`."
+    )
+
+
 def _say_it_waits(notice, *, remote: str, json_output: bool) -> None:
     """Tell whoever reads the error stream that the request waits. The output
     stream is left to the result."""
+    if notice.team is not None:
+        _say_the_team_waits(notice, remote=remote, json_output=json_output)
+        return
     if json_output:
         typer.echo(json.dumps({
             "event": "waiting", "pool": notice.pool, "remote": remote,
@@ -127,6 +179,22 @@ def _say_it_waits(notice, *, remote: str, json_output: bool) -> None:
         f"Waiting for a member of pool '{notice.pool}' on remote '{remote}', for up to"
         f" {notice.wait} s: {notice.full} This request is number {notice.place} of those"
         " that wait for the pool. Interrupt the command to cancel the request.",
+        err=True,
+    )
+
+
+def _say_the_team_waits(notice, *, remote: str, json_output: bool) -> None:
+    """The same for a request that names a team: it waits as one request."""
+    if json_output:
+        typer.echo(json.dumps({
+            "event": "waiting", "team": notice.team, "remote": remote,
+            "full": notice.full, "place": notice.place, "wait": notice.wait,
+        }), err=True)
+        return
+    typer.echo(
+        f"Waiting for team '{notice.team}' on remote '{remote}', for up to {notice.wait} s,"
+        f" and holding nothing meanwhile: {notice.full} This request is number"
+        f" {notice.place} of those that wait. Interrupt the command to cancel the request.",
         err=True,
     )
 
@@ -168,18 +236,25 @@ def release(
     none for this lease the daemon is asked all the same: a lease that has
     ended is reported as it ended, and one that is active is another's, which
     the daemon refuses.
+
+    *lease_id* may be a team lease id. The token of any member lease proves
+    the team's holder, the daemon ends every member lease, and every member's
+    token is forgotten. One member lease of a team is refused by the daemon,
+    which names the team lease id to release.
     """
     registered = pick_remote(root, remote)
     from ..service.pool_remote import REQUEST_TIMEOUT, RemotePool
 
     client = RemotePool(registered.url, registered.token, timeout=REQUEST_TIMEOUT)
-    kept = next(
-        (path for path, lease in held_leases(root, client) if lease.lease_id == lease_id), None
-    )
-    ended = client.release(lease_id, token=None if kept is None else _token(kept))
-    if kept is not None and ended.held:
+    kept = [
+        path for path, lease in held_leases(root, client)
+        if lease_id in (lease.lease_id, lease.team_lease_id)
+    ]
+    ended = client.release(lease_id, token=_token(kept[0]) if kept else None)
+    if ended.held:
         # The lease is over, so what proved its holder opens nothing now.
-        kept.unlink(missing_ok=True)
+        for path in kept:
+            path.unlink(missing_ok=True)
     if json_output:
         typer.echo(json.dumps({"lease": ended.lease_id, "state": ended.state}))
         return

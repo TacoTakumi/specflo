@@ -59,6 +59,17 @@ fits under its own ceiling and not the asker's. The service only reads those
 rows and takes the granted one out; the request that waits writes its row and
 comes back to ask again (see ``waiting``).
 
+A request may name a team instead of a pool (see ``teamlease``). A team fits
+when every member of every role fits at once: the members are placed one
+after the other, each with those placed before it counted as if they were
+out, and nothing is written until the last one fits. So a team that waits
+holds nothing, and its row in the queue is judged by the same placement as
+the request itself. A team that would not fit with no lease out at all is
+refused at once as ``TeamNeverFits``. Each member is then granted as a single
+lease is, by the same function, with the team lease id on its row; a member
+that does not start ends the members granted before it, and no lease of the
+team stays out.
+
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
 from callables handed in, so a test drives it with a fake clock and counted
@@ -70,7 +81,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
@@ -84,8 +95,9 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, expiry, ledger, runner
+from . import accounts, expiry, ledger, runner, teamlease
 from .config import Pool, PoolConfig
+from .teams import Team
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
 ENDINGS: tuple[str, ...] = tuple(kind for kind in TRANSITION_KINDS if kind != "granted")
@@ -96,6 +108,10 @@ Clock = Callable[[], datetime]
 
 class UnknownPool(SpecfloError):
     """A request for a pool the configuration does not declare."""
+
+
+class UnknownTeam(SpecfloError):
+    """A request for a team the configuration does not declare."""
 
 
 class UnknownLease(SpecfloError):
@@ -220,6 +236,7 @@ class PoolService:
         egress: str | None = None,
         pinned: str | None = None,
         project: str | None = None,
+        team_lease_id: str | None = None,
     ) -> Grant:
         """Lease a free member of the pool *pool_name* to *holder_label*.
 
@@ -231,7 +248,10 @@ class PoolService:
         the request takes, no-train without one; the definition's own class
         stands over it, and so does *pinned*, the class the requesting
         project pins on its record, when there is one. *project* is that
-        project, for a refusal to name.
+        project, for a refusal to name. *team_lease_id* makes the lease one
+        member of that team: the team's request gave way to those before it
+        and its waiting row is the team grant's to take out, so neither is
+        done again for a member.
 
         Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
         pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
@@ -249,13 +269,14 @@ class PoolService:
             # Placed before the queue is looked at: a request refused for
             # good is told so whoever waits ahead of it, and never joins them.
             placed = self._place(pool.name, store, egress, pinned, project)
-            self._give_way(pool, store, waiting_id)
-            if waiting_id is not None:
-                store.remove_waiting(waiting_id)
+            if team_lease_id is None:
+                self._give_way(f"pool '{pool.name}'", store, waiting_id)
+                if waiting_id is not None:
+                    store.remove_waiting(waiting_id)
             lease_id, token = self.mint_id(), self.mint_token()
             now = _text(self.clock())
             store.add_lease(Lease(
-                id=lease_id, team_lease_id=None,
+                id=lease_id, team_lease_id=team_lease_id,
                 holder_hash=hash_token(token), holder_label=holder_label,
                 member=placed.member.name, pool=pool.name, resources=placed.resources,
                 acquired=now, last_activity=now, idle_limit=idle_limit, state="active",
@@ -276,6 +297,77 @@ class PoolService:
                 expect="active",
             )
         return Grant(lease_id=lease_id, agent=agent, token=token)
+
+    def grant_team(
+        self,
+        team_name: str,
+        *,
+        holder_label: str,
+        cwd: Path | str,
+        idle_limit: int | None = None,
+        waiting_id: str | None = None,
+        egress: str | None = None,
+        pinned: str | None = None,
+        project: str | None = None,
+    ) -> teamlease.TeamGrant:
+        """Lease every role member of the team *team_name* to *holder_label*,
+        all or nothing, under one team lease id.
+
+        The rest is what ``grant`` takes, and each member is granted by it:
+        every member's pi runs in *cwd*, and the egress ceiling stands over
+        each member's pool as it does over a single request. *idle_limit* is
+        checked against every pool of the team before anything is granted.
+
+        Raises ``UnknownTeam``, ``IdleLimitError``, and for any role what
+        ``grant`` raises for its pool; ``NoFreeMember`` names the team, the
+        role and what is full, and nothing was written. Raises
+        ``TeamNeverFits`` for a team that would not fit with no lease out. A
+        member that does not start raises what the runner raised, after every
+        member granted before it has ended.
+        """
+        self.expire_due()
+        team = self._team(team_name)
+        limits = teamlease.idle_limits(
+            [self._pool(role.pool) for role in team.roles], idle_limit, _idle_limit
+        )
+        with self._turn:
+            with self.open_store() as store:
+                try:
+                    self._place_team(team, store, egress, pinned, project)
+                except NoFreeMember as full:
+                    self._never_fits(team, store, egress, pinned, project)
+                    raise full
+                self._give_way(f"team '{team.name}'", store, waiting_id)
+                if waiting_id is not None:
+                    store.remove_waiting(waiting_id)
+            # Granted in the order they were placed, and no one else's turn
+            # comes in between, so each member fits as it did when it was placed.
+            team_lease_id = f"team-{self.mint_id()}"
+            members: list[teamlease.MemberGrant] = []
+            try:
+                for role in teamlease.slots(team):
+                    grant = self.grant(
+                        role.pool, holder_label=holder_label, cwd=cwd,
+                        idle_limit=limits[role.pool], egress=egress, pinned=pinned,
+                        project=project, team_lease_id=team_lease_id,
+                    )
+                    members.append(teamlease.MemberGrant(
+                        role=role.name, pool=role.pool, lease_id=grant.lease_id,
+                        agent=grant.agent, token=grant.token,
+                    ))
+            except Exception:
+                # The member that did not start has ended in its own grant.
+                try:
+                    teamlease.end_members(
+                        self, [member.lease_id for member in members], "released",
+                        cause=teamlease.ROLLED_BACK,
+                    )
+                except SpecfloError:
+                    # A member that does not stop has ended all the same, and
+                    # what is told is why the team did not start.
+                    pass
+                raise
+        return teamlease.TeamGrant(team_lease_id=team_lease_id, members=tuple(members))
 
     def end_lease(
         self,
@@ -322,8 +414,16 @@ class PoolService:
         declared = ", ".join(p.name for p in self.config.pools) or "none"
         raise UnknownPool(f"pool '{name}' is not declared; the declared pools: {declared}.")
 
-    def _give_way(self, pool: Pool, store: PoolStore, waiting_id: str | None) -> None:
-        """Refuse a request for *pool* while a request that came before it fits.
+    def _team(self, name: str) -> Team:
+        for team in self.config.teams:
+            if team.name == name:
+                return team
+        declared = ", ".join(t.name for t in self.config.teams) or "none"
+        raise UnknownTeam(f"team '{name}' is not declared; the declared teams: {declared}.")
+
+    def _give_way(self, asked: str, store: PoolStore, waiting_id: str | None) -> None:
+        """Refuse a request for *asked*, a pool or a team as a refusal names
+        it, while a request that came before it fits.
 
         The requests before it are the rows ahead of its own, *waiting_id*,
         and every row when it has none. One that does not fit is passed over.
@@ -332,21 +432,76 @@ class PoolService:
             if ahead.id == waiting_id:
                 return
             if self._fits(ahead, store):
+                earlier = (
+                    f"pool '{ahead.pool}'" if ahead.team is None else f"team '{ahead.team}'"
+                )
                 raise NoFreeMember(
-                    f"pool '{pool.name}': a request that came earlier, for pool "
-                    f"'{ahead.pool}', is served first."
+                    f"{asked}: a request that came earlier, for {earlier}, is served first."
                 )
 
     def _fits(self, request: WaitingRequest, store: PoolStore) -> bool:
         """Could the waiting *request* be granted now? One that names no
-        declared pool could not. It is placed under the egress class its row
-        keeps, the one it named or none, and the pin its row keeps, as it is
-        when it asks again."""
+        declared pool or team could not. It is placed under the egress class
+        its row keeps, the one it named or none, and the pin its row keeps,
+        as it is when it asks again; a team is placed all at once."""
         try:
-            self._place(request.pool, store, request.egress, request.pinned)
-        except (NoFreeMember, EgressRefused, ClosedAccount):
+            if request.team is not None:
+                self._place_team(
+                    self._team(request.team), store, request.egress, request.pinned
+                )
+            else:
+                self._place(request.pool, store, request.egress, request.pinned)
+        except (NoFreeMember, EgressRefused, ClosedAccount, UnknownTeam):
             return False
         return True
+
+    def _place_team(
+        self,
+        team: Team,
+        store: PoolStore,
+        asked: str | None = None,
+        pinned: str | None = None,
+        project: str | None = None,
+        alone: bool = False,
+    ) -> list[ledger.Placement]:
+        """Where every member of *team* fits now, all at once: each is placed
+        with those placed before it counted as if they were out. Nothing is
+        written. The rest is what ``_place`` takes, and what it raises is
+        raised for the first member that does not fit; ``NoFreeMember`` names
+        the team and the role besides."""
+        placed: list[ledger.Placement] = []
+        beside: list[Lease] = []
+        for role in teamlease.slots(team):
+            try:
+                placement = self._place(
+                    role.pool, store, asked, pinned, project, also=beside, alone=alone
+                )
+            except NoFreeMember as full:
+                raise NoFreeMember(
+                    f"team '{team.name}' does not fit at once, and it is leased all or "
+                    f"nothing: no room for its role '{role.name}' - {full}"
+                ) from full
+            placed.append(placement)
+            beside.append(teamlease.placed_lease(role.pool, placement))
+        return placed
+
+    def _never_fits(
+        self,
+        team: Team,
+        store: PoolStore,
+        asked: str | None,
+        pinned: str | None,
+        project: str | None,
+    ) -> None:
+        """Refuse *team* for good when it would not fit with no lease out and
+        no project agent alive: a request for it would wait for ever."""
+        try:
+            self._place_team(team, store, asked, pinned, project, alone=True)
+        except NoFreeMember as never:
+            raise teamlease.TeamNeverFits(
+                f"{never} That is so with no other lease out at all, so no lease ending "
+                "makes room for the team, and the request does not wait."
+            ) from never
 
     def _place(
         self,
@@ -355,10 +510,15 @@ class PoolService:
         asked: str | None = None,
         pinned: str | None = None,
         project: str | None = None,
+        also: Sequence[Lease] = (),
+        alone: bool = False,
     ) -> ledger.Placement:
         """Where a request for the pool *pool_name* that names the egress
         class *asked*, or none, fits now, as the ledger answers from the
-        active lease rows. *pinned* is the class the requesting project
+        active lease rows. *also* are leases counted with the rows: the
+        members of a team placed before this one and not yet written. With
+        *alone* they are all that is counted, no row and no standing entry,
+        which says whether a team could ever fit. *pinned* is the class the requesting project
         *project* pins, when there is one. The accounts the store holds as
         closed, and that are not open again by the service's clock, go to the
         ledger with their reopen times. Raises ``NoFreeMember``,
@@ -379,11 +539,12 @@ class PoolService:
             record.name: record.reopen
             for record in store.list_accounts() if not accounts.is_open(record, now)
         }
+        out = [] if alone else store.list_leases(state="active")
         try:
             return ledger.place(
-                self.config, store.list_leases(state="active"),
+                self.config, [*out, *also],
                 ledger.Request(pool=pool_name, egress=egress_classes.within(ceiling)),
-                standing=self.standing(), closed=closed,
+                standing=() if alone else self.standing(), closed=closed,
             )
         except ledger.NoRoom as full:
             raise NoFreeMember(str(full)) from full

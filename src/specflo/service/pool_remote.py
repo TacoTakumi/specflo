@@ -12,6 +12,11 @@ a request that waits is then a JSON object to a line: one that says it waits,
 and last the result or the refusal. Every other answer is the one object it
 always was, under the status it always had.
 
+A request may name a team instead of a pool. Its grant is the team lease id
+and, for each role member, an ordinary lease with its agent and its token.
+The team lease id is given back where a lease is, and that ends every member
+lease.
+
 This module is the client's side only. It imports nothing of the pool's own
 code and no web framework; the daemon's routes take their paths from here.
 """
@@ -61,16 +66,41 @@ class LeaseGrant:
 
 
 @dataclasses.dataclass(frozen=True)
-class WaitNotice:
-    """What a request that has to wait is told at once."""
+class TeamMember:
+    """One role member of a granted team: an ordinary lease on a member of
+    the role's pool, the agent to drive and its token."""
 
+    role: str
     pool: str
+    lease_id: str
+    agent: str
+    # The credential itself: it is stored for the agent verbs, never shown.
+    token: str = dataclasses.field(repr=False)
+
+
+@dataclasses.dataclass(frozen=True)
+class TeamLeaseGrant:
+    """A granted team request: the one id the team is given back under, and
+    its members in the order of the team's roles."""
+
+    team_lease_id: str
+    members: tuple[TeamMember, ...]
+
+
+@dataclasses.dataclass(frozen=True)
+class WaitNotice:
+    """What a request that has to wait is told at once. It names the pool the
+    request asked for, or the team."""
+
     # What is full, in the pool's own words.
     full: str
-    # Among the requests that wait for the pool, in arrival order; 1 is the next.
+    # Among the requests that wait for the pool, in arrival order; 1 is the
+    # next. A team's request stands among all that wait.
     place: int
     # The longest the request waits, in seconds.
     wait: int
+    pool: str | None = None
+    team: str | None = None
 
 
 def release_path(lease_id: str) -> str:
@@ -90,6 +120,8 @@ class HeldLease:
     last_activity: str
     # In seconds.
     idle_limit: int
+    # The id the lease is given back under when it is one member of a team.
+    team_lease_id: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,7 +161,53 @@ class RemotePool(DaemonClient):
         once, as soon as the daemon says the request has to wait; with none
         the daemon is not asked to say so.
         """
-        body: dict = {"pool": pool, "cwd": cwd}
+        granted = self._ask(
+            {"pool": pool}, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
+            egress=egress, project=project, on_waiting=on_waiting,
+        )
+        return LeaseGrant(
+            lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]
+        )
+
+    def request_team(
+        self,
+        team: str,
+        *,
+        cwd: str,
+        idle_limit: int | None = None,
+        label: str | None = None,
+        wait: int | None = None,
+        egress: str | None = None,
+        project: str | None = None,
+        on_waiting: Callable[[WaitNotice], None] | None = None,
+    ) -> TeamLeaseGrant:
+        """Ask for every role member of *team*, all or nothing, each to run in
+        *cwd* on the daemon's host. The rest is what ``request`` takes; the
+        team waits as one request and holds nothing while it does."""
+        granted = self._ask(
+            {"team": team}, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
+            egress=egress, project=project, on_waiting=on_waiting,
+        )
+        return TeamLeaseGrant(
+            team_lease_id=granted["team_lease_id"],
+            members=tuple(TeamMember(**member) for member in granted["members"]),
+        )
+
+    def _ask(
+        self,
+        named: dict,
+        *,
+        cwd: str,
+        idle_limit: int | None,
+        label: str | None,
+        wait: int | None,
+        egress: str | None,
+        project: str | None,
+        on_waiting: Callable[[WaitNotice], None] | None,
+    ) -> dict:
+        """The daemon's answer to a lease request for what *named* names, a
+        pool or a team."""
+        body: dict = {**named, "cwd": cwd}
         if idle_limit is not None:
             body["idle_limit"] = idle_limit
         if label is not None:
@@ -141,12 +219,8 @@ class RemotePool(DaemonClient):
         if project is not None:
             body["project"] = project
         if on_waiting is None:
-            granted = self._request("POST", LEASES_PATH, json=body)
-        else:
-            granted = self._request_told(body, on_waiting)
-        return LeaseGrant(
-            lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]
-        )
+            return self._request("POST", LEASES_PATH, json=body)
+        return self._request_told(body, on_waiting)
 
     def _request_told(self, body: dict, on_waiting: Callable[[WaitNotice], None]):
         """The result of the lease request *body*, from a daemon asked to say
@@ -186,7 +260,9 @@ class RemotePool(DaemonClient):
         """Give back the lease *lease_id*, as the holder *token* proves.
 
         A lease that has ended already is reported as it ended, with or
-        without a token; an active one is ended for its holder only.
+        without a token; an active one is ended for its holder only. A team
+        lease id gives back every member lease of the team, as the token of
+        any one of them proves; one member lease of a team is refused.
         """
         body = {} if token is None else {"token": token}
         ended = self._request("POST", release_path(lease_id), json=body)

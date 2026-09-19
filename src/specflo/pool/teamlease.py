@@ -1,0 +1,157 @@
+"""A team's lease: every role member an ordinary lease, all under one team lease id.
+
+A request may name a team instead of a pool. A team is a set of roles, each a
+pool and a count (see ``teams``), and it is leased all or nothing: the pool
+service grants it only when every member of every role fits the ledger at
+once, and until then the request holds nothing. A team that waits for one
+full pool takes no member of another, so it is in no one's way while it waits.
+
+A granted team is as many leases as its roles count members, each with a
+lease id, an agent name and a token of its own, written and started by the
+very grant a single lease gets. What makes them a team is the one team lease
+id on every row. The orchestrator that asked holds every token and leads the
+team; the pool gives the members no way to reach each other.
+
+The team is given back as one. A release of the team lease id ends every
+member lease that is still active, each through the one function that ends a
+lease. A release of one member lease by its holder is refused, with the team
+lease id named, since a team short of a member is not the team that was
+asked for. The refusal stands on the holder's release only: a member that
+does not start, and whatever else ends a lease from inside the pool, ends
+member leases one by one.
+
+This module holds what is the team's own: what a granted team is, the member
+slots its roles come to, the leases that stand for members placed and not yet
+written, the idle limit of its member leases, and its release. Whether the
+team fits is the ledger's to say, asked by the pool service, which also makes
+the grant. Nothing here runs by itself and nothing here imports anything of
+the agent subsystem; the service a team is released through is handed in.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Iterable, Iterator
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+from ..daemon.poolstore import Lease
+from ..errors import SpecfloError
+from . import ledger
+from .config import Pool
+from .teams import Role, Team
+
+if TYPE_CHECKING:
+    from .service import Ended, PoolService
+
+# What a team member's lease is ended with when another member of its team did
+# not start, and the whole grant goes back.
+ROLLED_BACK = "a member of its team did not start"
+
+
+class TeamNeverFits(SpecfloError):
+    """A team that would not fit with no lease out at all. No lease ending
+    would cure it, so the request is refused at once and does not wait."""
+
+
+class MemberOfATeam(SpecfloError):
+    """A holder's release of one member lease of a team. The team is released
+    as one, under its team lease id, which the message names."""
+
+
+@dataclass(frozen=True)
+class MemberGrant:
+    """One role member of a granted team: an ordinary lease, the agent to
+    drive and the token that lets the team's holder, and no one else, drive it."""
+
+    role: str
+    pool: str
+    lease_id: str
+    agent: str
+    token: str
+
+
+@dataclass(frozen=True)
+class TeamGrant:
+    """What a granted team request gets: the one id its leases share, and the
+    members in the order of the team's roles."""
+
+    team_lease_id: str
+    members: tuple[MemberGrant, ...]
+
+
+def slots(team: Team) -> Iterator[Role]:
+    """The member slots of *team*, one for each lease it takes: every role as
+    many times as its count, in the order the roles are written."""
+    for role in team.roles:
+        for _ in range(role.count):
+            yield role
+
+
+def placed_lease(pool: str, placement: ledger.Placement) -> Lease:
+    """The lease that stands for a member placed and not yet written, for the
+    ledger to count when it places the next one: the row the grant would
+    write, with no holder and no times."""
+    return Lease(
+        id="", team_lease_id=None, holder_hash="", holder_label="",
+        member=placement.member.name, pool=pool, resources=placement.resources,
+        acquired="", last_activity="", idle_limit=0, state=ledger.ACTIVE,
+    )
+
+
+def idle_limits(
+    pools: Iterable[Pool], asked: int | None, limit_of: Callable[[Pool, int | None], int]
+) -> dict[str, int]:
+    """The idle limit of a member lease of a team on each of *pools*, by pool
+    name, in seconds. *limit_of* is the pool service's rule for one lease on
+    one pool: what was *asked* when the pool allows it, or the pool's default.
+    Every pool is asked here, before anything is granted, so a limit that one
+    pool refuses leaves nothing behind."""
+    return {pool.name: limit_of(pool, asked) for pool in pools}
+
+
+def refuse_member_release(lease: Lease) -> None:
+    """Refuse a holder's release of *lease* when it is an active member lease
+    of a team; a lease of no team, and one that has ended, passes."""
+    if lease.team_lease_id is None or lease.state != ledger.ACTIVE:
+        return
+    raise MemberOfATeam(
+        f"Lease '{lease.id}' is one member of the team lease '{lease.team_lease_id}', and a "
+        "team is released as one. Release the team: "
+        f"`specflo lease release {lease.team_lease_id}`."
+    )
+
+
+def team_leases(service: PoolService, team_lease_id: str) -> list[Lease]:
+    """Every lease of the team *team_lease_id*, ended ones too, in grant order;
+    none for an id that is no team's."""
+    with service.open_store() as store:
+        return store.list_leases(team_lease_id=team_lease_id)
+
+
+def release_team(service: PoolService, team_lease_id: str) -> list[Ended]:
+    """Release the team *team_lease_id* as one: how each member lease ended,
+    in grant order. A member that ended before is reported as it ended.
+
+    Every member is ended though one of them does not stop; the first
+    ``RunnerError`` is raised when all have ended.
+    """
+    return end_members(
+        service, [lease.id for lease in team_leases(service, team_lease_id)], "released"
+    )
+
+
+def end_members(
+    service: PoolService, lease_ids: Iterable[str], kind: str, *, cause: str | None = None
+) -> list[Ended]:
+    """End each of *lease_ids* as *kind*, through the service's one function
+    that ends a lease. A member whose process does not stop has ended all the
+    same, so the others are ended too before that failure is raised."""
+    ended, failed = [], None
+    for lease_id in lease_ids:
+        try:
+            ended.append(service.end_lease(lease_id, kind, cause=cause))
+        except SpecfloError as exc:
+            failed = failed or exc
+    if failed is not None:
+        raise failed
+    return ended

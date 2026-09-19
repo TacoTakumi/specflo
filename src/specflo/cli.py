@@ -2991,7 +2991,14 @@ LEASE_WAIT_DEFAULT = 600
     "request", epilog="Example: specflo lease request workers --idle-limit 30m"
 )
 def lease_request(
-    pool: str = typer.Argument(..., metavar="<pool>", help="The pool to take a member of."),
+    pool: str = typer.Argument(
+        None, metavar="<pool>", help="The pool to take a member of; none with --team."
+    ),
+    team: str = typer.Option(
+        None, "--team", metavar="<name>",
+        help="Lease every role member of this team instead of one member of a pool, all"
+        " or nothing, under one team lease id.",
+    ),
     cwd: Path = typer.Option(
         None, "--cwd", metavar="<dir>",
         help="Where the member starts; the current directory otherwise.",
@@ -3025,7 +3032,7 @@ def lease_request(
     root = _require_root()
     try:
         cli_lease.request(
-            root, pool, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
+            root, pool, team=team, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
             egress=egress, remote=remote, json_output=json_output,
         )
     except SpecfloError as exc:

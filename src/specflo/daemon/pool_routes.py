@@ -39,6 +39,13 @@ the project, and stands over the request as one more limit. A request has no
 field to say a pin with, so no client widens one; a project this daemon does
 not hold is refused, not served as a request with no pin.
 
+A request names a pool or a team, one of the two. A team's grant is answered
+with the team lease id and, for each role member, its lease, its agent and
+its token. The team lease id is given back on the route a lease is, and ends
+every member lease; a token of any member lease proves the team's holder. One
+member lease of a team is not released by itself: that is refused with the
+team lease id named. No route here takes anything from one member to another.
+
 A lease is its holder's, and the holder is whoever presents the lease token:
 the bearer token says which identity asks, not which orchestrator. So a
 release ends an active lease for that token only, and the listing answers for
@@ -62,7 +69,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
 from ..errors import SpecfloError
-from ..pool import egress, ledger, standing, waiting
+from ..pool import egress, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, load_pool_config
 from ..pool.runner import RunnerError
@@ -238,11 +245,13 @@ def _refused(exc: SpecfloError) -> HTTPException:
     return HTTPException(status_code=400, detail=str(exc))
 
 
-def _member_failed(pool: str, exc: RunnerError) -> HTTPException:
-    _log.warning("a request for pool %s: %s", pool, exc)
+def _member_failed(asked: str, exc: RunnerError) -> HTTPException:
+    """What a request on *asked*, a pool or a team as a person reads it, is
+    answered with when a member did not start or stop."""
+    _log.warning("a request for %s: %s", asked, exc)
     return HTTPException(
         status_code=502,
-        detail=f"A member could not be started or stopped for the request on pool '{pool}'; "
+        detail=f"A member could not be started or stopped for the request on {asked}; "
         "the daemon's log has the cause.",
     )
 
@@ -254,7 +263,7 @@ class _ClientGone(Exception):
     """The client of a waiting request closed its connection."""
 
 
-async def _granted(request: Request, asked: waiting.Waiting) -> Grant:
+async def _granted(request: Request, asked: waiting.Waiting) -> Grant | teamlease.TeamGrant:
     """The grant of *asked*, looked for until there is one, the request's time
     is up or its client is gone. However the wait ends, the request leaves the
     queue."""
@@ -271,19 +280,22 @@ async def _granted(request: Request, asked: waiting.Waiting) -> Grant:
         asked.leave()
 
 
-def _first_look(asked: waiting.Waiting) -> tuple[Grant | None, int | None]:
+def _first_look(
+    asked: waiting.Waiting,
+) -> tuple[Grant | teamlease.TeamGrant | None, int | None]:
     """The grant of *asked* if it fits now, or its place among those that wait."""
     grant = asked.attempt()
     return grant, None if grant is not None else asked.place()
 
 
-def _failed(pool: str, exc: Exception) -> HTTPException:
-    """What a request for *pool* that ended in *exc* is answered with."""
+def _failed(asked: waiting.Waiting, exc: Exception) -> HTTPException:
+    """What the request *asked* that ended in *exc* is answered with."""
     if isinstance(exc, _ClientGone):
         # No one reads this: the connection it would go down is closed.
         return HTTPException(status_code=400, detail="The client went away while it waited.")
     if isinstance(exc, RunnerError):
-        return _member_failed(pool, exc)
+        named = f"pool '{asked.pool}'" if asked.team is None else f"team '{asked.team}'"
+        return _member_failed(named, exc)
     if isinstance(exc, SpecfloError):
         return _refused(exc)
     _log.error("lease_request failed on the daemon", exc_info=exc)
@@ -293,12 +305,25 @@ def _failed(pool: str, exc: Exception) -> HTTPException:
     )
 
 
-async def _answer(request: Request, identity: str, grant: Grant) -> dict:
-    """What a granted request is answered with, once the grant is audited."""
+async def _answer(request: Request, identity: str, grant: Grant | teamlease.TeamGrant) -> dict:
+    """What a granted request is answered with, once the grant is audited. A
+    team's grant is one act, audited under the team lease id."""
+    granted = grant.team_lease_id if isinstance(grant, teamlease.TeamGrant) else grant.lease_id
     await run_in_threadpool(
-        audit, request.app.state.root, identity, "lease_request", None, grant.lease_id
+        audit, request.app.state.root, identity, "lease_request", None, granted
     )
-    # The one time the token is sent: the store and the audit record hold no copy.
+    # The one time a token is sent: the store and the audit record hold no copy.
+    if isinstance(grant, teamlease.TeamGrant):
+        return {"result": {
+            "team_lease_id": grant.team_lease_id,
+            "members": [
+                {
+                    "role": member.role, "pool": member.pool, "lease_id": member.lease_id,
+                    "agent": member.agent, "token": member.token,
+                }
+                for member in grant.members
+            ],
+        }}
     return {"result": {"lease_id": grant.lease_id, "agent": grant.agent, "token": grant.token}}
 
 
@@ -315,7 +340,7 @@ async def _lines(
     try:
         grant = await _granted(request, asked)
     except Exception as exc:
-        refused = _failed(asked.pool, exc)
+        refused = _failed(asked, exc)
         yield _line({"refused": {"status": refused.status_code, "detail": refused.detail}})
         return
     yield _line(await _answer(request, identity, grant))
@@ -344,14 +369,16 @@ async def lease_request(
     identity: str = Depends(current_identity),
     service: PoolService = Depends(pool_service),
 ) -> dict | StreamingResponse:
-    """Grant a lease on a free member of the named pool, started in the named
-    directory; a request with a time to wait waits that long for one, and a
-    client that reads notices is told at once that it waits."""
+    """Grant a lease on a free member of the named pool, or on every role
+    member of the named team, started in the named directory; a request with
+    a time to wait waits that long, and a client that reads notices is told
+    at once that it waits."""
     fields = _body(
-        body, required=("pool", "cwd"),
-        optional=("idle_limit", "label", "wait", "egress", "project"),
+        body, required=("cwd",),
+        optional=("pool", "team", "idle_limit", "label", "wait", "egress", "project"),
     )
     pool = _text(fields, "pool")
+    team = _text(fields, "team")
     cwd = _text(fields, "cwd")
     idle_limit = _seconds(fields, "idle_limit")
     wait = _seconds(fields, "wait")
@@ -364,8 +391,10 @@ async def lease_request(
             f"Field 'egress' must be an egress class, and '{asked_class}' is not one; "
             "the classes, strictest first: " + ", ".join(egress.EGRESS_CLASSES) + "."
         )
-    if pool is None or cwd is None:
-        raise _invalid("Fields 'pool' and 'cwd' must be strings that are not empty.")
+    if (pool is None) == (team is None):
+        raise _invalid("The request names a pool or a team: one of the fields 'pool' and 'team'.")
+    if cwd is None:
+        raise _invalid("Field 'cwd' must be a string that is not empty.")
     # The member runs on this host, so the directory is one of this host's.
     if not os.path.isabs(cwd) or not os.path.isdir(cwd):
         raise HTTPException(
@@ -378,7 +407,7 @@ async def lease_request(
     pinned = await run_in_threadpool(_pinned, request.app.state.root, project)
     asked = waiting.Waiting(
         service, pool, holder_label=holder_label, cwd=cwd, idle_limit=idle_limit, wait=wait or 0,
-        egress=asked_class, pinned=pinned, project=project,
+        egress=asked_class, pinned=pinned, project=project, team=team,
     )
     reads_notices = WAITING_MEDIA_TYPE in request.headers.get("accept", "")
     waits_on = False
@@ -387,12 +416,13 @@ async def lease_request(
         if grant is None and reads_notices:
             # Nothing is sent yet, so what is refused above has the status it always had.
             waits_on = True
-            notice = {"pool": pool, "full": asked.full, "place": place, "wait": wait}
+            named = {"pool": pool} if team is None else {"team": team}
+            notice = {**named, "full": asked.full, "place": place, "wait": wait}
             return _Waited(_lines(request, identity, asked, notice), asked)
         if grant is None:
             grant = await _granted(request, asked)
     except Exception as exc:
-        raise _failed(pool, exc)
+        raise _failed(asked, exc)
     finally:
         # A request that waits on in its lines leaves when they end.
         if not waits_on:
@@ -420,6 +450,8 @@ def _held(lease: Lease) -> dict:
         "lease_id": lease.id, "agent": ledger.agent_of(lease), "pool": lease.pool,
         "state": lease.state, "acquired": lease.acquired,
         "last_activity": lease.last_activity, "idle_limit": lease.idle_limit,
+        # What its holder gives the lease back under, when it is one of a team.
+        "team_lease_id": lease.team_lease_id,
     }
 
 
@@ -449,12 +481,17 @@ def lease_release(
     service: PoolService = Depends(pool_service),
 ) -> dict:
     """End the lease for the holder its token proves; an ended lease is
-    reported as it ended to whoever asks, and nothing changes."""
+    reported as it ended to whoever asks, and nothing changes. A team lease
+    id ends every member lease of the team, and one member lease of a team is
+    not ended by itself."""
     token = _text(_body(body, required=(), optional=("token",)), "token")
     _expire_due(service)
     with service.open_store() as store:
         lease = store.get_lease(lease_id)
     if lease is None:
+        members = teamlease.team_leases(service, lease_id)
+        if members:
+            return _team_release(request, identity, service, lease_id, members, token)
         raise HTTPException(status_code=400, detail=f"There is no lease '{lease_id}'.")
     held = _holds(lease, token)
     if lease.state != "active":
@@ -465,17 +502,55 @@ def lease_release(
             detail=f"Lease '{lease_id}' is held by another; only its holder releases it.",
         )
     try:
+        teamlease.refuse_member_release(lease)
         ended = service.end_lease(lease_id, "released")
     except RunnerError as exc:
         # The lease has ended all the same, and this identity ended it.
         audit(request.app.state.root, identity, "lease_release", None, lease_id)
-        raise _member_failed(lease.pool, exc)
+        raise _member_failed(f"pool '{lease.pool}'", exc)
     except SpecfloError as exc:
         raise _refused(exc)
     # A lease that ended some other way in between was not released by this call.
     if ended.state == "released":
         audit(request.app.state.root, identity, "lease_release", None, lease_id)
     return {"result": {"lease_id": lease_id, "state": ended.state, "held": True}}
+
+
+def _team_release(
+    request: Request,
+    identity: str,
+    service: PoolService,
+    team_lease_id: str,
+    members: list[Lease],
+    token: str | None,
+) -> dict:
+    """Release the team whose leases are *members* for the holder *token*
+    proves: whoever holds one member lease holds them all. A team with no
+    active member is reported as it ended, and nothing changes."""
+    held = any(_holds(member, token) for member in members)
+    out = [member for member in members if member.state == "active"]
+    if not out:
+        return {"result": {"lease_id": team_lease_id, "state": members[-1].state, "held": held}}
+    if not held:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Team lease '{team_lease_id}' is held by another; only its holder "
+            "releases it.",
+        )
+    try:
+        ended = teamlease.release_team(service, team_lease_id)
+    except RunnerError as exc:
+        # Every member lease has ended all the same, and this identity ended them.
+        audit(request.app.state.root, identity, "lease_release", None, team_lease_id)
+        raise _member_failed(f"team lease '{team_lease_id}'", exc)
+    except SpecfloError as exc:
+        raise _refused(exc)
+    # Members that ended some other way in between were not released by this call.
+    released = [end for end in ended if end.state == "released"]
+    if released:
+        audit(request.app.state.root, identity, "lease_release", None, team_lease_id)
+    state = "released" if released else ended[-1].state
+    return {"result": {"lease_id": team_lease_id, "state": state, "held": True}}
 
 
 # --- the pool's state ---------------------------------------------------------
