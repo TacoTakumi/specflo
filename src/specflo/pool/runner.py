@@ -39,7 +39,7 @@ from pathlib import Path
 
 from ..agent import lease
 from ..agent.client import HostUnreachableError, connect
-from ..agent.statefiles import AgentPaths
+from ..agent.statefiles import AgentPaths, read_status
 from ..errors import SpecfloError
 from . import launch, piconfig
 from .config import Account, Member
@@ -178,6 +178,23 @@ def stop(
         detail = _detail(stopped) if stopped is not None else f"no answer in {timeout:.0f}s"
         raise RunnerError(f"member '{name}' did not stop: {detail}")
     _forget(paths)
+
+
+def status(name: str) -> dict | None:
+    """What the host of the agent *name* last wrote of itself: its state and
+    ``last_activity``, the time its lease's holder last acted or its turn
+    last showed life.
+
+    None when there is nothing to go by: no status file, one that does not
+    parse, or one whose host process is gone - a host killed mid-turn leaves
+    a file that says working for ever.
+    """
+    try:
+        record = read_status(_paths(name).status)
+        os.kill(record["host_pid"], 0)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return record
 
 
 def _paths(name: str) -> AgentPaths:

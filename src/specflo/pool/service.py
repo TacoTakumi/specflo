@@ -13,7 +13,12 @@ active state is one guarded write in the store, so of two callers ending one
 lease one wins: the winner stops the member's process, and the agent host
 aborts a running turn before it stops pi. The other caller, and anyone ending
 a lease that has ended, gets the recorded end state and changes nothing.
-Nothing here runs in the background: a lease ends when a caller ends it.
+
+Nothing here runs in the background, so no lease expires by itself. Each
+entry point begins with ``expire_due``: the leases idle for their limit, by
+the rule in ``expiry``, are ended as expired before the caller is served. An
+expired lease therefore stands as active until the pool is next asked for
+something, and is never counted against the one who asks.
 
 Grants and endings take turns, one at a time in this process. A member's slot
 reads as free from the moment its lease leaves the active state, while its
@@ -41,7 +46,7 @@ from pathlib import Path
 
 from ..daemon.poolstore import TRANSITION_KINDS, Lease, PoolStore, Resource, Transition
 from ..errors import SpecfloError
-from . import runner
+from . import expiry, runner
 from .config import Member, Pool, PoolConfig
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
@@ -122,6 +127,33 @@ class PoolService:
     # What a member's scoped environment is taken from; this process's when None.
     environ: Mapping[str, str] | None = None
     _turn: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    # True while the expiry check runs: the endings it makes do not check again.
+    _checking: bool = field(default=False, init=False, repr=False)
+
+    def expire_due(self) -> list[Ended]:
+        """End every lease that has been idle for its limit; the endings made.
+
+        Each entry point of the service runs this first, and so does whatever
+        renders the pool's state. A lease's last activity is read from its
+        row and from the status of its member's agent host.
+
+        Raises ``RunnerError`` when an expired lease's member does not stop;
+        that lease has ended all the same.
+        """
+        with self._turn:
+            if self._checking:
+                return []
+            self._checking = True
+            try:
+                now = self.clock()
+                with self.open_store() as store:
+                    due = [
+                        lease.id for lease in store.list_leases(state="active")
+                        if expiry.expired(lease, runner.status(lease.member), now)
+                    ]
+                return [self.end_lease(lease_id, "expired") for lease_id in due]
+            finally:
+                self._checking = False
 
     def grant(
         self,
@@ -140,6 +172,7 @@ class PoolService:
         pool's maximum, ``NoFreeMember``, and what the runner raises for a
         member that does not start; the lease written for it is then ended.
         """
+        self.expire_due()
         pool = self._pool(pool_name)
         idle_limit = _idle_limit(pool, idle_limit)
         definition = next(d for d in self.config.definitions if d.name == pool.definition)
@@ -195,6 +228,7 @@ class PoolService:
             raise ValueError("a preempted lease records the preempting request's id")
         if cause is None:
             cause = f"preempted by {request_id}" if kind == "preempted" else kind
+        self.expire_due()
         with self._turn, self.open_store() as store:
             ending = Transition(
                 id=0, lease_id=lease_id, kind=kind, time=_text(self.clock()), cause=cause
