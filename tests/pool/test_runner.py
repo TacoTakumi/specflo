@@ -14,6 +14,7 @@ in it lives - which is what ``exec`` in a real pane comes to.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import signal
@@ -125,6 +126,8 @@ ACCOUNTS = (
 
 POOL_TOKEN = "pool-token-of-this-daemon"
 LEASE_TOKEN = "lease-token-of-the-holder"
+# How the pool knows that holder: by the hash of its token.
+HOLDER = hashlib.sha256(LEASE_TOKEN.encode()).hexdigest()
 
 
 def wait_until(cond, timeout=10.0, interval=0.05):
@@ -195,6 +198,21 @@ class Rig:
             cwd=self.work, pool_token=POOL_TOKEN, lease_token=LEASE_TOKEN,
             config_root=self.config_root, **kwargs,
         )
+
+    def start_by_hand(self, name: str) -> dict:
+        """An agent host under *name* that a developer started, as ``specflo
+        agent start`` starts one: no pool knows it. Its status record."""
+        done = subprocess.run(
+            [
+                sys.executable, "-c",
+                "import sys; from specflo.cli import main; sys.exit(main())",
+                "agent", "start", name, "--cwd", str(self.work), "--pi-cmd", self.command,
+                "--no-herdr",
+            ],
+            capture_output=True, text=True, timeout=60,
+        )
+        assert done.returncode == 0, done.stderr
+        return read_status(AgentPaths.resolve(name).status)
 
     def recorded(self) -> dict:
         assert wait_until(self.record.is_file), "the member's pi never started"
@@ -392,3 +410,25 @@ def test_stopping_a_member_whose_host_is_gone_still_records_the_cause(rig):
     runner.stop("local-1", "expired", pool_token=POOL_TOKEN)
 
     assert lease.read_ended(AgentPaths.resolve("local-1").root)["cause"] == "expired"
+
+
+@pytest.mark.parametrize("bound_to", [None, "the-token-of-another-pool"])
+def test_stop_leaves_alone_a_host_that_does_not_take_this_pools_token(rig, bound_to):
+    # a developer's own agent under a member's name: this pool never started it
+    before = rig.start_by_hand("local-1")
+    if bound_to is not None:
+        with connect("local-1") as client:
+            client.pool_bind(bound_to)
+
+    runner.stop("local-1", "released", pool_token=POOL_TOKEN, holder=HOLDER)
+
+    time.sleep(0.5)  # a stop that was sent would have landed by now
+    after = read_status(AgentPaths.resolve("local-1").status)
+    assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+    with connect("local-1") as client:
+        assert client.status()["status"]["state"] == "idle"
+    # and nothing says a lease ended there: none of this pool's ran on it
+    state_dir = AgentPaths.resolve("local-1").root
+    assert lease.read_ended(state_dir) is None
+    assert not (state_dir / lease.ENDED_DIR).exists()

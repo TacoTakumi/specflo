@@ -269,6 +269,33 @@ def test_an_undeclared_slot_and_a_member_the_pool_starts_are_refused(pool_rig):
     assert console_rows(pool_rig) == []
 
 
+@pytest.mark.parametrize("agent", ["local-1", "local-1.2"])
+def test_an_agent_under_a_name_the_pool_starts_hosts_under_is_refused(pool_rig, agent):
+    # the pool starts a member's host under the member's name, and a further
+    # lease's under that name and a number: a host it found there at a grant
+    # that knew its token would be stopped as its own
+    svc = pool_rig.service(pool_rig.config(console_member(), pool_rig.local_member()))
+    before = start_host(pool_rig, agent)
+
+    with pytest.raises(console.ConsoleRefused, match="member 'local-1'"):
+        console.attach(svc, SLOT, agent)
+
+    assert console_rows(pool_rig) == []
+    # the host was not bound: it knows no pool's token still
+    with connect(agent) as client, pytest.raises(RuntimeError, match="pool_token"):
+        client.lease_clear(svc.pool_token)
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+
+
+def test_an_agent_named_like_a_further_lease_of_a_console_is_attachable(pool_rig):
+    # a console is one agent under its developer's name for it: the pool
+    # starts nothing under a console's name
+    svc = pool_rig.service(pool_rig.config(console_member(), pool_rig.local_member()))
+    start_host(pool_rig, f"{SLOT}.2")
+
+    assert console.attach(svc, SLOT, f"{SLOT}.2").agent == f"{SLOT}.2"
+
+
 def test_an_agent_that_does_not_run_is_refused(pool_rig):
     svc = pool_rig.service(pool_rig.config(console_member()))
 

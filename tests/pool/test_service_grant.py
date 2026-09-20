@@ -17,6 +17,7 @@ import ast
 import hashlib
 import json
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ from typer.testing import CliRunner
 
 from specflo.agent import lease as agent_lease
 from specflo.agent.cli import agent_app
-from specflo.agent.client import connect
+from specflo.agent.client import AgentClient, connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.errors import SpecfloError
 from specflo.pool import launch, service
@@ -160,6 +161,62 @@ def test_a_member_that_cannot_be_started_leaves_no_active_lease(pool_rig, monkey
         ended = store.list_transitions()
     assert [t.kind for t in ended] == ["released"]
     assert "TEAM_A_KEY" in ended[0].cause
+
+
+def test_an_agent_the_pool_did_not_start_is_left_alone_by_a_refused_grant(pool_rig):
+    # a developer's own agent, started by hand under the name of a declared member
+    before = pool_rig.start_by_hand("local-1")
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+
+    with pytest.raises(service.runner.RunnerError, match="agent 'local-1' already runs"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+        (ended,) = store.list_transitions()
+    assert ended.kind == "released"
+    assert "agent 'local-1' already runs" in ended.cause
+    # the host and its pi are the ones the developer started, and nothing
+    # in their state directory says a lease ended there
+    time.sleep(0.5)  # a stop that was sent would have landed by now
+    after = pool_rig.status("local-1")
+    assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+    with connect("local-1") as client:
+        assert client.status()["status"]["state"] == "idle"
+    state_dir = AgentPaths.resolve("local-1").root
+    assert agent_lease.read_ended(state_dir) is None
+    assert not (state_dir / agent_lease.ENDED_DIR).exists()
+
+
+def test_a_member_whose_host_came_up_and_did_not_take_the_lease_is_stopped(
+    pool_rig, monkeypatch
+):
+    real_bind, refusals = AgentClient.lease_bind, ["lease_bind failed: refused for the test"]
+
+    def refused_once(self, *args, **kwargs):
+        if refusals:
+            raise RuntimeError(refusals.pop())
+        real_bind(self, *args, **kwargs)
+
+    monkeypatch.setattr(AgentClient, "lease_bind", refused_once)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+
+    with pytest.raises(service.runner.RunnerError, match="did not take the lease"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    # the pool started this one, so it goes with the grant that failed
+    started = pool_rig.recorded()["pid"]
+    assert wait_until(lambda: not pid_alive(started))
+    assert pool_rig.pane_names() == []
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+        (ended,) = store.list_transitions()
+    assert (ended.kind, "did not take the lease" in ended.cause) == ("released", True)
+    # the slot and the name are free: the next request starts the member afresh
+    pool_rig.record.unlink()
+    assert svc.grant("rebasers", holder_label="b", cwd=pool_rig.work).agent == "local-1"
+    assert pool_rig.recorded()["pid"] != started
 
 
 # -- one lease after another on one member ----------------------------------

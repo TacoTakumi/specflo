@@ -477,7 +477,9 @@ class PoolService:
         aborted and the member's process stopped, the slot is free to the
         next request, and the former holder's next verb is told the kind. A
         console's process is its developer's and is not stopped: its lease
-        ends on the host, and the host runs on.
+        ends on the host, and the host runs on. So does a host under the
+        member's name that the pool did not start, which a grant refused for
+        that reason ends its lease on: the runner stops its own hosts only.
 
         A lease that has ended already is left as it is, and how it ended is
         returned. Raises ``UnknownLease``, and ``RunnerError`` when the

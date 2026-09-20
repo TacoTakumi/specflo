@@ -318,7 +318,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   it starts nothing, stops nothing and leaves the developer's pi as it was
   started, and between leases the host refuses the tokens of former
   holders. A detached slot takes no new lease and a lease that is out
-  stands. Both verbs are the developer identity's alone.
+  stands. Both verbs are the developer identity's alone. An agent under a
+  name the pool starts a member's host under is refused at attach. A host
+  that answers under a member's name and that the pool did not start is
+  never the pool's to stop: a request for that member is refused naming
+  the agent, and the host runs on with nothing written beside it.
 - **The pool in the web UI.** `/pool` shows every pool, waiting request,
   member, lease, account, standing entry and recent transition to the
   requester and the developer; it carries nothing a member wrote and no

@@ -35,6 +35,11 @@ agent is attached to or that still drains, and for an agent that does not run
 on the daemon's host or runs on the TUI transport. It is refused as well for
 an agent that serves another slot, attached or still draining, and for one
 that a lease on a member the pool started runs on: a host serves one slot.
+And it is refused for an agent whose name is one the pool starts a member's
+host under, the member's own or that of a further lease on it. Agent names
+are one namespace on the daemon's host, and at a grant on that member the
+pool would find the attached host under the name, bound to its own token,
+and stop it as the member's.
 Otherwise the pool's token is bound on the agent's host, which is all the
 pool does to it until a lease. A host takes one pool's token, and takes the
 same one again, so the host that left a slot may be attached anew.
@@ -159,8 +164,9 @@ def attach(service: PoolService, slot: str, agent: str) -> ConsoleAttachment:
     of *service*; the row that says so.
 
     Raises ``ConsoleRefused`` for a name that is no declared console, a slot
-    that is attached or still drains, an agent that serves another slot or
-    runs a lease of a member the pool started, and one that is not attachable.
+    that is attached or still drains, an agent under a name the pool starts a
+    member's host under, one that serves another slot or runs a lease of a
+    member the pool started, and one that is not attachable.
     """
     _declared(service.config, slot)
     with service.open_store() as store:
@@ -190,6 +196,15 @@ def attach(service: PoolService, slot: str, agent: str) -> ConsoleAttachment:
             raise ConsoleRefused(
                 f"agent '{agent}' is not a developer's to attach: a lease of the pool runs on "
                 "it, on a member the pool started."
+            )
+        # With no lease on it now, the name may still be one the pool starts
+        # a host under at the next grant.
+        started = _started_as(service.config, agent)
+        if started is not None:
+            raise ConsoleRefused(
+                f"agent '{agent}' is not a developer's to attach: the pool starts member "
+                f"'{started.name}' under that name, and a host there that knows the pool's token "
+                "is stopped as the member's. Start the agent under another name to attach it."
             )
         try:
             runner.attach_console(agent, pool_token=service.pool_token)
@@ -223,6 +238,19 @@ def detach(service: PoolService, slot: str) -> str:
         if store.set_console_draining(slot) is None:
             raise ConsoleRefused(f"console '{slot}': nothing is attached to it.")
         return state(slot, store.list_consoles(), store.list_leases(state=ledger.ACTIVE))
+
+
+def _started_as(config: PoolConfig, agent: str) -> Member | None:
+    """The member of *config* whose host the pool starts under the name
+    *agent*, if there is one: a member of another kind than console runs
+    under its own name, and a further lease on it under that name, a dot and
+    a number, unless that is a declared name (see the ledger's placement)."""
+    declared = {member.name: member for member in config.members}
+    stem, dot, number = agent.rpartition(".")
+    if agent not in declared and dot and number.isdigit():
+        agent = stem
+    member = declared.get(agent)
+    return member if member is not None and member.kind != CONSOLE else None
 
 
 def _declared(config: PoolConfig, slot: str) -> None:

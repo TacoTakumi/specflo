@@ -18,9 +18,16 @@ runs, on disk.
 
 Once the host answers, the pool binds its own token and the lease's token on
 it over the host's socket, which raises the lease wall before the holder is
-told the agent's name. At the end the pool records why the lease ended in the
-agent's state directory, lowers the wall with its own token and stops the
-host; the host's exit ends the pane.
+told the agent's name. At the end the pool lowers the wall with its own
+token, records why the lease ended in the agent's state directory and stops
+the host; the host's exit ends the pane.
+
+Agent names are one namespace on the daemon's host, so a host may answer
+under a member's name that the pool did not start: a developer's own, started
+by hand. A start that finds a host under the name refuses and touches
+nothing. At the end, the token tells the pool's host from any other: the host
+the pool started takes it, and one that does not take it is left running,
+with nothing written beside it.
 
 A console is the one member whose host the pool does not start. A developer
 attaches an agent host that runs already: ``attach_console`` checks that one
@@ -49,6 +56,7 @@ and never to pi.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import subprocess
@@ -64,6 +72,8 @@ from ..errors import SpecfloError
 from . import launch, piconfig
 from .config import Account, Member
 from .definitions import AgentDefinition
+
+_log = logging.getLogger(__name__)
 
 # What pi is started from, in the agent's state directory: the command line
 # and the environment, as JSON. It is there from just before the start until
@@ -123,9 +133,13 @@ def start(
     name = member.name
     paths = _paths(name)
     if _serving(name):
-        # Found before anything is written: what is there belongs to the
-        # lease that runs, and so does the host.
-        raise RunnerError(f"member '{name}' is already running; its lease has not ended.")
+        # Found before anything is written: what is there belongs to whoever
+        # started that host, a lease that runs or a developer, and so does
+        # the host.
+        raise RunnerError(
+            f"member '{name}' cannot be started: an agent '{name}' already runs on the "
+            "daemon's host, and this lease did not start it."
+        )
     accounts = tuple(accounts)
     config_dir = piconfig.create(config_root, member, accounts)
     try:
@@ -182,27 +196,38 @@ def stop(
     """Stop the agent *name*; its lease ended for *cause*.
 
     The cause is one of the agent subsystem's lease end causes, and
-    *request_id* names the preempting request. The record is written first,
-    so a holder whose verb finds the host gone is told why. With *holder*,
-    the hash of the lease's token, it is kept for that holder as well, so
-    that it is told why when the member is leased again too. A host that is
-    already gone is not an error: the lease ends all the same.
+    *request_id* names the preempting request. The record is written before
+    the host is stopped, so a holder whose verb finds the host gone is told
+    why. With *holder*, the hash of the lease's token, it is kept for that
+    holder as well, so that it is told why when the member is leased again
+    too. A host that is already gone is not an error: the lease ends all the
+    same.
+
+    A host that answers and does not take *pool_token* is not one this pool
+    started: a start binds the token before anything else. It is someone
+    else's under the member's name, a developer's or another pool's, and the
+    lease never ran on it. It is left as it is, and so is its state
+    directory: nothing is stopped and no record is written.
 
     Raises ``RunnerError`` when the host does not stop; what the lease left
     on disk then stays, because the member may still run.
     """
     paths = _paths(name)
-    lease.write_ended(paths.root, cause, request_id, holder=holder)
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             try:
-                # The stop verb carries no pool token, so the wall comes down first.
+                # The stop verb carries no pool token, so the wall comes down
+                # first; and only the pool's own host takes the token.
                 client.lease_clear(pool_token)
             except RuntimeError:
-                pass  # no wall was raised on this host; the stop below says the rest
+                # Said aloud, because the lease ends and the host runs on.
+                _log.warning("agent %s does not take the pool's token: left running", name)
+                return
     except (HostUnreachableError, TimeoutError, OSError):
+        lease.write_ended(paths.root, cause, request_id, holder=holder)
         _forget(paths)
         return
+    lease.write_ended(paths.root, cause, request_id, holder=holder)
     stopped = _stop_cli(name, timeout)
     if stopped is None or stopped.returncode != 0:
         detail = _detail(stopped) if stopped is not None else f"no answer in {timeout:.0f}s"
