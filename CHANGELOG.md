@@ -233,7 +233,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   developer, to read the directory again with no restart; a directory with
   a fault changes nothing, a change that removes a member with a lease out
   is refused whole, and a reload that passes brings to life a pool that
-  was invalid at start.
+  was invalid at start. A reload that was refused leaves its faults on the
+  pool page, above the configuration that is still in force, as well as in
+  the output of whoever ran it.
 - **What a member is given.** Each lease on a started member runs a fresh
   pi through `specflo agent start`, in a herdr pane named for the member,
   and the end of the lease stops it. The definition reaches pi as

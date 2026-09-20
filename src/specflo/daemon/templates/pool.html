@@ -19,6 +19,17 @@
 {% elif view is none %}
 <p class="empty">{{ no_pool }}</p>
 {% else %}
+{% if errors %}
+<section id="pool-errors">
+  <h2>The pool directory has faults</h2>
+  <p class="error">The configuration in force is the last one that was valid. Correct what follows, then run `specflo serve pool reload`.</p>
+  <ul class="errors">
+    {% for error in errors %}
+    <li class="error">{{ error }}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
 <section id="pools">
   <h2>Pools</h2>
   <table>

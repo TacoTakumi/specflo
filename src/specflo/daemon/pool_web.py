@@ -279,15 +279,21 @@ def _expire_due(service: PoolService) -> None:
 @pages.get(POOL_PATH, include_in_schema=False)
 def pool_page(request: Request, identity: str = Depends(current_session)) -> Response:
     """The pool as it stands now; the faults of a configuration that did not
-    stand in its place, or that no pool is configured."""
+    stand in its place, or that no pool is configured.
+
+    A pool that stands may have faults beside it: a reload that was refused
+    leaves the last valid configuration serving and its faults on the state.
+    The page shows both, so the only word of a refused reload is not the CLI
+    output of whoever ran it.
+    """
+    errors = [str(error) for error in getattr(request.app.state, "pool_errors", ())]
     service = getattr(request.app.state, "pool", None)
     if service is None:
-        errors = [str(error) for error in getattr(request.app.state, "pool_errors", ())]
         return render("pool.html", identity=identity, view=None, errors=errors, no_pool=NO_POOL)
     _expire_due(service)
     return render(
-        "pool.html", identity=identity, view=pool_view(service, identity), limit=limit,
-        amount=amount, cause_shown=cause_shown, release_url=release_url,
+        "pool.html", identity=identity, view=pool_view(service, identity), errors=errors,
+        limit=limit, amount=amount, cause_shown=cause_shown, release_url=release_url,
         session=session_secret(request),
     )
 

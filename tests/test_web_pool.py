@@ -460,3 +460,32 @@ def test_what_a_member_answered_is_in_no_pool_page_and_no_pool_route_response(po
         assert MARKER not in html
     for answer in answers:
         assert MARKER not in answer.text, answer.request.url
+
+
+def test_faults_of_a_reload_that_was_refused_are_shown_above_the_pool_that_still_stands(
+    pool_rig, busy
+):
+    # A reload that does not pass keeps the last valid configuration in
+    # force. The page has to say so, or the only sign is the CLI output of
+    # whoever ran the reload.
+    app = application(pool_rig, busy["svc"])
+    fault = pool_config.ConfigError(
+        cli_admin.pool_dir(pool_rig.root) / "pool.yaml",
+        "member 'coder-gemma'",
+        "nonsense_key",
+        "unknown key; expected one of name, kind, command.",
+    )
+    app.state.pool_errors = (fault,)
+
+    html = page(signed_in(app))
+
+    assert str(fault) in unescape(html)
+    # the pool that still stands is shown as well
+    assert '<section id="pools">' in html
+
+
+def test_a_page_with_no_faults_carries_no_fault_section(pool_rig, busy):
+    html = page(signed_in(application(pool_rig, busy["svc"])))
+
+    assert '<section id="pool-errors">' not in html
+    assert '<section id="pools">' in html
