@@ -19,6 +19,13 @@ mistakes, not a limit: see its header.
 A hosted member's egress class does not travel as a flag either. It is written
 into a pi configuration directory generated for the member (see ``piconfig``),
 and one environment variable points the member's pi at that directory.
+
+pi loads the extensions a developer has installed, in a member as anywhere
+else, and one of them is specflo's own control extension. A member is reached
+through its agent host, whose socket is where the lease wall stands, so the
+member's environment tells that extension to serve nothing of its own;
+otherwise it binds a second socket, named for the working directory, that
+answers for the member with no lease behind it.
 """
 
 from __future__ import annotations
@@ -56,6 +63,24 @@ DENY_ENV = "SPECFLO_POOL_DENY"
 # only to a directory generated for the member, never from the caller: the
 # caller's own pi configuration carries no routing flags.
 AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
+
+# What a member says to the specflo control extension, which pi discovers
+# wherever a developer has installed it and loads inside a member too. The
+# member is driven through its agent host, and the host's socket is where the
+# lease wall stands, so the extension must serve nothing of its own: a second
+# socket would answer for the member with no lease behind it. The other two
+# are the handshake the extension reads when it does serve, set here so the
+# member is identified by its own name wherever the extension uses one.
+SERVE_ENV = "SPECFLO_AGENT_SERVE"
+AGENT_NAME_ENV = "SPECFLO_AGENT_NAME"
+AGENT_MANAGED_ENV = "SPECFLO_AGENT_MANAGED"
+
+# The variables the pool alone says, whatever a definition lists or a caller
+# exports. A member that could set one of these could give itself a name, a
+# deny list or a pi configuration of its own choosing.
+_POOL_SAYS: tuple[str, ...] = (
+    DENY_ENV, AGENT_DIR_ENV, SERVE_ENV, AGENT_NAME_ENV, AGENT_MANAGED_ENV,
+)
 
 
 class LaunchError(SpecfloError):
@@ -113,7 +138,7 @@ def member_env(
     allowed = [
         name
         for name in (*BASELINE_ENV, *definition.env, *definition.credentials)
-        if name not in key_vars and name not in (DENY_ENV, AGENT_DIR_ENV)
+        if name not in key_vars and name not in _POOL_SAYS
     ]
     if member.account is not None:
         allowed.append(_key_var(member, accounts, environ))
@@ -122,6 +147,9 @@ def member_env(
         env[DENY_ENV] = json.dumps(list(definition.deny))
     if config_dir is not None:
         env[AGENT_DIR_ENV] = str(config_dir)
+    env[SERVE_ENV] = "0"
+    env[AGENT_NAME_ENV] = member.name
+    env[AGENT_MANAGED_ENV] = "1"
     return env
 
 

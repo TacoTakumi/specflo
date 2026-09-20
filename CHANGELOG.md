@@ -244,7 +244,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   sit on a command line. A definition's `deny` list is enforced by a pi
   extension the pool loads on every member. It matches the text of a bash
   command and is a guard against mistakes, not a security boundary: there
-  is no sandbox, and a member's pi runs as the daemon's user.
+  is no sandbox, and a member's pi runs as the daemon's user. A member
+  loads the extensions the host has installed, specflo's own control
+  extension among them, and its environment tells that one to serve no
+  control socket of its own, so the member answers at its agent host and
+  nowhere else.
 - **`specflo lease request <pool>`, `lease release <lease>` and `lease
   list`.** A request prints the lease id and the agent to drive with the
   `specflo agent` verbs; the member starts in the requester's directory or

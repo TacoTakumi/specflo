@@ -95,6 +95,10 @@ def test_the_environment_is_the_baseline_plus_what_is_listed_and_nothing_else():
         "TMPDIR": CALLER["TMPDIR"],
         "GIT_AUTHOR_NAME": CALLER["GIT_AUTHOR_NAME"],
         "GH_READ_TOKEN": CALLER["GH_READ_TOKEN"],
+        # What the pool says about the member itself, never the caller.
+        launch.SERVE_ENV: "0",
+        launch.AGENT_NAME_ENV: LOCAL_MEMBER.name,
+        launch.AGENT_MANAGED_ENV: "1",
     }
 
 
@@ -163,3 +167,44 @@ def test_building_the_environment_changes_neither_the_caller_nor_the_process():
 
     assert caller == CALLER
     assert dict(os.environ) == before
+
+
+def test_a_member_serves_no_control_surface_of_its_own():
+    # pi discovers the specflo control extension wherever a developer has
+    # installed it, a member's pi included. Without this the extension binds
+    # a second control socket for the member, keyed by the working
+    # directory's name, which the agent host's lease wall does not guard.
+    env = launch.member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    assert env.get(launch.SERVE_ENV) == "0"
+
+
+def test_a_member_carries_the_agent_handshake_of_its_own_name():
+    env = launch.member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    assert env.get(launch.AGENT_NAME_ENV) == LOCAL_MEMBER.name
+    assert env.get(launch.AGENT_MANAGED_ENV) == "1"
+
+
+def test_neither_the_caller_nor_the_definition_sets_the_handshake():
+    # The three are the pool's to say, like the deny list: a definition that
+    # lists one, or a caller that exports one, changes nothing.
+    definition = replace(
+        DEFINITION,
+        env=("GIT_AUTHOR_NAME", launch.SERVE_ENV, launch.AGENT_MANAGED_ENV),
+        credentials=("GH_READ_TOKEN", launch.AGENT_NAME_ENV),
+    )
+    caller = dict(
+        CALLER,
+        **{
+            launch.SERVE_ENV: "1",
+            launch.AGENT_NAME_ENV: "not-the-member",
+            launch.AGENT_MANAGED_ENV: "0",
+        },
+    )
+
+    env = launch.member_env(definition, LOCAL_MEMBER, ACCOUNTS, caller)
+
+    assert env[launch.SERVE_ENV] == "0"
+    assert env.get(launch.AGENT_NAME_ENV) == LOCAL_MEMBER.name
+    assert env.get(launch.AGENT_MANAGED_ENV) == "1"

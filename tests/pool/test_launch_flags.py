@@ -94,3 +94,13 @@ def test_no_other_definition_content_reaches_the_argv_or_the_environment():
     for value in withheld:
         assert not any(value in arg for arg in flags if arg != PROMPT), value
     assert dict(os.environ) == before
+
+
+def test_extension_discovery_is_left_on():
+    # A member needs the extensions a developer has installed. The one the
+    # pool must silence is the control extension, and it is silenced through
+    # the environment, not by turning discovery off for everything.
+    argv = launch.pi_argv(DEFINITION, MEMBER)
+
+    assert "-ne" not in argv
+    assert "--no-extensions" not in argv
