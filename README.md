@@ -527,7 +527,7 @@ The developer's page has a release control on every active lease, which ends the
 
 ### Plan `Needs` lines on a daemon
 
-For a hosted project, a task's `Needs` name that is one of the daemon's pools is counted by the daemon: the pool's `size`, and as many slots taken as the pool has leases out, whichever project holds them. The ready set of `task list` uses that count in place of the plan's own; other names keep the plan's `pool add` count. `validate plan` on a hosted project reports a `Needs` name that is neither a daemon pool nor declared in the plan. A local project reads no pool. The execute skill's fan-out step tells the orchestrator to request a lease before such a task and release it after, on success or failure.
+For a hosted project, a task's `Needs` name that is one of the daemon's pools is counted by the daemon: the pool's `size`, and as many slots taken as the pool has leases out, whichever project holds them; a lease past its idle limit is not counted. The ready set of `task list` uses that count in place of the plan's own; other names keep the plan's `pool add` count. `validate plan` on a hosted project reports a `Needs` name that is neither a daemon pool nor declared in the plan. A local project reads no pool. The execute skill's fan-out step tells the orchestrator to request a lease before such a task and release it after, on success or failure.
 
 ### Known limits
 

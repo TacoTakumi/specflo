@@ -480,7 +480,10 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **A hosted plan's `Needs` lines count the daemon's pools.** For a hosted
   project, a `Needs` name that is one of the daemon's pools has the
   daemon's size and as many slots taken as the pool has leases out, across
-  every project; `task list` computes the ready set from that, and
+  every project; a lease that is past its idle limit is not counted, by
+  the rule the pool ends a lease by, so a lease nobody gave back does not
+  hold a task back until some other request ends it. `task list` computes
+  the ready set from that, and
   `validate plan` reports a name that is neither a daemon pool nor
   declared in the plan. `status`, `checkpoint` and the web project page do
   not read daemon capacity yet. A local plan is counted as before.

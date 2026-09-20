@@ -17,9 +17,11 @@ pi as the member a lease starts.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 import textwrap
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import yaml
@@ -27,11 +29,14 @@ from typer.testing import CliRunner
 
 from specflo import config, markdown, plan, projects, spec
 from specflo.cli import app
+from specflo.daemon.poolstore import Lease, Resource, open_pool_store
 from specflo.pool import cli_admin, planneeds
 from specflo.pool import config as pool_config
 
 from . import test_lease_request
+from .conftest import START
 from .test_lease_request import checkout, pool_daemon  # noqa: F401  (fixtures)
+from .test_runner import pid_alive
 
 runner = CliRunner()
 
@@ -173,6 +178,117 @@ def test_a_root_whose_pool_configuration_does_not_stand_has_no_daemon_pools(tmp_
     assert planneeds.daemon_pools(tmp_path) == {}
 
 
+# --- a lease past its idle limit is not out -----------------------------------
+
+REVIEWERS = "reviewers"
+TEN_MINUTES = 600
+
+
+def _at(minute: float) -> datetime:
+    return START + timedelta(minutes=minute)
+
+
+def _text(time: datetime) -> str:
+    return time.isoformat(timespec="milliseconds")
+
+
+@pytest.fixture
+def pools_root(tmp_path):
+    """A daemon root with two pools of one member each, and no daemon on it:
+    no member has a host, so a lease's row is all that tells its activity."""
+    directory = cli_admin.pool_dir(tmp_path)
+    folder = directory / pool_config.DEFINITIONS_DIR
+    folder.mkdir(parents=True)
+    (folder / "rebaser.md").write_text(test_lease_request.REBASER, encoding="utf-8")
+    shutil.copy(test_lease_request.FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    members = {POOL: "local-1", REVIEWERS: "local-2"}
+    data = {
+        "llama_swap": "llama-swap.yaml",
+        "members": [{
+            "name": member, "command": "pi", "backing": "local", "model": "model-a",
+            "labels": [], "capacity": 1, "egress": "local",
+        } for member in members.values()],
+        "pools": [{
+            "name": pool, "definition": "rebaser", "members": [member],
+            "size": 1, "idle_default": "10m", "idle_max": "4h",
+        } for pool, member in members.items()],
+    }
+    (directory / pool_config.POOL_FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
+    return tmp_path
+
+
+def _lease_out(root, pool, member, *, last_activity: float = 0, team=None) -> Lease:
+    """An active lease of *pool* in the store of *root*, last touched at that minute."""
+    lease = Lease(
+        id=f"lease-{member}", team_lease_id=team, holder_hash="0" * 64, holder_label="gone",
+        member=member, pool=pool,
+        resources=(Resource("pool", pool), Resource("member", member)),
+        acquired=_text(_at(0)), last_activity=_text(_at(last_activity)),
+        idle_limit=TEN_MINUTES, state="active",
+    )
+    with open_pool_store(root) as store:
+        store.add_lease(lease)
+    return lease
+
+
+def _host_says(monkeypatch, state: str, minute: float) -> None:
+    """What the agent host of every member says of itself: its state, stamped at that minute."""
+    status = {"state": state, "last_activity": _text(_at(minute))}
+    monkeypatch.setattr(planneeds.runner, "status", lambda name: dict(status))
+
+
+def test_a_lease_inside_its_idle_limit_is_out_and_one_past_it_is_not(pools_root):
+    _lease_out(pools_root, POOL, "local-1")
+
+    assert planneeds.daemon_pools(pools_root, now=_at(9))[POOL] == {"size": 1, "in_use": 1}
+    assert planneeds.daemon_pools(pools_root, now=_at(10))[POOL] == {"size": 1, "in_use": 0}
+
+
+def test_the_time_is_the_present_when_none_is_given(pools_root):
+    _lease_out(pools_root, POOL, "local-1")  # last touched long ago
+
+    assert planneeds.daemon_pools(pools_root)[POOL] == {"size": 1, "in_use": 0}
+
+
+def test_the_later_of_the_rows_and_the_hosts_activity_counts(pools_root, monkeypatch):
+    _lease_out(pools_root, POOL, "local-1")
+    _host_says(monkeypatch, "idle", 9)
+
+    assert planneeds.daemon_pools(pools_root, now=_at(15))[POOL]["in_use"] == 1
+    assert planneeds.daemon_pools(pools_root, now=_at(19))[POOL]["in_use"] == 0
+
+
+def test_a_working_member_keeps_its_lease_out(pools_root, monkeypatch):
+    _lease_out(pools_root, POOL, "local-1")
+    _host_says(monkeypatch, "working", 1)
+
+    assert planneeds.daemon_pools(pools_root, now=_at(40))[POOL]["in_use"] == 1
+
+
+def test_a_team_is_judged_by_its_latest_activity_across_the_pools(pools_root):
+    _lease_out(pools_root, POOL, "local-1", team="team-1")
+    _lease_out(pools_root, REVIEWERS, "local-2", last_activity=9, team="team-1")
+
+    # The worker's own row is fifteen minutes old; the reviewer's keeps both.
+    out = planneeds.daemon_pools(pools_root, now=_at(15))
+    assert (out[POOL]["in_use"], out[REVIEWERS]["in_use"]) == (1, 1)
+    out = planneeds.daemon_pools(pools_root, now=_at(19))
+    assert (out[POOL]["in_use"], out[REVIEWERS]["in_use"]) == (0, 0)
+
+
+def test_reading_ends_no_lease_and_stops_no_member(pools_root, monkeypatch):
+    lease = _lease_out(pools_root, POOL, "local-1")
+    monkeypatch.setattr(
+        planneeds.runner, "stop", lambda *a, **k: pytest.fail("the reader stopped a member")
+    )
+
+    assert planneeds.daemon_pools(pools_root, now=_at(60))[POOL]["in_use"] == 0
+
+    with open_pool_store(pools_root) as store:
+        assert store.list_leases() == [lease]
+        assert store.list_transitions() == []
+
+
 # --- a hosted plan, read on the daemon --------------------------------------
 
 
@@ -242,6 +358,41 @@ def test_a_hosted_task_is_held_back_while_every_lease_of_the_daemon_pool_is_out(
     released = runner.invoke(app, ["lease", "release", json.loads(leased.stdout)["lease"]])
     assert released.exit_code == 0, released.output
     assert "T-01" in _ready(_task_list())
+
+
+def test_a_lease_past_its_idle_limit_does_not_hold_a_hosted_task_back(
+    hosted_plan, pool_rig, monkeypatch
+):
+    leased = runner.invoke(app, ["lease", "request", POOL, "--json"])
+    assert leased.exit_code == 0, leased.output
+    with pool_rig.store() as store:
+        rows, transitions = store.list_leases(), store.list_transitions()
+    assert [row.state for row in rows] == ["active"]
+    # The holder goes away: nothing is done on the member, and no one asks the
+    # pool for anything. Only the plan is read, at a later time each read.
+    read = planneeds.daemon_pools
+
+    def read_after(**later):
+        monkeypatch.setattr(
+            planneeds, "daemon_pools",
+            lambda root: read(root, now=datetime.now(timezone.utc) + timedelta(**later)),
+        )
+
+    read_after(minutes=9)
+    listing = _task_list()
+    assert "T-01" not in _ready(listing)
+    assert listing["pools"][POOL] == {"size": 1, "holders": [], "in_use": 1}
+
+    read_after(minutes=11)
+    listing = _task_list()
+    assert "T-01" in _ready(listing)
+    assert listing["pools"][POOL] == {"size": 1, "holders": [], "in_use": 0}
+    assert "T-01" in listing["progress"]["next_actionable"]
+
+    # The reader ended nothing: the row is as it was, and the member runs.
+    with pool_rig.store() as store:
+        assert (store.list_leases(), store.list_transitions()) == (rows, transitions)
+    assert pid_alive(pool_rig.status("local-1")["pi_pid"])
 
 
 def test_validate_plan_on_a_hosted_project_reports_the_unknown_pool(hosted_plan):
