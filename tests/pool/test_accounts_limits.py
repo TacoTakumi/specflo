@@ -183,6 +183,113 @@ def test_a_read_before_the_reopen_time_leaves_a_closed_account_closed(provider, 
     assert kept.figures.free_requests == 960
 
 
+# --- a closure that a refused call set ---------------------------------------
+
+
+def close_for_limit(provider, store, clock, account, key, period):
+    """Close ``account`` as the watcher of a refused call does, its key's limit
+    resetting each ``period``."""
+    provider.keys[key]["limit_reset"] = period
+    with provider.client() as client:
+        return accounts.close_for_limit(
+            account, store, clock=clock, client=client, environ=ENVIRON
+        )
+
+
+# Noon on the 19th is a Saturday: the UTC week turns on Monday the 21st.
+@pytest.mark.parametrize(
+    ("period", "reset"),
+    [
+        ("weekly", datetime.datetime(2026, 9, 21, tzinfo=UTC)),
+        ("monthly", datetime.datetime(2026, 10, 1, tzinfo=UTC)),
+    ],
+)
+def test_a_read_with_no_free_requests_left_does_not_shorten_a_closure_for_the_keys_limit(
+    provider, store, clock, period, reset
+):
+    reset_text = reset.isoformat(timespec="milliseconds")
+    closed = close_for_limit(provider, store, clock, FREE, FREE_KEY, period)
+    assert (closed.closed, closed.reopen) == (True, reset_text)
+
+    provider.set_key(FREE_KEY, free_limit=50, free_used=50)
+    records = read(provider, store, clock, declared=(FREE,))
+
+    kept = store.get_account(FREE.name)
+    assert (kept.closed, kept.reopen) == (True, reset_text)
+    assert kept.figures.free_requests == 0
+    assert records == [kept]
+
+    # The day turns with the key's limit still spent: the account stays closed,
+    # to a reader of the store and through the next routine read.
+    clock.now = datetime.datetime(2026, 9, 20, 0, 5, 0, tzinfo=UTC)
+    assert accounts.is_open(store.get_account(FREE.name), clock()) is False
+    provider.set_key(FREE_KEY, free_limit=50, free_used=0)
+    read(provider, store, clock, declared=(FREE,))
+    kept = store.get_account(FREE.name)
+    assert (kept.closed, kept.reopen) == (True, reset_text)
+
+    clock.now = reset + datetime.timedelta(minutes=5)
+    read(provider, store, clock, declared=(FREE,))
+    reopened = store.get_account(FREE.name)
+    assert (reopened.closed, reopened.reopen) == (False, None)
+
+
+def test_a_closure_for_the_daily_quota_moves_on_a_day_while_no_requests_are_left(
+    provider, store, clock
+):
+    provider.set_key(FREE_KEY, free_limit=50, free_used=50)
+    read(provider, store, clock)
+
+    # The stored reopen time has come and the provider still reports none
+    # left: the new reopen time is the later one, and it is the one kept.
+    clock.now = datetime.datetime(2026, 9, 20, 0, 5, 0, tzinfo=UTC)
+    read(provider, store, clock)
+
+    closed = store.get_account(FREE.name)
+    assert (closed.closed, closed.reopen) == (True, "2026-09-21T00:00:00.000+00:00")
+
+
+def test_the_reopen_times_are_compared_as_times_and_not_as_text(provider, store, clock):
+    # One in the morning on the 20th, five hours ahead of UTC, is eight in the
+    # evening of the 19th: before the midnight the quota closes until, though
+    # its text sorts after.
+    store.set_account_closed(FREE.name, reopen="2026-09-20T01:00:00.000+05:00")
+    provider.set_key(FREE_KEY, free_limit=50, free_used=50)
+
+    read(provider, store, clock)
+
+    assert store.get_account(FREE.name).reopen == RESET_TEXT
+
+
+def test_an_account_closed_with_no_reopen_time_is_not_given_one_by_a_read(
+    provider, store, clock
+):
+    store.set_account_closed(FREE.name, reopen=None)
+    provider.set_key(FREE_KEY, free_limit=50, free_used=50)
+
+    read(provider, store, clock)
+
+    kept = store.get_account(FREE.name)
+    assert (kept.closed, kept.reopen) == (True, None)
+
+
+def test_a_refused_call_with_the_key_unread_does_not_shorten_a_closure_for_the_keys_limit(
+    provider, store, clock
+):
+    # A lease granted before the closure is left alone, so its member can be
+    # refused again while the account is closed. With the key unread the
+    # reopen time would be the next daily reset, sooner than the month's end.
+    monthly = "2026-10-01T00:00:00.000+00:00"
+    close_for_limit(provider, store, clock, MAIN, MAIN_KEY, "monthly")
+
+    provider.unreachable = True
+    record = close_for_limit(provider, store, clock, MAIN, MAIN_KEY, "monthly")
+
+    assert (record.closed, record.reopen) == (True, monthly)
+    assert record.figures.read_error is not None
+    assert record == store.get_account(MAIN.name)
+
+
 # --- a read that fails -------------------------------------------------------
 
 

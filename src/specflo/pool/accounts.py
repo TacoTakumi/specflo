@@ -18,6 +18,11 @@ limit or for the account's credits. The account is then closed until the
 key's limit resets: daily, weekly or monthly, as the key read says, on the
 UTC day, the UTC week from Monday and the UTC month.
 
+Neither closure shortens the other. An account closed until its key's limit
+resets, and then read with no free requests left, stays closed until that
+reset and does not open at midnight with the limit still spent: the later of
+the stored reopen time and the new one is kept.
+
 While the daemon serves, a reader reads every declared account's key: once
 when it starts and again after each ``READ_INTERVAL``. Which pool is in force,
 and which accounts it declares, is asked at each read, so a configuration put
@@ -110,7 +115,7 @@ def read_account(
         return store.set_account_figures(account.name, _failed(read_at, exc))
     record = store.set_account_figures(account.name, figures)
     if figures.free_requests == 0:
-        return store.set_account_closed(account.name, reopen=_text(next_daily_reset(now)))
+        return _close_until(store, record, next_daily_reset(now))
     # Requests left today do not open a closed account: something other than
     # the daily quota may have closed it. Only its reopen time does.
     if record.closed and is_open(record, now):
@@ -141,14 +146,33 @@ def close_for_limit(
     reset = None
     try:
         answer = _read_key(account, client, environ)
-        store.set_account_figures(account.name, _figures(answer, _text(now)))
+        record = store.set_account_figures(account.name, _figures(answer, _text(now)))
         reset = next_key_reset(answer["data"].get("limit_reset"), now)
     except _ReadError as exc:
-        store.set_account_figures(account.name, _failed(_text(now), exc))
+        record = store.set_account_figures(account.name, _failed(_text(now), exc))
     finally:
         if own:
             client.close()
-    return store.set_account_closed(account.name, reopen=_text(reset or next_daily_reset(now)))
+    return _close_until(store, record, reset or next_daily_reset(now))
+
+
+def _close_until(
+    store: PoolStore, record: poolstore.Account, reopen: datetime
+) -> poolstore.Account:
+    """Store the account of ``record`` closed until ``reopen``, or leave it
+    closed as it is when that lasts as long or longer; the record as stored.
+
+    An account can be closed for two things at once: its key's limit, until
+    the end of the week or the month, and the daily free quota, until
+    midnight. It is usable when both have passed, so the later reopen time is
+    the one kept. The times are compared as times, not as their text. A
+    closure with no reopen time lasts longest and is kept.
+    """
+    if record.closed and (
+        record.reopen is None or datetime.fromisoformat(record.reopen) >= reopen
+    ):
+        return record
+    return store.set_account_closed(record.name, reopen=_text(reopen))
 
 
 def next_key_reset(period: object, now: datetime) -> datetime | None:
