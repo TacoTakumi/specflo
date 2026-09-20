@@ -5,7 +5,8 @@ nothing that is not declared can be leased. An account is a name, a cap on how
 many leases may run through it at once, and the name of the environment
 variable that holds its one API key. A member is what runs a role: the harness
 command that starts it, what backs it, its capability labels, how many leases
-it serves at once, and its egress class.
+it serves at once, and its egress class. Its name is also the name its agent
+runs under, so it is one the agent host takes as an agent's name.
 
 A local member runs against llama-swap on this host, so it names one concrete
 model ID from the rig's llama-swap configuration and its class is ``local``.
@@ -120,6 +121,14 @@ _UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600}
 # is one server-wide rewrite table, and a selector picks the real model per
 # request, after the pool has checked which models fit together.
 _NOT_A_MODEL: tuple[str, ...] = ("profile", "selector")
+
+# What the agent host takes as an agent's name. A member's agent runs under
+# the member's name, so a member named otherwise never starts, and no status
+# can be read for the lease written for it. A console's name is held to the
+# same rule: members and agents share their names (see ``console``). The rule
+# is the agent package's own, repeated here because this module imports
+# nothing of that package.
+AGENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # The entry an error names when the fault is not in one account or member.
 FILE = "file"
@@ -488,6 +497,13 @@ def _account(entry: _Entry) -> Account:
 
 def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -> Member:
     entry.known(MEMBER_FIELDS)
+    name = entry.fields.get("name")
+    if isinstance(name, str) and name.strip() and not AGENT_NAME.match(name):
+        entry.fault(
+            "name", f"'{name}' cannot name an agent, and a member's agent runs under the "
+            "member's name; it starts with a letter or a digit and holds only letters, "
+            "digits, '.', '_' and '-'."
+        )
     kind = entry.one_of("kind", KINDS) if "kind" in entry.fields else STARTED
     if kind == CONSOLE:
         command = ""

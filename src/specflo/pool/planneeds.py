@@ -27,7 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..daemon.poolstore import open_pool_store
-from . import expiry, ledger, runner
+from . import expiry, runner
 from .cli_admin import pool_dir
 from .config import load_pool_config
 
@@ -53,7 +53,7 @@ def daemon_pools(root: Path | str, *, now: datetime | None = None) -> dict[str, 
         active = store.list_leases(state="active")
     # Every active lease is judged in one look: a team's leases lie in several
     # pools, and the latest activity among them renews them all.
-    read = [(lease, runner.status(ledger.agent_of(lease))) for lease in active]
+    read = expiry.read(active, runner.status)
     due = {lease.id for lease in expiry.due(read, now)}
     return {
         pool.name: {

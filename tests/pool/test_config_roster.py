@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from specflo.agent import statefiles
 from specflo.errors import SpecfloError
 from specflo.pool import config
 
@@ -343,6 +344,45 @@ def test_an_unknown_member_key_is_refused(tmp_path):
     error = _refused(_write(tmp_path, members=[_changed(LOCAL, colour="blue")]))
 
     assert (error.entry, error.field) == ("member 'coder-a'", "colour")
+
+
+# A member's agent runs under the member's name, so a name the agent host
+# would refuse is a member that can never start.
+NOT_AGENT_NAMES = ["my member", "team/coder", "_coder"]
+
+
+@pytest.mark.parametrize("name", NOT_AGENT_NAMES)
+def test_a_member_name_that_cannot_name_an_agent_is_refused(tmp_path, name):
+    _, errors = config.check_pool_file(_write(tmp_path, members=[_changed(LOCAL, name=name)]))
+
+    assert [(e.entry, e.field) for e in errors] == [(f"member '{name}'", "name")]
+    assert "cannot name an agent" in str(errors[0])
+
+
+@pytest.mark.parametrize("name", NOT_AGENT_NAMES)
+def test_a_console_name_that_cannot_name_an_agent_is_refused(tmp_path, name):
+    slot = _changed(LOCAL, name=name, kind="console", command=None)
+
+    _, errors = config.check_pool_file(_write(tmp_path, members=[slot]))
+
+    assert [(e.entry, e.field) for e in errors] == [(f"member '{name}'", "name")]
+
+
+def test_the_rule_for_a_member_name_is_the_agent_hosts_own():
+    # the pool configuration imports nothing of the agent package, so it
+    # repeats the rule; this is what keeps the two the same
+    assert config.AGENT_NAME.pattern == statefiles._NAME_RE.pattern
+    assert config.AGENT_NAME.flags == statefiles._NAME_RE.flags
+    for name in NOT_AGENT_NAMES:
+        with pytest.raises(ValueError):
+            statefiles.AgentPaths.resolve(name)
+
+
+@pytest.mark.parametrize("name", ["coder-a", "Coder_2.b", "9lives"])
+def test_a_member_name_the_agent_host_takes_is_accepted(tmp_path, name):
+    path = _write(tmp_path, members=[_changed(LOCAL, name=name)])
+
+    assert [m.name for m in config.load_pool_file(path).members] == [name]
 
 
 # --- the file ------------------------------------------------------------

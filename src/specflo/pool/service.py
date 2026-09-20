@@ -271,7 +271,9 @@ class PoolService:
 
         Each entry point of the service runs this first, and so does whatever
         renders the pool's state. A lease's last activity is read from its
-        row and from the status of its member's agent host.
+        row and from the status of its member's agent host; a status that
+        cannot be read is none, so such a row fails no caller and ends at its
+        limit (see ``expiry.read``).
 
         An expired lease whose member does not stop has ended all the same,
         and its slot is free. Whoever came here came for something else, so
@@ -288,10 +290,9 @@ class PoolService:
             try:
                 now = self.clock()
                 with self.open_store() as store:
-                    read = [
-                        (lease, runner.status(ledger.agent_of(lease)))
-                        for lease in store.list_leases(state="active")
-                    ]
+                    # A row whose agent has no status that can be read is
+                    # judged by the row alone, and fails no caller.
+                    read = expiry.read(store.list_leases(state="active"), runner.status)
                 due = [lease.id for lease in expiry.due(read, now)]
                 ended, failed = [], None
                 for lease_id in due:
@@ -314,7 +315,7 @@ class PoolService:
         its member's agent host. For whoever must know which member keeps a
         team before it ends the team's leases (see ``teamlease``)."""
         self.expire_due()
-        return [(lease, runner.status(ledger.agent_of(lease))) for lease in leases]
+        return expiry.read(leases, runner.status)
 
     def swap(
         self,
@@ -638,7 +639,7 @@ class PoolService:
                 return False
             return True
 
-        read = [(lease, runner.status(ledger.agent_of(lease))) for lease in full.out]
+        read = expiry.read(full.out, runner.status)
         taken = preempt.fewest(preempt.units(read, self.config.pools, self.clock()), fits)
         gone = {lease.id for unit in taken for lease in unit.leases}
         if not taken or any(self._fits(earlier, store, gone) for earlier in ahead):

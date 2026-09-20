@@ -213,11 +213,11 @@ def pool_view(service: PoolService, viewer: str) -> PoolView:
         rows = store.list_consoles()
         transitions = store.list_transitions(limit=RECENT_TRANSITIONS)
     standing = list(service.standing())
-    agents = {ledger.agent_of(lease) for lease in active} | {row.agent for row in rows}
-    statuses = {agent: runner.status(agent) for agent in agents}
-    judged = expiry.judged_activity(
-        [(lease, statuses[ledger.agent_of(lease)]) for lease in active], now
-    )
+    # A lease whose agent has no status that can be read is shown by its row.
+    read = expiry.read(active, runner.status)
+    statuses = {row.agent: runner.status(row.agent) for row in rows}
+    statuses.update((ledger.agent_of(lease), status) for lease, status in read)
+    judged = expiry.judged_activity(read, now)
     lease_rows = []
     for lease in active:
         idle = max(now - judged[lease.id], timedelta(0))

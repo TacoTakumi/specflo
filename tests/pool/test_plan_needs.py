@@ -289,6 +289,14 @@ def test_reading_ends_no_lease_and_stops_no_member(pools_root, monkeypatch):
         assert store.list_transitions() == []
 
 
+def test_a_lease_whose_status_cannot_be_read_is_judged_by_its_row(pools_root):
+    # the agent host takes no such name, so there is no status to read for it
+    _lease_out(pools_root, POOL, "my member")
+
+    assert planneeds.daemon_pools(pools_root, now=_at(9))[POOL] == {"size": 1, "in_use": 1}
+    assert planneeds.daemon_pools(pools_root, now=_at(10))[POOL] == {"size": 1, "in_use": 0}
+
+
 # --- a hosted plan, read on the daemon --------------------------------------
 
 

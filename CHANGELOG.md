@@ -223,6 +223,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   pool route answers `400` with every fault. Local mode is unchanged: a
   checkout with no remote loads no pool code and the pool verbs are
   refused there.
+  A member or console name that cannot name an agent (a space, a slash, a
+  leading underscore) is a fault. A lease whose agent's status cannot be
+  read fails no request, no page and no plan read: it is judged by its row
+  and ends at its idle limit.
 - **`specflo serve --root <dir> pool init`, `pool validate` and `pool
   reload`.** `init` writes a `pool.yaml` that is all comments and the five
   shipped agent definitions (`worker`, `critic`, `hermes-rebaser`,

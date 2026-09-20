@@ -163,6 +163,26 @@ def test_a_member_that_cannot_be_started_leaves_no_active_lease(pool_rig, monkey
     assert "TEAM_A_KEY" in ended[0].cause
 
 
+def test_a_member_whose_name_names_no_agent_leaves_no_active_lease(pool_rig):
+    # a roster from before such a name was refused: the agent host takes no
+    # agent of that name, so the member never starts and has no status to read
+    unnamed = replace(pool_rig.local_member(), name="my member")
+    svc = pool_rig.service(pool_rig.config(unnamed, pool_rig.local_member()))
+
+    with pytest.raises(service.runner.RunnerError, match="cannot name an agent"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+        (ended,) = store.list_transitions()
+    assert (ended.kind, "cannot name an agent" in ended.cause) == ("released", True)
+    # so nothing is left of it when the roster is put right
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    granted = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    assert granted.agent == "local-1"
+    assert svc.end_lease(granted.lease_id, "released").state == "released"
+
+
 def test_an_agent_the_pool_did_not_start_is_left_alone_by_a_refused_grant(pool_rig):
     # a developer's own agent, started by hand under the name of a declared member
     before = pool_rig.start_by_hand("local-1")

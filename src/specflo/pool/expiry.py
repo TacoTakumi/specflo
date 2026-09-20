@@ -22,22 +22,45 @@ member has been idle.
 The rule is a function of the lease rows, the status records and the time. It
 reads no clock and no file: a status record is handed in as data, and
 ``None`` stands for a member with no status to go by. Whoever has the active
-leases and their statuses can apply it, with no pool service at hand.
+leases and their statuses can apply it, with no pool service at hand. Whoever
+has only the leases pairs them with their statuses through ``read``, which is
+handed the reader of a status and takes one that cannot be read as ``None``.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from ..daemon.poolstore import Lease
+from ..errors import SpecfloError
+from . import ledger
 
 # The agent host's state for a member with a turn running.
 WORKING = "working"
 
 # A lease as it is read: its row, and its member's status record or None.
 Read = tuple[Lease, Mapping[str, Any] | None]
+
+
+def read(leases: Iterable[Lease], status: Callable[[str], Mapping[str, Any] | None]) -> list[Read]:
+    """Each lease of *leases* as the rule reads it: its row, with what *status*
+    says of the agent it runs under.
+
+    *status* is whatever reads an agent host's status record by agent name. A
+    status that cannot be read at all, because the name on the row is one no
+    agent can run under, is no status: the lease is judged by its row, and
+    ends at its idle limit as that of any member with nothing to go by. One
+    such row must not fail every reader of all the others.
+    """
+    found: list[Read] = []
+    for lease in leases:
+        try:
+            found.append((lease, status(ledger.agent_of(lease))))
+        except SpecfloError:
+            found.append((lease, None))
+    return found
 
 
 def last_activity(lease: Lease, status: Mapping[str, Any] | None, now: datetime) -> datetime:

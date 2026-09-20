@@ -436,6 +436,80 @@ def test_a_release_that_finds_its_own_lease_expired_is_told_when_the_member_does
     assert lease_state(pool_rig, after.lease_id) == "expired"
 
 
+# -- a lease whose agent's status cannot be read ---------------------------------
+
+# A name the agent host refuses: a lease under it has no status to read at all.
+NO_AGENT = "my member"
+
+
+def unreadable_lease(pool_rig) -> Lease:
+    """An active lease in the store under a name that names no agent, as a
+    store from before such a member name was refused may hold one."""
+    now = service._text(pool_rig.clock())
+    lease = Lease(
+        id="lease-unreadable", team_lease_id=None, holder_hash="0" * 64, holder_label="gone",
+        member=NO_AGENT, pool="rebasers",
+        resources=(Resource("pool", "rebasers"), Resource("member", NO_AGENT)),
+        acquired=now, last_activity=now, idle_limit=TEN_MINUTES, state="active",
+    )
+    with pool_rig.store() as store:
+        store.add_lease(lease)
+    return lease
+
+
+def test_a_status_that_cannot_be_read_is_no_status():
+    def status(name):
+        if name == NO_AGENT:
+            raise runner.RunnerError(f"member '{name}' cannot name an agent")
+        return host_status("idle", 9)
+
+    unread = dataclasses.replace(lease_row(), id="lease-2", member=NO_AGENT)
+
+    assert expiry.read([lease_row(), unread], status) == [
+        (lease_row(), host_status("idle", 9)), (unread, None),
+    ]
+
+
+def test_a_lease_whose_status_cannot_be_read_fails_no_caller(pool_rig):
+    real_time(pool_rig)
+    config = pool_rig.config(pool_rig.local_member(), pool_rig.hosted_member())
+    svc = pool_rig.service(config)
+    unread = unreadable_lease(pool_rig)
+
+    assert svc.expire_due() == []
+    assert svc.read([unread]) == [(unread, None)]
+    assert svc.swap(config, lambda old, new, store: ()) == ()
+    granted = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    assert granted.agent == "local-1"
+    assert svc.end_lease(granted.lease_id, "released").state == "released"
+
+    # it stands until its limit, as any lease whose member has no status
+    assert lease_state(pool_rig, unread.id) == "active"
+
+
+def test_a_lease_whose_status_cannot_be_read_ends_at_its_idle_limit(pool_rig, caplog):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    unread = unreadable_lease(pool_rig)
+    pool_rig.clock.advance(minutes=9)
+    # it holds the pool's one slot until then
+    with pytest.raises(service.NoFreeMember):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    pool_rig.clock.advance(minutes=2)
+    with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):
+        granted = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    assert lease_state(pool_rig, unread.id) == "expired"
+    with pool_rig.store() as store:
+        (ended,) = store.list_transitions(lease_id=unread.id)
+    assert (ended.kind, ended.cause) == ("expired", "expired")
+    # there was no process to stop under that name, and the log says so
+    (logged,) = [r.getMessage() for r in caplog.records if r.name == "specflo.pool.service"]
+    assert unread.id in logged and "cannot name an agent" in logged
+    svc.end_lease(granted.lease_id, "released")
+
+
 # -- structure ----------------------------------------------------------------
 
 # What would run by itself: a thread, a timer, a scheduled or background task.
