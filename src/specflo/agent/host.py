@@ -44,6 +44,13 @@ with nothing replayed. A connection that showed the token of an earlier lease
 is a stranger to the next one; the pool token holds across leases. When the
 lease is cleared every connection receives again, as on an unbound host.
 
+The event log is one file that outlives every lease, and the wall cannot sit
+in front of a file. So the host notes where the log ended when a lease was
+bound, and its status answer to a frame that shows a bound credential carries
+that offset as ``lease_log_start``: the ``log`` verb prints from there, so a
+holder reads its own lease's part and nothing a former holder or the
+developer said before it.
+
 Lease activity: while a lease is bound, every command the holder's token lets
 through moves ``last_activity`` in status.json to now, and so does a turn that
 is running. The daemon reads a lease's idle time from that stamp, so nothing a
@@ -167,6 +174,8 @@ class PiHost:
         self._wall_lock = threading.Lock()
         self._pool_digest: bytes | None = None
         self._lease_digest: bytes | None = None
+        # where the event log ended when the bound lease was bound
+        self._lease_log_start: int | None = None
         # the leases cleared on this host, oldest first, each digest once
         self._ended: deque[bytes] = deque(maxlen=ENDED_REMEMBERED)
         self._clock = clock
@@ -499,7 +508,15 @@ class PiHost:
             request = {k: v for k, v in request.items() if k not in TOKEN_FIELDS}
 
         if ctype == "status":
-            response.update(success=True, data=self._status_data())
+            data = self._status_data()
+            if admitted != "open":
+                # a credential was shown under a bound lease: the answer says
+                # where that lease's part of the log begins. The bare probe
+                # learns nothing of it.
+                with self._wall_lock:
+                    if self._lease_log_start is not None:
+                        data["lease_log_start"] = self._lease_log_start
+            response.update(success=True, data=data)
             self._respond(conn, send_lock, response)
         elif ctype == "stop":
             self._log_event({"type": "host_stop_requested"})
@@ -528,7 +545,9 @@ class PiHost:
         """Apply one pool verb; return the refusal reason, None on success."""
         ctype = request["type"]
         pool = _token_digest(request.get("pool_token"))
-        with self._wall_lock:
+        # the log lock first, as an event takes them: no event is written
+        # between the bind and the note of where the log ended at it
+        with self._log_lock, self._wall_lock:
             if ctype == "pool_bind":
                 if self._pool_digest is not None:
                     # the bound pool may say so again, which changes nothing:
@@ -551,6 +570,7 @@ class PiHost:
                     # its holder is a former one from now on
                     self._ended.append(self._lease_digest)
                 self._lease_digest = None
+                self._lease_log_start = None
                 return None
             lease = _token_digest(request.get("lease_token"))
             if lease is None:
@@ -561,6 +581,8 @@ class PiHost:
                 # the pool leases under this token again: it is no former one
                 self._ended.remove(lease)
             self._lease_digest = lease
+            # the log outlives a lease: what came before is not this holder's
+            self._lease_log_start = self.events.end()
             return None
 
     def _admitted_by(self, request: dict[str, Any]) -> str | None:

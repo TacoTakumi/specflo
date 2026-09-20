@@ -106,6 +106,10 @@ class EventLog:
         self._f.write(encode_frame(record))
         self._f.flush()
 
+    def end(self) -> int:
+        """Where the log ends now, in bytes; every append leaves a whole line."""
+        return self._f.tell()
+
     def close(self) -> None:
         self._f.close()
 

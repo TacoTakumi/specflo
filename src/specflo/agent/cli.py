@@ -827,6 +827,9 @@ def log(
     # The log is a file, so the wall is asked before it is read: a live host
     # under a lease refuses anyone but the holder. A host that is gone has no
     # wall; its log stays readable unless the pool recorded a lease ending.
+    # The log outlives a lease, so the host tells the holder where its own
+    # lease's part begins, and nothing before that is printed.
+    start = 0
     token = lease.find_token(name, lease_token)
     try:
         client = connect(name, connect_timeout=_PROBE_TIMEOUT, lease_token=token)
@@ -838,7 +841,7 @@ def log(
         refusal = None
         with client:
             try:
-                _walled_status(client, token or "")
+                start = _walled_status(client, token or "").get("lease_log_start") or 0
             except _LeaseRefused as exc:
                 refusal = exc
             except (TimeoutError, RuntimeError, OSError):
@@ -849,6 +852,7 @@ def log(
         typer.echo(f"Error: unknown agent '{name}' (no event log)", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
     with open(paths.events, "rb") as f:
+        f.seek(start)
         while True:
             chunk = f.read(65536)
             if chunk:

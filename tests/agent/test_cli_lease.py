@@ -295,7 +295,9 @@ def test_holder_token_from_a_file_above_the_working_directory(rig, monkeypatch):
     last = run("last", "m5")
     assert last.exit_code == 0 and last.stdout == REPLY + "\n"
     log = run("log", "m5")
-    assert log.exit_code == 0 and log.stdout == host.paths.events.read_text()
+    # the holder's log is the lease's part: it begins where the lease was bound
+    assert log.exit_code == 0 and '"host_forward"' in log.stdout
+    assert host.paths.events.read_text().endswith(log.stdout)
     status = run("status", "m5", "--json")
     assert status.exit_code == 0, status.stderr
     assert json.loads(status.stdout)["state"] == "idle"

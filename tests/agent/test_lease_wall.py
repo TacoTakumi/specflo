@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 import json
+import os
+import queue
+import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
+from specflo.agent import lease as lease_module
+from specflo.agent.cli import agent_app
 from specflo.agent.client import connect
 from specflo.agent.host import PiHost
-from specflo.agent.statefiles import read_status
+from specflo.agent.statefiles import ENV_STATE_DIR, read_status
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
@@ -306,3 +314,125 @@ def test_client_binding_helpers_raise_when_refused(make_host):
             client.pool_bind("another-pool")
         with pytest.raises(RuntimeError):
             client.lease_clear("wrong")
+
+
+# -- the event log outlives a lease: a holder reads its own lease's part -------
+
+BEFORE = "said before the lease was bound"
+MINE = "the holder's own prompt"
+
+
+@pytest.fixture
+def cli_rig(tmp_path, monkeypatch, make_host):
+    """The verbs, pointed at this test's hosts and away from any real token."""
+    make, base = make_host
+    work = tmp_path / "work"
+    work.mkdir()
+    monkeypatch.setenv(ENV_STATE_DIR, str(base))
+    monkeypatch.delenv(lease_module.ENV_LEASE_TOKEN, raising=False)
+    monkeypatch.chdir(work)
+    return make, base
+
+
+def turn(client, message: str) -> None:
+    client.send({"type": "prompt", "message": message})
+    client.read_until(lambda f: f.get("type") == "agent_settled", timeout=5)
+
+
+def shown_log(name: str, *args: str):
+    return CliRunner().invoke(agent_app, ["log", name, *args])
+
+
+def test_the_holders_log_begins_where_its_lease_was_bound(cli_rig):
+    make, base = cli_rig
+    host, _ = make("w14", {"reply": "the answer"})
+    with connect("w14", base_dir=base) as developer:
+        turn(developer, BEFORE)
+    lease("w14", base)
+    bound_at = host.paths.events.stat().st_size
+    with connect("w14", base_dir=base, lease_token=HOLDER) as holder:
+        turn(holder, MINE)
+        walled = holder.request({"type": "status", "lease_token": HOLDER})
+
+    first = shown_log("w14", "--lease-token", HOLDER)
+
+    assert first.exit_code == 0, first.output
+    assert BEFORE not in first.stdout
+    assert first.stdout.encode() == host.paths.events.read_bytes()[bound_at:]
+    assert MINE in first.stdout and "the answer" in first.stdout
+    # the holder is told where its part begins; the open probe is not
+    assert walled["data"].get("lease_log_start") == bound_at
+    with connect("w14", base_dir=base) as anyone:
+        assert "lease_log_start" not in anyone.status()
+
+    # the next lease on the same host: nothing of the one before it
+    with connect("w14", base_dir=base) as daemon:
+        daemon.lease_clear(POOL)
+        daemon.lease_bind(POOL, "second-holder")
+    with connect("w14", base_dir=base, lease_token="second-holder") as holder:
+        turn(holder, "the second holder's prompt")
+    second = shown_log("w14", "--lease-token", "second-holder")
+    assert second.exit_code == 0, second.output
+    assert BEFORE not in second.stdout and MINE not in second.stdout
+    assert "the second holder's prompt" in second.stdout
+
+
+def test_the_holders_log_follow_begins_at_the_same_point(cli_rig):
+    make, base = cli_rig
+    make("w15")
+    with connect("w15", base_dir=base) as developer:
+        turn(developer, BEFORE)
+    lease("w15", base)
+    follower = subprocess.Popen(
+        [
+            sys.executable, "-c",
+            "import sys; from specflo.cli import main; sys.exit(main())",
+            "agent", "log", "w15", "--follow", "--lease-token", HOLDER,
+        ],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        env={**os.environ, ENV_STATE_DIR: str(base)},
+    )
+    try:
+        lines: queue.Queue = queue.Queue()
+        threading.Thread(
+            target=lambda: [lines.put(line) for line in follower.stdout], daemon=True
+        ).start()
+        with connect("w15", base_dir=base, lease_token=HOLDER) as holder:
+            turn(holder, MINE)
+        seen: list[str] = []
+        deadline = time.monotonic() + 10
+        # the log is printed in order, so the holder's own turn comes last
+        while time.monotonic() < deadline and not any(MINE in line for line in seen):
+            try:
+                seen.append(lines.get(timeout=1))
+            except queue.Empty:
+                continue
+        assert any(MINE in line for line in seen)
+        assert not any(BEFORE in line for line in seen)
+    finally:
+        follower.kill()
+        follower.wait(timeout=5)
+
+
+def test_an_agent_with_no_lease_bound_prints_its_whole_log(cli_rig):
+    make, base = cli_rig
+    host, _ = make("w16")
+    with connect("w16", base_dir=base) as developer:
+        turn(developer, BEFORE)
+
+    unbound = shown_log("w16")
+
+    assert unbound.exit_code == 0, unbound.output
+    assert unbound.stdout.encode() == host.paths.events.read_bytes()
+    assert BEFORE in unbound.stdout
+
+    # and between two leases the log is the developer's again, all of it
+    lease("w16", base)
+    with connect("w16", base_dir=base, lease_token=HOLDER) as holder:
+        turn(holder, MINE)
+    with connect("w16", base_dir=base) as daemon:
+        daemon.lease_clear(POOL)
+    between = shown_log("w16")
+    assert between.exit_code == 0, between.output
+    assert between.stdout.encode() == host.paths.events.read_bytes()
+    assert BEFORE in between.stdout and MINE in between.stdout

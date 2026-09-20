@@ -331,7 +331,8 @@ completion phrases stay controller-side.
   and the prompt it was started with stay. A working agent refuses it (exit
   10).
 - `specflo agent log <name> [--follow]` - print the agent's event log
-  (events.jsonl); `--follow` streams new events as they land.
+  (events.jsonl); `--follow` streams new events as they land. For the
+  holder of a lease it begins where the lease was bound.
 - `specflo agent stop <name> [--timeout S]` - stop follows ownership. An rpc
   agent gets the v1 graceful stop: abort any in-flight run, terminate pi then
   the host (escalating to kill after a bounded grace period), release the

@@ -477,7 +477,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   from the working directory. While a lease is out the agent's host
   answers only its holder: another caller exits 1 with `agent '<name>' is
   leased to another holder`, and the host sends its events only to
-  connections that presented the holder's or the pool's token. After the
+  connections that presented the holder's or the pool's token. The
+  holder's `agent log` prints the lease's part of the event log: it begins
+  where the lease was bound, so the prompts and answers of former leases,
+  and on a console the developer's own turns, are not shown. After the
   lease the former holder's verb exits 12 and stderr says `lease
   released`, `lease expired` or `lease preempted by <request id>`. An
   agent under no lease behaves as before.

@@ -32,7 +32,7 @@ specflo feature request, not a workaround to script.
   settles (exit 0 immediately when idle).
 - `specflo agent last <name>` - the most recent final assistant text.
 - `specflo agent log <name> [--follow]` - the agent's event log; `--follow`
-  streams.
+  streams. Under a lease it begins where the lease was bound.
 - `specflo agent reset <name>` - start a new pi session in the same process:
   the context is cleared, the process and its launch flags are kept. Exit 10
   while the agent is working.

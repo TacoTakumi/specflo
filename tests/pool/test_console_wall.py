@@ -183,6 +183,64 @@ def test_a_connection_that_showed_the_old_token_gets_nothing_of_the_next_lease(p
         assert drained(former) == []
 
 
+# -- the event log, which outlives a lease --------------------------------------
+
+
+def shown_log(grant):
+    """The holder's own verb on the member's event log."""
+    return CliRunner().invoke(agent_app, ["log", grant.agent, "--lease-token", grant.token])
+
+
+def test_the_next_holder_of_a_started_member_reads_nothing_of_the_lease_before(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    pool_rig.scenario(reply="the answer to the first holder")
+    first = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    assert prompt(first, "the first holder's prompt").exit_code == 0
+    svc.end_lease(first.lease_id, "released")
+    pool_rig.scenario(reply="the answer to the second holder")
+    second = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    assert second.agent == first.agent and second.token != first.token
+    assert prompt(second, "the second holder's prompt").exit_code == 0
+
+    shown = shown_log(second)
+
+    assert shown.exit_code == 0, shown.output
+    assert "the first holder's prompt" not in shown.stdout
+    assert "the answer to the first holder" not in shown.stdout
+    assert "the second holder's prompt" in shown.stdout
+    assert "the answer to the second holder" in shown.stdout
+
+
+def test_a_holder_of_a_console_reads_nothing_from_before_its_lease(pool_rig):
+    capturing(pool_rig)
+    svc, before = attached(pool_rig)
+    assert developer_prompts().exit_code == 0
+    first = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    assert prompt(first, "the first holder's prompt").exit_code == 0
+    svc.end_lease(first.lease_id, "released")
+    assert developer_prompts("the developer, between the leases").exit_code == 0
+    second = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    assert prompt(second, "the second holder's prompt").exit_code == 0
+
+    shown = shown_log(second)
+
+    assert shown.exit_code == 0, shown.output
+    assert same_process(pool_rig, before)
+    assert DEVELOPER not in shown.stdout
+    assert "the first holder's prompt" not in shown.stdout
+    assert "the developer, between the leases" not in shown.stdout
+    events = [json.loads(line) for line in shown.stdout.splitlines()]
+    forwarded = [e["message"] for e in events if e["type"] == "host_forward"]
+    assert forwarded == ["the second holder's prompt"]
+    # one answer, the one to this holder: the log holds four by now
+    assert [e["type"] for e in events].count("agent_settled") == 1
+    # the console is the developer's: with no lease bound its whole log is read
+    svc.end_lease(second.lease_id, "released")
+    mine = CliRunner().invoke(agent_app, ["log", AGENT])
+    assert mine.exit_code == 0, mine.output
+    assert DEVELOPER in mine.stdout and "the first holder's prompt" in mine.stdout
+
+
 def drained(client) -> list[dict]:
     """What the host has sent this connection so far, its own answers apart:
     a status frame is answered on the same ordered stream, let in or not."""
