@@ -233,7 +233,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   developer, to read the directory again with no restart; a directory with
   a fault changes nothing, a change that removes a member with a lease out
   is refused whole, and a reload that passes brings to life a pool that
-  was invalid at start. A reload that was refused leaves its faults on the
+  was invalid at start. The daemon's three background readers (llama-swap
+  events, provider refusals, account keys) ask at every pass which
+  configuration is in force, so a member or an account that a reload
+  brings, and a pool that a reload opens, is read with no restart. A
+  reload that was refused leaves its faults on the
   pool page, above the configuration that is still in force, as well as in
   the output of whoever ran it.
 - **What a member is given.** Each lease on a started member runs a fresh

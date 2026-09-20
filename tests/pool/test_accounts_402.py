@@ -20,12 +20,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
+import threading
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -33,11 +36,14 @@ from specflo.agent.cli import agent_app
 from specflo.agent.statefiles import AgentPaths
 from specflo.daemon import HEALTH_PATH
 from specflo.daemon import app as daemon_app
+from specflo.daemon import pool_routes
 from specflo.daemon.poolstore import open_pool_store
-from specflo.pool import accounts, console, watch
+from specflo.pool import accounts, cli_admin, console, watch
+from specflo.pool import config as pool_config
 from specflo.pool.config import Account, Member
 
 from .stub_provider import StubProvider
+from .test_cli_validate import _write_three_faults
 from .test_console_attach import AGENT, SLOT, start_host
 from .test_events_reloads import write_pool
 from .test_runner import POOL_TOKEN, wait_until
@@ -731,6 +737,162 @@ def test_a_lease_on_a_console_is_not_read_what_its_agent_failed_at_before_the_le
     assert turn(AGENT, token=grant.token).stdout.strip() == REPLY
 
 
+# -- a configuration put in force later ---------------------------------------
+
+
+class Pools:
+    """What the daemon hands a watcher in place of the pool it was made for:
+    the pool in force now, none until a test puts one there."""
+
+    def __init__(self, pool=None) -> None:
+        self.pool = pool
+
+    def __call__(self):
+        return self.pool
+
+
+def in_force(service, config) -> None:
+    """Put *config* in force on *service*, as a reload that passed does."""
+    assert service.swap(config, lambda *_: ()) == ()
+
+
+@pytest.mark.parametrize("at_start", ["no pool", "no hosted member"])
+def test_a_hosted_member_and_its_account_brought_by_a_reload_are_watched_from_the_next_pass(
+    pool_rig, provider, monkeypatch, at_start
+):
+    key_resets(provider, "monthly")
+    provider.refuse(out_of("openrouter_key_limit"))
+    pool_rig.scenario(reply=REPLY, provider_errors=provider.as_pi_reports())
+    before = replace(pool_rig.config(pool_rig.local_member()), accounts=())
+    after = pool_rig.config(pool_rig.hosted_member())
+    pools = Pools(None if at_start == "no pool" else pool_rig.service(before))
+    read: list[str] = []
+    read_log = watch.runner.read_log
+    monkeypatch.setattr(
+        watch.runner, "read_log", lambda name, *a, **k: read.append(name) or read_log(name, *a, **k)
+    )
+
+    with provider.client() as client:
+        watcher = watch.watcher_for(pools())
+        assert watcher is not None, "a pool with nothing to watch has a watcher that waits"
+        watcher.pool, watcher.client = pools, client
+        watcher.poll()
+        with pool_rig.store() as store:
+            assert read == [] and store.list_accounts() == []
+        # the reload: the pool opens, or the pool that stands gets a hosted member
+        if pools.pool is None:
+            pools.pool = pool_rig.service(after)
+        else:
+            in_force(pools.pool, after)
+        watcher.poll()
+        grant = pools.pool.grant("rebasers", holder_label="orchestrator-a", cwd=pool_rig.work)
+        CliRunner().invoke(
+            agent_app, ["prompt", grant.agent, MESSAGE, "--lease-token", grant.token]
+        )
+        watcher.poll()
+
+    assert read == ["hosted-1"]
+    with pool_rig.store() as store:
+        account = store.get_account("team-a")
+    assert (account.closed, account.reopen) == (True, "2026-04-01T00:00:00.000+00:00")
+
+
+def test_a_refusal_under_an_account_the_configuration_does_not_declare_is_said_and_passed_over(
+    leased, provider, caplog
+):
+    provider.refuse(out_of("openrouter_key_limit"))
+    member = leased()
+    member.watcher.config = replace(member.service.config, accounts=())
+    member.prompt()
+
+    with caplog.at_level("WARNING", logger=watch.__name__):
+        member.watcher.poll()
+
+    assert member.account() is None
+    assert [seen.path for seen in provider.seen] == []
+    said = [r.getMessage() for r in caplog.records]
+    assert said == [
+        "account team-a is not declared: the provider's refusal of agent hosted-1 for "
+        "openrouter_key_limit closes nothing"
+    ]
+    # acted on once, and the watching goes on
+    member.watcher.poll()
+    assert len(caplog.records) == 1
+
+
+def test_the_loop_makes_no_pass_until_a_reload_brings_a_hosted_member(pool_rig, monkeypatch):
+    pools = Pools()
+    watcher = watch.watcher_for(None)
+    assert watcher is not None, "a daemon with no pool has a watcher that waits"
+    watcher.pool = pools
+    passes: list[int] = []
+    hosted = pool_rig.service(pool_rig.config(pool_rig.hosted_member()))
+
+    def seen() -> int:
+        if len(sleeps.delays) == 2:
+            pools.pool = hosted
+        return len(passes)
+
+    monkeypatch.setattr(watcher, "poll", lambda: passes.append(len(passes)))
+    sleeps = Sleeps(pool_rig.clock, 4, seen)
+    watcher.sleep = sleeps
+
+    with pytest.raises(Sleeps.Stop):
+        asyncio.run(watcher.run())
+
+    assert sleeps.delays == [watch.POLL_INTERVAL] * 4
+    # no pass while there was nothing to watch, and one at each turn from then on
+    assert sleeps.saw == [0, 0, 1, 2]
+
+
+def test_a_watcher_cancelled_while_it_has_nothing_to_watch_stops(pool_rig):
+    waiting = asyncio.Event()
+
+    async def sleep(delay: float) -> None:
+        waiting.set()
+        await asyncio.Event().wait()
+
+    watcher = watch.watcher_for(None)
+    assert watcher is not None, "a daemon with no pool has a watcher that waits"
+    watcher.sleep = sleep
+
+    async def serve() -> None:
+        task = asyncio.create_task(watcher.run())
+        await asyncio.wait_for(waiting.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(serve())
+
+    with pool_rig.store() as store:
+        assert store.list_accounts() == []
+
+
+def test_a_watcher_cancelled_in_the_middle_of_a_pass_stops(pool_rig, monkeypatch):
+    watcher = watch.watcher_for(pool_rig.service(pool_rig.config(pool_rig.hosted_member())))
+    begun, let_go = threading.Event(), threading.Event()
+
+    def poll() -> None:
+        begun.set()
+        assert let_go.wait(5), "the pass was never let go"
+
+    monkeypatch.setattr(watcher, "poll", poll)
+
+    async def serve() -> None:
+        task = asyncio.create_task(watcher.run())
+        deadline = 500
+        while not begun.is_set() and (deadline := deadline - 1):
+            await asyncio.sleep(0.01)
+        assert begun.is_set(), "the watcher made no pass"
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        let_go.set()
+
+    asyncio.run(serve())
+
+
 # -- the daemon's lifecycle -------------------------------------------------
 
 
@@ -738,9 +900,11 @@ def test_the_watcher_is_for_a_pool_with_a_hosted_member(pool_rig):
     local = pool_rig.service(pool_rig.config(pool_rig.local_member()))
     hosted = pool_rig.service(pool_rig.config(pool_rig.hosted_member()))
 
-    assert watch.watcher_for(None) is None
-    assert watch.watcher_for(local) is None
+    # no pool, and a pool with no hosted member, have nothing to watch
+    assert watch.watcher_for(None).watching() is False
+    assert watch.watcher_for(local).watching() is False
     watcher = watch.watcher_for(hosted)
+    assert watcher.watching() is True
     assert (watcher.config, watcher.pool_token, watcher.clock) == (
         hosted.config, POOL_TOKEN, pool_rig.clock
     )
@@ -822,3 +986,62 @@ def test_a_daemon_with_nothing_to_watch_starts_no_watcher(tmp_path, monkeypatch)
     assert watchers.started == 0
     with open_pool_store(bare) as store:
         assert store.list_accounts() == []
+
+
+def write_hosted_pool(rig) -> None:
+    """A pool directory that stands: one pool of one hosted member, the rig's
+    pi double, under the account "team-a"."""
+    write_pool(rig.root)
+    directory = cli_admin.pool_dir(rig.root)
+    definition = directory / pool_config.DEFINITIONS_DIR / "rebaser.md"
+    definition.write_text(
+        definition.read_text(encoding="utf-8").replace("egress: local", "egress: no-train"),
+        encoding="utf-8",
+    )
+    data = {
+        "llama_swap": "llama-swap.yaml",
+        "accounts": [{"name": "team-a", "cap": 2, "key_env": "TEAM_A_KEY"}],
+        "members": [{
+            "name": "hosted-1", "command": rig.command, "backing": "hosted",
+            "account": "team-a", "labels": [], "capacity": 1, "egress": "no-train",
+        }],
+        "pools": [{
+            "name": "rebasers", "definition": "rebaser", "members": ["hosted-1"],
+            "size": 1, "idle_default": "10m", "idle_max": "4h",
+        }],
+    }
+    (directory / pool_config.POOL_FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def test_a_daemon_that_got_its_pool_from_a_reload_acts_on_a_members_402(
+    pool_rig, provider, monkeypatch
+):
+    monkeypatch.setattr(watch, "POLL_INTERVAL", 0.01)
+    provider.refuse(out_of("openrouter_key_limit"))
+    pool_rig.scenario(reply=REPLY, provider_errors=provider.as_pi_reports())
+    _write_three_faults(pool_rig.root)
+    application = daemon_app.create_app(pool_rig.root)
+    assert application.state.pool is None
+
+    def closed() -> bool:
+        with pool_rig.store() as store:
+            account = store.get_account("team-a")
+        return account is not None and account.closed
+
+    with TestClient(application) as client:
+        assert client.get(HEALTH_PATH).status_code == 200
+        # the admin mends the directory and has the daemon read it again
+        shutil.rmtree(cli_admin.pool_dir(pool_rig.root))
+        write_hosted_pool(pool_rig)
+        assert pool_routes.reload_pool(application, "developer") == ()
+        service = application.state.pool
+        grant = service.grant("rebasers", holder_label="orchestrator-a", cwd=pool_rig.work)
+        CliRunner().invoke(
+            agent_app, ["prompt", grant.agent, MESSAGE, "--lease-token", grant.token]
+        )
+        deadline = 500
+        while not closed() and (deadline := deadline - 1):
+            client.get(HEALTH_PATH)
+        service.end_lease(grant.lease_id, "released")
+
+    assert closed(), "the refusal of the member's call closed no account"

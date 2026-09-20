@@ -544,7 +544,6 @@ For a hosted project, a task's `Needs` name that is one of the daemon's pools is
 - `project_agent_model` and `project_agent_account` are written by hand; no verb sets them and `pool validate` does not check them.
 - `status`, `checkpoint` and the web project pages do not read daemon pool capacity; only `task list` and `validate plan` do.
 - A request from a checkout whose active project is local, or that has none, carries no project and gets no pin.
-- After a reload the llama-swap events reader and the provider-refusal watcher keep the configuration they started with until the daemon restarts, and a pool brought to life by a reload has neither. The account key reader follows a reload, but a pool that declared no account when the daemon started gets no reader until a restart.
 - A console host remembers the lease tokens it has cleared in memory only, so a host that was started again accepts a former holder's token until its next lease.
 - A host keeps the 16 newest ended records per member; an older former holder gets the plain refusal, exit 1.
 - A member's `events.jsonl` is a plain file that any process of the same user can read.

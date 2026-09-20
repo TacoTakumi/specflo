@@ -28,6 +28,12 @@ stream a wait that doubles up to a minute. While no stream is being read the
 store says reload data is unavailable. The reader sends llama-swap that one
 GET and nothing else: no load, no unload, no profile.
 
+The daemon's reader runs for as long as the daemon serves, and asks at each
+turn which pool is in force and what it declares, so a reload is followed:
+the members of each snapshot are the ones declared then. Without a pool, and
+with a pool that has no local member, it connects to nothing and writes
+nothing, and looks again after a short wait.
+
 Where llama-swap answers is not in the pool configuration, which names the
 llama-swap configuration file and no address. It is llama-swap's own default
 on this host unless the daemon's environment names another.
@@ -58,6 +64,9 @@ CONNECT_TIMEOUT = 10.0
 # one up to the longest, and back to the first once a connection is answered.
 FIRST_DELAY = 1
 MAX_DELAY = 60
+# The wait of a reader with no local member to record for, in seconds, before
+# it looks again: a reload that brings one is followed this soon.
+IDLE_INTERVAL = 2.0
 
 MODEL_STATUS = "modelStatus"
 READY = "ready"
@@ -68,6 +77,8 @@ UNLOADED = frozenset({"stopped", "stopping", "shutdown"})
 Clock = Callable[[], datetime]
 # Each model under lease: its leased members, and the active leases on each.
 Leased = Mapping[str, Mapping[str, set[str]]]
+# The pool service in force now; None while the daemon has no pool.
+PoolLookup = Callable[[], object | None]
 
 _log = logging.getLogger(__name__)
 
@@ -151,16 +162,39 @@ class Recorder:
 
     ``open_store`` opens the store for one unit of work. The leases are read
     and never written: a reload is a row of its own.
+
+    With ``pool``, the configuration, the store and the clock are those of
+    the pool service it gives, taken anew at each snapshot: a reload puts
+    another configuration in force, and it opens the pool of a daemon that
+    had none. The three are None until it has given a service.
     """
 
     def __init__(
-        self, config: PoolConfig, open_store: Callable[[], PoolStore], *, clock: Clock
+        self,
+        config: PoolConfig | None,
+        open_store: Callable[[], PoolStore] | None,
+        *,
+        clock: Clock | None,
+        pool: PoolLookup | None = None,
     ) -> None:
         self.config = config
         self.open_store = open_store
         self.clock = clock
+        self.pool = pool
         self._framer = Framer()
         self._tracker = ReloadTracker()
+
+    def recording(self) -> bool:
+        """Take what the pool in force gives; whether there is a local member
+        to record for, which no pool and a pool of hosted members have not."""
+        if self.pool is not None:
+            service = self.pool()
+            if service is None:
+                return False
+            self.config, self.open_store, self.clock = (
+                service.config, service.open_store, service.clock
+            )
+        return any(m.backing == "local" for m in self.config.members)
 
     def line(self, line: str) -> list[Reload]:
         """Take one line of the stream; the reloads stored for it."""
@@ -168,6 +202,8 @@ class Recorder:
         states = model_states(data) if data is not None else None
         if states is None:
             return []
+        # the members are the ones declared now, not when the stream was opened
+        self.recording()
         now = _text(self.clock())
         with self.open_store() as store:
             leased = leased_models(self.config.members, store.list_leases(state="active"))
@@ -195,7 +231,8 @@ class EventsReader:
     """Reads llama-swap's event stream at ``url`` into ``recorder`` until cancelled.
 
     ``transport`` and ``sleep`` are for a test to hand in; without them the
-    reader connects over the network and waits on the event loop.
+    reader connects over the network and waits on the event loop. ``pool`` is
+    the recorder's: the daemon sets it to follow the pool it has in force.
     """
 
     def __init__(
@@ -211,9 +248,20 @@ class EventsReader:
         self.transport = transport
         self.sleep = sleep
 
+    @property
+    def pool(self) -> PoolLookup | None:
+        return self.recorder.pool
+
+    @pool.setter
+    def pool(self, pool: PoolLookup | None) -> None:
+        self.recorder.pool = pool
+
     async def run(self) -> None:
         delay = FIRST_DELAY
         reading = True
+        # Whether a connection was tried: a reader that never had a local
+        # member to record for has said nothing to the store, and says nothing.
+        tried = False
         # A quiet llama-swap sends nothing, so reading has no time limit.
         timeout = httpx.Timeout(CONNECT_TIMEOUT, read=None)
         try:
@@ -221,6 +269,10 @@ class EventsReader:
                 base_url=self.url, transport=self.transport, timeout=timeout
             ) as client:
                 while True:
+                    if not self.recorder.recording():
+                        await self.sleep(IDLE_INTERVAL)
+                        continue
+                    tried = True
                     try:
                         async with client.stream("GET", EVENTS_PATH) as response:
                             response.raise_for_status()
@@ -240,19 +292,17 @@ class EventsReader:
                     await self.sleep(delay)
                     delay = min(delay * 2, MAX_DELAY)
         finally:
-            self.recorder.disconnected()
+            if tried:
+                self.recorder.disconnected()
 
 
-def reader_for(service, *, environ: Mapping[str, str] | None = None) -> EventsReader | None:
-    """The reader for the pool *service*; None without a pool, and for a pool
-    with no local member, whose models are not llama-swap's."""
-    if service is None or not any(m.backing == "local" for m in service.config.members):
-        return None
+def reader_for(service, *, environ: Mapping[str, str] | None = None) -> EventsReader:
+    """The reader that follows the pool *service*, None for no pool. Whoever
+    can come to another pool later sets the reader's ``pool`` to say which."""
     environ = os.environ if environ is None else environ
-    return EventsReader(
-        Recorder(service.config, service.open_store, clock=service.clock),
-        url=environ.get(URL_ENV) or DEFAULT_URL,
-    )
+    recorder = Recorder(None, None, clock=None, pool=lambda: service)
+    recorder.recording()
+    return EventsReader(recorder, url=environ.get(URL_ENV) or DEFAULT_URL)
 
 
 def _text(time: datetime) -> str:

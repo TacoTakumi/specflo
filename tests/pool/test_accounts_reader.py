@@ -19,17 +19,20 @@ import asyncio
 import dataclasses
 import logging
 import re
+import shutil
 import threading
 from datetime import timedelta
 
 import httpx
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
-from specflo.daemon import HEALTH_PATH, auth, web
+from specflo.daemon import HEALTH_PATH, auth, pool_routes, web
 from specflo.daemon import app as daemon_app
 from specflo.daemon.poolstore import open_pool_store
-from specflo.pool import accounts
+from specflo.pool import accounts, cli_admin
+from specflo.pool import config as pool_config
 from specflo.pool.config import Account
 from specflo.pool.service import ClosedAccount
 
@@ -272,6 +275,81 @@ def test_a_cancelled_reader_stops(pool_rig, provider):
     assert len(provider.seen) == 2
 
 
+# -- a configuration put in force later -------------------------------------
+
+
+class Pools:
+    """What the daemon hands a reader in place of the pool it was made for:
+    the pool in force now, none until a test puts one there."""
+
+    def __init__(self, pool=None) -> None:
+        self.pool = pool
+
+    def __call__(self):
+        return self.pool
+
+
+@pytest.mark.parametrize("at_start", ["no pool", "no account"])
+def test_a_reader_with_no_key_to_read_reads_soon_after_a_reload_brings_the_first_account(
+    pool_rig, provider, at_start
+):
+    declared = pool_rig.config(pool_rig.local_member())
+    pools = Pools(
+        None if at_start == "no pool"
+        else pool_rig.service(dataclasses.replace(declared, accounts=()))
+    )
+    reads: list[int] = []
+
+    def then() -> None:
+        reads.append(len(provider.seen))
+        if len(reads) == 2:
+            # the reload: the pool opens, or the pool that stands declares its accounts
+            if pools.pool is None:
+                pools.pool = pool_rig.service(declared)
+            else:
+                assert pools.pool.swap(declared, lambda *_: ()) == ()
+
+    sleeps = Sleeps(pool_rig.clock, 4, then)
+    reader = accounts.reader_for(pools())
+    assert reader is not None, "a pool with no key to read has a reader that waits"
+    reader.pool, reader.client, reader.sleep = pools, provider.client(), sleeps
+
+    run(reader)
+
+    # the waits with no key to read are short, so the first account is read
+    # seconds after the reload; from then on the reads are a round apart
+    assert accounts.IDLE_INTERVAL <= 10
+    assert sleeps.delays == [
+        accounts.IDLE_INTERVAL, accounts.IDLE_INTERVAL, accounts.READ_INTERVAL,
+        accounts.READ_INTERVAL,
+    ]
+    assert reads == [0, 0, 2]
+    assert account(pool_rig).figures.usage == 12.5
+
+
+def test_a_reader_cancelled_while_it_has_no_key_to_read_stops(pool_rig, provider):
+    waiting = asyncio.Event()
+
+    async def sleep(delay: float) -> None:
+        waiting.set()
+        await asyncio.Event().wait()
+
+    reader = accounts.reader_for(None)
+    assert reader is not None, "a daemon with no pool has a reader that waits"
+    reader.client, reader.sleep = provider.client(), sleep
+
+    async def serve() -> None:
+        task = asyncio.create_task(reader.run())
+        await asyncio.wait_for(waiting.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(serve())
+
+    assert provider.seen == []
+
+
 # -- which daemon reads -----------------------------------------------------
 
 
@@ -281,8 +359,11 @@ def test_the_reader_is_for_a_pool_that_declares_an_account(pool_rig):
         dataclasses.replace(pool_rig.config(pool_rig.local_member()), accounts=())
     )
 
-    assert accounts.reader_for(None) is None
-    assert accounts.reader_for(none_declared) is None
+    # no pool, and a pool that declares no account, have no key to read
+    assert accounts.reader_for(None).read() == []
+    assert accounts.reader_for(none_declared).read() == []
+    with pool_rig.store() as store:
+        assert store.list_accounts() == []
     reader = accounts.reader_for(service)
     assert (reader.service, reader.client) == (service, None)
 
@@ -374,6 +455,72 @@ def test_a_daemon_with_no_account_no_pool_or_a_pool_with_faults_starts_no_reader
             assert client.get(HEALTH_PATH).status_code == 200
 
     assert [pool is None for pool in readers.asked] == [True, False, True]
-    assert readers.made == [] and provider.seen == []
+    assert provider.seen == []
     with open_pool_store(no_account) as store:
         assert store.list_accounts() == []
+
+
+def write_pool_with_an_account(root) -> None:
+    """The pool directory of ``write_pool``, with the account "team-a" declared."""
+    write_pool(root)
+    pool_file = cli_admin.pool_dir(root) / pool_config.POOL_FILE
+    data = yaml.safe_load(pool_file.read_text(encoding="utf-8"))
+    data["accounts"] = [{"name": "team-a", "cap": 2, "key_env": "TEAM_A_KEY"}]
+    pool_file.write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+@pytest.mark.parametrize("at_start", ["faults", "no account"])
+def test_a_daemon_that_got_its_first_account_from_a_reload_reads_its_key(
+    tmp_path, provider, monkeypatch, at_start
+):
+    monkeypatch.setattr(accounts, "IDLE_INTERVAL", 0.01)
+    monkeypatch.setenv("TEAM_A_KEY", KEY_A)
+    Readers(monkeypatch, provider)
+    root = tmp_path / "daemon"
+    if at_start == "faults":
+        _write_three_faults(root)
+    else:
+        root.mkdir()
+        write_pool(root)
+    application = daemon_app.create_app(root)
+    assert (application.state.pool is None) == (at_start == "faults")
+
+    with TestClient(application) as client:
+        assert client.get(HEALTH_PATH).status_code == 200
+        assert provider.seen == []
+        # the admin writes the directory anew and has the daemon read it again
+        shutil.rmtree(cli_admin.pool_dir(root))
+        write_pool_with_an_account(root)
+        assert pool_routes.reload_pool(application, "developer") == ()
+        deadline = 500
+        while not provider.seen and (deadline := deadline - 1):
+            client.get(HEALTH_PATH)
+
+    assert provider.seen == [Seen("GET", KEY_READ_PATH, f"Bearer {KEY_A}")]
+    with open_pool_store(root) as store:
+        assert store.get_account("team-a").figures.usage == 12.5
+
+
+def test_a_reload_that_is_refused_brings_no_reader_a_key_to_read(tmp_path, provider, monkeypatch):
+    monkeypatch.setattr(accounts, "IDLE_INTERVAL", 0.01)
+    monkeypatch.setenv("TEAM_A_KEY", KEY_A)
+    Readers(monkeypatch, provider)
+    root = tmp_path / "daemon"
+    root.mkdir()
+    write_pool(root)
+    application = daemon_app.create_app(root)
+
+    with TestClient(application) as client:
+        in_force = application.state.pool.config
+        shutil.rmtree(cli_admin.pool_dir(root))
+        write_pool_with_an_account(root)
+        pool_file = cli_admin.pool_dir(root) / pool_config.POOL_FILE
+        pool_file.write_text(
+            pool_file.read_text(encoding="utf-8").replace("size: 1", "size: 0"), encoding="utf-8"
+        )
+        assert pool_routes.reload_pool(application, "developer") != ()
+        for _ in range(50):
+            client.get(HEALTH_PATH)
+        assert application.state.pool.config is in_force
+
+    assert provider.seen == []

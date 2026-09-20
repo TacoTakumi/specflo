@@ -28,6 +28,7 @@ from fastapi.testclient import TestClient
 
 from specflo.daemon import HEALTH_PATH
 from specflo.daemon import app as daemon_app
+from specflo.daemon import pool_routes
 from specflo.daemon.poolstore import Lease, Reload, Resource, Transition, open_pool_store
 from specflo.pool import cli_admin, events
 from specflo.pool import config as pool_config
@@ -391,10 +392,115 @@ def test_the_reader_is_for_a_pool_with_a_local_member_and_reads_where_the_enviro
     local = pool_rig.service(pool_rig.config(pool_rig.local_member()))
     hosted = pool_rig.service(pool_rig.config(pool_rig.hosted_member()))
 
-    assert events.reader_for(None) is None
-    assert events.reader_for(hosted) is None
+    # no pool, and a pool with no local member, have nothing to record for
+    assert events.reader_for(None).recorder.recording() is False
+    assert events.reader_for(hosted).recorder.recording() is False
+    assert events.reader_for(local).recorder.recording() is True
     assert events.reader_for(local, environ={}).url == "http://127.0.0.1:8080"
     assert events.reader_for(local, environ={events.URL_ENV: URL}).url == URL
+
+
+# -- a configuration put in force later -------------------------------------
+
+
+def in_force(service, config) -> None:
+    """Put *config* in force on *service*, as a reload that passed does."""
+    assert service.swap(config, lambda *_: ()) == ()
+
+
+def test_a_local_member_added_by_a_reload_is_recorded_from_the_next_snapshot(pool_rig):
+    service = pool_rig.service(pool_rig.config(member("idle-c", "model-c")))
+    recorder = events.reader_for(service).recorder
+    with pool_rig.store() as store:
+        lease_on(store, "coder-a")
+
+    in_force(service, pool_rig.config(member("idle-c", "model-c"), member("coder-a", "model-a")))
+    feed(recorder, STREAM)
+
+    with pool_rig.store() as store:
+        assert [(r.member, r.model) for r in store.list_reloads()] == [("coder-a", "model-a")]
+
+
+class Pools:
+    """What the daemon hands a reader in place of the pool it was made for:
+    the pool in force now, none until a test puts one there."""
+
+    def __init__(self, pool=None) -> None:
+        self.pool = pool
+
+    def __call__(self):
+        return self.pool
+
+
+@pytest.mark.parametrize("at_start", ["no pool", "no local member"])
+def test_a_reader_with_nothing_to_record_for_connects_once_a_reload_brings_a_local_member(
+    pool_rig, at_start
+):
+    hosted = pool_rig.config(pool_rig.hosted_member())
+    local = pool_rig.config(pool_rig.hosted_member(), pool_rig.local_member())
+    pools = Pools(None if at_start == "no pool" else pool_rig.service(hosted))
+    with pool_rig.store() as store:
+        store.set_reload_data_available(True)
+    requests: list[httpx.Request] = []
+    delays: list[float] = []
+    connections: list[int] = []
+    left_alone: list[bool] = []
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, content=b"")
+
+    async def sleep(delay: float) -> None:
+        delays.append(delay)
+        connections.append(len(requests))
+        if len(delays) == 2:
+            with pool_rig.store() as store:
+                left_alone.append(store.reload_data_available())
+            # the reload: the pool opens, or the pool that stands gets a local member
+            if pools.pool is None:
+                pools.pool = pool_rig.service(local)
+            else:
+                in_force(pools.pool, local)
+        if len(delays) == 4:
+            raise Stop
+
+    reader = events.reader_for(pools(), environ={events.URL_ENV: URL})
+    assert reader is not None, "a pool with nothing to record for has a reader that waits"
+    reader.pool, reader.transport, reader.sleep = pools, httpx.MockTransport(answer), sleep
+    run(reader)
+
+    # two waits with nothing to record for, then the wait after each stream
+    # that was answered and ended
+    assert delays == [events.IDLE_INTERVAL, events.IDLE_INTERVAL, 1, 1]
+    assert connections == [0, 0, 1, 2]
+    # while it waited the reader wrote nothing
+    assert left_alone == [True]
+
+
+def test_a_reader_cancelled_while_it_waits_for_a_local_member_stops_and_writes_nothing(pool_rig):
+    with pool_rig.store() as store:
+        store.set_reload_data_available(True)
+    waiting = asyncio.Event()
+
+    async def sleep(delay: float) -> None:
+        waiting.set()
+        await asyncio.Event().wait()
+
+    reader = events.reader_for(None, environ={events.URL_ENV: URL})
+    assert reader is not None, "a daemon with no pool has a reader that waits"
+    reader.sleep = sleep
+
+    async def serve() -> None:
+        task = asyncio.create_task(reader.run())
+        await asyncio.wait_for(waiting.wait(), 5)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(serve())
+
+    with pool_rig.store() as store:
+        assert store.reload_data_available() is True
 
 
 # -- the daemon's lifecycle -------------------------------------------------
@@ -487,4 +593,66 @@ def test_a_daemon_with_no_pool_or_a_pool_with_faults_reads_no_stream(tmp_path, m
             assert client.get(HEALTH_PATH).status_code == 200
 
     assert readers.asked == [None, None]
-    assert readers.made == []
+    assert readers.connected == 0
+
+
+class Replays(Readers):
+    """Readers whose mock llama-swap sends the fixture stream, then holds on."""
+
+    def _answer(self, request: httpx.Request) -> httpx.Response:
+        async def body():
+            self.connected += 1
+            yield STREAM.encode("utf-8")
+            await asyncio.Event().wait()
+
+        return httpx.Response(200, content=body())
+
+
+def reloads_of(root: Path) -> list[tuple[str, str]]:
+    with open_pool_store(root) as store:
+        return [(r.member, r.model) for r in store.list_reloads()]
+
+
+def test_a_daemon_that_got_its_pool_from_a_reload_records_model_reloads(tmp_path, monkeypatch):
+    monkeypatch.setattr(events, "IDLE_INTERVAL", 0.01)
+    readers = Replays(monkeypatch)
+    root = _write_three_faults(tmp_path / "daemon")
+    application = daemon_app.create_app(root)
+    assert application.state.pool is None
+    with open_pool_store(root) as store:
+        lease_on(store, "local-1")
+
+    with TestClient(application) as client:
+        assert client.get(HEALTH_PATH).status_code == 200
+        # the admin mends the directory and has the daemon read it again
+        shutil.rmtree(cli_admin.pool_dir(root))
+        write_pool(root)
+        assert pool_routes.reload_pool(application, "developer") == ()
+        deadline = 500
+        while not reloads_of(root) and (deadline := deadline - 1):
+            client.get(HEALTH_PATH)
+
+    assert readers.connected == 1
+    assert reloads_of(root) == [("local-1", "model-a")]
+
+
+def test_a_reload_that_is_refused_changes_no_reader(root, monkeypatch):
+    monkeypatch.setattr(events, "IDLE_INTERVAL", 0.01)
+    write_pool(root)
+    readers = Readers(monkeypatch)
+    application = daemon_app.create_app(root)
+
+    with TestClient(application) as client:
+        deadline = 200
+        while not readers.connected and (deadline := deadline - 1):
+            client.get(HEALTH_PATH)
+        in_force_before = application.state.pool.config
+        (cli_admin.pool_dir(root) / pool_config.POOL_FILE).write_text("members: 7\n")
+        assert pool_routes.reload_pool(application, "developer") != ()
+        for _ in range(20):
+            client.get(HEALTH_PATH)
+        assert readers.made[0].recorder.recording() is True
+        assert readers.made[0].recorder.config is in_force_before
+
+    # the one connection stood through the reload that did not pass
+    assert readers.connected == 1

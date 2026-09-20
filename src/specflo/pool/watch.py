@@ -43,6 +43,12 @@ One pass is a plain call, ``poll``, so a test drives it with a fake clock.
 The loop around it runs each pass off the event loop, for a pass may wait on
 the provider or on a member's host, and sleeps until the next pass or the
 next turn that is due, whichever is first.
+
+The daemon's watcher runs for as long as the daemon serves, and asks at each
+pass which pool is in force and what it declares, so a reload is followed: a
+hosted member and an account that a reload brought are watched and closed
+from the next pass. Without a pool, and with a pool that has no hosted
+member, a pass reads nothing, and the loop makes none.
 """
 
 from __future__ import annotations
@@ -74,6 +80,8 @@ IN_FLIGHT = "openrouter_in_flight_budget"
 
 # The time now, timezone-aware. Passed in, so a test hands over a fake one.
 Clock = Callable[[], datetime]
+# The pool service in force now; None while the daemon has no pool.
+PoolLookup = Callable[[], object | None]
 
 _STATUS = re.compile(r"\s*(\d{3})\b")
 _RETRY_AFTER = re.compile(r"^\s*retry-after:\s*(\d+(?:\.\d+)?)\s*$", re.IGNORECASE | re.MULTILINE)
@@ -138,18 +146,24 @@ class Watcher:
     ``environ`` are what the key read of a closing account is made with; a
     client is opened for the read without one. ``sleep`` is the loop's wait,
     for a test to hand in.
+
+    With ``pool``, the configuration, the store, the pool token, the clock
+    and the environment are those of the pool service it gives, taken anew at
+    each pass: a reload puts another configuration in force, and it opens the
+    pool of a daemon that had none. They are None until it has given a service.
     """
 
     def __init__(
         self,
-        config: PoolConfig,
-        open_store: Callable[[], PoolStore],
+        config: PoolConfig | None,
+        open_store: Callable[[], PoolStore] | None,
         *,
-        pool_token: str,
-        clock: Clock,
+        pool_token: str | None,
+        clock: Clock | None,
         client: httpx.Client | None = None,
         environ: Mapping[str, str] | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        pool: PoolLookup | None = None,
     ) -> None:
         self.config = config
         self.open_store = open_store
@@ -158,15 +172,37 @@ class Watcher:
         self.client = client
         self.environ = environ
         self.sleep = sleep
+        self.pool = pool
         self._watched: dict[str, _Watched] = {}
         self._retries: list[_Retry] = []
         # where the log of each attached agent without a lease ended, last pass
         self._console_ends: dict[str, int] = {}
         self._started = False
 
+    def watching(self) -> bool:
+        """Take what the pool in force gives; whether there is a hosted member
+        to watch, which no pool and a pool of local members have not."""
+        if self.pool is not None:
+            service = self.pool()
+            if service is None:
+                return False
+            self.config, self.open_store = service.config, service.open_store
+            self.pool_token, self.clock, self.environ = (
+                service.pool_token, service.clock, service.environ
+            )
+        if any(m.backing == "hosted" for m in self.config.members):
+            return True
+        # No lease of a hosted member is out under a pool that declares none,
+        # so one found on a later pass was granted later: it is read from the
+        # start of its host, as after any pass.
+        self._started = True
+        return False
+
     def poll(self) -> float | None:
         """One pass over the logs; the seconds until the next turn is due to
         be sent again, None when none is."""
+        if not self.watching():
+            return None
         now = self.clock()
         accounts_by_member = {
             m.name: m.account for m in self.config.members if m.backing == "hosted" and m.account
@@ -250,7 +286,13 @@ class Watcher:
         if error is None or error.status != PAYMENT_REQUIRED:
             return
         if error.limit_source in CLOSING:
-            account = next(a for a in self.config.accounts if a.name == account_name)
+            account = next((a for a in self.config.accounts if a.name == account_name), None)
+            if account is None:
+                _log.warning(
+                    "account %s is not declared: the provider's refusal of agent %s for %s "
+                    "closes nothing", account_name, agent, error.limit_source,
+                )
+                return
             closed = accounts.close_for_limit(
                 account, store, clock=self.clock, client=self.client, environ=self.environ
             )
@@ -266,22 +308,21 @@ class Watcher:
 
     async def run(self) -> None:
         """Pass over the logs until cancelled. A pass that fails is said and
-        the next one is made all the same."""
+        the next one is made all the same. With nothing to watch no pass is
+        made, and the question is asked again after the same wait."""
         while True:
             wait = None
             try:
-                wait = await asyncio.to_thread(self.poll)
+                if self.watching():
+                    wait = await asyncio.to_thread(self.poll)
             except Exception as exc:
                 _log.warning("the pool's watch of its members' logs: %s", exc)
             await self.sleep(POLL_INTERVAL if wait is None else min(POLL_INTERVAL, max(wait, 0.0)))
 
 
-def watcher_for(service) -> Watcher | None:
-    """The watcher for the pool *service*; None without a pool, and for a pool
-    with no hosted member, whose calls no provider refuses."""
-    if service is None or not any(m.backing == "hosted" for m in service.config.members):
-        return None
-    return Watcher(
-        service.config, service.open_store, pool_token=service.pool_token,
-        clock=service.clock, environ=service.environ,
-    )
+def watcher_for(service) -> Watcher:
+    """The watcher that follows the pool *service*, None for no pool. Whoever
+    can come to another pool later sets the watcher's ``pool`` to say which."""
+    watcher = Watcher(None, None, pool_token=None, clock=None, pool=lambda: service)
+    watcher.watching()
+    return watcher

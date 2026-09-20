@@ -44,7 +44,7 @@ from specflo.cli import app
 from specflo.daemon import auth, pool_routes
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
-from specflo.pool import cli_admin
+from specflo.pool import accounts, cli_admin, events, watch
 from specflo.pool import config as pool_config
 from specflo.pool.service import PoolService, UnknownPool
 from specflo.pool.teams import TEAMS_DIR, Role, Team
@@ -352,6 +352,72 @@ def test_the_reload_is_one_function_that_answers_with_the_faults(served, pool_ri
     write_workers(pool_rig)
     assert pool_routes.reload_pool(served.application, "developer") == ()
     assert [r["identity"] for r in audit_records(pool_rig.root)] == ["developer"]
+
+
+# -- what the daemon reads while it serves -------------------------------------
+
+
+class Reading:
+    """The three readers the daemon starts, kept as they are made, with waits
+    short enough for a test."""
+
+    def __init__(self, monkeypatch) -> None:
+        self.made: dict[str, object] = {}
+        monkeypatch.setattr(events, "IDLE_INTERVAL", 0.01)
+        monkeypatch.setattr(events, "FIRST_DELAY", 0.01)
+        monkeypatch.setattr(events, "MAX_DELAY", 0.01)
+        monkeypatch.setattr(watch, "POLL_INTERVAL", 0.01)
+        monkeypatch.setattr(accounts, "IDLE_INTERVAL", 0.01)
+        for module, name in ((events, "reader_for"), (watch, "watcher_for"),
+                             (accounts, "reader_for")):
+            monkeypatch.setattr(module, name, self._keeping(module.__name__, getattr(module, name)))
+
+    def _keeping(self, key: str, make):
+        def made(pool):
+            self.made[key] = make(pool)
+            return self.made[key]
+
+        return made
+
+    def follows(self, service) -> bool:
+        """Whether each reader has taken the configuration in force on *service*."""
+        stream, logs, keys = (self.made.get(m.__name__) for m in (events, watch, accounts))
+        return (
+            None not in (stream, logs, keys) and service is not None
+            and stream.recorder.config is service.config
+            and logs.config is service.config
+            and keys.service is service
+        )
+
+
+def test_the_readers_follow_the_pool_a_reload_opens_and_each_configuration_after_it(
+    pool_rig, monkeypatch
+):
+    reading = Reading(monkeypatch)
+    break_directory(pool_rig)
+    served = Served(pool_rig)
+
+    with served.developer:
+        write_workers(pool_rig)
+        response = served.reload()
+        assert response.status_code == 200, response.text
+        assert response.json()["result"]["pid"] == os.getpid()
+        opened = served.state.pool
+        assert wait_until(lambda: reading.follows(opened)), "a reader kept no pool"
+
+        write_workers(pool_rig, members=[member(pool_rig, "w-1"), member(pool_rig, "w-2"),
+                                         member(pool_rig, "w-3")])
+        assert served.reload().status_code == 200
+        assert served.state.pool is opened
+        assert [m.name for m in opened.config.members] == ["w-1", "w-2", "w-3"]
+        assert wait_until(lambda: reading.follows(opened)), "a reader kept the old configuration"
+
+        # a directory that does not stand changes no reader
+        in_force = opened.config
+        break_directory(pool_rig)
+        assert served.reload().status_code == 400
+        assert not wait_until(lambda: not reading.follows(opened), timeout=0.3)
+        assert opened.config is in_force
 
 
 # -- the leases that are out when the configuration changes --------------------

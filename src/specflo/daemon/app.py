@@ -36,12 +36,22 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
     reloads of leased members, the event logs of leased hosted members for
     the calls their provider refused, and the key of every declared account
     for its figures. Each is a task on the server's event loop, cancelled
-    when the server shuts down; a daemon with no pool, or with a pool
-    configuration that did not stand, reads nothing.
+    when the server shuts down. The three run whatever the pool is, and each
+    asks at every turn which pool is in force: a reload puts another
+    configuration in force, and opens the pool of a daemon whose
+    configuration did not stand at the start. A reader with nothing to read,
+    and every reader of a daemon with no pool, reads nothing and waits.
     """
-    pool = app.state.pool
-    readers = (events.reader_for(pool), watch.watcher_for(pool), accounts.reader_for(pool))
-    tasks = [asyncio.create_task(reader.run()) for reader in readers if reader is not None]
+
+    def pool():
+        return app.state.pool
+
+    readers = (events.reader_for(pool()), watch.watcher_for(pool()), accounts.reader_for(pool()))
+    readers = [reader for reader in readers if reader is not None]
+    for reader in readers:
+        # made for the pool of this moment, and told where the one in force is
+        reader.pool = pool
+    tasks = [asyncio.create_task(reader.run()) for reader in readers]
     try:
         yield
     finally:

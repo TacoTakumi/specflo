@@ -18,12 +18,15 @@ limit or for the account's credits. The account is then closed until the
 key's limit resets: daily, weekly or monthly, as the key read says, on the
 UTC day, the UTC week from Monday and the UTC month.
 
-While the daemon serves a pool that declares an account, a reader reads every
-declared account's key: once when it starts and again after each
-``READ_INTERVAL``. Which accounts are declared is asked of the pool service at
-each read, so a configuration put in force later is followed. Each read runs
-off the event loop, and no request the daemon serves asks the provider
-anything: a grant and a page read the store.
+While the daemon serves, a reader reads every declared account's key: once
+when it starts and again after each ``READ_INTERVAL``. Which pool is in force,
+and which accounts it declares, is asked at each read, so a configuration put
+in force later is followed. Without a pool, and with a pool that declares no
+account, the reader asks the provider nothing and looks again after the short
+``IDLE_INTERVAL``: the first account a reload brings is read that soon, and
+one more account at the next routine read. Each read runs off the event loop,
+and no request the daemon serves asks the provider anything: a grant and a
+page read the store.
 
 The key goes into the request's authorization header and nowhere else: no
 record, error or message carries it.
@@ -49,6 +52,9 @@ READ_TIMEOUT = 10.0
 # The time between two routine reads of every account's key, in seconds. The
 # figures change slowly and the provider is someone else's service.
 READ_INTERVAL = 15 * 60
+# The wait of a reader with no key to read, in seconds, before it looks again:
+# the first account that a reload brings is read this soon.
+IDLE_INTERVAL = 5.0
 
 # The time now, timezone-aware. Passed in, so a test hands over a fake one.
 Clock = Callable[[], datetime]
@@ -241,6 +247,9 @@ class AccountsReader:
     ``client`` is what the provider is asked through; a client is opened for
     each read without one. ``sleep`` is the loop's wait. Both are for a test
     to hand in.
+
+    With ``pool``, the service is the one it gives, taken anew at each read: a
+    reload opens the pool of a daemon that had none. *service* is None until then.
     """
 
     def __init__(
@@ -249,14 +258,25 @@ class AccountsReader:
         *,
         client: httpx.Client | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+        pool: Callable[[], object | None] | None = None,
     ) -> None:
         self.service = service
         self.client = client
         self.sleep = sleep
+        self.pool = pool
+
+    def reading(self) -> bool:
+        """Take the pool in force; whether there is a key to read, which no
+        pool and a pool that declares no account have not."""
+        if self.pool is not None:
+            self.service = self.pool()
+        return self.service is not None and bool(self.service.config.accounts)
 
     def read(self) -> list[poolstore.Account]:
         """One read of every account the configuration in force declares; the
         records as stored."""
+        if not self.reading():
+            return []
         service = self.service
         with service.open_store() as store:
             return read_accounts(
@@ -266,8 +286,12 @@ class AccountsReader:
 
     async def run(self) -> None:
         """Read now and again after each interval. A read that fails is said
-        and the next one is made all the same."""
+        and the next one is made all the same. With no key to read none is
+        made, and the question is asked again after the short wait."""
         while True:
+            if not self.reading():
+                await self.sleep(IDLE_INTERVAL)
+                continue
             try:
                 await asyncio.to_thread(self.read)
             except Exception as exc:
@@ -275,9 +299,7 @@ class AccountsReader:
             await self.sleep(READ_INTERVAL)
 
 
-def reader_for(service) -> AccountsReader | None:
-    """The reader for the pool *service*; None without a pool, and for a pool
-    that declares no account, which has no key to read."""
-    if service is None or not service.config.accounts:
-        return None
+def reader_for(service) -> AccountsReader:
+    """The reader that follows the pool *service*, None for no pool. Whoever
+    can come to another pool later sets the reader's ``pool`` to say which."""
     return AccountsReader(service)
