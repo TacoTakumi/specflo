@@ -194,7 +194,9 @@ def start(
     _write_private(paths.root / LAUNCH_FILE, json.dumps(spec))
     if config_dir is not None:
         _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
-    pi_cmd = shlex.join([sys.executable, "-m", __name__, str(paths.root / LAUNCH_FILE)])
+    # -P: the launch runs in the lease's working directory, with the host's
+    # environment, and takes no module of its own from there.
+    pi_cmd = shlex.join([sys.executable, "-P", "-m", __name__, str(paths.root / LAUNCH_FILE)])
     try:
         started = _agent_cli(
             "start", name, "--transport", "rpc", "--cwd", str(cwd), "--pi-cmd", pi_cmd,

@@ -87,13 +87,17 @@ if args[:2] == ["workspace", "list"]:
 elif args[:2] == ["tab", "create"]:
     n = len(load()) + 1
     tab = {"tab_id": "wF:t%d" % n, "pane_id": "wF:p%d" % n,
-           "label": args[args.index("--label") + 1], "pid": None}
+           "label": args[args.index("--label") + 1], "pid": None,
+           "cwd": args[args.index("--cwd") + 1]}
     save(tabs + [tab])
     out({"tab": {"tab_id": tab["tab_id"], "workspace_id": "wF"},
          "root_pane": {"pane_id": tab["pane_id"], "tab_id": tab["tab_id"]}})
 elif args[:2] == ["pane", "run"]:
     if not os.environ.get("FAKE_HERDR_NO_RUN"):
+        # a pane id comes round again once a tab is gone: the newest has it
+        cwd = [t["cwd"] for t in tabs if t["pane_id"] == args[2]][-1]
         proc = subprocess.Popen(["/bin/sh", "-c", args[3]],
+                                cwd=cwd,
                                 stdin=subprocess.DEVNULL,
                                 stdout=open(os.environ["FAKE_HERDR_PANE_LOG"], "ab"),
                                 stderr=subprocess.STDOUT,
@@ -112,6 +116,23 @@ elif args[:2] in (["pane", "report-agent"], ["pane", "release-agent"]):
 else:
     sys.stderr.write("unknown command\\n")
     sys.exit(2)
+'''
+
+# A file in the lease's working directory named like a module of the standard
+# library: it writes down that it ran and with what, then gives way to the
+# real module, so a start that runs it goes on as one that does not.
+SHADOW = '''import importlib, os, sys
+
+with open({marker!r}, "a", encoding="utf-8") as f:
+    f.write(__name__ + " ran in: " + " ".join(sys.orig_argv[:4]) + "\\n")
+here = os.path.dirname(os.path.abspath(__file__))
+found = sys.path[:]
+sys.path[:] = [p for p in found if os.path.abspath(p or os.curdir) != here]
+try:
+    del sys.modules[__name__]
+    sys.modules[__name__] = importlib.import_module(__name__)
+finally:
+    sys.path[:] = found
 '''
 
 # Stands where a pi stands that does not start: waits as long as it is told,
@@ -230,6 +251,16 @@ class Rig:
             left += [p.name for p in self.config_root.iterdir()]
         return left
 
+    def shadow_modules(self, *names: str) -> Path:
+        """Files in the lease's working directory named like the modules
+        *names*; the file they write to when one of them is run."""
+        marker = self.tmp_path / "shadow-ran.txt"
+        for name in names:
+            (self.work / f"{name}.py").write_text(
+                SHADOW.format(marker=str(marker)), encoding="utf-8"
+            )
+        return marker
+
     def start(self, member: Member, **kwargs) -> str:
         return runner.start(
             DEFINITION, member, ACCOUNTS,
@@ -321,6 +352,33 @@ def test_start_runs_the_member_as_launched_in_a_pane_named_for_it(rig):
     assert {k: v for k, v in env.items() if k != "LC_CTYPE"} == {
         k: v for k, v in expected.items() if k != "LC_CTYPE"
     }
+
+
+def ran(marker: Path) -> list[str]:
+    """What the shadow modules wrote down, one line for each time one ran."""
+    return marker.read_text(encoding="utf-8").splitlines() if marker.exists() else []
+
+
+def test_a_pane_start_reads_no_module_from_the_leases_working_directory(rig):
+    # the pane's shell stands in the lease's working directory, and so do the
+    # host it runs and the launch that becomes pi
+    marker = rig.shadow_modules("shlex", "json")
+
+    name = rig.start(rig.local_member())
+
+    assert rig.pane_names() == [name]
+    assert rig.recorded()["cwd"] == str(rig.work)
+    assert ran(marker) == []
+
+
+def test_a_headless_start_reads_no_module_from_the_leases_working_directory(rig):
+    (rig.tmp_path / "bin" / "herdr").unlink()
+    marker = rig.shadow_modules("shlex", "json")
+
+    rig.start(rig.local_member())
+
+    assert rig.recorded()["cwd"] == str(rig.work)
+    assert ran(marker) == []
 
 
 def test_start_raises_the_wall_with_the_pool_and_lease_tokens(rig):

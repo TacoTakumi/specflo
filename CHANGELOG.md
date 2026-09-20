@@ -275,7 +275,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   loads the extensions the host has installed, specflo's own control
   extension among them, and its environment tells that one to serve no
   control socket of its own, so the member answers at its agent host and
-  nowhere else.
+  nowhere else. The launch shim and the member's host run under `python -P`,
+  so a file in the lease's working directory named like a library module
+  (`shlex.py`, `json.py`) is not run.
 - **`specflo lease request <pool>`, `lease release <lease>` and `lease
   list`.** A request prints the lease id and the agent to drive with the
   `specflo agent` verbs; the member starts in the requester's directory or

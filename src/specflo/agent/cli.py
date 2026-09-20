@@ -272,6 +272,9 @@ def start(
     paths.ensure()
     host_argv = [
         sys.executable,
+        # a herdr pane stands in the agent's working directory: the host
+        # takes no module of its own from there
+        "-P",
         "-m",
         "specflo.agent.cli",
         name,
