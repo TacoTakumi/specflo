@@ -24,6 +24,7 @@ start``, which no pool started; the helpers are the attach tests' own.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import signal
@@ -36,7 +37,7 @@ from specflo.agent.cli import EXIT_UNREACHABLE, agent_app
 from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.cli import app
-from specflo.daemon.poolstore import ConsoleAttachment
+from specflo.daemon.poolstore import ConsoleAttachment, Lease, Resource
 from specflo.pool import console, ledger, runner, service
 from specflo.pool.config import Member
 
@@ -578,3 +579,87 @@ def test_the_agent_of_a_leased_member_the_pool_started_is_refused(pool_rig):
     with pool_rig.store() as store:
         assert ledger.agent_of(store.get_lease(grant.lease_id)) == local.name
     assert prompt(grant, "still mine").exit_code == 0
+
+
+# -- a lease ends as its grant wrote it ---------------------------------------
+
+
+def lease_on(member: str, pool_started: bool | None) -> Lease:
+    """An active lease on *member*, with what its grant wrote of who started
+    the process; None is a row from before that was written."""
+    return Lease(
+        id="lease-1", team_lease_id=None, holder_hash="0" * 64, holder_label="a",
+        member=member, pool="rebasers",
+        resources=(Resource("pool", "rebasers"), Resource("member", member)),
+        acquired="2026-03-01T12:00:00.000+00:00", last_activity="2026-03-01T12:00:00.000+00:00",
+        idle_limit=600, state="active", pool_started=pool_started,
+    )
+
+
+def test_a_grant_on_a_console_writes_that_the_pool_started_nothing(pool_rig):
+    svc, _ = attached(pool_rig)
+
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.get_lease(grant.lease_id).pool_started is False
+    svc.end_lease(grant.lease_id, "released")
+
+
+def test_what_the_grant_wrote_decides_the_ending_whatever_is_declared_at_the_end(pool_rig):
+    local = pool_rig.local_member()
+    declared = pool_rig.config(local)
+    gone = pool_rig.config(pool_rig.hosted_member())
+    as_console = pool_rig.config(console_member(), pool_rig.hosted_member())
+    started_under_the_slot = pool_rig.config(Member(
+        name=SLOT, command=pool_rig.command, backing="local", labels=(), capacity=1,
+        egress="local", model="tc3",
+    ))
+    slot_as_console = pool_rig.config(Member(
+        name=local.name, command="", backing="local", labels=(), capacity=1,
+        egress="local", model="tc3", kind="console",
+    ))
+
+    # a process the pool started is stopped, also on a member that is declared
+    # no more, or as a console now
+    for config in (declared, gone, slot_as_console):
+        assert not console.leased(lease_on(local.name, True), config, [])
+    # a console's process is never stopped, also when a member the pool starts
+    # stands under the slot's name now
+    for config in (as_console, gone, started_under_the_slot):
+        assert console.leased(lease_on(SLOT, False), config, [])
+    # a row from before that was written ends by the configuration, as it did
+    before = lease_on(local.name, None)
+    assert not console.leased(before, declared, [])
+    assert console.leased(before, gone, [])
+    assert console.leased(before, slot_as_console, [])
+
+
+def test_an_attachment_row_that_names_the_agent_stands_over_what_the_grant_wrote(pool_rig):
+    local = pool_rig.local_member()
+    row = ConsoleAttachment(slot=SLOT, agent=local.name, attached="2026-03-01T12:00:00.000+00:00")
+
+    # a developer's host under that name knows the pool's token from its attach
+    assert console.leased(lease_on(local.name, True), pool_rig.config(local), [row])
+    detached = dataclasses.replace(row, draining=True)
+    assert console.leased(lease_on(local.name, True), pool_rig.config(local), [detached])
+
+
+def test_a_console_lease_whose_row_is_gone_still_stops_nothing(pool_rig):
+    svc, before = attached(pool_rig)
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    # the attachment row is gone, and the daemon is started again on a roster
+    # that starts a member under the lease's member name
+    with pool_rig.store() as store:
+        assert store.detach_console(SLOT)
+    renamed = Member(
+        name=SLOT, command=pool_rig.command, backing="local", labels=(), capacity=1,
+        egress="local", model="tc3",
+    )
+    again = pool_rig.service(pool_rig.config(renamed))
+
+    ended = again.end_lease(grant.lease_id, "released")
+
+    assert ended.state == "released"
+    assert same_process(pool_rig, before)
+    assert agent_lease.read_ended(AgentPaths.resolve(AGENT).root)["cause"] == "released"

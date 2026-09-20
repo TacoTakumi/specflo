@@ -16,8 +16,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import sqlite3
 import threading
 import time
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -27,10 +30,15 @@ from specflo.agent import lease as agent_lease
 from specflo.agent.cli import agent_app
 from specflo.agent.client import AgentClient, connect
 from specflo.agent.statefiles import AgentPaths
+from specflo.daemon import STATE_STORE_FILENAME
 from specflo.errors import SpecfloError
 from specflo.pool import launch, service
 from specflo.pool.service import Ended, Grant
 
+from .test_reload import STATUS_PATH, Served, write_workers
+from .test_reload import console as roster_console
+from .test_reload import member as roster_member
+from .test_reload import pool as roster_pool
 from .test_runner import pid_alive, wait_until
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "specflo"
@@ -411,6 +419,87 @@ def test_a_lease_ends_in_one_of_the_three_ways_only(pool_rig):
 
     with pool_rig.store() as store:
         assert store.get_lease(grant.lease_id).state == "active"
+
+
+# -- a lease ends as it began -------------------------------------------------
+
+
+def test_a_grant_writes_that_the_pool_started_the_members_process(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.get_lease(grant.lease_id).pool_started is True
+    svc.end_lease(grant.lease_id, "released")
+
+
+def test_a_lease_row_from_before_that_was_written_ends_by_the_roster_in_force(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    pi_pid = pool_rig.status(grant.agent)["pi_pid"]
+    # the row as a store from before the column holds it
+    rows = sqlite3.connect(pool_rig.root / STATE_STORE_FILENAME)
+    rows.execute("UPDATE pool_leases SET pool_started = NULL")
+    rows.commit()
+    rows.close()
+    with pool_rig.store() as store:
+        assert store.get_lease(grant.lease_id).pool_started is None
+
+    # the roster declares the member as one the pool starts, so it is stopped
+    svc.end_lease(grant.lease_id, "released")
+
+    assert wait_until(lambda: not pid_alive(pi_pid))
+    assert pool_rig.pane_names() == []
+
+
+def without_the_member(rig) -> None:
+    """The roster with "w-1" declared no more."""
+    write_workers(
+        rig, members=[roster_member(rig, "w-2", model="model-c")],
+        pools=[roster_pool("workers", "w-2")],
+    )
+
+
+def with_the_member_as_a_console(rig) -> None:
+    """The roster with "w-1" declared as a developer's console."""
+    write_workers(
+        rig, members=[roster_console("w-1"), roster_member(rig, "w-2", model="model-c")]
+    )
+
+
+@pytest.mark.parametrize("ending", ["released", "expired"])
+@pytest.mark.parametrize("later", [without_the_member, with_the_member_as_a_console])
+def test_a_daemon_started_again_on_another_roster_stops_the_process_the_pool_started(
+    pool_rig, later, ending
+):
+    write_workers(pool_rig)
+    lease = Served(pool_rig).granted(pool="workers")
+    assert lease["agent"] == "w-1"
+    started = pool_rig.status("w-1")
+    # the admin edits the roster and starts the daemon again: a reload would
+    # refuse the edit while the lease is out, and a start refuses nothing
+    later(pool_rig)
+    again = Served(pool_rig)
+    assert again.state.pool is not None and not list(again.state.pool_errors)
+
+    if ending == "released":
+        assert again.release(lease["lease_id"], lease["token"]).status_code == 200
+    else:
+        again.state.pool.clock = lambda: datetime.now(timezone.utc) + timedelta(minutes=11)
+        assert again.developer.get(STATUS_PATH).status_code == 200
+
+    with pool_rig.store() as store:
+        assert store.get_lease(lease["lease_id"]).state == ending
+        assert store.list_leases(state="active") == []
+    # the host and the pi of that lease are the pool's own, and they go with it
+    assert wait_until(lambda: not pid_alive(started["pi_pid"]))
+    assert wait_until(lambda: not pid_alive(started["host_pid"]))
+    assert pool_rig.pane_names() == []
+    # and the slot it held in the pool is free
+    after = again.granted(pool="workers")
+    assert after["agent"] == "w-2"
+    assert again.release(after["lease_id"], after["token"]).status_code == 200
 
 
 # -- structure --------------------------------------------------------------

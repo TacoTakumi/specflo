@@ -60,7 +60,10 @@ class Lease:
 
     ``holder_hash`` is the hash of the token issued at grant, never the token;
     ``holder_label`` is who asked, for a person to read. ``idle_limit`` is in
-    seconds. Leases of one team share a ``team_lease_id``.
+    seconds. Leases of one team share a ``team_lease_id``. ``pool_started``
+    is whether the pool started the process the lease runs on, as its grant
+    knew it: false for a lease on a developer's console, and None on a row
+    from before it was kept.
     """
 
     id: str
@@ -74,6 +77,7 @@ class Lease:
     last_activity: str
     idle_limit: int
     state: str
+    pool_started: bool | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -266,7 +270,8 @@ CREATE TABLE IF NOT EXISTS pool_leases (
     acquired      TEXT NOT NULL,
     last_activity TEXT NOT NULL,
     idle_limit    INTEGER NOT NULL,
-    state         TEXT NOT NULL
+    state         TEXT NOT NULL,
+    pool_started  INTEGER
 );
 CREATE TABLE IF NOT EXISTS pool_transitions (
     id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -322,11 +327,12 @@ ADDED_COLUMNS = (
     ("pool_waiting", "egress", "TEXT"),
     ("pool_waiting", "pinned", "TEXT"),
     ("pool_waiting", "until", "TEXT"),
+    ("pool_leases", "pool_started", "INTEGER"),
 )
 
 _LEASE_COLUMNS = (
     "id, team_lease_id, holder_hash, holder_label, member, pool,"
-    " resources, acquired, last_activity, idle_limit, state"
+    " resources, acquired, last_activity, idle_limit, state, pool_started"
 )
 _WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress, pinned, until"
 _ACCOUNT_COLUMNS = (
@@ -356,11 +362,11 @@ class SqlitePoolStore:
             with self.connection:
                 self.connection.execute(
                     f"INSERT INTO pool_leases ({_LEASE_COLUMNS})"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         lease.id, lease.team_lease_id, lease.holder_hash, lease.holder_label,
                         lease.member, lease.pool, resources, lease.acquired,
-                        lease.last_activity, lease.idle_limit, lease.state,
+                        lease.last_activity, lease.idle_limit, lease.state, lease.pool_started,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -628,6 +634,7 @@ def _lease(row: sqlite3.Row) -> Lease:
         last_activity=row["last_activity"],
         idle_limit=row["idle_limit"],
         state=row["state"],
+        pool_started=None if row["pool_started"] is None else bool(row["pool_started"]),
     )
 
 

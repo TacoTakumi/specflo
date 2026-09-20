@@ -151,6 +151,82 @@ def test_last_activity_is_replaced_on_the_row(store):
     assert store.set_lease_activity("lease-9", T1) is None
 
 
+def test_a_lease_keeps_whether_the_pool_started_its_process(store):
+    store.add_lease(lease(id="lease-started", pool_started=True))
+    store.add_lease(lease(id="lease-console", pool_started=False))
+    store.add_lease(lease(id="lease-unsaid"))
+
+    assert [(row.id, row.pool_started) for row in store.list_leases()] == [
+        ("lease-started", True), ("lease-console", False), ("lease-unsaid", None),
+    ]
+    assert store.get_lease("lease-started") == lease(id="lease-started", pool_started=True)
+
+
+# The lease table as it was before a row said whether the pool started the
+# lease's process.
+LEASE_TABLE_BEFORE_POOL_STARTED = """
+CREATE TABLE pool_leases (
+    seq           INTEGER PRIMARY KEY AUTOINCREMENT,
+    id            TEXT NOT NULL UNIQUE,
+    team_lease_id TEXT,
+    holder_hash   TEXT NOT NULL,
+    holder_label  TEXT NOT NULL,
+    member        TEXT NOT NULL,
+    pool          TEXT NOT NULL,
+    resources     TEXT NOT NULL,
+    acquired      TEXT NOT NULL,
+    last_activity TEXT NOT NULL,
+    idle_limit    INTEGER NOT NULL,
+    state         TEXT NOT NULL
+);
+"""
+
+
+def test_a_store_from_before_a_lease_said_who_started_it_gains_the_column(root):
+    path = root / daemon.STATE_STORE_FILENAME
+    before = sqlite3.connect(path)
+    before.executescript(LEASE_TABLE_BEFORE_POOL_STARTED)
+    before.execute(
+        "INSERT INTO pool_leases (id, team_lease_id, holder_hash, holder_label, member, pool,"
+        " resources, acquired, last_activity, idle_limit, state)"
+        " VALUES ('lease-old', NULL, '9f86', 'requester', 'gpu-worker-1', 'workers',"
+        " '[[\"pool\", \"workers\"]]', ?, ?, 600, 'active')",
+        (T0, T0),
+    )
+    before.commit()
+    before.close()
+
+    with poolstore.open_pool_store(root) as store:
+        # the row from before says nothing of it, and a lease granted now does
+        assert store.get_lease("lease-old").pool_started is None
+        assert store.get_lease("lease-old").resources == (Resource("pool", "workers"),)
+        store.add_lease(lease(id="lease-new", pool_started=True))
+
+    # opened again, the column is there and is left alone
+    with poolstore.open_pool_store(root) as store:
+        assert [(row.id, row.pool_started) for row in store.list_leases()] == [
+            ("lease-old", None), ("lease-new", True),
+        ]
+
+
+def test_a_new_store_and_one_that_gained_the_column_keep_the_same_lease_columns(tmp_path):
+    fresh, grown = daemon.prepare_root(tmp_path / "fresh"), daemon.prepare_root(tmp_path / "grown")
+    before = sqlite3.connect(grown / daemon.STATE_STORE_FILENAME)
+    before.executescript(LEASE_TABLE_BEFORE_POOL_STARTED)
+    before.close()
+
+    shapes = []
+    for root in (fresh, grown):
+        poolstore.open_pool_store(root).close()
+        rows = sqlite3.connect(root / daemon.STATE_STORE_FILENAME).execute(
+            "PRAGMA table_info(pool_leases)"
+        )
+        shapes.append([(row[1], row[2]) for row in rows])
+
+    assert shapes[0] == shapes[1]
+    assert ("pool_started", "INTEGER") in shapes[0]
+
+
 # --- transitions -------------------------------------------------------------
 
 

@@ -48,15 +48,20 @@ same one again, so the host that left a slot may be attached anew.
 
 A lease on an attached slot runs on the attached agent, so that is the agent
 the grant names and the name on the lease row (``placement``). Its ending
-stops nothing, and ``leased`` says which leases end so: those on a declared
-console, those on a slot's attached agent when a later configuration
-declares the slot otherwise, and those on a member the configuration no
-longer declares at all. So do those on an agent that any row names, of
-whatever slot and draining or not: a configuration that no one could refuse
-may start a member under an attached agent's name, the grant on it finds the
-developer's host there and ends its lease, and that host knows the pool's
-token from its attach. Only a lease that is known to be on a member the pool
-started has its process stopped.
+stops nothing, and ``leased`` says which leases end so. The lease row keeps
+what its grant knew, whether the pool started the lease's process, and a
+lease ends by that: a configuration put in force later, at a start of the
+daemon that no check of the leases out could refuse, may declare the member
+no more, or as a console, and the process the pool started is stopped all the
+same; it may start a member under a slot's name, and the console's process
+runs on all the same. A row from before that was kept ends by the
+configuration in force: as a console's when that declares its member a
+console, or not at all. Ahead of both stand the rows: a lease on an agent
+that any row names, of whatever slot and draining or not, stops nothing. A
+configuration that no one could refuse may start a member under an attached
+agent's name, the grant on it finds the developer's host there and ends its
+lease, and that host knows the pool's token from its attach. Only a lease
+that is known to be on a process the pool started has that process stopped.
 
 Nothing here talks to an agent host; the runner does, as for every member.
 """
@@ -127,16 +132,21 @@ def unmatched(
 
 def leased(lease: Lease, config: PoolConfig, rows: Iterable[ConsoleAttachment]) -> bool:
     """Does *lease* run on a developer's process, which its ending must leave
-    running? It does not when *config* declares its member as one the pool
-    starts and no row of *rows* names the lease's agent."""
-    member = next((m for m in config.members if m.name == lease.member), None)
-    if member is None or member.kind == CONSOLE:
-        # A member that is declared no more is not known to be the pool's own.
-        return True
+    running? It does when a row of *rows* names the lease's agent. Otherwise
+    the lease's own row says, as its grant wrote it: it does not when the
+    pool started the process, whatever *config* declares of the member now.
+    A row from before that was written is judged by *config*: it does not
+    when *config* declares its member as one the pool starts."""
     # The row of any slot, detached or not: the host that was attached under
     # the name knows the pool's token, and would be stopped as the member's.
     agent = ledger.agent_of(lease)
-    return any(row.agent == agent for row in rows)
+    if any(row.agent == agent for row in rows):
+        return True
+    if lease.pool_started is not None:
+        return not lease.pool_started
+    member = next((m for m in config.members if m.name == lease.member), None)
+    # A member that is declared no more is not known to be the pool's own.
+    return member is None or member.kind == CONSOLE
 
 
 def started_under(

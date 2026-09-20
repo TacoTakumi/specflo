@@ -250,7 +250,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   the output of whoever ran it.
 - **What a member is given.** Each lease on a started member runs a fresh
   pi through `specflo agent start`, in a herdr pane named for the member,
-  and the end of the lease stops it. A start watches pi for one second
+  and the end of the lease stops it. The lease records at its grant
+  whether the pool started its process, and its end goes by that record: a
+  daemon started again on a roster that declares the member no more, or as
+  a console, still stops the process (the store gains the column
+  `pool_leases.pool_started`; a row from before it ends as it did).
+  A start watches pi for one second
   before it hands the member over: a member whose pi did not start (a
   command that names no binary, an option pi turns down) is not granted,
   its slots are free at once, and the daemon's log has the end of what pi

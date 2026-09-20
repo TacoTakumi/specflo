@@ -103,8 +103,11 @@ agent's host and starts nothing. Its ending, whichever of the three it is,
 comes through ``end_lease`` like every ending and stops nothing either: the
 runner lowers the wall, aborts a turn the holder left running and records
 the ending for the former holder, and the developer's pi runs on. Which
-leases end so is ``console.leased`` to say. A lease that is out on a host
-that died expires at its idle limit, as any lease whose pi went away.
+leases end so is ``console.leased`` to say, from what the grant wrote on the
+lease row: whether the pool started the lease's process. So a lease ends as
+it began, whatever the configuration in force at its end declares of its
+member. A lease that is out on a host that died expires at its idle limit,
+as any lease whose pi went away.
 
 The configuration the service holds is the one in force, and it is put there
 whole (``swap``): when the daemon starts, and again when the pool directory
@@ -403,6 +406,9 @@ class PoolService:
                 holder_hash=hash_token(token), holder_label=holder_label,
                 member=placed.member.name, pool=pool.name, resources=placed.resources,
                 acquired=now, last_activity=now, idle_limit=idle_limit, state="active",
+                # Kept for the ending: the roster in force then may say
+                # otherwise of the member, or nothing at all.
+                pool_started=placed.member.kind != CONSOLE,
             ))
             try:
                 if placed.member.kind == CONSOLE:
