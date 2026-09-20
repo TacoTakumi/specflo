@@ -19,6 +19,11 @@ with the acting identity, and the running pool reads its directory again.
 
 A definition that a pool binds is not deleted, and the refusal names the pool.
 
+An entry under the name of a definition or a team that is not a regular file,
+a folder or a named pipe, is listed with its fault and is never opened. It has
+no form, and a save over it and a delete of it are refused with the fault:
+these pages write and remove a regular file only.
+
 A team is one markdown file in the teams folder, and its pages are the
 siblings of the definitions' pages: the same list, form, save and delete, on a
 router of their own. The form holds the roles one to a line, a name, a pool
@@ -51,8 +56,8 @@ from starlette.concurrency import run_in_threadpool
 from ..pool.cli_admin import pool_dir
 from ..pool.config import DEFINITIONS_DIR, ConfigError, Pool, load_pool_config
 from ..pool.definitions import (
-    BODY, DEFAULT_EGRESS, EGRESS_CLASSES, LIST_FIELDS, AgentDefinition, DefinitionError,
-    load_definition, serialise_definition,
+    BODY, DEFAULT_EGRESS, EGRESS_CLASSES, LIST_FIELDS, NOT_A_FILE, AgentDefinition,
+    DefinitionError, load_definition, not_a_file, serialise_definition,
 )
 from ..pool.teams import ROLE_FIELDS, TEAMS_DIR, Role, Team, check_team, serialise_team
 from .pool_routes import NO_POOL, reload_pool
@@ -236,6 +241,12 @@ def _files(directory: Path) -> dict[str, Path]:
     return {file.stem: file for file in sorted((directory / DEFINITIONS_DIR).glob("*.md"))}
 
 
+def odd_entry(file: Path, entry: str) -> ConfigError | None:
+    """The fault of a *file* that is not a regular file, as the check of the
+    pool directory reports it of the *entry*, or None for a regular file."""
+    return ConfigError(file, entry, "file", NOT_A_FILE) if not_a_file(file) else None
+
+
 def binding(directory: Path, name: str) -> tuple[str, ...]:
     """The pools that bind the definition *name*, in the files as they are now."""
     config, _ = load_pool_config(directory)
@@ -318,6 +329,15 @@ def _missing(identity: str, name: str, kind: str = "definition") -> Response:
     )
 
 
+def _no_form(identity: str, fault: ConfigError) -> Response:
+    """The 409 page of an entry that is not a regular file: it has no form,
+    and a save does not write over it."""
+    return render(
+        "error.html", status_code=409, identity=identity,
+        message=f"{fault} Correct the entry by hand.",
+    )
+
+
 def _list(request: Request, identity: str, status_code: int = 200, **refusal) -> Response:
     """The list of the definition files; with a *refusal*, what was not done and why."""
     directory = pool_dir(request.app.state.root)
@@ -387,6 +407,9 @@ def edit_definition_page(
     file = _files(pool_dir(request.app.state.root)).get(name)
     if file is None:
         return _missing(identity, name)
+    odd = odd_entry(file, f"definition '{name}'")
+    if odd is not None:
+        return _no_form(identity, odd)
     try:
         definition = load_definition(file)
     except DefinitionError as exc:
@@ -443,8 +466,12 @@ async def save_definition(
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
-    if name not in _files(pool_dir(request.app.state.root)):
+    file = _files(pool_dir(request.app.state.root)).get(name)
+    if file is None:
         return _missing(identity, name)
+    odd = odd_entry(file, f"definition '{name}'")
+    if odd is not None:
+        return _no_form(identity, odd)
     return await _save(request, identity, name, posted_values(fields, name))
 
 
@@ -472,8 +499,17 @@ async def delete_definition(
     if refused is not None:
         return refused
     directory = pool_dir(request.app.state.root)
-    if name not in _files(directory):
+    file = _files(directory).get(name)
+    if file is None:
         return _missing(identity, name)
+    odd = odd_entry(file, f"definition '{name}'")
+    if odd is not None:
+        return _list(
+            request, identity, status_code=409,
+            refused=f"The definition '{name}' was not deleted: a delete here removes a "
+            "regular file only.",
+            refused_faults=[str(odd)],
+        )
     pools = await run_in_threadpool(binding, directory, name)
     if pools:
         bound = ", ".join(f"pool '{pool}'" for pool in pools)
@@ -538,7 +574,10 @@ def read_team(file: Path, pools: dict[str, Pool]) -> Team | None:
     """The team in *file* when the form can hold it, else None. A role on a
     pool that is not among *pools*, or with a count its pool does not grant,
     is one the form holds, since a save there mends it; a file that says what
-    the form has no field for is corrected by hand."""
+    the form has no field for is corrected by hand, and so is an entry that is
+    not a regular file, which is not opened."""
+    if not_a_file(file):
+        return None
     try:
         team, faults = check_team(file.read_text(encoding="utf-8"), file, pools)
     except (OSError, UnicodeDecodeError):
@@ -643,6 +682,9 @@ def edit_team_page(
     file = _team_files(directory).get(name)
     if file is None:
         return _missing(identity, name, "team")
+    odd = odd_entry(file, f"team '{name}'")
+    if odd is not None:
+        return _no_form(identity, odd)
     config, _ = load_pool_config(directory)
     team = read_team(file, {pool.name: pool for pool in config.pools})
     if team is None:
@@ -683,8 +725,12 @@ async def save_team(
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
-    if name not in _team_files(pool_dir(request.app.state.root)):
+    file = _team_files(pool_dir(request.app.state.root)).get(name)
+    if file is None:
         return _missing(identity, name, "team")
+    odd = odd_entry(file, f"team '{name}'")
+    if odd is not None:
+        return _no_form(identity, odd)
     return await _save_team(request, identity, name, posted_team(fields, name))
 
 
@@ -716,8 +762,17 @@ async def delete_team(
     _, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
-    if name not in _team_files(pool_dir(request.app.state.root)):
+    file = _team_files(pool_dir(request.app.state.root)).get(name)
+    if file is None:
         return _missing(identity, name, "team")
+    odd = odd_entry(file, f"team '{name}'")
+    if odd is not None:
+        return _team_list(
+            request, identity, status_code=409,
+            refused=f"The team '{name}' was not deleted: a delete here removes a regular "
+            "file only.",
+            refused_faults=[str(odd)],
+        )
     relative = Path(TEAMS_DIR) / f"{name}.md"
     faults = await run_in_threadpool(
         put_file, request.app, identity, relative, None, TEAM_DELETED, name

@@ -14,6 +14,10 @@ once, is refused with the fault beside the form, naming the team and the role,
 and no file is written. A save that passed is followed by the reload of the
 running pool and leaves an audit entry with the acting identity.
 
+An entry of the teams folder that is not a regular file, a named pipe or a
+folder, is never opened: the daemon starts and the pages answer at once with
+its fault, it has no form, and a post to it is refused with the fault.
+
 The teams folder, or one file of it, may be a symlink to a place outside the
 pool directory. The check of a candidate stays in its copy then too: what it
 refuses leaves the real file as it was.
@@ -35,7 +39,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo.cli import app as cli
-from specflo.daemon import pool_manage, pool_web, web
+from specflo.daemon import pool_manage, pool_routes, pool_web, web
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
 from specflo.pool import cli_admin, teams
@@ -47,12 +51,13 @@ from specflo.service import pool_remote
 # rather than copied. The rig's fixtures are named here so that pytest finds
 # them from this module.
 from pool.conftest import no_real_llama_swap, pool_rig  # noqa: F401  (fixtures)
+from pool.odd_entries import KINDS, make_odd, within
 from pool.test_lease_request import audit_records
 from pool.test_reload import PAIR, Served, write_workers
 from pool.test_team_lease import REVIEW, active, write_team_pool
 from test_web_pool import signed_in
 from test_web_pool_definitions import NOT_THIS_SESSION, post, root, runner, shown  # noqa: F401
-from test_web_pool_definitions import LAYOUTS, behind_a_link, kept, snapshot
+from test_web_pool_definitions import LAYOUTS, behind_a_link, browser, kept, snapshot
 
 LIST = "/pool/teams"
 NEW = "/pool/teams/new"
@@ -502,6 +507,64 @@ def test_a_team_lease_and_a_waiting_request_of_a_deleted_team_end_as_after_a_han
     ended = served.release(team["team_lease_id"], team["members"][0]["token"])
     assert ended.status_code == 200, ended.text
     assert active(pool_rig) == []
+
+
+# -- an entry that is not a regular file -------------------------------------------
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_daemon_starts_and_reloads_at_once_on_an_entry_that_is_not_a_regular_file(
+    team_root, kind
+):
+    app = create_app(team_root)
+    odd = make_odd(folder(team_root) / "odd.md", kind)
+
+    # A named pipe holds its reader for ever, so each read here has a limit.
+    faults = within(pool_routes.reload_pool, app, "developer", pipes=[odd])
+    started = within(create_app, team_root, pipes=[odd])
+
+    assert [(fault.path, fault.entry) for fault in faults] == [(odd, "team 'odd'")]
+    assert "not a regular file" in str(faults[0])
+    assert [team.name for team in app.state.pool.config.teams] == ["review"]
+    assert started.state.pool is None
+    assert [str(fault) for fault in started.state.pool_errors] == [str(faults[0])]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_such_an_entry_is_listed_with_its_fault_and_has_no_form(team_root, kind):
+    odd = make_odd(folder(team_root) / "odd.md", kind)
+    client = browser(within(create_app, team_root, pipes=[odd]))
+
+    response = within(client.get, LIST, pipes=[odd])
+    form = within(client.get, edit_url("odd"), pipes=[odd])
+
+    assert response.status_code == 200
+    assert f"{odd}: team 'odd': file: not a regular file" in shown(response)
+    assert f'href="{edit_url("odd")}"' not in response.text
+    assert f'href="{edit_url("review")}"' in response.text
+    assert form.status_code == 409
+    assert "not a regular file" in shown(form) and "<form" not in form.text
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_delete_and_a_save_of_such_an_entry_are_refused_with_its_fault(team_root, kind):
+    odd = make_odd(folder(team_root) / "odd.md", kind)
+    client = browser(within(create_app, team_root, pipes=[odd]))
+    before = snapshot(team_root)
+
+    deleted = within(post, client, delete_url("odd"), pipes=[odd])
+    saved = within(lambda: post(client, edit_url("odd"), **FIELDS), pipes=[odd])
+    created = within(lambda: post(client, LIST, **{**FIELDS, "name": "odd"}), pipes=[odd])
+
+    assert deleted.status_code == 409
+    assert "was not deleted" in shown(deleted) and "not a regular file" in shown(deleted)
+    assert saved.status_code == 409
+    assert "not a regular file" in shown(saved)
+    assert created.status_code == 400
+    assert "there is a team 'odd' already" in shown(created)
+    assert odd.is_fifo() if kind == "pipe" else odd.is_dir()
+    assert snapshot(team_root) == before
+    assert saves(team_root) == []
 
 
 # -- a folder or a file that is a symlink ---------------------------------------------

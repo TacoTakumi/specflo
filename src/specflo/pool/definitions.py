@@ -44,6 +44,11 @@ BODY = "body"
 # directory is read as UTF-8, whatever the locale of the daemon says.
 NOT_UTF8 = "not UTF-8 text; save the file as UTF-8."
 
+# The problem of an entry under the name of a file that is a folder, a named
+# pipe, a socket or a device. Such an entry is never opened: a named pipe that
+# nothing writes to holds its reader for ever.
+NOT_A_FILE = "not a regular file; put a markdown file there, or take the entry away."
+
 # Front matter opens on the first line and closes on the next line that is
 # only "---"; a later "---" rule belongs to the prompt.
 _FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)^---[ \t]*$\n?(.*)\Z", re.DOTALL | re.MULTILINE)
@@ -75,13 +80,23 @@ class AgentDefinition:
     project_context: bool = False
 
 
+def not_a_file(path: Path) -> bool:
+    """Whether what is at ``path`` is something other than a regular file. A
+    symlink counts as what it leads to; a path with nothing at it is not one,
+    and the read of it says that the file is missing."""
+    return path.exists() and not path.is_file()
+
+
 def load_definition(path: Path) -> AgentDefinition:
     """The definition in the markdown file at ``path``.
 
-    Raises ``DefinitionError`` for a file that cannot be read, has no valid
-    front matter, carries an unknown key, a missing role, a wrongly typed
-    value or an unknown egress class, or has an empty body.
+    Raises ``DefinitionError`` for an entry that is not a regular file, which
+    is not opened, and for a file that cannot be read, has no valid front
+    matter, carries an unknown key, a missing role, a wrongly typed value or
+    an unknown egress class, or has an empty body.
     """
+    if not_a_file(path):
+        raise DefinitionError(path, "file", NOT_A_FILE)
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as exc:

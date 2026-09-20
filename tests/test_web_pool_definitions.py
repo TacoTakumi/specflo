@@ -15,6 +15,10 @@ the running pool and leaves an audit entry with the acting identity.
 
 A definition that a pool binds is not deleted: the refusal names the pool.
 
+An entry of the definitions folder that is not a regular file, a named pipe
+or a folder, is never opened: the daemon starts and the pages answer at once
+with its fault, it has no form, and a post to it is refused with the fault.
+
 The definitions folder, or one file of it, may be a symlink to a place outside
 the pool directory. The check of a candidate stays in its copy then too: what
 it refuses leaves the real file as it was, and makes none.
@@ -36,7 +40,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from specflo.cli import app as cli
-from specflo.daemon import pool_manage, pool_routes, web
+from specflo.daemon import auth, pool_manage, pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin, definitions
 from specflo.pool import config as pool_config
@@ -44,6 +48,7 @@ from specflo.pool import config as pool_config
 # The pool tests' rig and helpers, imported rather than copied. The rig's
 # fixtures are named here so that pytest finds them from this module.
 from pool.conftest import no_real_llama_swap, pool_rig  # noqa: F401  (fixtures)
+from pool.odd_entries import KINDS, make_odd, within
 from pool.test_lease_request import REBASER, audit_records, write_pool
 from test_web_pool import signed_in
 
@@ -116,6 +121,16 @@ def snapshot(root: Path) -> dict[str, bytes]:
 
 def post(client, url: str, **fields) -> object:
     return client.post(url, data={"session": client.cookies[web.SESSION_COOKIE], **fields})
+
+
+def browser(app) -> TestClient:
+    """The developer's signed-in browser, which gets a fault of the server as
+    the 500 a browser gets, where ``signed_in`` raises it in the test."""
+    client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
+    token = auth.mint_token(app.state.root, "developer")
+    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
+    assert response.status_code == 303, response.text
+    return client
 
 
 def shown(response) -> str:
@@ -450,6 +465,71 @@ def test_deleting_a_definition_no_pool_binds_removes_the_file_and_reloads(root):
         ("developer", "pool_reload", None),
     ]
     assert post(client, delete_url("critic")).status_code == 404
+
+
+# -- an entry that is not a regular file -------------------------------------------
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_daemon_starts_at_once_on_an_entry_that_is_not_a_regular_file(root, kind):
+    odd = make_odd(folder(root) / "odd.md", kind)
+
+    # A named pipe holds its reader for ever, so each read here has a limit.
+    app = within(create_app, root, pipes=[odd])
+
+    assert app.state.pool is None
+    assert [(fault.path, fault.entry) for fault in app.state.pool_errors] == [
+        (odd, "definition 'odd'")
+    ]
+    assert "not a regular file" in str(app.state.pool_errors[0])
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_reload_answers_at_once_with_the_fault_of_such_an_entry(root, kind):
+    app = create_app(root)
+    odd = make_odd(folder(root) / "odd.md", kind)
+
+    faults = within(pool_routes.reload_pool, app, "developer", pipes=[odd])
+
+    assert [fault.path for fault in faults] == [odd]
+    assert "not a regular file" in str(faults[0])
+    assert app.state.pool is not None and len(app.state.pool.config.definitions) == 5
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_such_an_entry_is_listed_with_its_fault_and_has_no_form(root, kind):
+    odd = make_odd(folder(root) / "odd.md", kind)
+    client = browser(within(create_app, root, pipes=[odd]))
+
+    listed = within(client.get, LIST, pipes=[odd])
+    form = within(client.get, edit_url("odd"), pipes=[odd])
+
+    assert listed.status_code == 200
+    assert f"{odd}: definition 'odd': file: not a regular file" in shown(listed)
+    assert f'href="{edit_url("odd")}"' not in listed.text
+    assert form.status_code == 409
+    assert "not a regular file" in shown(form) and "<form" not in form.text
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_a_delete_and_a_save_of_such_an_entry_are_refused_with_its_fault(root, kind):
+    odd = make_odd(folder(root) / "odd.md", kind)
+    client = browser(within(create_app, root, pipes=[odd]))
+    before = snapshot(root)
+
+    deleted = within(post, client, delete_url("odd"), pipes=[odd])
+    saved = within(lambda: post(client, edit_url("odd"), **FIELDS), pipes=[odd])
+    created = within(lambda: post(client, LIST, **{**FIELDS, "name": "odd"}), pipes=[odd])
+
+    assert deleted.status_code == 409
+    assert "was not deleted" in shown(deleted) and "not a regular file" in shown(deleted)
+    assert saved.status_code == 409
+    assert "not a regular file" in shown(saved)
+    assert created.status_code == 400
+    assert "there is a definition 'odd' already" in shown(created)
+    assert odd.is_fifo() if kind == "pipe" else odd.is_dir()
+    assert snapshot(root) == before
+    assert saves(root) == []
 
 
 # -- a folder or a file that is a symlink ---------------------------------------------

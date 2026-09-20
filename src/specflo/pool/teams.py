@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 from .config import ConfigError, Pool, _Entry, _names
-from .definitions import _FRONT_MATTER, NOT_UTF8
+from .definitions import _FRONT_MATTER, NOT_A_FILE, NOT_UTF8, not_a_file
 
 # The directory beside the pool file that holds the teams, one markdown file
 # each; a request names a team by the file's stem.
@@ -70,6 +70,9 @@ def check_teams(
     found: list[Team] = []
     errors: list[ConfigError] = []
     for file in sorted(folder.glob("*.md")):
+        if not_a_file(file):
+            errors.append(ConfigError(file, f"team '{file.stem}'", "file", NOT_A_FILE))
+            continue
         try:
             text = file.read_text(encoding="utf-8")
         except OSError as exc:

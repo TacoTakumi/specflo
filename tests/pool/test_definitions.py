@@ -14,6 +14,8 @@ import pytest
 from specflo.errors import SpecfloError
 from specflo.pool import definitions
 
+from .odd_entries import KINDS, make_odd, opened, within
+
 FULL = """\
 ---
 role: Rebases the work branch and reports conflicts
@@ -202,6 +204,31 @@ def test_a_file_that_is_not_utf8_is_refused_naming_the_file(tmp_path):
 
     assert error.field == "file"
     assert str(path) in str(error) and "not UTF-8" in str(error)
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_an_entry_that_is_not_a_regular_file_is_refused_and_is_never_opened(
+    tmp_path, monkeypatch, kind
+):
+    path = make_odd(tmp_path / "rebaser.md", kind)
+    paths = opened(monkeypatch)
+
+    # A named pipe holds its reader for ever, so the load has a limit.
+    error = within(_refused, path, pipes=[path])
+
+    assert error.field == "file"
+    assert str(path) in str(error) and "not a regular file" in str(error)
+    assert str(path) not in paths
+
+
+def test_a_symlink_to_a_regular_file_loads_as_the_file_does(tmp_path):
+    real = _write(tmp_path, FULL, name="kept-elsewhere.txt")
+    path = tmp_path / "rebaser.md"
+    path.symlink_to(real)
+
+    d = within(definitions.load_definition, path)
+
+    assert (d.name, d.role) == ("rebaser", "Rebases the work branch and reports conflicts")
 
 
 def test_a_definition_is_read_as_utf8_whatever_the_locale_says(tmp_path):

@@ -235,7 +235,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   prints every fault in one run, each naming the file, the entry and the
   field; every pool file is read as UTF-8, and one that is not UTF-8 is a
   fault like any other, for the verb, the daemon's start, a reload and the
-  pool pages. `reload [--remote <name>]` asks a running daemon, as the
+  pool pages. An entry of `definitions/` or `teams/` that is not a regular
+  file (a named pipe, a folder) is a fault too and is never opened, so
+  nothing waits on a named pipe; the pages give it no form, and a save or
+  a delete of it answers `409` with the fault.
+  `reload [--remote <name>]` asks a running daemon, as the
   developer, to read the directory again with no restart; a directory with
   a fault changes nothing, a change that removes a member with a lease out
   is refused whole, so is one that declares a started member under the

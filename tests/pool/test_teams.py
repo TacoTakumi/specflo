@@ -12,8 +12,12 @@ from pathlib import Path
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
-from specflo.pool import config, teams
+from specflo.cli import app as cli
+from specflo.pool import cli_admin, config, teams
+
+from .odd_entries import KINDS, make_odd, opened, within
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "pool"
 
@@ -229,6 +233,64 @@ def test_files_that_are_not_utf8_are_reported_with_the_other_faults_of_the_direc
         ("solo.md", "team 'solo'", "file"),
     ]
     assert [p.name for p in cfg.pools] == ["workers", "critics"]
+
+
+def _odd_entries(directory, kind):
+    """An entry of *kind* under the name of a definition file, and one under
+    the name of a team file."""
+    return [
+        make_odd(directory / config.DEFINITIONS_DIR / "scout.md", kind),
+        make_odd(directory / teams.TEAMS_DIR / "solo.md", kind),
+    ]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_entries_that_are_not_regular_files_are_faults_and_are_never_opened(
+    tmp_path, monkeypatch, kind
+):
+    directory = _write(tmp_path)
+    odd = _odd_entries(directory, kind)
+    paths = opened(monkeypatch)
+
+    # A named pipe holds its reader for ever, so the load has a limit.
+    cfg, errors = within(config.load_pool_config, directory, pipes=odd)
+
+    assert [(e.path, e.entry, e.field) for e in errors] == [
+        (odd[0], "definition 'scout'", "file"),
+        (odd[1], "team 'solo'", "file"),
+    ]
+    assert all("not a regular file" in str(e) for e in errors)
+    assert not set(map(str, odd)) & set(paths)
+    assert [t.name for t in cfg.teams] == ["gamedev"]
+
+
+@pytest.mark.parametrize("kind", KINDS)
+def test_the_validate_verb_answers_at_once_with_the_fault_of_each_such_entry(tmp_path, kind):
+    directory = cli_admin.pool_dir(tmp_path)
+    directory.mkdir()
+    odd = _odd_entries(_write(directory), kind)
+    verb = ["serve", "--root", str(tmp_path), "pool", "validate"]
+
+    result = within(CliRunner().invoke, cli, verb, pipes=odd)
+
+    assert result.exit_code != 0
+    for entry in odd:
+        assert any(
+            str(entry) in line and "not a regular file" in line
+            for line in result.output.splitlines()
+        ), result.output
+
+
+def test_a_team_file_that_is_a_symlink_to_a_regular_file_loads(tmp_path):
+    directory = _write(tmp_path)
+    file = directory / teams.TEAMS_DIR / "gamedev.md"
+    real = file.rename(tmp_path / "kept-elsewhere.txt")
+    file.symlink_to(real)
+
+    cfg, errors = within(config.load_pool_config, directory)
+
+    assert errors == []
+    assert [t.name for t in cfg.teams] == ["gamedev"]
 
 
 def test_a_pool_file_that_is_not_utf8_is_the_only_fault(tmp_path):
