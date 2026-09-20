@@ -48,6 +48,7 @@ from specflo.daemon.poolstore import WaitingRequest
 from specflo.pool import accounts, cli_admin, events, watch
 from specflo.pool import config as pool_config
 from specflo.pool import service as pool_service
+from specflo.pool.console import attach
 from specflo.pool.runner import RunnerError
 from specflo.pool.service import PoolService, UnknownPool
 from specflo.pool.teams import TEAMS_DIR, Role, Team
@@ -60,6 +61,7 @@ from specflo.service.pool_remote import (
 )
 
 from . import test_lease_request
+from .test_console_attach import AGENT, SLOT, start_host
 from .test_lease_request import FIXTURES, audit_records, checkout, runner  # noqa: F401
 from .test_lease_request import pool_daemon as plain_daemon  # noqa: F401  (fixture)
 from .test_runner import STUB, pid_alive, wait_until
@@ -468,6 +470,75 @@ def test_a_directory_that_makes_a_console_of_a_leased_member_is_refused(served, 
     # so the lease still ends as the lease of a member the pool started
     assert served.release(lease["lease_id"], lease["token"]).status_code == 200
     assert wait_until(lambda: not pid_alive(pi))
+
+
+# -- a member declared under the name of an attached console's agent -----------
+
+
+def write_desk(rig, started: str | None = None) -> Path:
+    """The workers and a console slot; with *started*, a member the pool
+    starts under that name as well, in a pool "others"."""
+    members = [member(rig, "w-1"), member(rig, "w-2", model="model-c"), console(SLOT)]
+    pools = [pool("workers", "w-1", "w-2"), pool("desk", SLOT)]
+    if started is not None:
+        members.append(member(rig, started))
+        pools.append(pool("others", started))
+    return write_directory(rig, members=members, pools=pools)
+
+
+def test_a_directory_that_starts_a_member_under_an_attached_agents_name_is_refused(pool_rig):
+    write_desk(pool_rig)
+    served = Served(pool_rig)
+    before = start_host(pool_rig)
+    attach(served.state.pool, SLOT, AGENT)
+    in_force = served.state.pool.config
+    write_desk(pool_rig, started=AGENT)
+
+    response = served.reload()
+
+    # at a grant the pool would find the developer's host under the member's
+    # name, bound to its own token, and stop it as the member's
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert f"member '{AGENT}'" in detail and f"console '{SLOT}'" in detail
+    assert "another name" in detail and "stays in force" in detail
+    assert served.state.pool.config is in_force
+    assert served.lease(pool="others").status_code == 400
+    (fault,) = served.state.pool_errors
+    assert served.developer.get(STATUS_PATH).json()["errors"] == [str(fault)]
+    assert audit_records(pool_rig.root) == []
+    after = pool_rig.status(AGENT)
+    assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+
+    # the member is declared under another name, and the reload passes
+    write_desk(pool_rig, started="w-3")
+    assert served.reload().status_code == 200
+    assert list(served.state.pool_errors) == []
+    assert served.granted(pool="others")["agent"] == "w-3"
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+
+
+def test_a_daemon_started_on_such_a_directory_has_no_pool_until_the_name_is_changed(pool_rig):
+    write_desk(pool_rig)
+    start_host(pool_rig)
+    attach(Served(pool_rig).state.pool, SLOT, AGENT)
+    write_desk(pool_rig, started=AGENT)
+
+    # no reload stands between this directory and the daemon that starts on it
+    again = Served(pool_rig)
+
+    assert again.state.pool is None
+    (fault,) = again.state.pool_errors
+    assert f"member '{AGENT}'" in str(fault) and f"console '{SLOT}'" in str(fault)
+    assert str(fault) in again.lease(pool="others").json()["detail"]
+    # nor does the reload that opens the pool pass it
+    assert again.reload().status_code == 400
+    assert again.state.pool is None
+
+    write_desk(pool_rig, started="w-3")
+    assert again.reload().status_code == 200
+    assert again.granted(pool="others")["agent"] == "w-3"
 
 
 def test_a_lease_on_a_pool_that_is_declared_no_more_is_given_back_as_ever(served, pool_rig):

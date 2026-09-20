@@ -23,6 +23,8 @@ import shutil
 import subprocess
 import sys
 import threading
+import time
+from dataclasses import replace
 
 import pytest
 import yaml
@@ -33,6 +35,7 @@ from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.cli import app
 from specflo.daemon import auth
+from specflo.daemon.poolstore import ConsoleAttachment
 from specflo.pool import cli_admin, console, ledger, service, waiting
 from specflo.pool import config as pool_config
 from specflo.pool.config import Member
@@ -351,6 +354,66 @@ def test_a_slot_with_nothing_attached_is_not_detached(pool_rig):
 
     with pytest.raises(console.ConsoleRefused, match="nothing is attached"):
         console.detach(svc, SLOT)
+
+
+# -- a member declared later under the attached agent's name --------------------
+
+
+def with_a_member_named(rig, name: str):
+    """The console's configuration, and beside the slot a pool "workers" of one
+    member the pool starts under *name*."""
+    first = rig.config(console_member())
+    started = Member(
+        name=name, command=rig.command, backing="local", labels=(), capacity=1,
+        egress="local", model="tc3",
+    )
+    workers = replace(first.pools[0], name="workers", members=(name,))
+    return replace(first, members=(*first.members, started), pools=(*first.pools, workers))
+
+
+def test_the_rows_whose_agent_a_configuration_starts_a_member_under_are_told(pool_rig):
+    rows = [
+        ConsoleAttachment(slot=SLOT, agent=AGENT, attached="2026-01-01T00:00:00.000+00:00"),
+        ConsoleAttachment(
+            slot="desk-2", agent="other-pi.2", attached="2026-01-01T00:00:00.000+00:00",
+            draining=True,
+        ),
+        ConsoleAttachment(slot="desk-3", agent="free-pi", attached="2026-01-01T00:00:00.000+00:00"),
+    ]
+
+    assert console.started_under(pool_rig.config(console_member()), rows) == []
+    # the member's own name, and that of a further lease on it; a slot that
+    # was detached counts, because its host knows the pool's token still
+    (own,) = console.started_under(with_a_member_named(pool_rig, AGENT), rows)
+    assert (own[0].name, own[1].slot) == (AGENT, SLOT)
+    (further,) = console.started_under(with_a_member_named(pool_rig, "other-pi"), rows)
+    assert (further[0].name, further[1].agent) == ("other-pi", "other-pi.2")
+
+
+@pytest.mark.parametrize("detached", [False, True])
+def test_a_grant_on_a_member_under_the_attached_agents_name_leaves_the_host_running(
+    pool_rig, detached
+):
+    svc = pool_rig.service(pool_rig.config(console_member()))
+    before = start_host(pool_rig)
+    console.attach(svc, SLOT, AGENT)
+    if detached:
+        console.detach(svc, SLOT)
+    # a daemon that starts again reads its directory with no reload to refuse
+    # it: the member is declared under the name of the host that was attached
+    later = pool_rig.service(with_a_member_named(pool_rig, AGENT))
+
+    with pytest.raises(service.runner.RunnerError, match=f"agent '{AGENT}' already runs"):
+        later.grant("workers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.list_leases(state=ledger.ACTIVE) == []
+    time.sleep(0.5)  # a stop that was sent would have landed by now
+    after = pool_rig.status(AGENT)
+    assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
+    assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
+    with connect(AGENT) as client:
+        assert client.status()["status"]["state"] == "idle"
 
 
 # -- the verbs, asked of a daemon ---------------------------------------------

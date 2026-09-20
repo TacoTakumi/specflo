@@ -39,7 +39,9 @@ And it is refused for an agent whose name is one the pool starts a member's
 host under, the member's own or that of a further lease on it. Agent names
 are one namespace on the daemon's host, and at a grant on that member the
 pool would find the attached host under the name, bound to its own token,
-and stop it as the member's.
+and stop it as the member's. A member may be declared under such a name
+later, so ``started_under`` tells a configuration's members from the rows,
+for whoever puts a configuration in force to refuse it.
 Otherwise the pool's token is bound on the agent's host, which is all the
 pool does to it until a lease. A host takes one pool's token, and takes the
 same one again, so the host that left a slot may be attached anew.
@@ -49,8 +51,12 @@ the grant names and the name on the lease row (``placement``). Its ending
 stops nothing, and ``leased`` says which leases end so: those on a declared
 console, those on a slot's attached agent when a later configuration
 declares the slot otherwise, and those on a member the configuration no
-longer declares at all. Only a lease that is known to be on a member the
-pool started has its process stopped.
+longer declares at all. So do those on an agent that any row names, of
+whatever slot and draining or not: a configuration that no one could refuse
+may start a member under an attached agent's name, the grant on it finds the
+developer's host there and ends its lease, and that host knows the pool's
+token from its attach. Only a lease that is known to be on a member the pool
+started has its process stopped.
 
 Nothing here talks to an agent host; the runner does, as for every member.
 """
@@ -122,13 +128,33 @@ def unmatched(
 def leased(lease: Lease, config: PoolConfig, rows: Iterable[ConsoleAttachment]) -> bool:
     """Does *lease* run on a developer's process, which its ending must leave
     running? It does not when *config* declares its member as one the pool
-    starts and no row of *rows* attached the lease's agent under that name."""
+    starts and no row of *rows* names the lease's agent."""
     member = next((m for m in config.members if m.name == lease.member), None)
     if member is None or member.kind == CONSOLE:
         # A member that is declared no more is not known to be the pool's own.
         return True
+    # The row of any slot, detached or not: the host that was attached under
+    # the name knows the pool's token, and would be stopped as the member's.
     agent = ledger.agent_of(lease)
-    return any(row.slot == lease.member and row.agent == agent for row in rows)
+    return any(row.agent == agent for row in rows)
+
+
+def started_under(
+    config: PoolConfig, rows: Iterable[ConsoleAttachment]
+) -> list[tuple[Member, ConsoleAttachment]]:
+    """The rows of *rows* whose agent's name is one the pool starts a host
+    under with *config* in force, each with the member it starts there.
+
+    Every row counts, that of a slot that was detached or is declared no more
+    too: a detach takes nothing from the host, which knows the pool's token
+    until it ends, and a grant on the member would stop it as the member's.
+    """
+    found = []
+    for row in rows:
+        member = _started_as(config, row.agent)
+        if member is not None:
+            found.append((member, row))
+    return found
 
 
 def _gone(row: ConsoleAttachment, statuses: Mapping[str, object] | None) -> bool:

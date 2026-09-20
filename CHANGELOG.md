@@ -234,7 +234,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   pool pages. `reload [--remote <name>]` asks a running daemon, as the
   developer, to read the directory again with no restart; a directory with
   a fault changes nothing, a change that removes a member with a lease out
-  is refused whole, and a reload that passes brings to life a pool that
+  is refused whole, so is one that declares a started member under the
+  name of an agent that was attached to a console, and a reload that
+  passes brings to life a pool that
   was invalid at start. The daemon's three background readers (llama-swap
   events, provider refusals, account keys) ask at every pass which
   configuration is in force, so a member or an account that a reload
@@ -355,7 +357,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   name the pool starts a member's host under is refused at attach. A host
   that answers under a member's name and that the pool did not start is
   never the pool's to stop: a request for that member is refused naming
-  the agent, and the host runs on with nothing written beside it.
+  the agent, and the host runs on with nothing written beside it; the
+  same holds for an attached console's host, whatever member a
+  configuration later declares under its name.
 - **The pool in the web UI.** `/pool` shows every pool, waiting request,
   member, lease, account, standing entry and recent transition to the
   requester and the developer; it carries nothing a member wrote and no

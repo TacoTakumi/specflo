@@ -30,6 +30,14 @@ lease named, and it passes once the lease has ended. A pool or a team that
 is declared no more stands in no one's way: its leases are given back as
 ever, and a request that waits for it is refused at its next look.
 
+Agent names are one namespace on this host, and a developer's host that was
+attached to a console knows the pool's token. A member the pool starts under
+the name of such a host would find it there at its first grant and stop it as
+its own. So a directory that declares one is not put in force either, with
+the member, the agent and its slot named, and it passes once the member has
+another name. No reload stands before the directory the daemon starts on, so
+the same is asked where the pool opens, and such a directory gives no pool.
+
 The routes are written out, like the product routes. Each one runs as the
 identity behind its bearer token, and one that changes the pool appends an
 audit record with that identity and the lease it acted on. The service takes
@@ -166,6 +174,9 @@ def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
     if not directory.is_dir():
         return None, ()
     config, errors = load_pool_config(directory)
+    if not errors:
+        with open_pool_store(root) as store:
+            errors = attached_names(config, store)
     if errors:
         for error in errors:
             _log.warning("pool configuration: %s", error)
@@ -236,6 +247,31 @@ def held_members(old: PoolConfig, new: PoolConfig, store: PoolStore) -> list[Con
     return faults
 
 
+def attached_names(new: PoolConfig, store: PoolStore) -> list[ConfigError]:
+    """What else forbids *new*: each member it starts under the name of an
+    agent that was attached to a console, whatever the slot's state now.
+
+    The host of that agent is its developer's, and it knows the pool's token
+    from the attach. A grant on the member would find it under the member's
+    name and stop it as the member's.
+    """
+    return [
+        ConfigError(
+            new.path, f"member '{member.name}'", "name",
+            f"the pool would start its host as '{row.agent}', the name of the agent that was "
+            f"attached to console '{row.slot}': that host is its developer's and knows the "
+            "pool's token, and a grant on the member would stop it as the member's. Declare "
+            "the member under another name, then reload.",
+        )
+        for member, row in console.started_under(new, store.list_consoles())
+    ]
+
+
+def _in_the_way(old: PoolConfig, new: PoolConfig, store: PoolStore) -> list[ConfigError]:
+    """All that forbids *new* in place of *old* now, for the service's swap."""
+    return held_members(old, new, store) + attached_names(new, store)
+
+
 def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
     """Read the pool directory of the daemon application *app* again, as
     *identity*, and put it in force; the faults that kept it from that, none
@@ -258,7 +294,7 @@ def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
         config, errors = load_pool_config(pool_dir(root))
         for error in errors:
             _log.warning("pool configuration: %s", error)
-        faults = tuple(errors) or service.swap(config, held_members)
+        faults = tuple(errors) or service.swap(config, _in_the_way)
     app.state.pool_errors = faults
     if not faults:
         audit(root, identity, "pool_reload", None, None)
