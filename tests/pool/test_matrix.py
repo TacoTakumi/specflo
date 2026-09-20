@@ -141,3 +141,11 @@ def test_a_var_naming_an_absent_model_is_refused(tmp_path):
 def test_a_missing_file_is_refused(tmp_path):
     with pytest.raises(SpecfloError, match="missing.yaml"):
         matrix.read(tmp_path / "missing.yaml")
+
+
+def test_a_file_that_is_not_utf8_is_refused_naming_the_file(tmp_path):
+    path = tmp_path / "llama-swap.yaml"
+    path.write_bytes(b"models:\n  m1: {cmd: caf\xe9}\n")
+
+    with pytest.raises(SpecfloError, match="llama-swap.yaml is not UTF-8"):
+        matrix.read(path)

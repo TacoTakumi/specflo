@@ -5,6 +5,10 @@ the body is the system prompt. A definition that cannot be trusted as written
 is refused with an error naming the file and the field at fault.
 """
 
+import os
+import subprocess
+import sys
+
 import pytest
 
 from specflo.errors import SpecfloError
@@ -188,6 +192,34 @@ def test_a_missing_file_is_refused_naming_the_file(tmp_path):
     error = _refused(path)
 
     assert str(path) in str(error)
+
+
+def test_a_file_that_is_not_utf8_is_refused_naming_the_file(tmp_path):
+    path = tmp_path / "rebaser.md"
+    path.write_bytes(b"---\nrole: Caf\xe9 worker\n---\nDo the task.\n")
+
+    error = _refused(path)
+
+    assert error.field == "file"
+    assert str(path) in str(error) and "not UTF-8" in str(error)
+
+
+def test_a_definition_is_read_as_utf8_whatever_the_locale_says(tmp_path):
+    path = tmp_path / "rebaser.md"
+    path.write_bytes(b"---\nrole: Worker\n---\nAnswer \xe2\x80\x9cdone\xe2\x80\x9d.\n")
+    code = (
+        "import sys; from pathlib import Path; from specflo.pool import definitions; "
+        "print(ascii(definitions.load_definition(Path(sys.argv[1])).prompt))"
+    )
+    # A daemon started by a service manager often has no locale at all.
+    env = {**os.environ, "LC_ALL": "C", "PYTHONCOERCECLOCALE": "0", "PYTHONUTF8": "0"}
+
+    done = subprocess.run(
+        [sys.executable, "-c", code, str(path)], capture_output=True, text=True, env=env
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == ascii("Answer \u201cdone\u201d.")
 
 
 def test_a_refusal_is_a_user_facing_error(tmp_path):

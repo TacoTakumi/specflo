@@ -255,6 +255,17 @@ def test_a_llama_swap_configuration_that_cannot_be_read_is_refused_once(tmp_path
     assert [(e.entry, e.field) for e in errors] == [(config.FILE, "llama_swap")]
 
 
+def test_a_llama_swap_configuration_that_is_not_utf8_is_refused_once(tmp_path):
+    path = _write(tmp_path)
+    swap = tmp_path / "llama-swap.yaml"
+    swap.write_bytes(b"# caf\xe9\n" + swap.read_bytes())
+
+    _, errors = config.check_pool_file(path)
+
+    assert [(e.path, e.entry, e.field) for e in errors] == [(path, config.FILE, "llama_swap")]
+    assert str(swap) in str(errors[0]) and "not UTF-8" in str(errors[0])
+
+
 # --- hosted members ------------------------------------------------------
 
 
@@ -367,6 +378,17 @@ def test_a_file_that_is_not_yaml_is_refused(tmp_path):
     path.write_text("accounts: [unclosed\n", encoding="utf-8")
 
     assert _refused(path).entry == config.FILE
+
+
+def test_a_file_that_is_not_utf8_is_refused_naming_the_file(tmp_path):
+    # Latin-1 from an editor's default: a fault of the file, not a traceback.
+    path = tmp_path / "pool.yaml"
+    path.write_bytes(b"accounts: []  # caf\xe9\n")
+
+    error = _refused(path)
+
+    assert (error.path, error.entry, error.field) == (path, config.FILE, "file")
+    assert "not UTF-8" in str(error)
 
 
 def test_a_file_that_is_not_a_mapping_is_refused(tmp_path):

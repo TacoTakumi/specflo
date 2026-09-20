@@ -502,7 +502,7 @@ def read_team(file: Path, pools: dict[str, Pool]) -> Team | None:
     the form has no field for is corrected by hand."""
     try:
         team, faults = check_team(file.read_text(encoding="utf-8"), file, pools)
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     mended_by_hand = [fault for fault in faults if fault.field not in ("pool", "count")]
     if mended_by_hand or posted_roles(role_lines(team)) != (team.roles, []):

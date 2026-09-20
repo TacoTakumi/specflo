@@ -49,7 +49,13 @@ import yaml
 
 from ..errors import SpecfloError
 from . import matrix
-from .definitions import EGRESS_CLASSES, AgentDefinition, DefinitionError, load_definition
+from .definitions import (
+    EGRESS_CLASSES,
+    NOT_UTF8,
+    AgentDefinition,
+    DefinitionError,
+    load_definition,
+)
 
 if TYPE_CHECKING:
     from .teams import Team
@@ -241,6 +247,8 @@ def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str
     except OSError as exc:
         problem = f"cannot be read ({exc.strerror})."
         return PoolConfig(path), [ConfigError(path, FILE, "file", problem)], set()
+    except UnicodeDecodeError:
+        return PoolConfig(path), [ConfigError(path, FILE, "file", NOT_UTF8)], set()
     except yaml.YAMLError:
         return PoolConfig(path), [ConfigError(path, FILE, "file", "not valid YAML.")], set()
     if data is None:

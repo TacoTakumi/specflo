@@ -40,6 +40,10 @@ FIELDS: tuple[str, ...] = ("role", *LIST_FIELDS, "egress", "project_context")
 FRONT_MATTER = "front matter"
 BODY = "body"
 
+# The problem of a file whose bytes are not UTF-8. Every file of the pool
+# directory is read as UTF-8, whatever the locale of the daemon says.
+NOT_UTF8 = "not UTF-8 text; save the file as UTF-8."
+
 # Front matter opens on the first line and closes on the next line that is
 # only "---"; a later "---" rule belongs to the prompt.
 _FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)^---[ \t]*$\n?(.*)\Z", re.DOTALL | re.MULTILINE)
@@ -79,9 +83,11 @@ def load_definition(path: Path) -> AgentDefinition:
     value or an unknown egress class, or has an empty body.
     """
     try:
-        text = path.read_text()
+        text = path.read_text(encoding="utf-8")
     except OSError as exc:
         raise DefinitionError(path, "file", f"cannot be read ({exc.strerror}).") from exc
+    except UnicodeDecodeError as exc:
+        raise DefinitionError(path, "file", NOT_UTF8) from exc
     return parse_definition(text, path)
 
 

@@ -208,6 +208,40 @@ def test_a_pool_file_that_cannot_be_read_is_the_only_fault(tmp_path):
     assert cfg.teams == ()
 
 
+def test_files_that_are_not_utf8_are_reported_with_the_other_faults_of_the_directory(tmp_path):
+    directory = _write(
+        tmp_path,
+        {"gamedev": _team([DESIGNER, _changed(REVIEWER, pool="testers")])},
+        members=(CODER_A, _changed(CODER_B, capacity=0), HOSTED),
+        pools=(_changed(WORKERS, members=["coder-a"], size=1), CRITICS),
+    )
+    (directory / config.DEFINITIONS_DIR / "scout.md").write_bytes(
+        WORKER.replace("the worker", "the caf\xe9 scout").encode("latin-1")
+    )
+    (directory / teams.TEAMS_DIR / "solo.md").write_bytes(b"---\nroles: []\n---\n\xe9\n")
+
+    cfg, errors = config.load_pool_config(directory)
+
+    assert [(e.path.name, e.entry, e.field) for e in errors] == [
+        ("pool.yaml", "member 'coder-b'", "capacity"),
+        ("scout.md", "definition 'scout'", "file"),
+        ("gamedev.md", "team 'gamedev' role 'reviewer'", "pool"),
+        ("solo.md", "team 'solo'", "file"),
+    ]
+    assert [p.name for p in cfg.pools] == ["workers", "critics"]
+
+
+def test_a_pool_file_that_is_not_utf8_is_the_only_fault(tmp_path):
+    directory = _write(tmp_path)
+    (directory / config.POOL_FILE).write_bytes(b"accounts: []  # caf\xe9\n")
+
+    cfg, errors = config.load_pool_config(directory)
+
+    assert [(e.entry, e.field) for e in errors] == [(config.FILE, "file")]
+    assert "not UTF-8" in str(errors[0])
+    assert cfg.teams == ()
+
+
 # --- a role that can never be granted ------------------------------------
 
 
@@ -331,6 +365,18 @@ def test_a_file_without_usable_front_matter_is_refused(tmp_path, text):
     error = _one_error(_write(tmp_path, {"solo": text}))
 
     assert (error.entry, error.field) == ("team 'solo'", teams.FRONT_MATTER)
+
+
+def test_a_team_file_that_is_not_utf8_is_refused_naming_the_file(tmp_path):
+    directory = _write(tmp_path)
+    file = directory / teams.TEAMS_DIR / "solo.md"
+    file.write_bytes(b"---\nroles: []\n---\n\nThe caf\xe9 team.\n")
+
+    cfg, errors = config.load_pool_config(directory)
+
+    assert [(e.path, e.entry, e.field) for e in errors] == [(file, "team 'solo'", "file")]
+    assert "not UTF-8" in str(errors[0])
+    assert [t.name for t in cfg.teams] == ["gamedev"]
 
 
 def test_every_fault_in_a_team_is_reported_in_one_pass(tmp_path):

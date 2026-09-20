@@ -62,6 +62,8 @@ def read(path: Path | str) -> SwapConfig:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except OSError as exc:
         raise SpecfloError(f"cannot read llama-swap configuration {path}: {exc}") from exc
+    except UnicodeDecodeError as exc:
+        raise SpecfloError(f"llama-swap configuration {path} is not UTF-8 text") from exc
     except yaml.YAMLError as exc:
         raise SpecfloError(f"llama-swap configuration {path} is not valid YAML: {exc}") from exc
     if not isinstance(data, dict):

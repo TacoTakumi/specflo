@@ -25,7 +25,7 @@ from pathlib import Path
 import yaml
 
 from .config import ConfigError, Pool, _Entry, _names
-from .definitions import _FRONT_MATTER
+from .definitions import _FRONT_MATTER, NOT_UTF8
 
 # The directory beside the pool file that holds the teams, one markdown file
 # each; a request names a team by the file's stem.
@@ -75,6 +75,9 @@ def check_teams(
         except OSError as exc:
             problem = f"cannot be read ({exc.strerror})."
             errors.append(ConfigError(file, f"team '{file.stem}'", "file", problem))
+            continue
+        except UnicodeDecodeError:
+            errors.append(ConfigError(file, f"team '{file.stem}'", "file", NOT_UTF8))
             continue
         team, faults = check_team(text, file, pools, refused)
         errors.extend(faults)

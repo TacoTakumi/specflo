@@ -229,7 +229,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   `model-update-checker`, `landscape-scanner`), keeping any file that
   exists. `validate` checks the whole directory without a daemon and
   prints every fault in one run, each naming the file, the entry and the
-  field. `reload [--remote <name>]` asks a running daemon, as the
+  field; every pool file is read as UTF-8, and one that is not UTF-8 is a
+  fault like any other, for the verb, the daemon's start, a reload and the
+  pool pages. `reload [--remote <name>]` asks a running daemon, as the
   developer, to read the directory again with no restart; a directory with
   a fault changes nothing, a change that removes a member with a lease out
   is refused whole, and a reload that passes brings to life a pool that

@@ -212,6 +212,18 @@ def test_a_team_that_a_count_keeps_from_standing_has_a_form_and_a_save_mends_it(
     path = folder(team_root) / "review.md"
     path.write_text(teams.serialise_team(replace(
         REVIEW, roles=(REVIEW.roles[0], replace(REVIEW.roles[1], count=4)),
+def test_a_file_that_is_not_utf8_is_listed_with_its_fault_and_has_no_form(team_root):
+    (folder(team_root) / "review.md").write_bytes(b"---\nentry: caf\xe9\n---\n")
+    client = signed_in(create_app(team_root))
+
+    response = client.get(LIST)
+
+    assert response.status_code == 200
+    assert "not UTF-8 text" in shown(response)
+    assert f'href="{edit_url("review")}"' not in response.text
+    assert client.get(edit_url("review")).status_code == 409
+
+
     )), encoding="utf-8")
     app = create_app(team_root)
     assert app.state.pool is None

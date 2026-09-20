@@ -8,26 +8,38 @@ admin has to correct. The faults are kept on the application for the pages
 that show them. A root with no pool directory has no faults and no pool, and
 says so; a directory that stands is served.
 
+A file an editor saved as Latin-1 is one more fault of the directory. It is
+named with the others by the verb, by the pool routes and on the pool page,
+and a reload onto it changes nothing.
+
 The directories are the validation verb's own, the daemon and the checkout
 the request verb's.
 """
 
 from __future__ import annotations
 
+from html import unescape
+
 import pytest
 from fastapi.testclient import TestClient
 
 from specflo import daemon
 from specflo.cli import app
-from specflo.daemon import auth, pool_routes
+from specflo.daemon import auth, pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
 from specflo.service import wire
-from specflo.service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH, release_path
+from specflo.service.pool_remote import (
+    HELD_PATH,
+    LEASES_PATH,
+    RELOAD_PATH,
+    STATUS_PATH,
+    release_path,
+)
 
 from . import test_lease_request
-from .test_cli_validate import _write, _write_three_faults
+from .test_cli_validate import WORKER, _validate, _write, _write_three_faults
 from .test_lease_request import checkout, pool_daemon, runner  # noqa: F401  (fixtures)
 
 NO_POOL = "No pool is configured on this daemon."
@@ -138,6 +150,101 @@ def test_the_request_verb_prints_every_fault(monkeypatch, request):
         assert " ".join(fault.split()) in output, result.output
     assert "Traceback" not in result.output
     assert request.getfixturevalue("pool_rig").pane_names() == []
+
+
+# -- a file that is not UTF-8 --------------------------------------------------
+
+
+def save_as_latin1(root):
+    """A hand edit from an editor that does not write UTF-8: a definition and
+    a team file of the pool directory under *root*; the two files."""
+    directory = cli_admin.pool_dir(root)
+    definition = directory / pool_config.DEFINITIONS_DIR / "barista.md"
+    definition.write_bytes(WORKER.replace("the worker", "the caf\xe9 worker").encode("latin-1"))
+    team = directory / "teams" / "crew.md"
+    team.write_bytes(b"---\nroles: []\n---\n\nThe caf\xe9 crew.\n")
+    return definition, team
+
+
+@pytest.fixture
+def latin1_root(tmp_path):
+    """The directory with three faults, and the two files on top of them."""
+    root = _write_three_faults(tmp_path / "daemon")
+    files = save_as_latin1(root)
+    faults = faults_of(root)
+    assert len(faults) == 5
+    for file in files:
+        assert [f for f in faults if str(file) in f and "not UTF-8" in f], (file, faults)
+    return root
+
+
+def test_a_daemon_on_a_directory_with_a_file_that_is_not_utf8_serves_projects(latin1_root):
+    client = client_on(latin1_root)
+
+    created = client.post(wire.route_path("create_project"), json={"name": "My Thing"})
+    assert created.status_code == 200, created.text
+
+
+def test_a_pool_request_is_answered_with_the_file_that_is_not_utf8_and_the_other_faults(
+    latin1_root, tmp_path
+):
+    client = client_on(latin1_root)
+
+    response = client.post(LEASES_PATH, json={"pool": "workers", "cwd": str(tmp_path)})
+
+    assert response.status_code == 400
+    for fault in faults_of(latin1_root):
+        assert fault in response.json()["detail"]
+
+
+def test_the_pool_page_lists_the_file_that_is_not_utf8_with_the_other_faults(latin1_root):
+    application = create_app(latin1_root)
+    client = TestClient(application, follow_redirects=False)
+    token = auth.mint_token(latin1_root, "developer")
+    signed_in = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
+    assert signed_in.status_code == 303, signed_in.text
+
+    page = client.get("/pool")
+
+    assert page.status_code == 200, page.text
+    shown = unescape(page.text)
+    for fault in faults_of(latin1_root):
+        assert fault in shown
+
+
+def test_the_validate_verb_prints_the_file_that_is_not_utf8_and_no_traceback(tmp_path):
+    root = _write_three_faults(tmp_path / "daemon")
+    files = save_as_latin1(root)
+
+    result = _validate(root)
+
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+    assert result.exit_code == 1
+    output = " ".join(result.output.split())
+    for file in files:
+        assert f"{file}: " in output and "not UTF-8" in output, result.output
+    assert "member 'coder-b'" in output and "5 errors" in output
+    assert "Traceback" not in result.output
+
+
+def test_a_reload_onto_a_file_that_is_not_utf8_keeps_the_configuration_in_force(tmp_path):
+    root = _write(tmp_path / "daemon")
+    application = create_app(root)
+    client = TestClient(application)
+    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    in_force = application.state.pool.config
+    save_as_latin1(root)
+
+    response = client.post(RELOAD_PATH, json={})
+
+    assert response.status_code == 400, response.text
+    faults = faults_of(root)
+    assert len(faults) == 2
+    for fault in faults:
+        assert fault in response.json()["detail"]
+    assert application.state.pool.config is in_force
+    assert [str(fault) for fault in application.state.pool_errors] == faults
+    assert client.get(STATUS_PATH).status_code == 200
 
 
 # -- a configuration that stands, and none ------------------------------------
