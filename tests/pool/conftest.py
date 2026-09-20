@@ -17,6 +17,7 @@ import pytest
 
 from specflo.agent.statefiles import AgentPaths, read_status
 from specflo.daemon.poolstore import PoolStore, open_pool_store
+from specflo.pool import accounts
 from specflo.pool.config import Member, Pool, PoolConfig
 from specflo.pool.service import PoolService
 
@@ -88,6 +89,14 @@ def no_real_llama_swap(monkeypatch):
     # A test daemon that serves starts the events reader; point it at a closed
     # port so no test reads a real llama-swap, whatever runs on this machine.
     monkeypatch.setenv("SPECFLO_LLAMA_SWAP_URL", "http://127.0.0.1:1")
+
+
+@pytest.fixture(autouse=True)
+def no_real_provider(monkeypatch):
+    # A test daemon that serves a pool with an account starts the accounts
+    # reader; point every key read that is handed no client at a closed port,
+    # so no test asks the real provider anything, whatever keys are set here.
+    monkeypatch.setattr(accounts, "PROVIDER_URL", "http://127.0.0.1:1")
 
 
 @pytest.fixture

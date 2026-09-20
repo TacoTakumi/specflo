@@ -35,7 +35,7 @@ from specflo.service.pool_remote import HELD_PATH, LEASES_PATH, release_path
 
 # The pool tests' rig and helpers, imported rather than copied. The rig's
 # fixtures are named here so that pytest finds them from this module.
-from pool.conftest import no_real_llama_swap, pool_rig  # noqa: F401  (fixtures)
+from pool.conftest import no_real_llama_swap, no_real_provider, pool_rig  # noqa: F401  (fixtures)
 from pool.test_cli_validate import _write_three_faults
 from pool.test_console_attach import console_member
 from pool.test_events_reloads import T0, lease_on

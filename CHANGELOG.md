@@ -274,10 +274,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   pool with no member under the ceiling is refused at once. Validation
   refuses a `no-train` member on an `anthropic/` model, for which pi sends
   no routing flags.
-- **Closed accounts.** When a provider answers a hosted member's call with
-  a 402 for the key's limit or the account's credits, the daemon reads the
-  key (`GET /api/v1/key`, its one provider call) and closes the account
-  until the limit resets. A closed account ends no lease; a request that
+- **Closed accounts.** The serving daemon reads each declared account's
+  key (`GET /api/v1/key`, its one provider call) at start and every 15
+  minutes, shows the figures on the pool page, and closes an account whose
+  daily free-request quota is used up until the next daily reset; a read
+  that fails closes nothing. When a provider answers a hosted member's call
+  with a 402 for the key's limit or the account's credits, the daemon reads
+  the key again and closes the account until the limit resets. A closed account ends no lease; a request that
   only closed accounts could serve is refused at once, naming each account
   and its reopen time. A 402 for the in-flight spending budget leaves the
   account open and the same prompt is sent again after 5 s. The pool holds

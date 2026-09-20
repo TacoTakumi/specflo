@@ -18,14 +18,23 @@ limit or for the account's credits. The account is then closed until the
 key's limit resets: daily, weekly or monthly, as the key read says, on the
 UTC day, the UTC week from Monday and the UTC month.
 
+While the daemon serves a pool that declares an account, a reader reads every
+declared account's key: once when it starts and again after each
+``READ_INTERVAL``. Which accounts are declared is asked of the pool service at
+each read, so a configuration put in force later is followed. Each read runs
+off the event loop, and no request the daemon serves asks the provider
+anything: a grant and a page read the store.
+
 The key goes into the request's authorization header and nowhere else: no
 record, error or message carries it.
 """
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import os
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import datetime, timedelta, timezone
 
 import httpx
@@ -37,9 +46,15 @@ from .config import Account
 PROVIDER_URL = "https://openrouter.ai"
 KEY_READ_PATH = "/api/v1/key"
 READ_TIMEOUT = 10.0
+# The time between two routine reads of every account's key, in seconds. The
+# figures change slowly and the provider is someone else's service.
+READ_INTERVAL = 15 * 60
 
 # The time now, timezone-aware. Passed in, so a test hands over a fake one.
 Clock = Callable[[], datetime]
+
+
+_log = logging.getLogger(__name__)
 
 
 class _ReadError(Exception):
@@ -218,3 +233,51 @@ def _number(data: dict, field: str, *, optional: bool = True) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _ReadError(f"provider answer to the key read has no number in {field!r}")
     return float(value)
+
+
+class AccountsReader:
+    """Reads the key of every account the pool *service* declares, until cancelled.
+
+    ``client`` is what the provider is asked through; a client is opened for
+    each read without one. ``sleep`` is the loop's wait. Both are for a test
+    to hand in.
+    """
+
+    def __init__(
+        self,
+        service,
+        *,
+        client: httpx.Client | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self.service = service
+        self.client = client
+        self.sleep = sleep
+
+    def read(self) -> list[poolstore.Account]:
+        """One read of every account the configuration in force declares; the
+        records as stored."""
+        service = self.service
+        with service.open_store() as store:
+            return read_accounts(
+                service.config.accounts, store,
+                clock=service.clock, client=self.client, environ=service.environ,
+            )
+
+    async def run(self) -> None:
+        """Read now and again after each interval. A read that fails is said
+        and the next one is made all the same."""
+        while True:
+            try:
+                await asyncio.to_thread(self.read)
+            except Exception as exc:
+                _log.warning("the pool's read of its accounts' keys: %s", exc)
+            await self.sleep(READ_INTERVAL)
+
+
+def reader_for(service) -> AccountsReader | None:
+    """The reader for the pool *service*; None without a pool, and for a pool
+    that declares no account, which has no key to read."""
+    if service is None or not service.config.accounts:
+        return None
+    return AccountsReader(service)

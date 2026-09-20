@@ -497,7 +497,9 @@ Each lease on a started member runs a fresh pi, started through `specflo agent s
 
 A member's egress class says where its prompts go: `local` (llama-swap on the daemon's host), `no-train` (a hosted provider that is told to collect and retain nothing) or `open` (any hosted provider). A request is served only by a member no more open than its ceiling, which is the strictest of three: the `--egress` of the request (`no-train` when none is given), the class the pool's definition accepts, and the class the requesting project pins. `specflo egress <class>` pins the active project; the client sends only the project's slug and the daemon reads the pin from its own record, so nothing in a request widens it. There is no unpin verb. A pool with no member under the ceiling is refused at once and never waited on.
 
-The provider can refuse a hosted member's call with a 402. When the key's credit limit or the account's credits are used up, the daemon reads the key (`GET /api/v1/key`, the one provider call it makes) and closes the account until the key's limit resets, or until the next midnight UTC when the read says nothing of a reset. A closed account ends no lease, but its members take no new one: a request that only closed accounts could serve is refused at once, naming each account and its reopen time. When the 402 is the in-flight spending budget, the account stays open and the daemon sends the member the same prompt again. A 429 is left to pi, which retries it.
+While it serves, the daemon reads the key of every declared account (`GET /api/v1/key`, the one provider call it makes): once when it starts and every 15 minutes after that. The figures show on `/pool`. An account with no free-model requests left for the day is closed until the next midnight UTC. A read that fails shows on `/pool` as the read error and closes nothing.
+
+The provider can refuse a hosted member's call with a 402. When the key's credit limit or the account's credits are used up, the daemon reads the key again and closes the account until the key's limit resets, or until the next midnight UTC when the read says nothing of a reset. A closed account ends no lease, but its members take no new one: a request that only closed accounts could serve is refused at once, naming each account and its reopen time. When the 402 is the in-flight spending budget, the account stays open and the daemon sends the member the same prompt again. A 429 is left to pi, which retries it.
 
 ### The ledger
 
@@ -532,7 +534,6 @@ For a hosted project, a task's `Needs` name that is one of the daemon's pools is
 - There is no sandbox. A member's pi runs as the daemon's user with the tools its definition lists; what the member is given (tools, environment, credentials) is the only hard limit on it.
 - The deny list is a guard against mistakes, not a security boundary. It matches the text of a bash command, so `git push` in the list stops `git push origin main` and does not stop `git -C repo push`, an alias or a script. A list that cannot be read blocks every bash call.
 - Stock pi does not carry a provider 402's `Retry-After`, so an in-flight budget refusal is sent again after a fixed 5 s, with no cap on the number of tries.
-- Account figures are read from the provider only when a 402 closes an account; nothing reads them on a schedule, so an exhausted daily free-request quota closes no account by itself.
 - pi sends the `no-train` routing flags only from its OpenAI-completions client. Validation refuses the known case (`anthropic/` models); a `no-train` member with no `--model` in its command passes and runs pi's provider default.
 - Token files do not record their remote, so with several remotes `lease list` and `lease release` present every stored token to the remote they run on.
 - Skill names in a definition are passed to `--skill` as written and not resolved to paths, and pi's own skill discovery stays on.
@@ -543,7 +544,7 @@ For a hosted project, a task's `Needs` name that is one of the daemon's pools is
 - `project_agent_model` and `project_agent_account` are written by hand; no verb sets them and `pool validate` does not check them.
 - `status`, `checkpoint` and the web project pages do not read daemon pool capacity; only `task list` and `validate plan` do.
 - A request from a checkout whose active project is local, or that has none, carries no project and gets no pin.
-- After a reload the llama-swap events reader and the provider-refusal watcher keep the configuration they started with until the daemon restarts, and a pool brought to life by a reload has neither.
+- After a reload the llama-swap events reader and the provider-refusal watcher keep the configuration they started with until the daemon restarts, and a pool brought to life by a reload has neither. The account key reader follows a reload, but a pool that declared no account when the daemon started gets no reader until a restart.
 - A console host remembers the lease tokens it has cleared in memory only, so a host that was started again accepts a former holder's token until its next lease.
 - A host keeps the 16 newest ended records per member; an older former holder gets the plain refusal, exit 1.
 - A member's `events.jsonl` is a plain file that any process of the same user can read.

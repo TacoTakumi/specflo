@@ -31,7 +31,7 @@ from specflo.pool.runner import RunnerError
 
 # The pool tests' rig and the pool page's helpers, imported rather than copied.
 # The fixtures are named here so that pytest finds them from this module.
-from pool.conftest import no_real_llama_swap, pool_rig  # noqa: F401  (fixtures)
+from pool.conftest import no_real_llama_swap, no_real_provider, pool_rig  # noqa: F401  (fixtures)
 from pool.test_cli_validate import _write_three_faults
 from pool.test_lease_request import audit_records
 from pool.test_preempt import stamps  # noqa: F401  (fixture)
