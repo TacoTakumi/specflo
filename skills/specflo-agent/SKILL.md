@@ -114,7 +114,9 @@ are refused - start your own agents as before.
   The member starts in `--cwd`, by default your working directory. The token
   files and the remote's token are under the checkout's `.specflo`, and a
   member with bash or read that starts in the checkout can read them: for a
-  member that is not trusted, pass a `--cwd` outside the checkout.
+  member that is not trusted, pass a `--cwd` outside the checkout. That keeps
+  them out of its working tree, and no further: such a member runs as the
+  same user on the same host and can still open them by absolute path.
 - `specflo lease release <lease> [--remote NAME] [--json]` - give the lease
   back, always, when the work is over or has failed. A lease that has ended
   already is reported as it ended.
