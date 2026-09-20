@@ -15,6 +15,8 @@ clock starts at the real time, because the host stamps with its own.
 from __future__ import annotations
 
 import ast
+import dataclasses
+import logging
 import os
 import signal
 from datetime import datetime, timedelta, timezone
@@ -29,7 +31,7 @@ from specflo.agent.cli import agent_app
 from specflo.agent.client import connect
 from specflo.cli import app
 from specflo.daemon.poolstore import Lease, Resource
-from specflo.pool import expiry, runner, service
+from specflo.pool import expiry, runner, service, waiting
 from specflo.pool.service import Grant
 
 from .conftest import START
@@ -277,6 +279,161 @@ def test_a_member_whose_host_died_mid_turn_is_not_working_for_ever(pool_rig):
 
 def test_the_runner_reads_no_status_for_a_member_that_never_ran(pool_rig):
     assert runner.status("local-1") is None
+
+
+# -- a member that does not stop -----------------------------------------------
+
+
+def two_pools(pool_rig):
+    """Two pools of one member each: "rebasers" on local-1, "critics" on hosted-1."""
+    local, hosted = pool_rig.local_member(), pool_rig.hosted_member()
+    config = pool_rig.config(local)
+    (rebasers,) = config.pools
+    critics = dataclasses.replace(rebasers, name="critics", members=(hosted.name,))
+    return dataclasses.replace(config, members=(local, hosted), pools=(rebasers, critics))
+
+
+def asks(pool_rig, svc, pool: str, label: str) -> waiting.Waiting:
+    ids = iter([f"request-{label}"])
+    return waiting.Waiting(
+        svc, pool, holder_label=label, cwd=pool_rig.work, wait=3600, mint_id=lambda: next(ids)
+    )
+
+
+def does_not_stop(monkeypatch, agent: str) -> list[str]:
+    """From now on the stop of *agent* fails, as a host that gives no answer
+    makes it fail; the agents a stop was asked of. The process is stopped all
+    the same, so the test leaves none behind."""
+    real_stop, asked = runner.stop, []
+
+    def stop(name, cause, **tokens):
+        asked.append(name)
+        real_stop(name, cause, **tokens)
+        if name == agent:
+            raise runner.RunnerError(f"member '{name}' did not stop: no answer in 20 s")
+
+    monkeypatch.setattr(service.runner, "stop", stop)
+    return asked
+
+
+def test_an_expired_member_that_does_not_stop_fails_no_request_for_another_pool(
+    pool_rig, monkeypatch, caplog
+):
+    real_time(pool_rig)
+    svc = pool_rig.service(two_pools(pool_rig))
+    stuck = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    pool_rig.clock.advance(minutes=11)
+    real_stop = runner.stop
+    does_not_stop(monkeypatch, stuck.agent)
+
+    with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):
+        granted = svc.grant("critics", holder_label="b", cwd=pool_rig.work)
+
+    assert granted.agent == "hosted-1"
+    # the lease of the member that did not stop has ended, and the log says why
+    assert lease_state(pool_rig, stuck.lease_id) == "expired"
+    (logged,) = [r.getMessage() for r in caplog.records if r.name == "specflo.pool.service"]
+    assert stuck.lease_id in logged and "member 'local-1' did not stop" in logged
+    # so its slot is free, and nothing is left for the next check to fail on
+    again = svc.grant("rebasers", holder_label="c", cwd=pool_rig.work)
+    assert again.agent == stuck.agent
+    monkeypatch.setattr(service.runner, "stop", real_stop)
+    for grant in (granted, again):
+        svc.end_lease(grant.lease_id, "released")
+
+
+def test_the_leases_due_after_one_whose_member_does_not_stop_are_ended_in_the_same_pass(
+    pool_rig, monkeypatch, caplog
+):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member(), pool_rig.hosted_member()))
+    stuck = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    after = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    pi_after = pool_rig.status(after.agent)["pi_pid"]
+    pool_rig.clock.advance(minutes=11)
+    asked = does_not_stop(monkeypatch, stuck.agent)
+
+    with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):
+        ended = svc.expire_due()
+
+    assert asked == [stuck.agent, after.agent]
+    assert [(e.lease_id, e.state) for e in ended] == [
+        (stuck.lease_id, "expired"), (after.lease_id, "expired"),
+    ]
+    assert lease_state(pool_rig, after.lease_id) == "expired"
+    assert wait_until(lambda: not pid_alive(pi_after))
+    assert ["did not stop" in r.getMessage() for r in caplog.records] == [True]
+    assert svc.expire_due() == []
+
+
+def test_a_request_that_waits_keeps_its_row_and_its_place_when_an_expired_member_does_not_stop(
+    pool_rig, monkeypatch
+):
+    real_time(pool_rig)
+    svc = pool_rig.service(two_pools(pool_rig))
+    stuck = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    held = svc.grant("critics", holder_label="b", cwd=pool_rig.work, idle_limit=3600)
+    first, second = asks(pool_rig, svc, "critics", "c"), asks(pool_rig, svc, "critics", "d")
+    assert first.attempt() is None
+    assert second.attempt() is None
+    pool_rig.clock.advance(minutes=11)
+    does_not_stop(monkeypatch, stuck.agent)
+
+    # the look finds the other pool's lease expired, and goes on as a look does
+    assert first.attempt() is None
+
+    assert lease_state(pool_rig, stuck.lease_id) == "expired"
+    with pool_rig.store() as store:
+        assert [row.id for row in store.list_waiting()] == ["request-c", "request-d"]
+    assert (first.place(), second.place()) == (1, 2)
+    svc.end_lease(held.lease_id, "released")
+    served = first.attempt()
+    assert served.agent == held.agent
+    second.leave()
+    svc.end_lease(served.lease_id, "released")
+
+
+def test_a_read_goes_on_when_an_expired_member_does_not_stop(pool_rig, monkeypatch):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    stuck = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    pool_rig.clock.advance(minutes=11)
+    does_not_stop(monkeypatch, stuck.agent)
+
+    assert svc.read([]) == []
+
+    assert lease_state(pool_rig, stuck.lease_id) == "expired"
+
+
+def test_a_release_is_told_when_its_own_member_does_not_stop(pool_rig, monkeypatch):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    does_not_stop(monkeypatch, grant.agent)
+
+    with pytest.raises(runner.RunnerError, match="member 'local-1' did not stop"):
+        svc.end_lease(grant.lease_id, "released")
+
+    assert lease_state(pool_rig, grant.lease_id) == "released"
+
+
+def test_a_release_that_finds_its_own_lease_expired_is_told_when_the_member_does_not_stop(
+    pool_rig, monkeypatch
+):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member(), pool_rig.hosted_member()))
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    after = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    pool_rig.clock.advance(minutes=11)
+    does_not_stop(monkeypatch, grant.agent)
+
+    # the check on the way in is what ends it; the failure is this caller's own
+    with pytest.raises(runner.RunnerError, match="member 'local-1' did not stop"):
+        svc.end_lease(grant.lease_id, "released")
+
+    assert lease_state(pool_rig, grant.lease_id) == "expired"
+    # and it is raised when the pass is done, not in place of the rest of it
+    assert lease_state(pool_rig, after.lease_id) == "expired"
 
 
 # -- structure ----------------------------------------------------------------

@@ -283,6 +283,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   `idle_default`); what the holder does on the member and every turn the
   member works renews it, there is no renew verb, and an idle lease is
   ended as expired at the next pool request, with no background reaper.
+  An expired lease whose member does not stop has ended all the same: the
+  failure is logged, the other leases due are still ended, and it fails
+  no unrelated request, no waiting request's look and no reload. Only a
+  release of that very lease is told of it.
   `lease list` shows only the leases this checkout holds tokens for.
 - **`specflo agent reset <name>`** - clear an agent's conversation context
   in place (pi `new_session`); the process, its directory and its model

@@ -22,7 +22,9 @@ the rule in ``expiry``, are ended as expired before the caller is served. An
 expired lease therefore stands as active until the pool is next asked for
 something, and is never counted against the one who asks. A team's member
 leases are judged by the latest activity on any of them, so they are all
-ended at the same check or none is, each as a lease of no team is.
+ended at the same check or none is, each as a lease of no team is. When the
+member of an expired lease does not stop, the check logs that and goes on:
+the lease has ended, and the one who asked came for something else.
 
 Grants and endings take turns, one at a time in this process. A member's slot
 reads as free from the moment its lease leaves the active state, while its
@@ -127,6 +129,7 @@ ids.
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -146,6 +149,8 @@ from . import egress as egress_classes
 from . import accounts, console, expiry, ledger, preempt, runner, teamlease
 from .config import CONSOLE, Pool, PoolConfig
 from .teams import Team
+
+_log = logging.getLogger(__name__)
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
 ENDINGS: tuple[str, ...] = tuple(kind for kind in TRANSITION_KINDS if kind != "granted")
@@ -261,15 +266,20 @@ class PoolService:
     # True while the expiry check runs: the endings it makes do not check again.
     _checking: bool = field(default=False, init=False, repr=False)
 
-    def expire_due(self) -> list[Ended]:
+    def expire_due(self, own: str | None = None) -> list[Ended]:
         """End every lease that has been idle for its limit; the endings made.
 
         Each entry point of the service runs this first, and so does whatever
         renders the pool's state. A lease's last activity is read from its
         row and from the status of its member's agent host.
 
-        Raises ``RunnerError`` when an expired lease's member does not stop;
-        that lease has ended all the same.
+        An expired lease whose member does not stop has ended all the same,
+        and its slot is free. Whoever came here came for something else, so
+        that failure is logged and fails no one: the leases due after it are
+        ended in the same pass, and the caller is served as after any check.
+        The one caller it is told to is the one that came to end that lease,
+        *own*: the ``RunnerError`` is raised to it when the pass is done, as
+        the failure of a stop it had made itself would be.
         """
         with self._turn:
             if self._checking:
@@ -283,7 +293,19 @@ class PoolService:
                         for lease in store.list_leases(state="active")
                     ]
                 due = [lease.id for lease in expiry.due(read, now)]
-                return [self.end_lease(lease_id, "expired") for lease_id in due]
+                ended, failed = [], None
+                for lease_id in due:
+                    try:
+                        ended.append(self.end_lease(lease_id, "expired"))
+                    except runner.RunnerError as exc:
+                        _log.warning("the expired lease %s: %s", lease_id, exc)
+                        if lease_id == own:
+                            failed = exc
+                        with self.open_store() as store:
+                            ended.append(_recorded_end(store, lease_id))
+                if failed is not None:
+                    raise failed
+                return ended
             finally:
                 self._checking = False
 
@@ -509,7 +531,7 @@ class PoolService:
             raise ValueError("a preempted lease records the preempting request's id")
         if cause is None:
             cause = f"preempted by {request_id}" if kind == "preempted" else kind
-        self.expire_due()
+        self.expire_due(own=lease_id)
         with self._turn, self.open_store() as store:
             ending = Transition(
                 id=0, lease_id=lease_id, kind=kind, time=_text(self.clock()), cause=cause

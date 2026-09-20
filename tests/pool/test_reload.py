@@ -34,6 +34,7 @@ import shutil
 import sys
 import threading
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -41,11 +42,13 @@ import yaml
 from fastapi.testclient import TestClient
 
 from specflo.cli import app
-from specflo.daemon import auth, pool_routes
+from specflo.daemon import auth, pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
 from specflo.pool import accounts, cli_admin, events, watch
 from specflo.pool import config as pool_config
+from specflo.pool import service as pool_service
+from specflo.pool.runner import RunnerError
 from specflo.pool.service import PoolService, UnknownPool
 from specflo.pool.teams import TEAMS_DIR, Role, Team
 from specflo.service.pool_remote import (
@@ -502,6 +505,78 @@ def test_a_team_lease_of_a_team_that_is_declared_no_more_is_given_back_as_one(po
     assert ended.status_code == 200, ended.text
     assert active(pool_rig) == []
     assert wait_until(lambda: not any(pid_alive(pi) for pi in pis))
+
+
+# -- an expired lease whose member does not stop -------------------------------
+
+# What the runner's words may hold of the member's host, and no answer may.
+HOST_WORDS = "/home/someone/pi: no answer in 20 s"
+
+
+def expired_and_stuck(served, monkeypatch) -> dict:
+    """A lease on "w-1" that is past its idle limit at the next request, with
+    a member whose stop fails from now on. The process is stopped all the
+    same, so the test leaves none behind."""
+    lease = served.granted(pool="workers")
+    served.state.pool.clock = lambda: datetime.now(timezone.utc) + timedelta(minutes=11)
+    real_stop = pool_service.runner.stop
+
+    def stop(agent, cause, **tokens):
+        real_stop(agent, cause, **tokens)
+        raise RunnerError(f"member '{agent}' did not stop: {HOST_WORDS}")
+
+    monkeypatch.setattr(pool_service.runner, "stop", stop)
+    return lease
+
+
+def test_a_reload_is_put_in_force_when_an_expired_member_does_not_stop(
+    served, pool_rig, monkeypatch
+):
+    lease = expired_and_stuck(served, monkeypatch)
+    write_workers(pool_rig, teams=PAIR)
+
+    response = served.reload()
+
+    assert response.status_code == 200, response.text
+    assert response.headers["content-type"] == "application/json"
+    assert response.json()["result"]["teams"] == 1
+    assert HOST_WORDS not in response.text and "/home/someone" not in response.text
+    assert [team.name for team in served.state.pool.config.teams] == ["pair"]
+    assert list(served.state.pool_errors) == []
+    # the lease has ended, which is all the reload had to do with it
+    assert active(pool_rig) == []
+    with pool_rig.store() as store:
+        assert store.get_lease(lease["lease_id"]).state == "expired"
+    assert [r["operation"] for r in audit_records(pool_rig.root)] == [
+        "lease_request", "pool_reload",
+    ]
+
+
+def test_a_save_from_a_management_page_is_in_force_when_an_expired_member_does_not_stop(
+    served, pool_rig, monkeypatch
+):
+    expired_and_stuck(served, monkeypatch)
+    browser = TestClient(served.application, follow_redirects=False)
+    token = auth.mint_token(pool_rig.root, "developer")
+    signed = browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
+    assert signed.status_code == 303, signed.text
+    form = {
+        "session": browser.cookies[web.SESSION_COOKIE], "name": "worker",
+        "role": "Does one plan task and reports what changed", "tools": "read\nbash\n",
+        "egress": "local", "prompt": NEW_PROMPT,
+    }
+
+    response = browser.post("/pool/definitions/worker/edit", data=form)
+
+    assert response.status_code == 303, response.text
+    assert [d.prompt for d in served.state.pool.config.definitions] == [NEW_PROMPT]
+    assert list(served.state.pool_errors) == []
+    assert [r["operation"] for r in audit_records(pool_rig.root)] == [
+        "lease_request", "definition_save", "pool_reload",
+    ]
+    # a member started from now on runs what the page saved
+    assert served.granted(pool="workers")["agent"] == "w-1"
+    assert prompt_of(pool_rig, "w-1") == NEW_PROMPT
 
 
 # -- the service ---------------------------------------------------------------
