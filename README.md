@@ -30,6 +30,13 @@ brainstorm -> spec -> plan -> execute pipeline. The [CHANGELOG](https://github.c
 is the development history. Pre-1.0, interfaces may still move; breaking
 changes are called out explicitly in the changelog.
 
+**Three surfaces are a heavy work in progress and change constantly: pi
+subagents (`specflo agent`), daemon hosting (`specflo serve`) and the agent
+pool (`specflo lease`, `specflo console`).** They are written up below because
+they work and are being used, not because they are settled. Expect their
+commands, flags, on-disk formats and behaviour to move between releases, with
+no migration path.
+
 ## Quick start
 
 Requires Python 3.12+. Install from PyPI:
@@ -287,8 +294,10 @@ ordering, `--needs` plus `pool add` for hardware and shared environments, and
 
 ## pi subagents (`specflo agent`)
 
-**Experimental, work in progress.** The `specflo agent` surface is new and
-still settling; verbs, flags, and on-disk formats may change between releases.
+**Heavy work in progress.** The `specflo agent` surface is under active
+development and changes constantly: commands, flags, the on-disk formats and
+the behaviour itself can all move between releases, with no migration path.
+Treat it as a preview to try, not a surface to build on.
 
 The `specflo agent` group runs and controls headless pi coding agents. Each
 agent is a detached host process that spawns `pi --mode rpc`, holds its stdio
@@ -426,6 +435,8 @@ and auto-answering stops for that run.
 
 ## Hosting projects on a daemon
 
+**Heavy work in progress.** Daemon hosting, and the web UI with it, is under active development and changes constantly: commands, flags, the on-disk formats and the behaviour itself can all move between releases, with no migration path. Treat it as a preview to try, not a surface to build on.
+
 A project lives in one place: in a checkout under the projects directory, or on a daemon. `specflo serve` runs the daemon on a root of its own; a checkout registers it with `specflo remote add` and then creates projects there with `new --remote`, moves existing ones there with `promote`, and works them with the same commands as before. The daemon holds the only copy of a hosted project's artifacts; the checkout keeps a pointer and nothing else.
 
 The daemon knows three identities, `requester`, `developer` and `agent`, each with its own bearer tokens minted by `serve token add`. Every request carries one, and every mutation is recorded with the identity behind it. The two human identities sign in to the web UI; the agent identity is what a daemon-started agent acts as, and the sign-in page refuses it. There is no permission system beyond that: the identities exist so the handoff between requester and developer is recorded.
@@ -454,6 +465,8 @@ The fresh agent gets an opening prompt naming its seat as the requester and poin
 The chat is shared by the web and the pane. A message posted from the project page reaches the agent as a prompt prefixed with the poster's label; an agent mid-run takes it as a steer, and the post returns once the agent has the prompt. The daemon holds one subscription to each live agent's socket and appends every user message from any seat, every assistant message and every state change to a durable per-project chat log under its root, each entry with a monotonic id. The page follows the log over one server-sent-events stream with replay from the last id it saw, shows the agent's state (working, idle) and a needs-attention banner while a blocking dialog is open in the session, which says to answer in the pane. The log and the mapping survive a daemon restart: the daemon finds the live agent again without a new start. Advancing the project out of brainstorm stops the agent and clears the mapping; `specflo agent stop` does the same by hand.
 
 ## The agent pool
+
+**Heavy work in progress.** The agent pool, with its leases, teams and consoles, is under active development and changes constantly: commands, flags, the on-disk formats and the behaviour itself can all move between releases, with no migration path. Treat it as a preview to try, not a surface to build on.
 
 A daemon can hold an agent pool: a roster of pi agents that an admin declares ahead of time and that orchestrators in any checkout lease by name, use through the `specflo agent` verbs, and give back. Every pool on the daemon draws on one ledger, so two projects cannot both claim the same member, provider account slot or GPU room. The pool is a daemon feature. Local mode is unchanged: a checkout with no registered remote loads no pool code, and the `lease` and `console` verbs are refused there, naming `specflo remote add`.
 
