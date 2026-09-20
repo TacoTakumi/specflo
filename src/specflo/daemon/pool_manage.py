@@ -117,15 +117,54 @@ def _at_home(fault: ConfigError, copy: Path, directory: Path) -> ConfigError:
     )
 
 
+def _real_in(copy: Path, relative: Path) -> Path:
+    """The path of *relative* in the *copy*, with no symlink left on it, so
+    that what is written or removed there is in the copy and nowhere else.
+
+    The copy keeps the symlinks of the directory as symlinks, and a symlink to
+    a place outside still leads there. Each folder on the way that is one
+    becomes a real folder holding a copy of what the symlink showed, empty for
+    a symlink that shows no folder; a symlink in it with a relative path is
+    made to lead where it led from the folder that was shown. A symlink where
+    the file is to be is removed: the symlink, never what it leads to."""
+    at = copy
+    for part in relative.parts[:-1]:
+        at = at / part
+        if not at.is_symlink():
+            continue
+        try:
+            shown = at.resolve(strict=True)
+        except (OSError, RuntimeError):
+            shown = None
+        at.unlink()
+        if shown is None or not shown.is_dir():
+            at.mkdir()
+            continue
+        shutil.copytree(shown, at, symlinks=True)
+        for folder, folders, files in os.walk(at):
+            for entry in (Path(folder, name) for name in (*folders, *files)):
+                if entry.is_symlink() and not os.path.isabs(leads := os.readlink(entry)):
+                    entry.unlink()
+                    entry.symlink_to(shown / Path(folder).relative_to(at) / leads)
+    target = copy / relative
+    if target.is_symlink():
+        target.unlink()
+    return target
+
+
 def check_candidate(directory: Path, relative: Path, text: str | None) -> list[ConfigError]:
     """Every fault of the pool *directory* as it would be with the file at
     *relative* holding *text*, or gone for a *text* of None. Nothing in the
     directory changes: the check runs on a copy beside it, and is the one
-    ``serve pool validate`` runs."""
+    ``serve pool validate`` runs.
+
+    The check writes, removes and makes nothing outside the copy. That holds
+    where the folder of the file, or the file, is a symlink to a place outside
+    the directory: the real file there is read and is never touched."""
     copy = Path(tempfile.mkdtemp(prefix=CANDIDATE_PREFIX, dir=directory.parent))
     try:
         shutil.copytree(directory, copy, symlinks=True, dirs_exist_ok=True)
-        target = copy / relative
+        target = _real_in(copy, relative)
         if text is None:
             target.unlink(missing_ok=True)
         else:

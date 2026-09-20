@@ -15,6 +15,10 @@ the running pool and leaves an audit entry with the acting identity.
 
 A definition that a pool binds is not deleted: the refusal names the pool.
 
+The definitions folder, or one file of it, may be a symlink to a place outside
+the pool directory. The check of a candidate stays in its copy then too: what
+it refuses leaves the real file as it was, and makes none.
+
 Every post runs the session-secret guard first. The requester's session gets
 neither the pages nor the posts.
 """
@@ -22,6 +26,7 @@ neither the pages nor the posts.
 from __future__ import annotations
 
 import re
+import shutil
 from dataclasses import replace
 from html import unescape
 from pathlib import Path
@@ -445,6 +450,124 @@ def test_deleting_a_definition_no_pool_binds_removes_the_file_and_reloads(root):
         ("developer", "pool_reload", None),
     ]
     assert post(client, delete_url("critic")).status_code == 404
+
+
+# -- a folder or a file that is a symlink ---------------------------------------------
+
+
+LAYOUTS = ["folder", "file"]
+
+
+def behind_a_link(folder: Path, elsewhere: Path, layout: str, name: str) -> Path:
+    """Keep the file *name* of *folder* in *elsewhere* and leave a symlink in
+    its place: to the whole folder for the layout "folder", to the one file
+    for the layout "file". The real file is what comes back."""
+    if layout == "folder":
+        shutil.move(str(folder), str(elsewhere))
+        folder.symlink_to(elsewhere, target_is_directory=True)
+    else:
+        elsewhere.mkdir()
+        shutil.move(str(folder / name), str(elsewhere / name))
+        (folder / name).symlink_to(elsewhere / name)
+    return elsewhere / name
+
+
+def kept(elsewhere: Path) -> dict[str, bytes]:
+    """Every file of the real folder *elsewhere*, by name."""
+    return {path.name: path.read_bytes() for path in sorted(elsewhere.iterdir())}
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_refused_save_leaves_the_real_file_behind_a_symlink_as_it_was(root, tmp_path, layout):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(root), elsewhere, layout, "worker.md")
+    client = signed_in(create_app(root))
+    before = kept(elsewhere)
+
+    response = post(client, edit_url("worker"), **{**FIELDS, "prompt": ""})
+
+    assert response.status_code == 400
+    assert EMPTY_BODY in shown(response)
+    assert kept(elsewhere) == before
+    assert saves(root) == []
+
+
+def test_a_refused_create_makes_no_file_in_the_real_folder_behind_a_symlink(root, tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(root), elsewhere, "folder", "worker.md")
+    client = signed_in(create_app(root))
+    before = kept(elsewhere)
+
+    response = post(client, LIST, **{**FIELDS, "prompt": ""})
+
+    assert response.status_code == 400
+    assert EMPTY_BODY in shown(response)
+    assert kept(elsewhere) == before
+    assert not (folder(root) / "porter.md").exists()
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_refused_delete_leaves_the_real_file_behind_a_symlink_in_place(root, tmp_path, layout):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(root), elsewhere, layout, "worker.md")
+    # another file has a fault, so the directory stands with no change at all
+    (folder(root) / "critic.md").write_text("no front matter\n", encoding="utf-8")
+    client = signed_in(create_app(root))
+    before = kept(elsewhere)
+
+    response = post(client, delete_url("worker"))
+
+    assert response.status_code == 409
+    assert "The definition 'worker' was not deleted" in shown(response)
+    assert kept(elsewhere) == before
+    assert (folder(root) / "worker.md").is_file()
+    assert saves(root) == []
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_save_that_passed_changes_the_file_the_directory_shows_behind_a_symlink(
+    root, tmp_path, layout
+):
+    behind_a_link(folder(root), tmp_path / "elsewhere", layout, "worker.md")
+    client = signed_in(create_app(root))
+
+    response = post(client, edit_url("worker"), **FIELDS)
+
+    assert response.status_code == 303, response.text
+    assert definitions.load_definition(folder(root) / "worker.md") == replace(PORTER, name="worker")
+    assert [r["operation"] for r in saves(root)] == ["definition_save"]
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_delete_that_passed_takes_the_file_out_of_the_directory_behind_a_symlink(
+    root, tmp_path, layout
+):
+    behind_a_link(folder(root), tmp_path / "elsewhere", layout, "critic.md")
+    client = signed_in(create_app(root))
+
+    response = post(client, delete_url("critic"))
+
+    assert response.status_code == 303, response.text
+    assert "critic.md" not in [entry.name for entry in folder(root).iterdir()]
+    assert [r["operation"] for r in saves(root)] == ["definition_delete"]
+
+
+def test_the_check_of_a_candidate_reads_a_relative_symlink_of_a_linked_folder_as_it_was(
+    root, tmp_path
+):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(root), elsewhere, "folder", "worker.md")
+    # a file of the real folder that is a link with a path relative to that folder
+    (tmp_path / "critic.md").write_bytes((elsewhere / "critic.md").read_bytes())
+    (elsewhere / "critic.md").unlink()
+    (elsewhere / "critic.md").symlink_to(Path("..") / "critic.md")
+    text = (elsewhere / "worker.md").read_text(encoding="utf-8")
+
+    faults = pool_manage.check_candidate(
+        cli_admin.pool_dir(root), Path(pool_config.DEFINITIONS_DIR) / "worker.md", text
+    )
+
+    assert faults == []
 
 
 # -- who may, and how ----------------------------------------------------------------

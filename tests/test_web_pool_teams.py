@@ -14,6 +14,10 @@ once, is refused with the fault beside the form, naming the team and the role,
 and no file is written. A save that passed is followed by the reload of the
 running pool and leaves an audit entry with the acting identity.
 
+The teams folder, or one file of it, may be a symlink to a place outside the
+pool directory. The check of a candidate stays in its copy then too: what it
+refuses leaves the real file as it was.
+
 Every post runs the session-secret guard first. The requester's session gets
 neither the pages nor the posts. No route of the web UI edits an account, a
 member or a named pool, and none runs a member of the pool.
@@ -48,7 +52,7 @@ from pool.test_reload import PAIR, Served, write_workers
 from pool.test_team_lease import REVIEW, active, write_team_pool
 from test_web_pool import signed_in
 from test_web_pool_definitions import NOT_THIS_SESSION, post, root, runner, shown  # noqa: F401
-from test_web_pool_definitions import snapshot
+from test_web_pool_definitions import LAYOUTS, behind_a_link, kept, snapshot
 
 LIST = "/pool/teams"
 NEW = "/pool/teams/new"
@@ -208,10 +212,6 @@ def test_a_file_that_does_not_load_is_listed_with_its_fault_and_has_no_form(team
     assert client.get(edit_url("nobody")).status_code == 404
 
 
-def test_a_team_that_a_count_keeps_from_standing_has_a_form_and_a_save_mends_it(team_root):
-    path = folder(team_root) / "review.md"
-    path.write_text(teams.serialise_team(replace(
-        REVIEW, roles=(REVIEW.roles[0], replace(REVIEW.roles[1], count=4)),
 def test_a_file_that_is_not_utf8_is_listed_with_its_fault_and_has_no_form(team_root):
     (folder(team_root) / "review.md").write_bytes(b"---\nentry: caf\xe9\n---\n")
     client = signed_in(create_app(team_root))
@@ -224,6 +224,10 @@ def test_a_file_that_is_not_utf8_is_listed_with_its_fault_and_has_no_form(team_r
     assert client.get(edit_url("review")).status_code == 409
 
 
+def test_a_team_that_a_count_keeps_from_standing_has_a_form_and_a_save_mends_it(team_root):
+    path = folder(team_root) / "review.md"
+    path.write_text(teams.serialise_team(replace(
+        REVIEW, roles=(REVIEW.roles[0], replace(REVIEW.roles[1], count=4)),
     )), encoding="utf-8")
     app = create_app(team_root)
     assert app.state.pool is None
@@ -498,6 +502,62 @@ def test_a_team_lease_and_a_waiting_request_of_a_deleted_team_end_as_after_a_han
     ended = served.release(team["team_lease_id"], team["members"][0]["token"])
     assert ended.status_code == 200, ended.text
     assert active(pool_rig) == []
+
+
+# -- a folder or a file that is a symlink ---------------------------------------------
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_refused_save_leaves_the_real_file_behind_a_symlink_as_it_was(
+    team_root, tmp_path, layout
+):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(team_root), elsewhere, layout, "review.md")
+    client = signed_in(create_app(team_root))
+    before = kept(elsewhere)
+
+    response = post(client, edit_url("review"), **{**FIELDS, "roles": "critic critics 3"})
+
+    assert response.status_code == 400
+    assert "count: 3 is more than pool 'critics'" in beside_roles(response)
+    assert kept(elsewhere) == before
+    assert saves(team_root) == []
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_refused_delete_leaves_the_real_file_behind_a_symlink_in_place(
+    team_root, tmp_path, layout
+):
+    elsewhere = tmp_path / "elsewhere"
+    behind_a_link(folder(team_root), elsewhere, layout, "review.md")
+    # a definition has a fault, so the directory stands with no change at all
+    definition = cli_admin.pool_dir(team_root) / pool_config.DEFINITIONS_DIR / "rebaser.md"
+    definition.write_text("no front matter\n", encoding="utf-8")
+    client = signed_in(create_app(team_root))
+    before = kept(elsewhere)
+
+    response = post(client, delete_url("review"))
+
+    assert response.status_code == 409
+    assert "The team 'review' was not deleted" in shown(response)
+    assert kept(elsewhere) == before
+    assert (folder(team_root) / "review.md").is_file()
+    assert saves(team_root) == []
+
+
+@pytest.mark.parametrize("layout", LAYOUTS)
+def test_a_save_and_a_delete_that_passed_change_what_the_directory_shows_behind_a_symlink(
+    team_root, tmp_path, layout
+):
+    behind_a_link(folder(team_root), tmp_path / "elsewhere", layout, "review.md")
+    client = signed_in(create_app(team_root))
+
+    assert post(client, edit_url("review"), **FIELDS).status_code == 303
+    assert (folder(team_root) / "review.md").read_text(encoding="utf-8") == BUILD_TEXT
+
+    assert post(client, delete_url("review")).status_code == 303
+    assert listed(team_root) == []
+    assert [r["operation"] for r in saves(team_root)] == ["team_save", "team_delete"]
 
 
 # -- who may, and how ----------------------------------------------------------------

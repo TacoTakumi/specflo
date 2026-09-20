@@ -363,7 +363,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   which ends it, or its whole team, as `released by developer`. The
   developer also has pages that list, create, edit and delete agent
   definitions and teams: a save is checked against the whole pool
-  directory before the file changes, written as an admin would write it,
+  directory before the file changes (on a copy, and the check changes
+  nothing outside that copy, also when the definitions or teams folder or
+  a file in it is a symlink), written as an admin would write it,
   followed by a reload and audited; a definition that a pool binds is not
   deleted. Accounts, members and named pools have no edit pages and no
   page runs an agent.
