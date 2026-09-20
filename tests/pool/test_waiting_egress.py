@@ -220,7 +220,7 @@ def test_opening_the_store_on_a_root_with_the_earlier_waiting_table_adds_the_col
 
     columns = [row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(pool_waiting)")]
     assert columns == [
-        "seq", "id", "pool", "team", "holder_label", "arrived", "egress", "pinned",
+        "seq", "id", "pool", "team", "holder_label", "arrived", "egress", "pinned", "until",
     ]
     # opened again, the column is there and is left alone
     with poolstore.open_pool_store(root) as store:

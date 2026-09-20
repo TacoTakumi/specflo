@@ -60,7 +60,11 @@ not fit holds up no one behind it. A row keeps the egress class its request
 named and the class its project pinned when it arrived, so an earlier request
 fits under its own ceiling and not the asker's. The service only reads those
 rows and takes the granted one out; the request that waits writes its row and
-comes back to ask again (see ``waiting``).
+comes back to ask again (see ``waiting``). A row also keeps the time its wait
+is up. Its asker takes it out at that time, so a row that is still there
+``WAITING_GRACE`` later was left by an asker that is gone: it is passed over
+as if it were not there, by the order and by a request that takes an idle
+lease, and whoever reads the rows for either takes it out.
 
 A request that waits may take an idle lease (see ``preempt``). At a look that
 finds no room the service reads which of the active leases may be taken, each
@@ -127,7 +131,7 @@ import secrets
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from ..daemon.poolstore import (
@@ -145,6 +149,13 @@ from .teams import Team
 
 # The ways a lease ends; each is a transition kind and the state it leaves.
 ENDINGS: tuple[str, ...] = tuple(kind for kind in TRANSITION_KINDS if kind != "granted")
+
+# How long after its wait is up a waiting row is still taken to have an asker,
+# in seconds. The asker takes its row out at its first look at or after that
+# time, and that look may come late: a look waits its turn behind the grants
+# and endings before it, and each may take most of a minute to start or stop
+# a member.
+WAITING_GRACE = 120
 
 # The time now, timezone-aware. Passed in, so a test hands over a fake one.
 Clock = Callable[[], datetime]
@@ -531,6 +542,26 @@ class PoolService:
         declared = ", ".join(t.name for t in self.config.teams) or "none"
         raise UnknownTeam(f"team '{name}' is not declared; the declared teams: {declared}.")
 
+    def _waits(self, store: PoolStore, waiting_id: str | None) -> list[WaitingRequest]:
+        """The requests that wait still, in arrival order.
+
+        A row whose wait was up more than ``WAITING_GRACE`` ago has no asker
+        any more: it is taken out here and is not among them. A row that
+        keeps no such time stays, and so does *waiting_id*, the row of the
+        request that asks now, whatever its time.
+        """
+        given_up = self.clock() - timedelta(seconds=WAITING_GRACE)
+        waits = []
+        for row in store.list_waiting():
+            if (
+                row.id != waiting_id and row.until is not None
+                and datetime.fromisoformat(row.until) < given_up
+            ):
+                store.remove_waiting(row.id)
+            else:
+                waits.append(row)
+        return waits
+
     def _give_way(self, asked: str, store: PoolStore, waiting_id: str | None) -> None:
         """Refuse a request for *asked*, a pool or a team as a refusal names
         it, while a request that came before it fits.
@@ -538,7 +569,7 @@ class PoolService:
         The requests before it are the rows ahead of its own, *waiting_id*,
         and every row when it has none. One that does not fit is passed over.
         """
-        for ahead in store.list_waiting():
+        for ahead in self._waits(store, waiting_id):
             if ahead.id == waiting_id:
                 return
             if self._fits(ahead, store):
@@ -571,7 +602,7 @@ class PoolService:
         if waiting_id is None:
             raise full
         ahead: list[WaitingRequest] = []
-        for row in store.list_waiting():
+        for row in self._waits(store, waiting_id):
             if row.id == waiting_id:
                 break
             ahead.append(row)

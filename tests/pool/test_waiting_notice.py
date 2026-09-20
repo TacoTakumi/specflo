@@ -305,6 +305,22 @@ def test_with_no_time_named_the_verb_asks_to_wait_ten_minutes(checkout, pool_rig
     assert set(json.loads(result.stdout)) == {"lease", "agent", "pool", "remote"}
 
 
+def test_the_verb_turns_down_a_wait_above_the_pools_limit_before_it_asks(
+    checkout, pool_rig, monkeypatch
+):
+    bodies = lease_bodies(monkeypatch)
+
+    # what the verb says again is the pool's own limit
+    assert cli.LEASE_WAIT_MAX == waiting.WAIT_MAX
+    result = runner.invoke(app, ["lease", "request", "rebasers", "--wait", str(10**12)])
+
+    # a usage error with the range in it: no request is sent, and nothing is raised
+    assert result.exit_code == 2, result.output
+    assert str(waiting.WAIT_MAX) in result.output
+    assert isinstance(result.exception, SystemExit)
+    assert bodies == []
+
+
 def test_wait_0_refuses_a_full_pool_at_once_and_says_nothing_of_waiting(
     checkout, pool_rig, monkeypatch
 ):

@@ -269,7 +269,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   that does not fit waits on the daemon for up to `--wait` seconds, 600 by
   default, and says so at once on stderr with the pool, what is full, its
   place and the limit; `--wait 0` refuses at once and an interrupt cancels
-  the request. Waiting requests are served in arrival order. A lease has
+  the request. Waiting requests are served in arrival order. A request
+  waits one day at the most (`--wait` up to 86400); the verb and the daemon
+  both refuse more. A waiting request's record keeps the time its wait is
+  up, and a record still there two minutes after that time was left by a
+  requester that is gone: it is passed over and removed, so it cannot hold
+  a pool. A lease has
   an idle limit (`--idle-limit` up to the pool's `idle_max`, else its
   `idle_default`); what the holder does on the member and every turn the
   member works renews it, there is no renew verb, and an idle lease is

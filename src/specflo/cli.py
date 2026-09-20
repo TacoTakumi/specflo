@@ -2992,6 +2992,9 @@ def workitem_spawn(
 
 # How long `lease request` waits for a full pool when no time is named, in seconds.
 LEASE_WAIT_DEFAULT = 600
+# The longest the daemon lets a request wait, in seconds: one day. It is the
+# pool's own limit, said again here because no pool code loads with the CLI.
+LEASE_WAIT_MAX = 86400
 
 
 @lease_app.command(
@@ -3020,10 +3023,10 @@ def lease_request(
         help="What the pool shows as the holder; the checkout's directory name otherwise.",
     ),
     wait: int = typer.Option(
-        LEASE_WAIT_DEFAULT, "--wait", metavar="<seconds>", min=0,
+        LEASE_WAIT_DEFAULT, "--wait", metavar="<seconds>", min=0, max=LEASE_WAIT_MAX,
         help=f"How long to wait for a full pool, in seconds; {LEASE_WAIT_DEFAULT} otherwise,"
-        " and 0 refuses a full pool at once. A request that waits says so at once on"
-        " stderr; interrupt the command to cancel it.",
+        f" {LEASE_WAIT_MAX} at the most, and 0 refuses a full pool at once. A request that"
+        " waits says so at once on stderr; interrupt the command to cancel it.",
     ),
     egress: str = typer.Option(
         None, "--egress", metavar="<class>",

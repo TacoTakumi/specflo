@@ -21,7 +21,7 @@ import ast
 import dataclasses
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -178,6 +178,117 @@ def test_a_request_that_leaves_is_no_longer_waiting(pool_rig):
     assert waiting_rows(pool_rig) == []
 
 
+# -- a row and the time its wait is up ----------------------------------------
+
+
+def orphan(pool_rig, *, until: datetime | None, pool: str = "rebasers") -> None:
+    """A waiting row no one waits on: its asker went away and did not take it out."""
+    with pool_rig.store() as store:
+        store.add_waiting(WaitingRequest(
+            id="request-gone", pool=pool, team=None, holder_label="gone",
+            arrived=service._text(pool_rig.clock()),
+            until=None if until is None else service._text(until),
+        ))
+
+
+def test_a_waiting_row_keeps_the_time_its_wait_is_up(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    assert asks(pool_rig, svc, "rebasers", "b", wait=waiting.WAIT_MAX).attempt() is None
+
+    (row,) = waiting_rows(pool_rig)
+    assert row.until == service._text(pool_rig.clock() + timedelta(seconds=waiting.WAIT_MAX))
+
+
+def test_a_wait_too_long_to_count_writes_no_row(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    second = asks(pool_rig, svc, "rebasers", "b", wait=10**12)
+
+    with pytest.raises(OverflowError):
+        second.attempt()
+
+    # the time is worked out before the row is written, so nothing stays behind
+    assert waiting_rows(pool_rig) == []
+
+
+def test_a_row_long_past_its_time_holds_no_pool_and_is_taken_out(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    first = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    orphan(pool_rig, until=pool_rig.clock() + timedelta(seconds=2))
+    svc.end_lease(first.lease_id, "released")
+
+    # while its time runs the row is served first, as any row is
+    with pytest.raises(service.NoFreeMember, match="came earlier"):
+        svc.grant("rebasers", holder_label="c", cwd=pool_rig.work)
+    pool_rig.clock.advance(seconds=2 + service.WAITING_GRACE + 1)
+
+    assert svc.grant("rebasers", holder_label="c", cwd=pool_rig.work).agent == "local-1"
+    assert waiting_rows(pool_rig) == []
+
+
+def test_a_row_only_just_past_its_time_is_still_served_first(pool_rig):
+    # its asker takes it out at its next look, which comes a little after the time
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    first = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    earlier = asks(pool_rig, svc, "rebasers", "b", wait=2)
+    assert earlier.attempt() is None
+    svc.end_lease(first.lease_id, "released")
+    pool_rig.clock.advance(seconds=2 + service.WAITING_GRACE)
+
+    with pytest.raises(service.NoFreeMember, match="came earlier"):
+        svc.grant("rebasers", holder_label="c", cwd=pool_rig.work)
+
+    assert [row.id for row in waiting_rows(pool_rig)] == ["request-b"]
+    assert earlier.attempt().agent == "local-1"
+
+
+def test_a_row_with_no_time_is_served_first_however_old(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    orphan(pool_rig, until=None)
+    pool_rig.clock.advance(days=30)
+
+    with pytest.raises(service.NoFreeMember, match="came earlier"):
+        svc.grant("rebasers", holder_label="c", cwd=pool_rig.work)
+
+    assert [row.id for row in waiting_rows(pool_rig)] == ["request-gone"]
+
+
+def test_a_request_that_looks_is_not_given_up_at_its_own_look(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    first = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    earlier = asks(pool_rig, svc, "rebasers", "b", wait=2)
+    later = asks(pool_rig, svc, "rebasers", "c")
+    assert earlier.attempt() is None
+    assert later.attempt() is None
+    svc.end_lease(first.lease_id, "released")
+    pool_rig.clock.advance(minutes=30)
+
+    # it asks, so it is there: the member is its own and not the later one's
+    assert earlier.attempt().agent == "local-1"
+    assert [row.id for row in waiting_rows(pool_rig)] == ["request-c"]
+
+
+def test_a_row_long_past_its_time_keeps_no_idle_lease_from_a_later_request(
+    pool_rig, monkeypatch
+):
+    monkeypatch.setattr(service.runner, "status", lambda name: None)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member(), preempt_after=300))
+    old = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    orphan(pool_rig, until=pool_rig.clock() + timedelta(seconds=2))
+    later = asks(pool_rig, svc, "rebasers", "c")
+    assert later.attempt() is None
+    pool_rig.clock.advance(minutes=6)
+
+    granted = later.attempt()
+
+    assert granted is not None
+    with pool_rig.store() as store:
+        assert store.get_lease(old.lease_id).state == "preempted"
+    assert waiting_rows(pool_rig) == []
+
+
 # -- the daemon: a request that blocks ----------------------------------------
 
 
@@ -323,6 +434,28 @@ def test_the_route_refuses_a_wait_that_is_no_number_of_seconds(pool_daemon, pool
     assert waiting_rows(pool_rig) == []
 
 
+def test_the_route_refuses_a_wait_above_the_maximum_and_writes_no_row(pool_rig):
+    write_pool(pool_rig)
+    client = TestClient(create_app(pool_rig.root))
+    client.headers["Authorization"] = f"Bearer {_token(pool_rig.root)}"
+    good = {"pool": "rebasers", "cwd": str(pool_rig.work)}
+    # the pool is full, so a request that may wait would be written down
+    assert client.post(LEASES_PATH, json=good).status_code == 200
+
+    for wait in (10**12, waiting.WAIT_MAX + 1):
+        response = client.post(LEASES_PATH, json={**good, "wait": wait})
+        assert response.status_code == 400, (wait, response.text)
+        assert f"{waiting.WAIT_MAX} s" in response.json()["detail"]
+        assert waiting_rows(pool_rig) == []
+    # and so is a team's, which comes in by the same route
+    response = client.post(
+        LEASES_PATH, json={"team": "pair", "cwd": str(pool_rig.work), "wait": 10**12}
+    )
+    assert response.status_code == 400, response.text
+    assert f"{waiting.WAIT_MAX} s" in response.json()["detail"]
+    assert waiting_rows(pool_rig) == []
+
+
 def test_waiting_records_a_stopped_daemon_left_are_cleared_when_the_pool_opens(pool_rig):
     write_pool(pool_rig)
     with pool_rig.store() as store:
@@ -367,12 +500,39 @@ def test_a_wait_below_zero_is_refused_by_the_verb(checkout, pool_rig):
     assert pool_rig.pane_names() == []
 
 
+def test_a_wait_above_the_maximum_is_refused_by_the_verb_and_writes_no_row(checkout, pool_rig):
+    held = runner.invoke(app, ["lease", "request", "rebasers"])
+    assert held.exit_code == 0, held.output
+
+    asked = time.monotonic()
+    result = runner.invoke(
+        app, ["lease", "request", "rebasers", "--wait", str(waiting.WAIT_MAX + 1)]
+    )
+
+    # refused at once, by the verb itself: nothing is taken in to wait
+    assert time.monotonic() - asked < 10
+
+    assert result.exit_code != 0
+    output = " ".join(result.output.split())
+    assert str(waiting.WAIT_MAX) in output
+    assert "Traceback" not in result.output
+    assert waiting_rows(pool_rig) == []
+    assert pool_rig.pane_names() == ["local-1"]
+
+
 # -- structure ----------------------------------------------------------------
 
 
 def test_the_look_is_short_enough_to_grant_within_5_s(monkeypatch):
     monkeypatch.undo()
     assert 0 < waiting.POLL_INTERVAL <= 2
+
+
+def test_a_row_is_given_up_only_after_its_asker_has_had_its_look():
+    # the asker's last look comes a poll interval after the one before, 2 s at
+    # the most, and may wait its turn behind a member that starts and one that stops
+    slowest_turn = service.runner.START_TIMEOUT + service.runner.STOP_TIMEOUT
+    assert service.WAITING_GRACE >= 2 + slowest_turn
 
 
 def test_nothing_in_the_waiting_module_runs_by_itself():

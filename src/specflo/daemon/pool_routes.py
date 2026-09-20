@@ -40,12 +40,13 @@ start or stop is a 502: what the agent CLI said of it can name paths on this
 host, so that goes to the daemon's log and the response names the pool only.
 No route here carries anything a member wrote.
 
-A request the pool has no room for may wait, for as long as its body says.
-It waits in its own route, which is async: between two looks at the pool it
-holds no thread, and each look runs in a worker thread, so a request that
-waits for an hour stalls no other. The route also sees its client go away,
-and a request no one waits for any more leaves the queue. The rows a stopped
-daemon left are cleared when the pool opens.
+A request the pool has no room for may wait, for as long as its body says
+and no longer than ``waiting.WAIT_MAX``; one that asks for more is refused
+before the pool is looked at. It waits in its own route, which is async:
+between two looks at the pool it holds no thread, and each look runs in a
+worker thread, so a request that waits for an hour stalls no other. The route
+also sees its client go away, and a request no one waits for any more leaves
+the queue. The rows a stopped daemon left are cleared when the pool opens.
 
 A client may say that it reads notices. The answer to its request, when the
 request has to wait, is then sent as it comes, a JSON object to a line: first
@@ -479,6 +480,12 @@ async def lease_request(
     wait = _seconds(fields, "wait")
     if wait is not None and wait < 0:
         raise _invalid("Field 'wait' must be a whole number of seconds, 0 or more.")
+    if wait is not None and wait > waiting.WAIT_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"A request waits {waiting.WAIT_MAX} s at the most, and this one asked to "
+            f"wait {wait} s.",
+        )
     holder_label = _holder_label(identity, _text(fields, "label"))
     asked_class = _text(fields, "egress")
     if asked_class is not None and asked_class not in egress.EGRESS_CLASSES:

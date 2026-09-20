@@ -33,7 +33,11 @@ whole team. A team draws on several pools, so its place is read among all
 that wait.
 
 The time a request may wait is counted on the service's clock, so a test
-drives it with a fake one.
+drives it with a fake one. It is no more than ``WAIT_MAX``, which whoever
+serves the request holds it to. The row keeps the time the wait is up, so a
+row whose asker went away and did not take it out holds up no one for long:
+the service passes it over and takes it out some time after that (see
+``service``).
 """
 
 from __future__ import annotations
@@ -53,6 +57,10 @@ from .teamlease import TeamGrant
 # seconds. A slot that frees is granted within this, and the time the member
 # before took to stop.
 POLL_INTERVAL = 1.0
+
+# The longest a request may ask to wait, in seconds: one day. No one waits on
+# a pool for longer, and a time this far off is one the clock can count to.
+WAIT_MAX = 86400
 
 
 class WaitTimeout(SpecfloError):
@@ -140,14 +148,15 @@ class Waiting:
         if self._id is None:
             if self.wait <= 0:
                 raise full
-            request_id = self.mint_id()
+            # Worked out before the row is written: whatever fails here leaves no row.
+            request_id, until = self.mint_id(), now + timedelta(seconds=self.wait)
             with self.service.open_store() as store:
                 store.add_waiting(WaitingRequest(
                     id=request_id, pool=self.pool, team=self.team,
                     holder_label=self.holder_label, arrived=_text(now), egress=self.egress,
-                    pinned=self.pinned,
+                    pinned=self.pinned, until=_text(until),
                 ))
-            self._id, self._until = request_id, now + timedelta(seconds=self.wait)
+            self._id, self._until = request_id, until
         elif now >= self._until:
             self.leave()
             raise WaitTimeout(f"Waited {self.wait:g} s and was not granted: {full}") from full

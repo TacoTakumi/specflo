@@ -13,8 +13,9 @@ store's.
 
 The store keeps no clock and makes no decision. Every time is a value the
 caller passes in, as ISO 8601 text like the agent host's status file, so a
-test drives it with a fake clock; whether a lease has expired or a closed
-account has reopened is for the reader to compute from what is stored.
+test drives it with a fake clock; whether a lease has expired, a closed
+account has reopened or a waiting request's time is up is for the reader to
+compute from what is stored.
 
 Standard library only, and opened per unit of work like the state store: a
 SQLite connection belongs to the thread that opened it, and the daemon
@@ -96,8 +97,9 @@ class WaitingRequest:
     also stands under limits the request does not set and is worked out by
     whoever reads the row. ``pinned`` is one of those limits: the egress class
     the requesting project pinned when the request arrived, None when no
-    project stood behind the request or it pinned none. A row from before a
-    value was kept reads as None.
+    project stood behind the request or it pinned none. ``until`` is the time
+    the request's wait is up, after which its asker waits no more; None is no
+    such time. A row from before a value was kept reads as None.
     """
 
     id: str
@@ -107,6 +109,7 @@ class WaitingRequest:
     arrived: str
     egress: str | None = None
     pinned: str | None = None
+    until: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -280,7 +283,8 @@ CREATE TABLE IF NOT EXISTS pool_waiting (
     holder_label TEXT NOT NULL,
     arrived      TEXT NOT NULL,
     egress       TEXT,
-    pinned       TEXT
+    pinned       TEXT,
+    until        TEXT
 );
 CREATE TABLE IF NOT EXISTS pool_accounts (
     name          TEXT PRIMARY KEY,
@@ -314,13 +318,17 @@ CREATE TABLE IF NOT EXISTS pool_notes (
 # Columns added after their table's first shape, as (table, column, type):
 # CREATE TABLE IF NOT EXISTS leaves an existing table alone, so a store
 # opened from before the column gains it here.
-ADDED_COLUMNS = (("pool_waiting", "egress", "TEXT"), ("pool_waiting", "pinned", "TEXT"))
+ADDED_COLUMNS = (
+    ("pool_waiting", "egress", "TEXT"),
+    ("pool_waiting", "pinned", "TEXT"),
+    ("pool_waiting", "until", "TEXT"),
+)
 
 _LEASE_COLUMNS = (
     "id, team_lease_id, holder_hash, holder_label, member, pool,"
     " resources, acquired, last_activity, idle_limit, state"
 )
-_WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress, pinned"
+_WAITING_COLUMNS = "id, pool, team, holder_label, arrived, egress, pinned, until"
 _ACCOUNT_COLUMNS = (
     "name, closed, reopen, usage, spend_limit, remaining, free_requests, read_at, read_error"
 )
@@ -443,10 +451,11 @@ class SqlitePoolStore:
         try:
             with self.connection:
                 self.connection.execute(
-                    f"INSERT INTO pool_waiting ({_WAITING_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    f"INSERT INTO pool_waiting ({_WAITING_COLUMNS})"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
-                        request.id, request.pool, request.team,
-                        request.holder_label, request.arrived, request.egress, request.pinned,
+                        request.id, request.pool, request.team, request.holder_label,
+                        request.arrived, request.egress, request.pinned, request.until,
                     ),
                 )
         except sqlite3.IntegrityError as exc:
@@ -464,7 +473,7 @@ class SqlitePoolStore:
             WaitingRequest(
                 id=row["id"], pool=row["pool"], team=row["team"],
                 holder_label=row["holder_label"], arrived=row["arrived"], egress=row["egress"],
-                pinned=row["pinned"],
+                pinned=row["pinned"], until=row["until"],
             )
             for row in rows
         ]

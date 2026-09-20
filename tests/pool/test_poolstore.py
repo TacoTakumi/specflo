@@ -256,6 +256,86 @@ def test_a_waiting_request_that_leaves_the_queue_leaves_no_record(store):
     assert store.list_waiting() == []
 
 
+def test_a_waiting_request_keeps_the_time_its_wait_is_up(store):
+    timed = WaitingRequest(
+        id="req-1", pool="workers", team=None, holder_label="r", arrived=T0, until=T1
+    )
+    untimed = WaitingRequest(id="req-2", pool="workers", team=None, holder_label="r", arrived=T0)
+    store.add_waiting(timed)
+    store.add_waiting(untimed)
+
+    assert [row.until for row in store.list_waiting()] == [T1, None]
+    assert store.list_waiting() == [timed, untimed]
+
+
+# The waiting table as it was before a row kept the time its wait is up.
+WAITING_TABLE_BEFORE_UNTIL = """
+CREATE TABLE pool_waiting (
+    seq          INTEGER PRIMARY KEY AUTOINCREMENT,
+    id           TEXT NOT NULL UNIQUE,
+    pool         TEXT,
+    team         TEXT,
+    holder_label TEXT NOT NULL,
+    arrived      TEXT NOT NULL,
+    egress       TEXT,
+    pinned       TEXT
+);
+"""
+
+
+def test_a_store_from_before_the_time_was_kept_gains_the_column_and_its_rows_read_as_none(root):
+    path = root / daemon.STATE_STORE_FILENAME
+    before = sqlite3.connect(path)
+    before.executescript(WAITING_TABLE_BEFORE_UNTIL)
+    before.execute(
+        "INSERT INTO pool_waiting (id, pool, team, holder_label, arrived, egress, pinned)"
+        " VALUES ('request-old', 'workers', NULL, 'requester / my-project', ?, 'open', NULL)",
+        (T0,),
+    )
+    before.commit()
+    before.close()
+
+    with poolstore.open_pool_store(root) as store:
+        columns = [
+            row[1] for row in sqlite3.connect(path).execute("PRAGMA table_info(pool_waiting)")
+        ]
+        assert columns[-1] == "until"
+        assert store.list_waiting() == [
+            WaitingRequest(
+                id="request-old", pool="workers", team=None,
+                holder_label="requester / my-project", arrived=T0, egress="open", until=None,
+            )
+        ]
+        store.add_waiting(WaitingRequest(
+            id="request-new", pool="workers", team=None, holder_label="later",
+            arrived=T1, until=T2,
+        ))
+
+    # opened again, the column is there and is left alone
+    with poolstore.open_pool_store(root) as store:
+        assert [(row.id, row.until) for row in store.list_waiting()] == [
+            ("request-old", None), ("request-new", T2),
+        ]
+
+
+def test_a_new_store_and_one_that_gained_the_time_keep_the_same_waiting_columns(tmp_path):
+    fresh, grown = daemon.prepare_root(tmp_path / "fresh"), daemon.prepare_root(tmp_path / "grown")
+    before = sqlite3.connect(grown / daemon.STATE_STORE_FILENAME)
+    before.executescript(WAITING_TABLE_BEFORE_UNTIL)
+    before.close()
+
+    shapes = []
+    for root in (fresh, grown):
+        poolstore.open_pool_store(root).close()
+        rows = sqlite3.connect(root / daemon.STATE_STORE_FILENAME).execute(
+            "PRAGMA table_info(pool_waiting)"
+        )
+        shapes.append([(row[1], row[2]) for row in rows])
+
+    assert shapes[0] == shapes[1]
+    assert ("until", "TEXT") in shapes[0]
+
+
 # --- accounts ----------------------------------------------------------------
 
 
