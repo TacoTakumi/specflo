@@ -14,9 +14,11 @@ agent host, placed by a fake herdr, as in the pool service's tests.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import shutil
 import stat
+import sys
 import threading
 import time
 from pathlib import Path
@@ -32,7 +34,7 @@ from specflo.daemon import auth
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
-from specflo.service.pool_remote import LEASES_PATH
+from specflo.service.pool_remote import LEASES_PATH, RemotePool
 
 from .test_runner import pid_alive
 
@@ -280,6 +282,123 @@ def test_a_pool_with_no_free_member_is_refused_and_the_held_token_is_kept(checko
     assert result.exit_code != 0
     assert "rebasers" in result.output
     assert token_file.read_text() == held
+
+
+# -- a token that cannot be kept ----------------------------------------------
+#
+# The daemon has granted the lease by the time the verb keeps its token. A
+# lease with no token kept can be neither driven nor released from here, so
+# the verb gives it back at once with the token the grant carried.
+
+
+def one_error_line(result) -> str:
+    """The one line a refused verb prints: the CLI's error, and no traceback."""
+    assert result.exit_code != 0
+    assert isinstance(result.exception, SystemExit), repr(result.exception)
+    (line,) = result.output.strip().splitlines()
+    assert line.startswith("error:")
+    return line
+
+
+def test_a_grant_whose_token_cannot_be_kept_is_given_back_and_the_error_names_the_lease(
+    checkout, pool_rig
+):
+    # where the tokens go is a file, so nothing can be written under it
+    leases = checkout / ".specflo" / "leases"
+    leases.write_text("not a directory\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["lease", "request", "rebasers"])
+
+    assert result.exit_code != 0
+    with pool_rig.store() as store:
+        (row,) = store.list_leases()
+    assert row.state == "released"
+    line = one_error_line(result)
+    assert row.id in line and "released" in line
+    # the member is free to the next request
+    leases.unlink()
+    assert request("rebasers", "--wait", "0")["agent"] == "local-1"
+
+
+def test_a_grant_for_an_agent_that_names_no_token_file_is_given_back(
+    checkout, pool_rig, monkeypatch
+):
+    asked = RemotePool.request
+
+    def names_a_path(self, *args, **keys):
+        # the grant is the daemon's own; only the name the client reads differs
+        return dataclasses.replace(asked(self, *args, **keys), agent="../local-1")
+
+    monkeypatch.setattr(RemotePool, "request", names_a_path)
+
+    result = runner.invoke(app, ["lease", "request", "rebasers"])
+
+    assert result.exit_code != 0
+    with pool_rig.store() as store:
+        (row,) = store.list_leases()
+    assert row.state == "released"
+    line = one_error_line(result)
+    assert row.id in line and "released" in line and "'../local-1'" in line
+    assert list((checkout / ".specflo").rglob("*.token")) == []
+    # the member is free to the next request, whose grant is read as it is
+    monkeypatch.setattr(RemotePool, "request", asked)
+    assert request("rebasers", "--wait", "0")["agent"] == "local-1"
+
+
+def test_a_lease_that_cannot_be_given_back_either_is_named_as_still_out(
+    checkout, pool_rig, monkeypatch
+):
+    from specflo.errors import SpecfloError
+
+    (checkout / ".specflo" / "leases").write_text("not a directory\n", encoding="utf-8")
+
+    def unreachable(self, lease_id, *, token=None):
+        raise SpecfloError("Cannot reach the remote.")
+
+    monkeypatch.setattr(RemotePool, "release", unreachable)
+
+    result = runner.invoke(app, ["lease", "request", "rebasers"])
+
+    assert result.exit_code != 0
+    with pool_rig.store() as store:
+        (row,) = store.list_leases()
+    assert row.state == "active"
+    line = one_error_line(result)
+    assert row.id in line and "still out" in line and "Cannot reach the remote" in line
+
+
+@pytest.fixture
+def review_team(monkeypatch):
+    """The daemon's pool directory holds the team "review": a worker, which is
+    local-1, and a critic, which is local-3."""
+    from .test_team_lease import write_team_pool
+
+    monkeypatch.setattr(sys.modules[__name__], "write_pool", write_team_pool)
+
+
+def test_a_team_with_one_token_that_cannot_be_kept_is_given_back_whole(
+    review_team, checkout, pool_rig
+):
+    # the worker's token is kept, and then the critic's cannot be: its file is a directory
+    leases = checkout / ".specflo" / "leases"
+    (leases / "local-3.token").mkdir(parents=True)
+
+    result = runner.invoke(app, ["lease", "request", "--team", "review"])
+
+    assert result.exit_code != 0
+    with pool_rig.store() as store:
+        rows = store.list_leases()
+    assert [row.state for row in rows] == ["released", "released"]
+    (team_lease_id,) = {row.team_lease_id for row in rows}
+    line = one_error_line(result)
+    assert team_lease_id in line and "released" in line
+    # the token that was kept opens nothing now, and it is gone
+    assert not (leases / "local-1.token").exists()
+    # the members are free to the next team
+    (leases / "local-3.token").rmdir()
+    again = runner.invoke(app, ["lease", "request", "--team", "review", "--wait", "0"])
+    assert again.exit_code == 0, again.output
+    assert (leases / "local-1.token").is_file() and (leases / "local-3.token").is_file()
 
 
 # -- the route --------------------------------------------------------------

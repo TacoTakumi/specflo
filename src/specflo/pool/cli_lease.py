@@ -77,8 +77,9 @@ def request(
     without one, and refuses at once a pool with no member under it, however
     long the request may wait. The request names the active project when
     the daemon holds it, and the daemon holds the request to the class that
-    project pins. Raises ``SpecfloError`` with the words to print for
-    anything that is refused, here or on the daemon.
+    project pins. A grant whose token cannot be kept here is given back at
+    once. Raises ``SpecfloError`` with the words to print for anything that
+    is refused, here or on the daemon.
     """
     # A checkout with no daemon is refused before anything else is looked at.
     registered = pick_remote(root, remote)
@@ -115,9 +116,9 @@ def request(
             " it waits no longer."
         )
     if team is not None:
-        _say_team(root, team, grant, remote=registered.name, json_output=json_output)
+        _say_team(root, client, team, grant, remote=registered.name, json_output=json_output)
         return
-    token_path = store_token(root, grant.agent, grant.token)
+    (token_path,) = _keep_tokens(root, client, grant.lease_id, [(grant.agent, grant.token)])
     if json_output:
         typer.echo(json.dumps({
             "lease": grant.lease_id, "agent": grant.agent,
@@ -134,10 +135,13 @@ def request(
     )
 
 
-def _say_team(root: Path, team: str, grant, *, remote: str, json_output: bool) -> None:
+def _say_team(root: Path, client, team: str, grant, *, remote: str, json_output: bool) -> None:
     """Keep the token of every member of the granted team, and print the team
     lease id and each role's agent; no token is printed."""
-    paths = [store_token(root, member.agent, member.token) for member in grant.members]
+    paths = _keep_tokens(
+        root, client, grant.team_lease_id,
+        [(member.agent, member.token) for member in grant.members],
+    )
     if json_output:
         typer.echo(json.dumps({
             "team_lease": grant.team_lease_id, "team": team, "remote": remote,
@@ -161,6 +165,42 @@ def _say_team(root: Path, team: str, grant, *, remote: str, json_output: bool) -
         f" {_shown(paths[0].parent, root)}. Give the team back as one with"
         f" `specflo lease release {grant.team_lease_id}`."
     )
+
+
+def _keep_tokens(root: Path, client, lease_id: str, members: list[tuple[str, str]]) -> list[Path]:
+    """Keep the token of each (agent, token) of a grant; the files' paths.
+
+    The daemon has granted the lease by now, and a lease with a token that is
+    not kept can be neither driven nor given back from this checkout: it would
+    hold its members until the idle limit. So when one token cannot be kept,
+    the lease *lease_id* is given back at once with a token of the grant, which
+    for a team lease id ends every member lease, and the error names the lease
+    and says how it stands.
+    """
+    kept: list[Path] = []
+    try:
+        for agent, token in members:
+            kept.append(store_token(root, agent, token))
+    except (OSError, SpecfloError) as exc:
+        cause = str(exc).rstrip(".")
+        try:
+            ended = client.release(lease_id, token=members[0][1])
+        except SpecfloError as refused:
+            # What was kept stays: it is all that can still give the lease back.
+            again = f" or `specflo lease release {lease_id}` gives it back" if kept else ""
+            raise SpecfloError(
+                f"A token of lease {lease_id} could not be kept ({cause}), and the lease"
+                f" could not be given back: {str(refused).rstrip('.')}. It is still out,"
+                f" until its idle limit passes{again}."
+            ) from exc
+        # The lease is over, so what proved its holder opens nothing now.
+        for path in kept:
+            path.unlink(missing_ok=True)
+        raise SpecfloError(
+            f"A token of lease {lease_id} could not be kept ({cause}), so the lease was"
+            f" given back at once: it is {ended.state}, and nothing is held."
+        ) from exc
+    return kept
 
 
 def _say_it_waits(notice, *, remote: str, json_output: bool) -> None:

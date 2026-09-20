@@ -255,7 +255,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   list`.** A request prints the lease id and the agent to drive with the
   `specflo agent` verbs; the member starts in the requester's directory or
   in `--cwd`. The lease token is kept in `.specflo/leases/<agent>.token`
-  (mode 0600, never printed), where the agent verbs find it. A request
+  (mode 0600, never printed), where the agent verbs find it. A grant whose
+  token cannot be kept there is given back at once, a team as one, and the
+  error names the lease. A request
   that does not fit waits on the daemon for up to `--wait` seconds, 600 by
   default, and says so at once on stderr with the pool, what is full, its
   place and the limit; `--wait 0` refuses at once and an interrupt cancels
