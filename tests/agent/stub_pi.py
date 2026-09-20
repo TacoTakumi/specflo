@@ -23,9 +23,8 @@ Scenario keys:
   tool            {"name": ..., "args": {...}} - emit one tool_execution
                   start/end pair before the reply
   recall          bool - keep the session's prompt messages and append the
-                  earlier ones to each reply; new_session is then answered
-                  and forgets them (without it new_session is unhandled)
-  cancel_new_session  bool - with recall: answer new_session as cancelled
+                  earlier ones to each reply; new_session forgets them
+  cancel_new_session  bool - answer new_session as cancelled
                       by an extension, forgetting nothing
   provider_errors  list - while one is left, a prompt takes the next and its
                    provider call fails with it:
@@ -254,7 +253,7 @@ class Stub:
                 )
             elif ctype == "extension_ui_response":
                 pass  # stale/unsolicited; ignore like pi does
-            elif ctype == "new_session" and self.scenario.get("recall"):
+            elif ctype == "new_session":
                 self.handle_new_session(cmd)
             else:
                 respond(cmd, str(ctype), success=False, error="stub: unhandled command")

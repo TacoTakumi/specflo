@@ -4,6 +4,9 @@ An attached console is leased like any member, by the same ledger and the
 same rows, with one difference: its pi is the developer's own. A grant binds
 the lease's token on the host that runs already; it starts no process,
 generates no pi configuration and applies nothing of the pool's definition.
+Behind the wall it has that pi clear its conversation in place, so a holder
+gets nothing of a former holder's turns or of the developer's own, and a pi
+that does not clear is not leased.
 However the lease ends - released, expired or preempted - the pool lowers the
 wall, aborts a turn the holder left running and records the ending for the
 former holder. The host and its pi are left as they were, under the same
@@ -21,6 +24,7 @@ start``, which no pool started; the helpers are the attach tests' own.
 
 from __future__ import annotations
 
+import json
 import os
 import signal
 
@@ -28,7 +32,7 @@ import pytest
 from typer.testing import CliRunner
 
 from specflo.agent import lease as agent_lease
-from specflo.agent.cli import EXIT_UNREACHABLE
+from specflo.agent.cli import EXIT_UNREACHABLE, agent_app
 from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.cli import app
@@ -86,6 +90,11 @@ def slot_state(pool_rig) -> str:
     return console.state(SLOT, console_rows(pool_rig), out, statuses(pool_rig))
 
 
+def last(grant):
+    """What `specflo agent last` prints for the holder of *grant*."""
+    return cli.invoke(agent_app, ["last", grant.agent, "--lease-token", grant.token])
+
+
 def kill_host(before: dict) -> None:
     for pid in (before["host_pid"], before["pi_pid"]):
         os.kill(pid, signal.SIGKILL)
@@ -130,6 +139,127 @@ def test_a_live_host_that_does_not_take_the_lease_leaves_no_active_lease_and_run
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []
     assert same_process(pool_rig, before)
+
+
+# -- the conversation ---------------------------------------------------------
+
+
+def test_the_next_holder_of_a_console_gets_nothing_of_the_former_holders_conversation(pool_rig):
+    pool_rig.scenario(reply="done", recall=True)
+    svc, before = attached(pool_rig)
+    first = svc.grant("rebasers", holder_label="project-a", cwd=pool_rig.work)
+    assert prompt(first, "MARKER-OF-PROJECT-A").exit_code == 0
+    svc.end_lease(first.lease_id, "released")
+
+    second = svc.grant("rebasers", holder_label="project-b", cwd=pool_rig.work)
+
+    # before a prompt of its own, the holder has no last answer to read
+    read = last(second)
+    assert read.exit_code == 0
+    assert read.output.strip() == ""
+    asked = prompt(second, "what were you told?")
+    assert asked.exit_code == 0
+    assert "MARKER-OF-PROJECT-A" not in asked.output
+    assert "[recalls: nothing]" in asked.output
+    svc.end_lease(second.lease_id, "released")
+    # cleared in place: the pi is the one the developer started
+    assert same_process(pool_rig, before)
+
+
+def test_the_first_holder_gets_nothing_of_the_developers_own_conversation(pool_rig):
+    pool_rig.scenario(reply="done", recall=True)
+    svc = pool_rig.service(pool_rig.config(console_member()))
+    before = start_host(pool_rig)
+    told = cli.invoke(agent_app, ["prompt", AGENT, "MARKER-OF-THE-DEVELOPER"])
+    assert told.exit_code == 0
+    console.attach(svc, SLOT, AGENT)
+
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    assert last(grant).output.strip() == ""
+    asked = prompt(grant, "what were you told?")
+    assert asked.exit_code == 0
+    assert "MARKER-OF-THE-DEVELOPER" not in asked.output
+    assert same_process(pool_rig, before)
+
+
+def test_a_console_whose_pi_does_not_clear_its_conversation_is_not_granted(pool_rig):
+    pool_rig.scenario(reply="done", recall=True, cancel_new_session=True)
+    svc, before = attached(pool_rig)
+
+    with pytest.raises(runner.RunnerError, match=f"'{AGENT}'.*did not clear its conversation"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    # the lease ended as one on a member that did not start
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+        [ended] = store.list_leases()
+        causes = [t.cause for t in store.list_transitions(lease_id=ended.id)]
+    assert ended.state == "released"
+    assert any(c.startswith("member did not start") and AGENT in c for c in causes)
+    # the wall is down again: the developer's own frame, with no token, is taken
+    assert cli.invoke(agent_app, ["prompt", AGENT, "mine again"]).exit_code == 0
+    assert same_process(pool_rig, before)
+
+
+def test_a_bind_whose_pi_does_not_clear_lowers_the_wall_again(pool_rig):
+    pool_rig.scenario(reply="done", recall=True, cancel_new_session=True)
+    before = start_host(pool_rig)
+
+    with pytest.raises(runner.RunnerError, match="cancelled"):
+        runner.bind_console(AGENT, pool_token=POOL_TOKEN, lease_token="token-of-the-holder")
+
+    # no lease is bound: a frame with no token reaches the developer's pi
+    with connect(AGENT) as developer:
+        assert developer.request({"type": "get_last_assistant_text"})["success"]
+    assert same_process(pool_rig, before)
+
+
+def test_a_console_in_a_turn_of_the_developers_is_not_cleared_and_not_granted(pool_rig):
+    pool_rig.scenario(mode="never_settle", recall=True, capture=str(pool_rig.capture))
+    svc, before = attached(pool_rig)
+    with connect(AGENT) as developer:
+        developer.send({"type": "prompt", "message": "a long turn"})
+        assert wait_until(lambda: pool_rig.status(AGENT)["state"] == "working")
+
+    with pytest.raises(runner.RunnerError, match=f"'{AGENT}'.*did not clear its conversation"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    frames = [json.loads(line) for line in pool_rig.capture.read_text().splitlines()]
+    assert "new_session" not in [f["type"] for f in frames]
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+    assert same_process(pool_rig, before)
+    # the turn is the developer's: the refused lease's ending leaves it running
+    assert "abort" not in [f["type"] for f in frames]
+    assert pool_rig.status(AGENT)["state"] == "working"
+
+
+def test_a_console_is_cleared_once_the_turn_its_last_holder_left_running_is_aborted(pool_rig):
+    pool_rig.scenario(mode="never_settle", recall=True)
+    svc, before = attached(pool_rig)
+    old = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    with connect(AGENT, lease_token=old.token) as holder:
+        holder.send({"type": "prompt", "message": "a long turn"})
+        assert wait_until(lambda: pool_rig.status(AGENT)["state"] == "working")
+    svc.end_lease(old.lease_id, "released")
+
+    new = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+
+    assert new.agent == AGENT
+    assert same_process(pool_rig, before)
+
+
+def test_a_member_the_pool_starts_is_sent_no_clearing(pool_rig):
+    pool_rig.scenario(reply="done", recall=True, capture=str(pool_rig.capture))
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    assert prompt(grant, "hello").exit_code == 0
+    frames = [json.loads(line) for line in pool_rig.capture.read_text().splitlines()]
+    assert "new_session" not in [f["type"] for f in frames]
+    svc.end_lease(grant.lease_id, "released")
 
 
 # -- the ending ---------------------------------------------------------------

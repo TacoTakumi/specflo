@@ -350,8 +350,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   <slot>`.** A member of `kind: console` is a slot for a developer's own
   agent, running under `specflo agent start` on the rpc transport on the
   daemon's host. While attached it is leased like any member; a lease on
-  it starts nothing, stops nothing and leaves the developer's pi as it was
-  started, and between leases the host refuses the tokens of former
+  it starts nothing, stops nothing and applies no definition. The pool
+  clears the pi's conversation at each grant (pi `new_session`, under the
+  same process), so a holder gets nothing of a former holder's turns nor
+  of the developer's own: attaching a console gives its conversation up.
+  A console whose pi does not clear it, a turn still running for one, is
+  not leased, and a turn of the developer's own is left running. Between
+  leases the host refuses the tokens of former
   holders. A detached slot takes no new lease and a lease that is out
   stands. Both verbs are the developer identity's alone. An agent under a
   name the pool starts a member's host under is refused at attach. A host

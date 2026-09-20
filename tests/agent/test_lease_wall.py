@@ -222,9 +222,10 @@ def test_holder_token_passes_and_never_reaches_pi(make_host):
         assert response["id"] == request_id
         assert response["success"] is True
         # pi answers these itself: the wall let them through
-        for ctype in ("steer", "follow_up", "new_session"):
+        for ctype in ("steer", "follow_up"):
             answer = holder.request(frame_for(ctype))
             assert answer["error"] == "stub: unhandled command"
+        assert holder.request(frame_for("new_session"))["success"] is True
         assert holder.request({"type": "abort"})["success"] is True
         assert holder.status()["status"]["state"] == "idle"
 

@@ -39,7 +39,9 @@ with nothing written beside it.
 A console is the one member whose host the pool does not start. A developer
 attaches an agent host that runs already: ``attach_console`` checks that one
 answers under the name on the rpc transport and binds the pool's token on it,
-and ``bind_console`` raises the wall on it for one lease. Neither starts
+and ``bind_console`` raises the wall on it for one lease and then has its pi
+clear its conversation, which would else pass from one lease to the next: a
+console's pi is the one process that outlives a lease. Neither starts
 anything. A developer may have stopped the host since the attach and started
 it again under the same name, and that host knows no pool: so ``bind_console``
 makes the checks of an attach and binds the pool's token again before the
@@ -117,6 +119,12 @@ _WATCH_EVERY = 0.05
 _STDERR_LINES = 5
 _STDERR_CHARS = 400
 _PROBE_TIMEOUT = 2.0
+# How long a console's pi may take to answer that its conversation is cleared.
+_CLEAR_TIMEOUT = 10.0
+# The consoles whose last bind left no lease on the host, because the pi did
+# not clear: a turn that runs there was never a holder's, so the ending of
+# that lease aborts nothing.
+_not_leased: set[str] = set()
 # Where the pool's own stop verb runs: no token file is found upward from it.
 _NO_CHECKOUT = os.path.abspath(os.sep)
 
@@ -351,18 +359,27 @@ def attach_console(name: str, *, pool_token: str) -> None:
 
 
 def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
-    """Raise the lease wall on the attached console host *name* for one lease;
-    the agent's name. Nothing is started.
+    """Raise the lease wall on the attached console host *name* for one lease
+    and clear its pi's conversation; the agent's name. Nothing is started.
 
     The host that answers may not be the one that was attached: a developer
     can stop it and start it again under the same name. So the pool's token is
     bound first, after the checks of an attach. A host that has the token
     takes it again, which changes nothing, and a fresh one is bound by it.
 
-    Raises ``RunnerError`` for an agent on the TUI transport, and for a host
-    that is gone, is bound to another pool or does not take the lease.
+    A console's pi runs on from lease to lease, so its conversation is cleared
+    in place, under the same process id: the holder gets nothing of a former
+    holder's turns, nor of the developer's own. It is cleared behind the wall,
+    where no frame but the pool's comes between the clearing and the holder's
+    first prompt. A pi that does not clear is not leased: the wall comes down
+    again.
+
+    Raises ``RunnerError`` for an agent on the TUI transport, for a host that
+    is gone, is bound to another pool or does not take the lease, and for a pi
+    that did not clear its conversation.
     """
     paths = _paths(name)
+    _not_leased.discard(name)
     try:
         try:
             # As at an attach: a TUI agent answers on no host's socket.
@@ -373,6 +390,17 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
             _refuse_tui(name, client.status(timeout=_PROBE_TIMEOUT).get("status"))
             client.pool_bind(pool_token)
             client.lease_bind(pool_token, lease_token)
+            kept = _clear_conversation(client, pool_token)
+            if kept is not None:
+                try:
+                    client.lease_clear(pool_token)
+                except (TimeoutError, RuntimeError, OSError):
+                    pass  # the lease's ending lowers the wall as well
+                _not_leased.add(name)
+                raise RunnerError(
+                    f"console '{name}': its pi did not clear its conversation, so it is "
+                    f"not leased: {kept}"
+                )
     except (
         NotAttachable, HostUnreachableError, TimeoutError, RuntimeError, OSError
     ) as exc:
@@ -380,6 +408,37 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
     # As at a start: the last ending was a former lease's, not this one's.
     lease.clear_ended(paths.root)
     return name
+
+
+def _clear_conversation(client, pool_token: str) -> str | None:
+    """Have the pi behind *client* start a new session, under the pool's
+    token, which the lease wall admits; why it kept its conversation, None
+    when it is cleared.
+
+    As `specflo agent reset` has it: a pi in a turn is not asked, and one that
+    answers that an extension cancelled the new session has cleared nothing.
+    A turn the former holder left running was aborted a moment ago, so a pi
+    that is in a turn is given a moment to settle.
+    """
+    deadline = time.monotonic() + _PROBE_TIMEOUT
+    while True:
+        record = client.status(timeout=_PROBE_TIMEOUT).get("status")
+        if not isinstance(record, dict) or record.get("state") != "working":
+            break
+        if time.monotonic() >= deadline:
+            return "a turn is running on it, the developer's own for one"
+        time.sleep(_WATCH_EVERY)
+    try:
+        answer = client.request(
+            {"type": "new_session", "pool_token": pool_token}, timeout=_CLEAR_TIMEOUT
+        )
+    except TimeoutError:
+        return f"no answer in {_CLEAR_TIMEOUT:.0f}s"
+    if not answer.get("success"):
+        return str(answer.get("error") or "pi refused a new session")
+    if (answer.get("data") or {}).get("cancelled"):
+        return "a pi extension cancelled the new session"
+    return None
 
 
 def release_console(
@@ -396,9 +455,13 @@ def release_console(
     The record is written as ``stop`` writes it, so the former holder is told
     why. The wall comes down, and a turn that ran under the lease is aborted;
     pi stays up through an abort. A host that is gone, or that does not know
-    the pool's token, is left alone: the lease ends all the same.
+    the pool's token, is left alone: the lease ends all the same. A lease
+    whose bind the pi refused by keeping its conversation was never on the
+    host: a turn that runs there is the developer's own and is left running.
     """
     paths = _paths(name)
+    held = name not in _not_leased
+    _not_leased.discard(name)
     lease.write_ended(paths.root, cause, request_id, holder=holder)
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
@@ -408,7 +471,7 @@ def release_console(
             except (TimeoutError, RuntimeError):
                 record = None  # the wall comes down all the same
             client.lease_clear(pool_token)
-            if isinstance(record, dict) and record.get("state") == "working":
+            if held and isinstance(record, dict) and record.get("state") == "working":
                 client.request({"type": "abort"}, timeout=_PROBE_TIMEOUT)
     except (HostUnreachableError, TimeoutError, RuntimeError, OSError):
         # No host, or one that this pool is not bound on: nothing of it is
