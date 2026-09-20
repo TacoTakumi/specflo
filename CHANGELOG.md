@@ -527,7 +527,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   fan-out step requests a lease before a task whose `Needs` names a daemon
   pool and releases it after, on success or failure; the agent skill
   documents the lease verbs, the waiting notice, the team form and the
-  lease-ended errors.
+  lease-ended errors. The README's known limits and the agent skill say that
+  lease token files and a remote's token are under the checkout's
+  `.specflo`, that a member started there with bash or read can read them,
+  and that a `--cwd` outside the checkout avoids it.
 
 ### Fixed
 

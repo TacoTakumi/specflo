@@ -111,6 +111,10 @@ are refused - start your own agents as before.
   take one member. It prints the lease id and the agent name; the lease token
   goes to a token file under the checkout, where every agent verb finds it by
   itself. Then drive the member: `specflo agent prompt <agent> "<text>"`.
+  The member starts in `--cwd`, by default your working directory. The token
+  files and the remote's token are under the checkout's `.specflo`, and a
+  member with bash or read that starts in the checkout can read them: for a
+  member that is not trusted, pass a `--cwd` outside the checkout.
 - `specflo lease release <lease> [--remote NAME] [--json]` - give the lease
   back, always, when the work is over or has failed. A lease that has ended
   already is reported as it ended.
