@@ -125,8 +125,15 @@ def unmatched(
 ) -> frozenset[str]:
     """The console slots of *config* that take no new lease now: those with no
     agent attached, those that were detached and, with *statuses* (see
-    ``state``), those whose host is gone or is no rpc host."""
-    serving = {row.slot for row in rows if not row.draining and not _gone(row, statuses)}
+    ``state``), those whose host is gone or is no rpc host, and those whose
+    host is in a state that takes no lease (``runner.TAKES_NO_LEASE``): a
+    turn of the developer's own is running, or its pi is gone. Such a slot is
+    attached still, and reads so; it is the placement that passes it over,
+    for the request to take the next member or to wait."""
+    serving = {
+        row.slot for row in rows
+        if not row.draining and not _gone(row, statuses) and not _busy(row, statuses)
+    }
     return frozenset(member.name for member in slots(config) if member.name not in serving)
 
 
@@ -165,6 +172,14 @@ def started_under(
         if member is not None:
             found.append((member, row))
     return found
+
+
+def _busy(row: ConsoleAttachment, statuses: Mapping[str, object] | None) -> bool:
+    """Is the host of *row* in a state in which it takes no lease now?"""
+    if statuses is None:
+        return False
+    record = statuses.get(row.agent)
+    return isinstance(record, Mapping) and record.get("state") in runner.TAKES_NO_LEASE
 
 
 def _gone(row: ConsoleAttachment, statuses: Mapping[str, object] | None) -> bool:

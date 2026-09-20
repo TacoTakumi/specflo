@@ -372,8 +372,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   clears the pi's conversation at each grant (pi `new_session`, under the
   same process), so a holder gets nothing of a former holder's turns nor
   of the developer's own: attaching a console gives its conversation up.
-  A console whose pi does not clear it, a turn still running for one, is
-  not leased, and a turn of the developer's own is left running. Between
+  A console whose developer has a turn running, or whose pi has exited,
+  takes no lease while it is so: the placement passes the slot over, so
+  the request takes the next member of the pool or waits, as for a slot
+  with no agent attached; the slot reads attached all the same, and the
+  developer's turn is left alone. A bind that loses that race is refused
+  naming the console and the cause, and the daemon answers 409. A console
+  whose pi does not clear its conversation is not leased. Between
   leases the host refuses the tokens of former
   holders. A detached slot takes no new lease and a lease that is out
   stands. Both verbs are the developer identity's alone. An agent under a

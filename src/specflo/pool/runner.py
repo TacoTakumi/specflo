@@ -121,6 +121,13 @@ _STDERR_CHARS = 400
 _PROBE_TIMEOUT = 2.0
 # How long a console's pi may take to answer that its conversation is cleared.
 _CLEAR_TIMEOUT = 10.0
+# The states of an attached console's host in which it takes no lease: a turn
+# of the developer's own is running, which the lease wall would take the end
+# of away from them, or its pi is gone and nothing would answer the bind. The
+# placement passes such a console over (see ``console.unmatched``).
+TAKES_NO_LEASE = frozenset({"working", "exited"})
+# Why a pi kept its conversation when a turn was running on it all along.
+_TURN_RUNNING = "a turn is running on it, the developer's own for one"
 # The consoles whose last bind left no lease on the host, because the pi did
 # not clear: a turn that runs there was never a holder's, so the ending of
 # that lease aborts nothing.
@@ -131,6 +138,13 @@ _NO_CHECKOUT = os.path.abspath(os.sep)
 
 class RunnerError(SpecfloError):
     """A member's process that could not be started or stopped."""
+
+
+class ConsoleBusy(RunnerError):
+    """A console that takes no lease now: a turn of the developer's own runs
+    on it, or its pi is gone. The placement passes such a console over, so
+    this is the race it loses between the placement and the bind; the request
+    is not one that a member failed to start for."""
 
 
 class NotAttachable(SpecfloError):
@@ -376,6 +390,11 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
     first prompt. A pi that does not clear is not leased: the wall comes down
     again.
 
+    A host that takes no lease now is refused before the wall goes up
+    (``ConsoleBusy``): the placement passed such a console over already, so
+    this is the race it lost, and a turn of the developer's own that runs
+    then keeps its connection and its ending.
+
     Raises ``RunnerError`` for an agent on the TUI transport, for a host that
     is gone, is bound to another pool or does not take the lease, and for a pi
     that did not clear its conversation.
@@ -389,7 +408,9 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
         except (OSError, ValueError):
             pass  # no record to go by; the socket says the rest
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
-            _refuse_tui(name, client.status(timeout=_PROBE_TIMEOUT).get("status"))
+            record = client.status(timeout=_PROBE_TIMEOUT).get("status")
+            _refuse_tui(name, record)
+            _refuse_busy(name, record)
             client.pool_bind(pool_token)
             # the process is the developer's: the holder's stop is not taken
             client.lease_bind(pool_token, lease_token, console=True)
@@ -400,7 +421,10 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
                 except (TimeoutError, RuntimeError, OSError):
                     pass  # the lease's ending lowers the wall as well
                 _not_leased.add(name)
-                raise RunnerError(
+                # A turn that started in the race the placement lost is no
+                # failure of the member's: the request is to be told so.
+                fault = ConsoleBusy if kept == _TURN_RUNNING else RunnerError
+                raise fault(
                     f"console '{name}': its pi did not clear its conversation, so it is "
                     f"not leased: {kept}"
                 )
@@ -429,7 +453,7 @@ def _clear_conversation(client, pool_token: str) -> str | None:
         if not isinstance(record, dict) or record.get("state") != "working":
             break
         if time.monotonic() >= deadline:
-            return "a turn is running on it, the developer's own for one"
+            return _TURN_RUNNING
         time.sleep(_WATCH_EVERY)
     try:
         answer = client.request(
@@ -480,6 +504,20 @@ def release_console(
         # No host, or one that this pool is not bound on: nothing of it is
         # this pool's to clear or to abort.
         pass
+
+
+def _refuse_busy(name: str, record: object) -> None:
+    """Raise ``ConsoleBusy`` when *record*, the status record of the attached
+    console *name*, says a state in which it takes no lease (see
+    ``TAKES_NO_LEASE``). Read before the wall goes up: a turn that runs now
+    is the developer's own."""
+    if not isinstance(record, dict) or record.get("state") not in TAKES_NO_LEASE:
+        return
+    why = (
+        _TURN_RUNNING if record.get("state") == "working"
+        else "its pi has exited, so nothing would answer the lease"
+    )
+    raise ConsoleBusy(f"console '{name}' takes no lease now: {why}.")
 
 
 def _refuse_tui(name: str, record: object) -> None:

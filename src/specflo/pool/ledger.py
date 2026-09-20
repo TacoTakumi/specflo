@@ -240,7 +240,7 @@ def place(
     if away:
         kept.append(
             ", ".join(away) + " cannot be matched now: a console takes a lease only "
-            "while an agent is attached to it"
+            "while an agent is attached to it and free to take one"
         )
     if full:
         kept.append(", ".join(

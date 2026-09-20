@@ -115,7 +115,7 @@ from ..errors import SpecfloError
 from ..pool import console, egress, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, PoolConfig, load_pool_config
-from ..pool.runner import RunnerError
+from ..pool.runner import ConsoleBusy, RunnerError
 from ..pool.service import Grant, PoolService, hash_token
 from ..projects import load_project, validate_slug
 from ..service.pool_remote import (
@@ -481,6 +481,10 @@ def _failed(asked: waiting.Waiting, exc: Exception) -> HTTPException:
     if isinstance(exc, _ClientGone):
         # No one reads this: the connection it would go down is closed.
         return HTTPException(status_code=400, detail="The client went away before it was answered.")
+    if isinstance(exc, ConsoleBusy):
+        # The console was free when it was matched and is not free now: no
+        # member failed, and the request is told which console and why.
+        return HTTPException(status_code=409, detail=str(exc))
     if isinstance(exc, RunnerError):
         named = f"pool '{asked.pool}'" if asked.team is None else f"team '{asked.team}'"
         return _member_failed(named, exc)

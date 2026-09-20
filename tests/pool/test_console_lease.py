@@ -37,8 +37,9 @@ from specflo.agent.cli import EXIT_UNREACHABLE, agent_app
 from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.cli import app
+from specflo.daemon import pool_routes
 from specflo.daemon.poolstore import ConsoleAttachment, Lease, Resource
-from specflo.pool import console, ledger, runner, service
+from specflo.pool import console, ledger, runner, service, waiting
 from specflo.pool.config import Member
 
 from .test_console_attach import AGENT, SLOT, asks, console_member, console_rows, start_host
@@ -102,6 +103,22 @@ def kill_host(before: dict) -> None:
     assert wait_until(lambda: not pid_alive(before["host_pid"]))
 
 
+def kill_pi(rig, before: dict) -> None:
+    """Kill the console's pi and leave the developer's host running: the host
+    writes exited as soon as pi's output ends."""
+    os.kill(before["pi_pid"], signal.SIGKILL)
+    assert wait_until(lambda: rig.status(AGENT)["state"] == "exited")
+    assert pid_alive(before["host_pid"])
+
+
+def working(rig, name: str = AGENT) -> None:
+    """Start a turn of the developer's own on the console's pi; the stub pi
+    is in never_settle mode, so the turn runs until it is aborted."""
+    with connect(name) as developer:
+        developer.send({"type": "prompt", "message": "a long turn"})
+        assert wait_until(lambda: rig.status(name)["state"] == "working")
+
+
 # -- the grant ----------------------------------------------------------------
 
 
@@ -140,6 +157,76 @@ def test_a_live_host_that_does_not_take_the_lease_leaves_no_active_lease_and_run
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []
     assert same_process(pool_rig, before)
+
+
+# -- a console that takes no lease now -----------------------------------------
+
+
+def test_a_console_whose_developer_is_in_a_turn_is_passed_over_for_a_free_member(pool_rig):
+    pool_rig.scenario(mode="never_settle", recall=True)
+    started = pool_rig.local_member()
+    svc, before = attached(pool_rig, console_member(), started, size=2)
+    working(pool_rig)
+
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    # the member the pool starts serves the request; the console is passed over
+    assert grant.agent == started.name
+    with pool_rig.store() as store:
+        assert [out.member for out in store.list_leases()] == [started.name]
+    assert same_process(pool_rig, before)
+    assert pool_rig.status(AGENT)["state"] == "working"
+
+
+def test_a_console_whose_pi_exited_under_a_live_host_takes_no_lease(pool_rig):
+    svc, before = attached(pool_rig)
+    kill_pi(pool_rig, before)
+
+    with pytest.raises(service.NoFreeMember, match=f"'{SLOT}'.*console"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.list_leases() == []
+
+
+def test_a_console_that_takes_no_lease_now_is_attached_still(pool_rig):
+    pool_rig.scenario(mode="never_settle", recall=True)
+    svc, _ = attached(pool_rig)
+    working(pool_rig)
+
+    # the slot is the developer's and stays attached on the page; it is only
+    # the placement that passes it over while the turn runs
+    assert slot_state(pool_rig) == console.ATTACHED
+    unmatched = console.unmatched(svc.config, console_rows(pool_rig), statuses(pool_rig))
+    assert unmatched == frozenset({SLOT})
+
+
+def test_the_bind_refuses_a_console_whose_turn_started_after_it_was_matched(pool_rig):
+    pool_rig.scenario(mode="never_settle", recall=True, capture=str(pool_rig.capture))
+    before = start_host(pool_rig)
+    working(pool_rig)
+
+    with pytest.raises(runner.ConsoleBusy, match=f"'{AGENT}'.*a turn"):
+        runner.bind_console(AGENT, pool_token=POOL_TOKEN, lease_token="token-of-the-holder")
+
+    # the wall never went up: the developer's own frame, with no token, is taken
+    with connect(AGENT) as developer:
+        assert developer.status()["status"]["state"] == "working"
+    frames = [json.loads(line) for line in pool_rig.capture.read_text().splitlines()]
+    assert "new_session" not in [f["type"] for f in frames]
+    assert same_process(pool_rig, before)
+
+
+def test_a_console_that_takes_no_lease_is_no_member_that_failed_to_start(pool_rig):
+    asked = waiting.Waiting(
+        pool_rig.service(pool_rig.config(console_member())), "rebasers",
+        holder_label="a", cwd=pool_rig.work, wait=0, mint_id=lambda: "request-a",
+    )
+
+    answer = pool_routes._failed(asked, runner.ConsoleBusy(f"console '{SLOT}': a turn is running"))
+
+    assert answer.status_code == 409
+    assert SLOT in answer.detail and "a turn is running" in answer.detail
 
 
 # -- the conversation ---------------------------------------------------------
@@ -219,19 +306,19 @@ def test_a_bind_whose_pi_does_not_clear_lowers_the_wall_again(pool_rig):
 def test_a_console_in_a_turn_of_the_developers_is_not_cleared_and_not_granted(pool_rig):
     pool_rig.scenario(mode="never_settle", recall=True, capture=str(pool_rig.capture))
     svc, before = attached(pool_rig)
-    with connect(AGENT) as developer:
-        developer.send({"type": "prompt", "message": "a long turn"})
-        assert wait_until(lambda: pool_rig.status(AGENT)["state"] == "working")
+    working(pool_rig)
 
-    with pytest.raises(runner.RunnerError, match=f"'{AGENT}'.*did not clear its conversation"):
+    # the one slot the pool has takes no lease now, so the request waits
+    with pytest.raises(service.NoFreeMember, match=f"'{SLOT}'.*console"):
         svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    assert asks(pool_rig, svc, "a").attempt() is None
 
     frames = [json.loads(line) for line in pool_rig.capture.read_text().splitlines()]
     assert "new_session" not in [f["type"] for f in frames]
     with pool_rig.store() as store:
-        assert store.list_leases(state="active") == []
+        assert store.list_leases() == []
     assert same_process(pool_rig, before)
-    # the turn is the developer's: the refused lease's ending leaves it running
+    # the turn is the developer's: nothing of the request reached it
     assert "abort" not in [f["type"] for f in frames]
     assert pool_rig.status(AGENT)["state"] == "working"
 
