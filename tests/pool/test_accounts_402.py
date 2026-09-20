@@ -20,7 +20,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import httpx
 import pytest
@@ -32,10 +34,11 @@ from specflo.agent.statefiles import AgentPaths
 from specflo.daemon import HEALTH_PATH
 from specflo.daemon import app as daemon_app
 from specflo.daemon.poolstore import open_pool_store
-from specflo.pool import accounts, watch
-from specflo.pool.config import Account
+from specflo.pool import accounts, console, watch
+from specflo.pool.config import Account, Member
 
 from .stub_provider import StubProvider
+from .test_console_attach import AGENT, SLOT, start_host
 from .test_events_reloads import write_pool
 from .test_runner import POOL_TOKEN, wait_until
 
@@ -462,6 +465,270 @@ def test_a_local_member_is_not_watched(pool_rig, provider, monkeypatch):
         watcher.poll()
 
     assert read == []
+
+
+# -- a lease whose agent is not named like its member -------------------------
+
+
+def prompts_in(capture: Path) -> list[str]:
+    """The message of every prompt the pi that writes *capture* was sent."""
+    if not capture.exists():
+        return []
+    frames = [json.loads(line) for line in capture.read_text().splitlines() if line]
+    return [frame["message"] for frame in frames if frame["type"] == "prompt"]
+
+
+def turn(agent: str, message: str = MESSAGE, *, token: str | None = None):
+    """One turn on *agent*: the holder's under the lease's *token*, the
+    developer's own without one."""
+    wall = [] if token is None else ["--lease-token", token]
+    return CliRunner().invoke(agent_app, ["prompt", agent, message, *wall])
+
+
+@pytest.fixture
+def resent(monkeypatch):
+    """The agent of every prompt the watcher has sent again; each one is still sent."""
+    agents: list[str] = []
+    real = watch.runner.resend_prompt
+
+    def resend(name, *args, **kwargs):
+        agents.append(name)
+        return real(name, *args, **kwargs)
+
+    monkeypatch.setattr(watch.runner, "resend_prompt", resend)
+    return agents
+
+
+class Shared:
+    """One hosted member that serves two leases at a time, with a watcher on it.
+
+    Each lease runs on an agent of its own name, the second one not the
+    member's. The pi of each is started with the refusals the provider holds
+    at that moment, and writes what it is sent to a capture of its own."""
+
+    def __init__(self, pool_rig, provider: ChatProvider) -> None:
+        self.rig, self.provider = pool_rig, provider
+        member = replace(pool_rig.hosted_member(), capacity=2)
+        self.service = pool_rig.service(pool_rig.config(member, size=2))
+        self.client = provider.client()
+        self.watcher = watch.Watcher(
+            self.service.config, pool_rig.store, pool_token=POOL_TOKEN,
+            clock=pool_rig.clock, client=self.client, environ=ENVIRON,
+        )
+        self.watcher.poll()
+        self.captures: dict[str, Path] = {}
+
+    def lease(self):
+        """One more lease on the member; its pi is refused what the provider holds now."""
+        capture = self.rig.tmp_path / f"capture-{len(self.captures) + 1}.jsonl"
+        self.rig.scenario(
+            reply=REPLY, capture=str(capture), provider_errors=self.provider.as_pi_reports()
+        )
+        grant = self.service.grant("rebasers", holder_label="orchestrator-a", cwd=self.rig.work)
+        self.captures[grant.agent] = capture
+        return grant
+
+    def prompts_received(self, grant) -> list[str]:
+        return prompts_in(self.captures[grant.agent])
+
+    def account(self):
+        with self.rig.store() as store:
+            return store.get_account("team-a")
+
+
+@pytest.fixture
+def shared(pool_rig, provider):
+    member = Shared(pool_rig, provider)
+    yield member
+    member.client.close()
+
+
+def test_a_402_for_the_key_limit_at_a_members_second_agent_closes_the_account(shared, provider):
+    key_resets(provider, "monthly")
+    first = shared.lease()
+    provider.refuse(out_of("openrouter_key_limit"))
+    second = shared.lease()
+    assert (first.agent, second.agent) == ("hosted-1", "hosted-1.2")
+
+    turn(second.agent, token=second.token)
+    shared.watcher.poll()
+
+    account = shared.account()
+    assert account is not None, "the log of the second agent was not read"
+    assert (account.closed, account.reopen) == (True, "2026-04-01T00:00:00.000+00:00")
+    # acted on once, though two leases of the member are watched
+    shared.watcher.poll()
+    assert [seen.path for seen in provider.seen].count("/api/v1/key") == 1
+
+
+@pytest.mark.parametrize("refused", [0, 1], ids=["the first agent", "the second agent"])
+def test_an_in_flight_402_at_one_of_a_members_agents_is_sent_again_once_and_to_that_agent(
+    shared, provider, resent, refused
+):
+    grants = []
+    for position in (0, 1):
+        if position == refused:
+            provider.refuse(IN_FLIGHT, retry_after=3)
+        grants.append(shared.lease())
+    mine, other = grants[refused], grants[1 - refused]
+
+    turn(mine.agent, token=mine.token)
+    assert shared.watcher.poll() == 3.0
+    shared.rig.clock.advance(seconds=3)
+    shared.watcher.poll()
+    shared.rig.clock.advance(seconds=10)
+    shared.watcher.poll()
+
+    assert resent == [mine.agent]
+    assert shared.prompts_received(mine) == [MESSAGE, MESSAGE]
+    assert shared.prompts_received(other) == []
+    assert shared.account() is None  # nothing was written about it: it is open
+
+
+def test_a_members_second_lease_is_not_read_the_earlier_failures_of_its_first_agent(
+    shared, provider, resent
+):
+    key_resets(provider, "daily")
+    provider.refuse(out_of("openrouter_key_limit"))
+    provider.refuse(IN_FLIGHT, retry_after=3)
+    first = shared.lease()
+    turn(first.agent, token=first.token)
+    turn(first.agent, "and push it", token=first.token)
+    shared.watcher.poll()
+    assert shared.account().closed is True
+    shared.rig.clock.advance(seconds=3)
+    shared.watcher.poll()
+    assert resent == [first.agent]
+    # the account is open again while the first lease is still out
+    with shared.rig.store() as store:
+        store.set_account_open("team-a")
+
+    second = shared.lease()
+    assert second.agent != first.agent
+    shared.watcher.poll()
+    shared.rig.clock.advance(seconds=10)
+    shared.watcher.poll()
+
+    assert shared.account().closed is False
+    assert resent == [first.agent]
+    assert shared.prompts_received(first) == [MESSAGE, "and push it", "and push it"]
+    assert shared.prompts_received(second) == []
+
+
+def hosted_console() -> Member:
+    """A console slot on a hosted model, its calls under the account's key."""
+    return Member(
+        name=SLOT, command="", backing="hosted", labels=(), capacity=1, egress="no-train",
+        model="some-vendor/some-model", account="team-a", kind="console",
+    )
+
+
+class Desk:
+    """A developer's own agent, attached to a hosted console slot, with a
+    watcher on the pool. The agent's name is the developer's, not the slot's,
+    and its pi is refused what the provider held when it was started."""
+
+    def __init__(self, pool_rig, provider: ChatProvider) -> None:
+        self.rig = pool_rig
+        pool_rig.scenario(
+            reply=REPLY, capture=str(pool_rig.capture),
+            provider_errors=provider.as_pi_reports(),
+        )
+        start_host(pool_rig)
+        self.service = pool_rig.service(pool_rig.config(hosted_console()))
+        console.attach(self.service, SLOT, AGENT)
+        self.client = provider.client()
+        self.watcher = watch.Watcher(
+            self.service.config, pool_rig.store, pool_token=POOL_TOKEN,
+            clock=pool_rig.clock, client=self.client, environ=ENVIRON,
+        )
+        self.watcher.poll()
+
+    def lease(self):
+        grant = self.service.grant("rebasers", holder_label="orchestrator-a", cwd=self.rig.work)
+        assert grant.agent == AGENT != SLOT
+        return grant
+
+    def prompts_received(self) -> list[str]:
+        return prompts_in(self.rig.capture)
+
+    def account(self):
+        with self.rig.store() as store:
+            return store.get_account("team-a")
+
+
+@pytest.fixture
+def desk(pool_rig, provider):
+    made: list[Desk] = []
+
+    def make() -> Desk:
+        made.append(Desk(pool_rig, provider))
+        return made[-1]
+
+    yield make
+    for one in made:
+        one.client.close()
+
+
+def test_a_402_for_the_key_limit_at_a_consoles_agent_closes_the_account(desk, provider):
+    key_resets(provider, "monthly")
+    provider.refuse(out_of("openrouter_key_limit"))
+    slot = desk()
+    grant = slot.lease()
+
+    turn(AGENT, token=grant.token)
+    slot.watcher.poll()
+
+    account = slot.account()
+    assert account is not None, "the log of the attached agent was not read"
+    assert (account.closed, account.reopen) == (True, "2026-04-01T00:00:00.000+00:00")
+    slot.watcher.poll()
+    assert [seen.path for seen in provider.seen].count("/api/v1/key") == 1
+
+
+def test_an_in_flight_402_at_a_consoles_agent_is_sent_again_once_and_to_that_agent(
+    desk, provider, resent
+):
+    provider.refuse(IN_FLIGHT, retry_after=3)
+    slot = desk()
+    grant = slot.lease()
+
+    turn(AGENT, token=grant.token)
+    assert slot.watcher.poll() == 3.0
+    slot.rig.clock.advance(seconds=3)
+    slot.watcher.poll()
+    slot.rig.clock.advance(seconds=10)
+    slot.watcher.poll()
+
+    assert resent == [AGENT]
+    assert slot.prompts_received() == [MESSAGE, MESSAGE]
+    assert slot.account() is None
+
+
+def test_a_lease_on_a_console_is_not_read_what_its_agent_failed_at_before_the_lease(
+    desk, provider, resent
+):
+    # the developer's host runs on from before the lease: its log holds the
+    # developer's own turns, and their refusals are not the lease's
+    provider.refuse(out_of("openrouter_key_limit"))
+    provider.refuse(IN_FLIGHT, retry_after=3)
+    slot = desk()
+    turn(AGENT, "my own turn")
+    turn(AGENT, "my next turn")
+    assert slot.prompts_received() == ["my own turn", "my next turn"]
+    # a pass goes by with no lease on the slot, as in a daemon that serves
+    slot.watcher.poll()
+
+    grant = slot.lease()
+    slot.watcher.poll()
+    slot.rig.clock.advance(seconds=10)
+    slot.watcher.poll()
+
+    assert slot.account() is None
+    assert resent == []
+    assert slot.prompts_received() == ["my own turn", "my next turn"]
+    # what the agent is refused from now on is the lease's
+    assert turn(AGENT, token=grant.token).stdout.strip() == REPLY
 
 
 # -- the daemon's lifecycle -------------------------------------------------

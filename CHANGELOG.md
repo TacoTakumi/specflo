@@ -289,7 +289,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   the key again and closes the account until the limit resets. A closed account ends no lease; a request that
   only closed accounts could serve is refused at once, naming each account
   and its reopen time. A 402 for the in-flight spending budget leaves the
-  account open and the same prompt is sent again after 5 s. The pool holds
+  account open and the same prompt is sent again after 5 s. A refusal is
+  read from the log of the lease's own agent and the prompt goes back to
+  that agent, so each lease of a member that serves two, and a lease on a
+  console, has its own refusals acted on and no one else's. The pool holds
   no management key and creates no keys.
 - **One ledger for every pool.** A request is admitted against each pool's
   `size`, each member's `capacity` and each account's `cap`, counted across
