@@ -526,12 +526,45 @@ def _pi_gone(frame) -> bool:
     return isinstance(frame, dict) and frame.get("type") == "process_exit"
 
 
-def _wait_for_settle(client, timeout: float | None) -> None:
-    """Block until agent_settled; exit 11 on timeout, 12 when pi dies."""
+def _is_turn_end(frame) -> bool:
+    return isinstance(frame, dict) and frame.get("type") == "turn_end"
+
+
+def _turn_error(frame) -> str | None:
+    """Why the turn *frame* ends went badly, or None when it ended well.
+
+    A provider that refuses the call ends the turn with stopReason "error"
+    and the refusal in errorMessage. The run still settles, so without this
+    the caller sees a settled agent with nothing to say. Only the LAST turn
+    of a run counts: pi retries some refusals itself, and a run that reaches
+    an answer that way ended well, whatever its earlier turns did.
+    """
+    message = frame.get("message")
+    if not isinstance(message, dict) or message.get("stopReason") != "error":
+        return None
+    said = message.get("errorMessage")
+    return str(said) if said else "the turn ended in an error"
+
+
+def _wait_for_settle(client, timeout: float | None) -> str | None:
+    """Block until agent_settled; exit 11 on timeout, 12 when pi dies.
+
+    Answers why the last turn ended badly, or None when it ended well. The
+    frames pass through here on the way to the settle, so this is where a
+    refused turn is seen at all.
+    """
+    failed: str | None = None
+
+    def done(frame) -> bool:
+        nonlocal failed
+        if _is_turn_end(frame):
+            # The newest turn stands, so a retry that answered clears what
+            # the attempt before it left here.
+            failed = _turn_error(frame)
+        return _settled(frame) or _pi_gone(frame)
+
     try:
-        frame = client.read_until(
-            lambda f: _settled(f) or _pi_gone(f), timeout=timeout
-        )
+        frame = client.read_until(done, timeout=timeout)
     except TimeoutError:
         typer.echo(f"Error: agent did not settle within {timeout}s", err=True)
         raise typer.Exit(code=EXIT_TIMEOUT)
@@ -541,6 +574,7 @@ def _wait_for_settle(client, timeout: float | None) -> None:
     if _pi_gone(frame):
         typer.echo("Error: pi process exited before settling", err=True)
         raise typer.Exit(code=EXIT_UNREACHABLE)
+    return failed
 
 
 def _print_last_text(client, name: str) -> None:
@@ -610,7 +644,10 @@ def prompt(
         if no_wait:
             typer.echo("submitted; not waiting for settle", err=True)
             return
-        _wait_for_settle(client, timeout)
+        failed = _wait_for_settle(client, timeout)
+        if failed is not None:
+            typer.echo(f"Error: agent '{name}' turn ended in an error: {failed}", err=True)
+            raise typer.Exit(code=EXIT_GENERIC)
         _print_last_text(client, name)
 
 

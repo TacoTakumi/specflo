@@ -455,6 +455,13 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ### Fixed
 
+- **A turn the provider refused no longer looks like an empty answer.**
+  `specflo agent prompt` used to exit 0 and print nothing when the model's
+  provider refused the call, so an orchestrator could not tell a refused
+  turn from a member that had nothing to say. It now exits non-zero and
+  prints the provider's message, naming the agent. Only the last turn of a
+  run counts: pi retries some refusals itself, and a run that reaches an
+  answer that way still exits 0 with its text.
 - **The index stops calling a finished project active.** The `(active)`
   marker in `specflo-index.md` now needs a live status as well as the
   active-project pointer. `complete` and `shelve` both leave the pointer

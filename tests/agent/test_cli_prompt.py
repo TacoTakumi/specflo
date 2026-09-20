@@ -262,3 +262,56 @@ def test_last_and_wait_unreachable_exit_12(rig):
     assert run_cli("last", "ghost").returncode == 12
     assert run_cli("wait", "ghost").returncode == 12
     assert run_cli("log", "ghost").returncode == 12
+
+
+def test_a_turn_the_provider_refused_is_reported_not_printed_as_nothing(rig):
+    # A refused turn used to reach the caller as exit 0 with nothing on
+    # either stream, so an orchestrator could not tell it from a member that
+    # answered nothing. pi does not retry a 402, so the run settles there.
+    run_cli, spawn_cli, start_agent, base = rig
+    start_agent(
+        "a-refused",
+        {
+            "reply": "never reached",
+            "provider_errors": [
+                {"status": 402, "error": {"message": "credits exhausted"}}
+            ],
+        },
+    )
+
+    result = run_cli("prompt", "a-refused", "hello")
+
+    assert result.returncode != 0
+    assert "a-refused" in result.stderr
+    assert "402" in result.stderr and "credits exhausted" in result.stderr
+
+
+def test_a_run_that_ends_well_is_unchanged(rig):
+    run_cli, spawn_cli, start_agent, base = rig
+    start_agent("a-fine", {"reply": "the known reply"})
+
+    result = run_cli("prompt", "a-fine", "hello")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "the known reply\n"
+    assert result.stderr == ""
+
+
+def test_a_refusal_pi_retried_into_an_answer_is_not_reported_as_a_failure(rig):
+    # pi retries a 429 itself. The run reaches an answer, so it ended well,
+    # whatever the attempt before it did: only the last turn counts.
+    run_cli, spawn_cli, start_agent, base = rig
+    start_agent(
+        "a-retried",
+        {
+            "reply": "the answer after the retry",
+            "provider_errors": [
+                {"status": 429, "error": {"message": "slow down"}, "retry_after": 1}
+            ],
+        },
+    )
+
+    result = run_cli("prompt", "a-retried", "hello")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "the answer after the retry\n"
