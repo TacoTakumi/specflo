@@ -263,6 +263,65 @@ def test_a_member_the_pool_starts_is_sent_no_clearing(pool_rig):
     svc.end_lease(grant.lease_id, "released")
 
 
+def holder_verb(grant, verb: str, *args: str):
+    """What `specflo agent <verb>` comes to for the holder of *grant*."""
+    return cli.invoke(agent_app, [verb, grant.agent, *args, "--lease-token", grant.token])
+
+
+def test_the_holders_stop_on_a_console_is_refused_and_the_process_stays_the_developers(pool_rig):
+    svc, before = attached(pool_rig)
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    refused = holder_verb(grant, "stop", "--timeout", "5")
+
+    assert refused.exit_code != 0
+    assert "developer's console" in refused.stderr
+    assert "not the holder's to stop" in refused.stderr
+    assert same_process(pool_rig, before)
+    # the rest of the lease is the holder's as before
+    assert prompt(grant, "hello").exit_code == 0
+    assert holder_verb(grant, "wait").exit_code == 0
+    assert "done" in last(grant).output
+    assert "hello" in holder_verb(grant, "log").output
+    assert holder_verb(grant, "reset").exit_code == 0
+    assert same_process(pool_rig, before)
+
+
+def test_the_developer_stops_the_console_between_leases_with_no_token(pool_rig):
+    svc, before = attached(pool_rig)
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    assert holder_verb(grant, "stop", "--timeout", "5").exit_code != 0
+    svc.end_lease(grant.lease_id, "released")
+
+    stopped = cli.invoke(agent_app, ["stop", AGENT])
+
+    assert stopped.exit_code == 0, stopped.output
+    assert wait_until(lambda: not pid_alive(before["host_pid"]))
+    assert not pid_alive(before["pi_pid"])
+
+
+def test_the_pools_token_stops_a_leased_console_as_before(pool_rig):
+    svc, before = attached(pool_rig)
+    svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with connect(AGENT) as daemon:
+        assert daemon.request({"type": "stop", "pool_token": POOL_TOKEN})["success"] is True
+
+    assert wait_until(lambda: not pid_alive(before["host_pid"]))
+
+
+def test_the_holders_stop_on_a_member_the_pool_starts_works_as_before(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    running = pool_rig.status(grant.agent)
+
+    stopped = holder_verb(grant, "stop")
+
+    assert stopped.exit_code == 0, stopped.output
+    assert wait_until(lambda: not pid_alive(running["host_pid"]))
+    svc.end_lease(grant.lease_id, "released")
+
+
 # -- the ending ---------------------------------------------------------------
 
 

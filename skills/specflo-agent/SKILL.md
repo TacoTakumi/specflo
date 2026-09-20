@@ -141,6 +141,11 @@ names the team lease id. The orchestrator leads the team: the pool gives the
 members no way to message each other, so what one member must learn from
 another goes through your prompts.
 
+**A leased member can be a developer's console.** On one, the holder's
+`specflo agent stop` is refused with a non-zero exit: the process is the
+developer's, so release the lease to be done with it. Prompt, wait, last, log
+and reset work as on any member.
+
 **Renewal is implicit.** Every verb you run on the member and every turn the
 member works renews the lease; there is no renew verb. An idle lease expires
 at its idle limit. `specflo agent reset <agent>` clears the member's context

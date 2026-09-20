@@ -174,13 +174,21 @@ class AgentClient:
         self._pool_verb({"type": "pool_bind", "pool_token": pool_token}, timeout)
 
     def lease_bind(
-        self, pool_token: str, lease_token: str, timeout: float | None = 5.0
+        self,
+        pool_token: str,
+        lease_token: str,
+        timeout: float | None = 5.0,
+        *,
+        console: bool = False,
     ) -> None:
-        """Raise the wall: from now on only this lease's holder may drive."""
-        self._pool_verb(
-            {"type": "lease_bind", "pool_token": pool_token, "lease_token": lease_token},
-            timeout,
-        )
+        """Raise the wall: from now on only this lease's holder may drive.
+
+        *console* says the host is a developer's console, whose process is
+        not the holder's to stop."""
+        frame = {"type": "lease_bind", "pool_token": pool_token, "lease_token": lease_token}
+        if console:
+            frame["console"] = True
+        self._pool_verb(frame, timeout)
 
     def lease_clear(self, pool_token: str, timeout: float | None = 5.0) -> None:
         """Lower the wall when the lease ends."""

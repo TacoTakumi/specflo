@@ -317,6 +317,94 @@ def test_client_binding_helpers_raise_when_refused(make_host):
             client.lease_clear("wrong")
 
 
+# -- a console's process is its developer's: the holder does not stop it ---------
+
+
+def console_lease(name: str, base: Path) -> None:
+    """Bind the pool and one lease the way the pool daemon does on a console."""
+    with connect(name, base_dir=base) as daemon:
+        daemon.pool_bind(POOL)
+        daemon.lease_bind(POOL, HOLDER, console=True)
+
+
+def test_the_holders_stop_on_a_console_is_refused_and_the_host_runs_on(make_host):
+    make, base = make_host
+    host, capture = make("c1")
+    console_lease("c1", base)
+
+    with connect("c1", base_dir=base, lease_token=HOLDER) as holder:
+        refused = holder.stop()
+        assert refused["success"] is False
+        assert "developer's console" in refused["error"]
+        assert "not the holder's to stop" in refused["error"]
+        # it is no refusal of the wall: the holder holds the lease
+        assert not lease_module.is_wall_refusal(refused["error"])
+        # the rest of the lease is the holder's as before
+        assert holder.request({"type": "get_last_assistant_text"})["success"] is True
+        turn(holder, "go on")
+
+    assert host.proc.poll() is None
+    assert not host.wait_stopped(timeout=0.2)
+    assert read_status(host.paths.status)["state"] == "idle"
+    assert [f["type"] for f in captured(capture)] == ["get_last_assistant_text", "prompt"]
+    log = host.paths.events.read_text()
+    assert '"host_stop_requested"' not in log
+
+
+def test_a_refused_stop_on_a_console_does_not_renew_the_lease(tmp_path):
+    ticks = iter(f"2026-03-01T12:00:{n:02d}+00:00" for n in range(60))
+    scenario_file = tmp_path / "scenario.json"
+    scenario_file.write_text(json.dumps({"reply": "ok"}), encoding="utf-8")
+    base = tmp_path / "state"
+    host = PiHost(
+        "c2", [sys.executable, str(STUB), str(scenario_file)], cwd=tmp_path,
+        base_dir=base, clock=lambda: next(ticks),
+    ).start().serve()
+    try:
+        console_lease("c2", base)
+        stamp = read_status(host.paths.status)["last_activity"]
+        with connect("c2", base_dir=base, lease_token=HOLDER) as holder:
+            assert holder.stop()["success"] is False
+        assert read_status(host.paths.status)["last_activity"] == stamp
+        assert host.proc.poll() is None
+    finally:
+        host.close()
+
+
+def test_the_pools_token_stops_a_leased_console(make_host):
+    make, base = make_host
+    host, _ = make("c3")
+    console_lease("c3", base)
+    with connect("c3", base_dir=base, lease_token=HOLDER) as both:
+        # the pool's token admits the stop, with the holder's beside it or not
+        assert both.request({"type": "stop", "pool_token": POOL})["success"] is True
+    assert host.wait_stopped(timeout=10)
+
+
+def test_a_stop_with_no_token_stops_a_console_between_leases(make_host):
+    make, base = make_host
+    host, _ = make("c4")
+    console_lease("c4", base)
+    with connect("c4", base_dir=base) as daemon:
+        daemon.lease_clear(POOL)
+    with connect("c4", base_dir=base) as developer:
+        assert developer.stop()["success"] is True
+    assert host.wait_stopped(timeout=10)
+    assert read_status(host.paths.status)["state"] == "stopped"
+
+
+def test_a_lease_that_is_no_consoles_follows_one_that_was(make_host):
+    make, base = make_host
+    host, _ = make("c5")
+    console_lease("c5", base)
+    with connect("c5", base_dir=base) as daemon:
+        daemon.lease_clear(POOL)
+        daemon.lease_bind(POOL, "second-holder")
+    with connect("c5", base_dir=base, lease_token="second-holder") as holder:
+        assert holder.stop()["success"] is True
+    assert host.wait_stopped(timeout=10)
+
+
 # -- the event log outlives a lease: a holder reads its own lease's part -------
 
 BEFORE = "said before the lease was bound"

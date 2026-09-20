@@ -389,7 +389,8 @@ def bind_console(name: str, *, pool_token: str, lease_token: str) -> str:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             _refuse_tui(name, client.status(timeout=_PROBE_TIMEOUT).get("status"))
             client.pool_bind(pool_token)
-            client.lease_bind(pool_token, lease_token)
+            # the process is the developer's: the holder's stop is not taken
+            client.lease_bind(pool_token, lease_token, console=True)
             kept = _clear_conversation(client, pool_token)
             if kept is not None:
                 try:

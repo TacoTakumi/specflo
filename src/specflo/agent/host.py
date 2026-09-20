@@ -29,7 +29,11 @@ pi or the event log. A host that was never pool-bound has no wall and is a
 plain pipe.
 
 Between leases no lease is bound and a frame needs no token, which is how a
-developer drives a console the pool leases out. A host that runs on past a
+developer drives a console the pool leases out. The process of a console is
+its developer's, so the pool says at ``lease_bind`` when the host is one, and
+the holder of such a lease drives the pi but does not stop it: a ``stop`` that
+only the holder's token lets in is refused, and the pool's token stops the
+host as before. A host that runs on past a
 lease still faces that lease's former holder, so it remembers the tokens of
 the leases it has cleared, as digests and the newest ``ENDED_REMEMBERED`` of
 them, and refuses a frame that carries one as its ``lease_token``, with a
@@ -177,6 +181,8 @@ class PiHost:
         self._wall_lock = threading.Lock()
         self._pool_digest: bytes | None = None
         self._lease_digest: bytes | None = None
+        # the bound lease is one on a developer's console
+        self._lease_console = False
         # where the event log ended when the bound lease was bound
         self._lease_log_start: int | None = None
         # the leases cleared on this host, oldest first, each digest once
@@ -507,6 +513,16 @@ class PiHost:
             return
         # before the frame can reach pi: its answer comes back in the broadcast
         self._note_tokens(conn, request)
+        if ctype == "stop" and self._holders_stop_on_a_console(request):
+            response.update(
+                success=False,
+                error=(
+                    f"agent '{self.name}' is a developer's console and is not the "
+                    "holder's to stop; release the lease to be done with it"
+                ),
+            )
+            self._respond(conn, send_lock, response)
+            return
         admitted = self._admitted_by(request)
         if admitted is None:
             response.update(
@@ -584,6 +600,7 @@ class PiHost:
                     # its holder is a former one from now on
                     self._ended.append(self._lease_digest)
                 self._lease_digest = None
+                self._lease_console = False
                 self._lease_log_start = None
                 return None
             lease = _token_digest(request.get("lease_token"))
@@ -595,6 +612,7 @@ class PiHost:
                 # the pool leases under this token again: it is no former one
                 self._ended.remove(lease)
             self._lease_digest = lease
+            self._lease_console = request.get("console") is True
             # the log outlives a lease: what came before is not this holder's
             self._lease_log_start = self.events.end()
             return None
@@ -627,6 +645,23 @@ class PiHost:
             if digest is not None and hmac.compare_digest(digest, expected[field]):
                 return field
         return None
+
+    def _holders_stop_on_a_console(self, request: dict[str, Any]) -> bool:
+        """Does only the token of a lease on a console let this stop in?
+
+        Asked before the wall is, and under one hold of its lock: a stop that
+        arrives as the lease ends is then turned away here or by the wall, and
+        never reaches a process that is the developer's.
+        """
+        with self._wall_lock:
+            if not self._lease_console or self._lease_digest is None:
+                return False
+            lease, pool = self._lease_digest, self._pool_digest
+        shown_pool = _token_digest(request.get("pool_token"))
+        if shown_pool is not None and pool is not None and hmac.compare_digest(shown_pool, pool):
+            return False
+        shown = _token_digest(request.get("lease_token"))
+        return shown is not None and hmac.compare_digest(shown, lease)
 
     def _note_tokens(self, conn: socket.socket, request: dict[str, Any]) -> None:
         """Remember which bound tokens this connection has shown.
