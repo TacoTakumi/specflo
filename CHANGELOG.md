@@ -378,7 +378,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   with no agent attached; the slot reads attached all the same, and the
   developer's turn is left alone. A bind that loses that race is refused
   naming the console and the cause, and the daemon answers 409. A console
-  whose pi does not clear its conversation is not leased. Between
+  whose pi does not clear its conversation is not leased. A lease on a
+  console ends with a record for its former holder alone, under the hash
+  of the holder's token: the host is the developer's and runs on, and a
+  last ending beside it would tell the developer's own verbs, which carry
+  no token, that a lease of theirs had ended. Between
   leases the host refuses the tokens of former
   holders. A detached slot takes no new lease and a lease that is out
   stands. Both verbs are the developer identity's alone. An agent under a

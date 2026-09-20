@@ -420,9 +420,10 @@ def test_releasing_the_lease_clears_the_binding_and_leaves_the_pi_alive(pool_rig
 
     assert (ended.state, ended.cause) == ("released", "released")
     assert same_process(pool_rig, before)
-    # the ending is written down, for whoever asks and for the former holder
+    # the ending is written down for the former holder alone: the host is the
+    # developer's and runs on, and no ending of the pool's is theirs to read
     root = AgentPaths.resolve(AGENT).root
-    assert agent_lease.read_ended(root)["cause"] == "released"
+    assert agent_lease.read_ended(root) is None
     assert agent_lease.read_ended(root, old.token)["cause"] == "released"
     assert agent_lease.read_ended(root, "never-held") is None
     # the binding is gone: the host takes the next lease, and it is still attached
@@ -431,6 +432,25 @@ def test_releasing_the_lease_clears_the_binding_and_leaves_the_pi_alive(pool_rig
     assert new.agent == AGENT
     assert same_process(pool_rig, before)
     assert prompt(new, "hello").exit_code == 0
+
+
+def test_the_developers_own_verbs_are_told_nothing_of_a_lease_that_ended(pool_rig):
+    svc, _ = attached(pool_rig)
+    old = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    svc.end_lease(old.lease_id, "released")
+    console.detach(svc, SLOT)
+
+    # the developer is done for the day and stops the own agent, with no token
+    stopped = cli.invoke(agent_app, ["stop", AGENT])
+    assert stopped.exit_code == 0, stopped.output
+
+    for verb in (["status", AGENT], ["log", AGENT], ["stop", AGENT]):
+        done = cli.invoke(agent_app, verb)
+        assert done.exit_code != EXIT_UNREACHABLE, f"{verb}: {done.output}"
+        assert "lease released" not in done.output
+    # the former holder still learns how its own lease ended
+    root = AgentPaths.resolve(AGENT).root
+    assert agent_lease.read_ended(root, old.token)["cause"] == "released"
 
 
 def test_a_new_lease_on_the_console_forgets_the_last_ending(pool_rig):
@@ -808,4 +828,6 @@ def test_a_console_lease_whose_row_is_gone_still_stops_nothing(pool_rig):
 
     assert ended.state == "released"
     assert same_process(pool_rig, before)
-    assert agent_lease.read_ended(AgentPaths.resolve(AGENT).root)["cause"] == "released"
+    root = AgentPaths.resolve(AGENT).root
+    assert agent_lease.read_ended(root) is None
+    assert agent_lease.read_ended(root, grant.token)["cause"] == "released"

@@ -31,6 +31,11 @@ token): a former holder learns how its own lease ended, and any other token
 finds nothing. The newest ``ENDED_KEPT`` are kept for one agent; an older one
 is removed, and its holder then gets the wall's refusal like anyone else.
 
+A lease on a developer's console ends with the holder's record alone
+(``write_ended`` with ``last=False``): the host is the developer's and runs
+on, and a last ending left beside it would tell the developer's own verbs,
+which carry no token, that a lease of theirs had ended.
+
 Stdlib only, and nothing from the rest of the agent subsystem: this module
 knows files and strings, not the host's socket and not pi.
 """
@@ -119,11 +124,18 @@ def write_ended(
     request_id: str | None = None,
     ended_at: str | None = None,
     holder: str | None = None,
-) -> Path:
+    *,
+    last: bool = True,
+) -> Path | None:
     """Record why the lease on this agent ended; atomic, replaces any earlier.
 
     *holder* is the hash of the lease's token (``token_hash``). With one the
     record is also kept for that holder, past the agent's next lease.
+
+    With *last* False only the holder's record is written, and the agent's
+    last ending is left as it was: a console's host is the developer's own
+    and runs on, so an ending of the pool's is no ending of theirs to read.
+    The path written, None when there was only a *holder* to write for.
     """
     if cause not in ENDED_CAUSES:
         raise ValueError(f"invalid lease end cause {cause!r}: one of {ENDED_CAUSES}")
@@ -137,6 +149,8 @@ def write_ended(
     if holder is not None:
         _write_record(Path(state_dir) / ENDED_DIR / f"{holder}.json", record)
         _drop_oldest(Path(state_dir) / ENDED_DIR)
+    if not last:
+        return None
     return _write_record(Path(state_dir) / ENDED_FILE, record)
 
 

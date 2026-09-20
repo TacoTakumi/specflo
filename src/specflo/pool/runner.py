@@ -479,17 +479,19 @@ def release_console(
     """End the lease on the attached console host *name* for *cause*, and
     stop nothing: the host and its pi are the developer's.
 
-    The record is written as ``stop`` writes it, so the former holder is told
-    why. The wall comes down, and a turn that ran under the lease is aborted;
-    pi stays up through an abort. A host that is gone, or that does not know
-    the pool's token, is left alone: the lease ends all the same. A lease
+    The record is written for the former holder alone, under the hash of its
+    token, so it is told why; the developer's agent is left with no last
+    ending, which its own verbs, that carry no token, would read as one of
+    theirs. The wall comes down, and a turn that ran under the lease is
+    aborted; pi stays up through an abort. A host that is gone, or that does
+    not know the pool's token, is left alone: the lease ends all the same. A lease
     whose bind the pi refused by keeping its conversation was never on the
     host: a turn that runs there is the developer's own and is left running.
     """
     paths = _paths(name)
     held = name not in _not_leased
     _not_leased.discard(name)
-    lease.write_ended(paths.root, cause, request_id, holder=holder)
+    lease.write_ended(paths.root, cause, request_id, holder=holder, last=False)
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             # Read while the wall is up: a turn that runs now is the holder's.

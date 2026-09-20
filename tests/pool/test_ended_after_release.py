@@ -151,6 +151,19 @@ def test_a_record_is_found_by_its_holders_token_alone(tmp_path):
     assert agent_lease.read_ended(tmp_path, "mine")["cause"] == "preempted"
 
 
+def test_a_record_for_the_holder_alone_leaves_the_agent_no_last_ending(tmp_path):
+    # how a lease on a developer's console ends: the host runs on, and a last
+    # ending beside it would answer the developer's own verbs, which carry
+    # no token
+    written = agent_lease.write_ended(
+        tmp_path, "released", holder=agent_lease.token_hash("mine"), last=False
+    )
+
+    assert written is None
+    assert agent_lease.read_ended(tmp_path) is None
+    assert agent_lease.read_ended(tmp_path, "mine")["cause"] == "released"
+
+
 def test_a_holder_that_is_no_token_hash_is_refused(tmp_path):
     with pytest.raises(ValueError):
         agent_lease.write_ended(tmp_path, "released", holder="../status")
