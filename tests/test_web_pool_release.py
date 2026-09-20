@@ -180,6 +180,32 @@ def test_the_control_on_a_member_lease_of_a_team_releases_the_whole_team(pool_ri
     assert record["id"] == team.team_lease_id
 
 
+def test_the_control_records_the_developer_for_every_member_of_a_team_one_member_has_kept(
+    pool_rig, stamps
+):
+    """The expiry check runs before each ending, and an ended member renews no
+    one: the member whose prompts kept the team is ended last, so no other
+    member is found idle without it and recorded as expired."""
+    svc = pool_rig.service(team_config(pool_rig))  # every pool's idle limit is 10 minutes
+    team = svc.grant_team("review", holder_label="lead", cwd=pool_rig.work)
+    worker = team.members[0]
+    for _ in range(3):  # the worker is prompted at minutes 9, 18 and 27, the critic never
+        pool_rig.clock.advance(minutes=9)
+        stamps[worker.agent] = {
+            "state": "idle", "last_activity": pool_rig.clock().isoformat(timespec="milliseconds"),
+        }
+    pool_rig.clock.advance(minutes=3)
+    client = signed_in(application(pool_rig, svc))
+
+    response = release(client, worker.lease_id)
+
+    assert response.status_code == 303, response.text
+    for member in team.members:
+        assert causes(pool_rig, member.lease_id)[-1] == ("released", CAUSE)
+    (record,) = audit_records(pool_rig.root)
+    assert (record["identity"], record["id"]) == ("developer", team.team_lease_id)
+
+
 # -- refusals: the lease stays active --------------------------------------------------
 
 

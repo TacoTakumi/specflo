@@ -310,7 +310,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   team that waits holds nothing. Activity on any member renews every
   member, they expire together, and `lease release <team lease id>` ends
   them all; a release of one member lease is refused naming the team lease
-  id.
+  id. A team given back inside its limit is recorded, stopped and told of
+  as released for every member, whichever member kept it alive.
 - **Preemption, opt-in per pool.** A pool that declares `preempt_after`
   lets a request that already waits take a lease that has been idle for
   longer than that, never one whose member is in a turn, and a team only

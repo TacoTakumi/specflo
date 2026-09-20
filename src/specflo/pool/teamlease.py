@@ -39,11 +39,12 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from ..daemon.poolstore import Lease
 from ..errors import SpecfloError
-from . import ledger
+from . import expiry, ledger
 from .config import Pool
 from .teams import Role, Team
 
@@ -167,16 +168,63 @@ def end_members(
 ) -> list[Ended]:
     """End each of *lease_ids* as *kind*, through the service's one function
     that ends a lease; *request_id* is the request that took them, for members
-    that are preempted. A member whose process does not stop has ended all the
-    same, so the others are ended too before that failure is raised."""
-    ended, failed = [], None
-    for lease_id in lease_ids:
+    that are preempted. How each ended, in the order of *lease_ids*. A member
+    whose process does not stop has ended all the same, so the others are
+    ended too before that failure is raised.
+
+    The members of a team are ended with the one that keeps it last (see
+    ``keeper_last``), so that a team ended inside its limit has no member
+    found expired on the way. When the leases cannot be read for that, they
+    are ended in the order given."""
+    lease_ids = list(lease_ids)
+    ended, failed = {}, None
+    try:
+        with service.open_store() as store:
+            out = [
+                lease for lease in store.list_leases(state="active") if lease.id in lease_ids
+            ]
+        order = keeper_last(lease_ids, service.read(out), service.clock())
+    except SpecfloError as exc:
+        order, failed = lease_ids, exc
+    for lease_id in order:
         try:
-            ended.append(
-                service.end_lease(lease_id, kind, cause=cause, request_id=request_id)
+            ended[lease_id] = service.end_lease(
+                lease_id, kind, cause=cause, request_id=request_id
             )
         except SpecfloError as exc:
             failed = failed or exc
     if failed is not None:
         raise failed
-    return ended
+    return [ended[lease_id] for lease_id in lease_ids]
+
+
+def keeper_last(
+    lease_ids: Iterable[str], read: Iterable[expiry.Read], now: datetime
+) -> list[str]:
+    """*lease_ids* with the member leases of each team put the longest idle
+    first at the time *now*, in the places that team's leases hold. *read* is
+    the active leases among them, each with its member's status. An id of no
+    team, and one that is not in *read*, stays where it is; members idle alike
+    keep their order.
+
+    The expiry check runs before each ending, and a team is judged by the
+    latest activity among its member leases that are still active. A member
+    that kept the team and ended before the others would leave them to be
+    judged without it, and a team given back inside its limit would be
+    recorded, stopped and told of as expired. Ended last, it is there for
+    every look. A team that is past its limit has expired whole at the first
+    look, as ever."""
+    lease_ids = list(lease_ids)
+    seen = {
+        lease.id: (lease.team_lease_id, expiry.last_activity(lease, status, now))
+        for lease, status in read if lease.team_lease_id is not None
+    }
+    places: dict[str, list[int]] = {}
+    for place, lease_id in enumerate(lease_ids):
+        if lease_id in seen:
+            places.setdefault(seen[lease_id][0], []).append(place)
+    for held in places.values():
+        members = sorted((lease_ids[place] for place in held), key=lambda member: seen[member][1])
+        for place, lease_id in zip(held, members):
+            lease_ids[place] = lease_id
+    return lease_ids

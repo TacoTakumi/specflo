@@ -276,6 +276,13 @@ class PoolService:
             finally:
                 self._checking = False
 
+    def read(self, leases: Sequence[Lease]) -> list[expiry.Read]:
+        """*leases* as the expiry rule reads them: each row with the status of
+        its member's agent host. For whoever must know which member keeps a
+        team before it ends the team's leases (see ``teamlease``)."""
+        self.expire_due()
+        return [(lease, runner.status(ledger.agent_of(lease))) for lease in leases]
+
     def swap(
         self,
         config: PoolConfig,
