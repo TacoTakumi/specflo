@@ -32,12 +32,16 @@ from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
 from specflo.errors import SpecfloError
 from specflo.pool import service, waiting
-from specflo.service.pool_remote import LEASES_PATH, RemotePool
+from specflo.service.pool_remote import LEASES_PATH, WAITING_MEDIA_TYPE, RemotePool
 
 from .conftest import FakeClock
 from .test_expiry import BACKGROUND, called_names
 from .test_lease_request import (  # noqa: F401  (fixtures)
+    GONE,
+    SlowStart,
+    ask_and_read_nothing,
     checkout,
+    endings,
     pool_daemon,
     runner,
     write_pool,
@@ -411,6 +415,36 @@ def test_a_client_that_goes_away_while_it_waits_leaves_no_waiting_record(
     time.sleep(0.3)
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []
+
+
+@pytest.mark.parametrize("accept", [None, WAITING_MEDIA_TYPE], ids=["plain", "told"])
+def test_a_client_that_goes_away_while_its_member_starts_leaves_no_lease_out(
+    pool_daemon, pool_rig, holder, monkeypatch, accept
+):
+    first = holder.request("rebasers", cwd=str(pool_rig.work))
+    # the one that waits is granted a member that starts slowly
+    slow = SlowStart(monkeypatch)
+    body = {"pool": "rebasers", "cwd": str(pool_rig.work), "wait": 600}
+    connection = ask_and_read_nothing(pool_daemon, body, accept=accept)
+    assert wait_until(lambda: len(waiting_rows(pool_rig)) == 1)
+
+    holder.release(first.lease_id, token=first.token)
+    slow.requester_goes_away(connection)
+
+    def second_ended() -> bool:
+        with pool_rig.store() as store:
+            leases = store.list_leases()
+        return len(leases) == 2 and leases[-1].state != "active"
+
+    assert wait_until(second_ended, timeout=10), "a lease no one holds is still out"
+    with pool_rig.store() as store:
+        second = store.list_leases()[-1]
+    kind, cause = endings(pool_rig, second.id)[-1]
+    assert (second.state, kind) == ("released", "released") and GONE in cause
+    assert waiting_rows(pool_rig) == []
+    # the slot is free at once: the next request does not wait for it
+    again = holder.request("rebasers", cwd=str(pool_rig.work))
+    assert again.agent == "local-1"
 
 
 def test_the_route_refuses_a_full_pool_at_once_when_no_wait_is_asked(pool_rig, holder):

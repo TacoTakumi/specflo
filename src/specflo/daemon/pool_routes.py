@@ -48,6 +48,13 @@ worker thread, so a request that waits for an hour stalls no other. The route
 also sees its client go away, and a request no one waits for any more leaves
 the queue. The rows a stopped daemon left are cleared when the pool opens.
 
+A member takes seconds to start, and the client may go away in them. The
+token of a lease granted then is one no one ever read, so the lease is ended
+before it is answered: as any lease ends, with a cause that says the
+requester went away, and its slots are free to the next request. The ending
+stops a process, which takes time too, so it runs in a thread apart from the
+route: it is not awaited, and a route that is cancelled still ends its lease.
+
 A client may say that it reads notices. The answer to its request, when the
 request has to wait, is then sent as it comes, a JSON object to a line: first
 that it waits, on what, in which place and for how long, and at the end of
@@ -355,17 +362,38 @@ def _member_failed(asked: str, exc: RunnerError) -> HTTPException:
 # --- leases -------------------------------------------------------------------
 
 
+# Why a lease ends whose requester did not stay for its answer. A page shows a
+# cause up to its first ": ", so this has none.
+REQUESTER_GONE = "the requester went away before it was answered"
+
+
 class _ClientGone(Exception):
-    """The client of a waiting request closed its connection."""
+    """The client of a request closed its connection before it was answered."""
 
 
-async def _granted(request: Request, asked: waiting.Waiting) -> Grant | teamlease.TeamGrant:
+def _look(asked: waiting.Waiting, root: Path, identity: str) -> Grant | teamlease.TeamGrant | None:
+    """One look at *asked* for *identity*, in a worker thread. A grant is
+    audited there and then, so a lease this route made has its record whatever
+    becomes of the route. A team's grant is one act, audited under the team
+    lease id."""
+    grant = asked.attempt()
+    if grant is not None:
+        team = isinstance(grant, teamlease.TeamGrant)
+        granted = grant.team_lease_id if team else grant.lease_id
+        audit(root, identity, "lease_request", None, granted)
+    return grant
+
+
+async def _granted(
+    request: Request, identity: str, asked: waiting.Waiting
+) -> Grant | teamlease.TeamGrant:
     """The grant of *asked*, looked for until there is one, the request's time
     is up or its client is gone. However the wait ends, the request leaves the
     queue."""
+    root = request.app.state.root
     try:
         while True:
-            grant = await run_in_threadpool(asked.attempt)
+            grant = await run_in_threadpool(_look, asked, root, identity)
             if grant is not None:
                 return grant
             if await request.is_disconnected():
@@ -377,18 +405,46 @@ async def _granted(request: Request, asked: waiting.Waiting) -> Grant | teamleas
 
 
 def _first_look(
-    asked: waiting.Waiting,
+    asked: waiting.Waiting, root: Path, identity: str
 ) -> tuple[Grant | teamlease.TeamGrant | None, int | None]:
     """The grant of *asked* if it fits now, or its place among those that wait."""
-    grant = asked.attempt()
+    grant = _look(asked, root, identity)
     return grant, None if grant is not None else asked.place()
+
+
+def _end_unanswered(service: PoolService, grant: Grant | teamlease.TeamGrant) -> None:
+    """End every lease of *grant*, through the one function that ends a lease.
+    No one is there to answer, so a member that does not stop is the log's
+    matter: its lease has ended all the same."""
+    try:
+        if isinstance(grant, teamlease.TeamGrant):
+            teamlease.end_members(
+                service, [member.lease_id for member in grant.members], "released",
+                cause=REQUESTER_GONE,
+            )
+        else:
+            service.end_lease(grant.lease_id, "released", cause=REQUESTER_GONE)
+    except RunnerError as exc:
+        _log.warning("a lease whose requester went away: %s", exc)
+    except Exception:
+        _log.exception("a lease whose requester went away was not ended")
+
+
+def _give_back(service: PoolService, grant: Grant | teamlease.TeamGrant) -> None:
+    """Give back *grant*, whose requester went away before it was answered.
+
+    The ending stops a process, which may take as long as the runner allows,
+    so it runs in a thread and not on the loop. Not awaited: a route that is
+    cancelled cannot wait, and its lease is ended all the same.
+    """
+    asyncio.get_running_loop().run_in_executor(None, _end_unanswered, service, grant)
 
 
 def _failed(asked: waiting.Waiting, exc: Exception) -> HTTPException:
     """What the request *asked* that ended in *exc* is answered with."""
     if isinstance(exc, _ClientGone):
         # No one reads this: the connection it would go down is closed.
-        return HTTPException(status_code=400, detail="The client went away while it waited.")
+        return HTTPException(status_code=400, detail="The client went away before it was answered.")
     if isinstance(exc, RunnerError):
         named = f"pool '{asked.pool}'" if asked.team is None else f"team '{asked.team}'"
         return _member_failed(named, exc)
@@ -401,13 +457,8 @@ def _failed(asked: waiting.Waiting, exc: Exception) -> HTTPException:
     )
 
 
-async def _answer(request: Request, identity: str, grant: Grant | teamlease.TeamGrant) -> dict:
-    """What a granted request is answered with, once the grant is audited. A
-    team's grant is one act, audited under the team lease id."""
-    granted = grant.team_lease_id if isinstance(grant, teamlease.TeamGrant) else grant.lease_id
-    await run_in_threadpool(
-        audit, request.app.state.root, identity, "lease_request", None, granted
-    )
+def _answer(grant: Grant | teamlease.TeamGrant) -> dict:
+    """What a granted request is answered with."""
     # The one time a token is sent: the store and the audit record hold no copy.
     if isinstance(grant, teamlease.TeamGrant):
         return {"result": {
@@ -427,35 +478,44 @@ def _line(told: dict) -> bytes:
     return (json.dumps(told) + "\n").encode("utf-8")
 
 
-async def _lines(
-    request: Request, identity: str, asked: waiting.Waiting, notice: dict
-) -> AsyncIterator[bytes]:
-    """The answer to a request that waits, for a client that reads notices:
-    that it waits, and when the wait is over the result or the refusal."""
-    yield _line({"waiting": notice})
-    try:
-        grant = await _granted(request, asked)
-    except Exception as exc:
-        refused = _failed(asked, exc)
-        yield _line({"refused": {"status": refused.status_code, "detail": refused.detail}})
-        return
-    yield _line(await _answer(request, identity, grant))
-
-
 class _Waited(StreamingResponse):
-    """The lines of a request that waits. The client going away stops the
-    sending, and however the sending ends the request leaves the queue."""
+    """The answer to a request that waits, for a client that reads notices:
+    that it waits, and when the wait is over the result or the refusal. The
+    client going away stops the sending. However the sending ends the request
+    leaves the queue, and a grant whose line was not sent is given back."""
 
-    def __init__(self, lines: AsyncIterator[bytes], asked: waiting.Waiting) -> None:
-        super().__init__(lines, media_type=WAITING_MEDIA_TYPE)
+    def __init__(
+        self, request: Request, identity: str, asked: waiting.Waiting, notice: dict
+    ) -> None:
+        super().__init__(self._lines(request, identity, notice), media_type=WAITING_MEDIA_TYPE)
         self._asked = asked
+        # The grant, from when the pool gives it until its line has been sent.
+        self._unsent: Grant | teamlease.TeamGrant | None = None
+
+    async def _lines(self, request: Request, identity: str, notice: dict) -> AsyncIterator[bytes]:
+        yield _line({"waiting": notice})
+        try:
+            self._unsent = await _granted(request, identity, self._asked)
+        except Exception as exc:
+            refused = _failed(self._asked, exc)
+            yield _line({"refused": {"status": refused.status_code, "detail": refused.detail}})
+            return
+        # The member took its time to start, and the client may be gone since.
+        if await request.is_disconnected():
+            return
+        yield _line(_answer(self._unsent))
+        # Asked for the line after it, so that one was sent.
+        self._unsent = None
 
     async def __call__(self, scope, receive, send) -> None:
         try:
             await super().__call__(scope, receive, send)
         finally:
-            # Not left to the lines: a client gone before the first is never asked for one.
+            # Not left to the lines: a client gone before the first is never
+            # asked for one, and lines that are cancelled do not go on.
             self._asked.leave()
+            if self._unsent is not None:
+                _give_back(self._asked.service, self._unsent)
 
 
 @router.post(LEASES_PATH, response_model=None)
@@ -514,22 +574,28 @@ async def lease_request(
     reads_notices = WAITING_MEDIA_TYPE in request.headers.get("accept", "")
     waits_on = False
     try:
-        grant, place = await run_in_threadpool(_first_look, asked)
+        grant, place = await run_in_threadpool(
+            _first_look, asked, request.app.state.root, identity
+        )
         if grant is None and reads_notices:
             # Nothing is sent yet, so what is refused above has the status it always had.
             waits_on = True
             named = {"pool": pool} if team is None else {"team": team}
             notice = {**named, "full": asked.full, "place": place, "wait": wait}
-            return _Waited(_lines(request, identity, asked, notice), asked)
+            return _Waited(request, identity, asked, notice)
         if grant is None:
-            grant = await _granted(request, asked)
+            grant = await _granted(request, identity, asked)
     except Exception as exc:
         raise _failed(asked, exc)
     finally:
         # A request that waits on in its lines leaves when they end.
         if not waits_on:
             asked.leave()
-    return await _answer(request, identity, grant)
+    # The member took its time to start, and the client may be gone since.
+    if await request.is_disconnected():
+        _give_back(service, grant)
+        raise _failed(asked, _ClientGone())
+    return _answer(grant)
 
 
 def _expire_due(service: PoolService) -> None:

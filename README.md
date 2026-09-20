@@ -548,7 +548,7 @@ For a hosted project, a task's `Needs` name that is one of the daemon's pools is
 - A host keeps the 16 newest ended records per member; an older former holder gets the plain refusal, exit 1.
 - A member's `events.jsonl` is a plain file that any process of the same user can read.
 - A save from the management pages that passes validation is written even when the reload that follows refuses the swap because a member with a lease out was removed.
-- A lease granted at the moment its request is cancelled stays out until it expires from idleness.
+- A lease granted to a requester that has gone away, as when the request is cancelled while the member starts, is ended before it is answered and its slots are free at once. Only a lease whose answer was sent and then lost, on a connection that broke as the answer went out, stays out until it expires from idleness.
 
 ## The config file
 

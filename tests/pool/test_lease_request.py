@@ -15,6 +15,7 @@ agent host, placed by a fake herdr, as in the pool service's tests.
 from __future__ import annotations
 
 import dataclasses
+import http.client
 import json
 import shutil
 import stat
@@ -22,6 +23,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -36,7 +38,7 @@ from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
 from specflo.service.pool_remote import LEASES_PATH, RemotePool
 
-from .test_runner import pid_alive
+from .test_runner import pid_alive, wait_until
 
 runner = CliRunner()
 
@@ -471,3 +473,139 @@ def test_a_daemon_root_with_no_pool_directory_starts_and_refuses_a_request(tmp_p
 
     assert response.status_code == 400
     assert "pool" in response.json()["detail"].lower()
+
+
+# -- a requester that goes away while its member starts ------------------------
+#
+# A member takes seconds to start, and its requester may not last that long:
+# an interrupt, or a client that gives up. The token of the lease it was
+# granted is one no one ever read, so the daemon ends that lease at once.
+
+GONE = "the requester went away"
+
+
+class SlowStart:
+    """The runner's start from now on: the member is started, and the start
+    does not return until the test lets it."""
+
+    def __init__(self, monkeypatch) -> None:
+        from specflo.pool import runner as members
+
+        self.begun, self.go_on = threading.Event(), threading.Event()
+        start = members.start
+
+        def held(*args, **keys) -> str:
+            agent = start(*args, **keys)
+            self.begun.set()
+            assert self.go_on.wait(timeout=30)
+            return agent
+
+        monkeypatch.setattr(members, "start", held)
+
+    def requester_goes_away(self, connection: http.client.HTTPConnection) -> None:
+        """Close *connection* while a member starts, and let the start end."""
+        assert self.begun.wait(timeout=30), "no member was started"
+        connection.close()
+        # the daemon hears of the close before the start returns
+        time.sleep(0.2)
+        self.go_on.set()
+
+
+def ask_and_read_nothing(
+    pool_daemon, body: dict, *, accept: str | None = None
+) -> http.client.HTTPConnection:
+    """Send the lease request *body* on a connection of its own, and read no
+    answer: whoever closes the connection is the requester going away."""
+    address = urlsplit(pool_daemon["url"])
+    connection = http.client.HTTPConnection(address.hostname, address.port, timeout=30)
+    headers = {
+        "Authorization": f"Bearer {pool_daemon['token']}", "Content-Type": "application/json",
+    }
+    if accept is not None:
+        headers["Accept"] = accept
+    connection.request("POST", LEASES_PATH, body=json.dumps(body), headers=headers)
+    return connection
+
+
+def given_back(pool_rig) -> list:
+    """The leases of the store once none is active; the wait for that is short."""
+    def none_out() -> bool:
+        with pool_rig.store() as store:
+            return store.list_leases() != [] and store.list_leases(state="active") == []
+
+    assert wait_until(none_out, timeout=10), "a lease no one holds is still out"
+    with pool_rig.store() as store:
+        return store.list_leases()
+
+
+def endings(pool_rig, lease_id: str) -> list[tuple[str, str]]:
+    with pool_rig.store() as store:
+        return [(step.kind, step.cause) for step in store.list_transitions(lease_id=lease_id)]
+
+
+def test_a_requester_that_goes_away_while_the_member_starts_leaves_no_lease_out(
+    checkout, pool_daemon, pool_rig, monkeypatch
+):
+    slow = SlowStart(monkeypatch)
+    connection = ask_and_read_nothing(
+        pool_daemon, {"pool": "rebasers", "cwd": str(pool_rig.work)}
+    )
+
+    slow.requester_goes_away(connection)
+
+    (row,) = given_back(pool_rig)
+    assert row.state == "released"
+    kind, cause = endings(pool_rig, row.id)[-1]
+    assert kind == "released" and GONE in cause
+    # a page cuts a cause at its first colon
+    assert ": " not in cause
+    # the request made a lease, and the record says whose request it was
+    (record,) = audit_records(pool_daemon["root"])
+    assert (record["identity"], record["operation"], record["id"]) == (
+        "developer", "lease_request", row.id,
+    )
+    # the slots are free now, not when the lease would have run out of idle time
+    assert request("rebasers", "--wait", "0")["agent"] == "local-1"
+
+
+def test_a_team_whose_requester_goes_away_while_a_member_starts_is_given_back_whole(
+    review_team, checkout, pool_daemon, pool_rig, monkeypatch
+):
+    slow = SlowStart(monkeypatch)
+    connection = ask_and_read_nothing(
+        pool_daemon, {"team": "review", "cwd": str(pool_rig.work)}
+    )
+
+    slow.requester_goes_away(connection)
+
+    rows = given_back(pool_rig)
+    assert [row.state for row in rows] == ["released", "released"]
+    for row in rows:
+        kind, cause = endings(pool_rig, row.id)[-1]
+        assert kind == "released" and GONE in cause
+    # the members are free to the next team
+    again = runner.invoke(app, ["lease", "request", "--team", "review", "--wait", "0"])
+    assert again.exit_code == 0, again.output
+
+
+def test_a_requester_that_stays_while_the_member_starts_slowly_has_its_grant(
+    pool_daemon, pool_rig, monkeypatch
+):
+    slow = SlowStart(monkeypatch)
+    connection = ask_and_read_nothing(
+        pool_daemon, {"pool": "rebasers", "cwd": str(pool_rig.work)}
+    )
+    assert slow.begun.wait(timeout=30)
+    time.sleep(0.3)
+    slow.go_on.set()
+
+    response = connection.getresponse()
+    granted = json.loads(response.read())["result"]
+    connection.close()
+
+    assert response.status == 200
+    assert granted["agent"] == "local-1" and granted["token"]
+    with pool_rig.store() as store:
+        (row,) = store.list_leases(state="active")
+    assert row.id == granted["lease_id"]
+    assert endings(pool_rig, row.id) == [("granted", "requested")]
