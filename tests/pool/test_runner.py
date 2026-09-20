@@ -5,6 +5,8 @@ with the launch builder's command line, scoped environment and the lease's
 working directory, in a herdr pane named for the member, and raises the lease
 wall on the host before it hands the agent's name back. Ending the lease stops
 the host and leaves the cause where the former holder's next verb finds it.
+A member whose pi does not start is not handed back: the start fails with what
+pi said, and leaves nothing of the launch behind.
 
 pi is the stub, reached through a recorder that writes down what it was
 started with. herdr is a fake on PATH that keeps its tabs in a file, really
@@ -22,6 +24,7 @@ import stat
 import subprocess
 import sys
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -110,6 +113,15 @@ else:
     sys.exit(2)
 '''
 
+# Stands where a pi stands that does not start: waits as long as it is told,
+# says why on its standard error and exits.
+FAILING_PI = """#!/bin/sh
+sleep "$1"
+echo "pi: starting up" >&2
+echo "Unknown option: --frobnicate" >&2
+exit 1
+"""
+
 DEFINITION = AgentDefinition(
     name="rebaser",
     role="Rebases the work branch and reports conflicts",
@@ -128,6 +140,8 @@ POOL_TOKEN = "pool-token-of-this-daemon"
 LEASE_TOKEN = "lease-token-of-the-holder"
 # How the pool knows that holder: by the hash of its token.
 HOLDER = hashlib.sha256(LEASE_TOKEN.encode()).hexdigest()
+# How long the runner watches a started pi, outside these tests.
+PI_START_WATCH = runner.PI_START_WATCH
 
 
 def wait_until(cond, timeout=10.0, interval=0.05):
@@ -178,6 +192,13 @@ class Rig:
         monkeypatch.setenv("TEAM_A_KEY", "key-of-team-a")
         monkeypatch.setenv("TEAM_B_KEY", "key-of-team-b")
         monkeypatch.delenv(lease.ENV_LEASE_TOKEN, raising=False)
+        # The stub pi starts, and every start would sleep the watch out: one
+        # look is enough here. A test of a pi that does not start watches
+        # for as long as the runner really does.
+        monkeypatch.setattr(runner, "PI_START_WATCH", 0.0)
+
+    def watch_as_shipped(self, monkeypatch) -> None:
+        monkeypatch.setattr(runner, "PI_START_WATCH", PI_START_WATCH)
 
     def local_member(self) -> Member:
         return Member(
@@ -191,6 +212,22 @@ class Rig:
             labels=(), capacity=1, egress="no-train",
             model="some-vendor/some-model", account="team-a",
         )
+
+    def failing_command(self, after: str = "0") -> str:
+        """A member's command whose pi exits with an error *after* seconds."""
+        script = self.tmp_path / "failing-pi"
+        script.write_text(FAILING_PI, encoding="utf-8")
+        script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        return f"{script} {after}"
+
+    def launch_leftovers(self, name: str) -> list[str]:
+        """What a launch of *name* writes that must not outlive it."""
+        state_dir = AgentPaths.resolve(name).root
+        left = [f for f in (runner.LAUNCH_FILE, runner.CONFIG_DIR_FILE)
+                if (state_dir / f).exists()]
+        if self.config_root.is_dir():
+            left += [p.name for p in self.config_root.iterdir()]
+        return left
 
     def start(self, member: Member, **kwargs) -> str:
         return runner.start(
@@ -394,6 +431,89 @@ def test_a_start_whose_host_never_answers_is_cleaned_up_and_raises(rig, monkeypa
     state_dir = AgentPaths.resolve("hosted-1").root
     leftovers = [p.name for p in state_dir.iterdir()] if state_dir.is_dir() else []
     assert leftovers == []
+
+
+def test_a_member_whose_command_names_no_binary_is_refused_and_nothing_is_left(
+    rig, monkeypatch
+):
+    rig.watch_as_shipped(monkeypatch)
+    member = replace(rig.hosted_member(), command="/nonexistent/pi --mode rpc")
+
+    with pytest.raises(runner.RunnerError, match="member 'hosted-1'") as raised:
+        rig.start(member)
+
+    # what the launch shim said of the command, and nothing of what it was given
+    assert "/nonexistent/pi" in str(raised.value)
+    assert "No such file or directory" in str(raised.value)
+    assert "key-of-team-a" not in str(raised.value)
+    assert "Traceback" not in str(raised.value)
+    # the host that came up for it is gone, and so is its pane
+    host_pid = read_status(AgentPaths.resolve("hosted-1").status)["host_pid"]
+    assert wait_until(lambda: not pid_alive(host_pid))
+    assert rig.pane_names() == []
+    assert rig.launch_leftovers("hosted-1") == []
+
+
+@pytest.mark.parametrize("after", ["0", "0.4"])
+def test_a_member_whose_pi_exits_at_once_is_refused_with_the_tail_of_its_error(
+    rig, monkeypatch, after
+):
+    rig.watch_as_shipped(monkeypatch)
+    # "0.4": the pi is still up when the host answers and the wall goes up
+    member = replace(rig.hosted_member(), command=rig.failing_command(after))
+    # the host keeps one error log across leases: a former lease's is not this one's
+    state_dir = AgentPaths.resolve("hosted-1").ensure().root
+    (state_dir / runner.PI_STDERR_FILE).write_text("an error of a former lease\n")
+
+    with pytest.raises(runner.RunnerError, match="member 'hosted-1'") as raised:
+        rig.start(member)
+
+    assert "Unknown option: --frobnicate" in str(raised.value)
+    assert "an error of a former lease" not in str(raised.value)
+    host_pid = read_status(state_dir / "status.json")["host_pid"]
+    assert wait_until(lambda: not pid_alive(host_pid))
+    assert rig.pane_names() == []
+    assert rig.launch_leftovers("hosted-1") == []
+    # the name is free: the member starts once its command is put right
+    assert rig.start(rig.hosted_member()) == "hosted-1"
+    assert rig.recorded()["pid"]
+
+
+def test_the_error_reported_for_a_pi_that_did_not_start_carries_no_account_key(
+    rig, monkeypatch
+):
+    rig.watch_as_shipped(monkeypatch)
+    script = rig.tmp_path / "leaking-pi"
+    script.write_text('#!/bin/sh\necho "cannot sign in with $TEAM_A_KEY" >&2\nexit 1\n')
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+    with pytest.raises(runner.RunnerError, match="cannot sign in with") as raised:
+        rig.start(replace(rig.hosted_member(), command=str(script)))
+
+    assert "key-of-team-a" not in str(raised.value)
+
+
+def test_a_grant_on_a_member_whose_pi_did_not_start_ends_the_lease_and_frees_its_slots(
+    pool_rig, monkeypatch
+):
+    pool_rig.watch_as_shipped(monkeypatch)
+    broken = replace(pool_rig.hosted_member(), command=pool_rig.failing_command())
+    svc = pool_rig.service(pool_rig.config(broken))
+
+    with pytest.raises(runner.RunnerError, match="Unknown option: --frobnicate"):
+        svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+
+    with pool_rig.store() as store:
+        assert store.list_leases(state="active") == []
+        (ended,) = store.list_transitions()
+    assert ended.kind == "released"
+    assert "member 'hosted-1'" in ended.cause
+    assert pool_rig.pane_names() == []
+    assert pool_rig.launch_leftovers("hosted-1") == []
+    # the one slot of the pool, the member, its account and its model is free:
+    # the next request takes the member, once its command is put right
+    svc = pool_rig.service(pool_rig.config(pool_rig.hosted_member()))
+    assert svc.grant("rebasers", holder_label="b", cwd=pool_rig.work).agent == "hosted-1"
 
 
 def test_a_member_that_cannot_be_launched_starts_nothing(rig, monkeypatch):

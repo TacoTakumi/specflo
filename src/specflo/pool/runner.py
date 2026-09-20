@@ -22,6 +22,13 @@ told the agent's name. At the end the pool lowers the wall with its own
 token, records why the lease ended in the agent's state directory and stops
 the host; the host's exit ends the pane.
 
+The host answers as soon as it has spawned pi, so a pi that cannot run - a
+command that names no binary, a flag pi turns down - goes a moment after the
+host answered. A start therefore watches the host's record for a short while
+before it hands the member over. A member whose pi has gone by then is not
+handed over: the start fails with the end of what pi wrote on its standard
+error, and leaves nothing behind.
+
 Agent names are one namespace on the daemon's host, so a host may answer
 under a member's name that the pool did not start: a developer's own, started
 by hand. A start that finds a host under the name refuses and touches
@@ -61,6 +68,7 @@ import os
 import shlex
 import subprocess
 import sys
+import time
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -85,6 +93,10 @@ LAUNCH_FILE = "pool-launch.json"
 # from a fresh daemon process too. A local member has none.
 CONFIG_DIR_FILE = "pool-config-dir"
 
+# Where the agent host keeps what pi writes on its standard error, in the
+# agent's state directory. The host appends to it, lease after lease.
+PI_STDERR_FILE = "pi-stderr.log"
+
 # How long a start may take: the agent CLI gives the host's socket 15 s, and
 # herdr placement comes before that.
 START_TIMEOUT = 45.0
@@ -93,6 +105,17 @@ START_TIMEOUT = 45.0
 STOP_TIMEOUT = 30.0
 # Added to a verb's own bound before the subprocess itself is given up on.
 _CLI_GRACE = 15.0
+# How long a started pi is watched before its member is handed over, and how
+# often. Every start takes this long: a pi that runs says nothing of itself,
+# and one that is asked something would see a frame no holder sent. pi 0.85
+# turns down an option it does not know 0.16 s after its start, and the launch
+# shim fails in less. A pi that goes later than this is the holder's verb to
+# report.
+PI_START_WATCH = 1.0
+_WATCH_EVERY = 0.05
+# How much of pi's error output a failed start reports.
+_STDERR_LINES = 5
+_STDERR_CHARS = 400
 _PROBE_TIMEOUT = 2.0
 # Where the pool's own stop verb runs: no token file is found upward from it.
 _NO_CHECKOUT = os.path.abspath(os.sep)
@@ -124,11 +147,13 @@ def start(
     pi runs in *cwd* with the launch builder's command line and scoped
     environment, the latter taken from *environ* (this process's by default).
     A hosted member's pi configuration directory is generated under
-    *config_root*. The call returns once the host serves and the wall is up.
+    *config_root*. The call returns once the host serves, the wall is up and
+    pi has run for ``PI_START_WATCH`` seconds.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
-    and ``RunnerError`` for one already running or whose host does not come up
-    or take the tokens; whatever such a start left behind is removed.
+    and ``RunnerError`` for one already running, one whose host does not come
+    up or take the tokens, and one whose pi did not start; whatever such a
+    start left behind is removed.
     """
     name = member.name
     paths = _paths(name)
@@ -156,6 +181,8 @@ def start(
         raise
     paths.ensure()
     lease.clear_ended(paths.root)
+    # The host appends pi's error output to what former leases left.
+    stderr_from = _size(paths.root / PI_STDERR_FILE)
     _write_private(paths.root / LAUNCH_FILE, json.dumps(spec))
     if config_dir is not None:
         _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
@@ -175,6 +202,23 @@ def start(
                 client.lease_bind(pool_token, lease_token)
         except (HostUnreachableError, TimeoutError, RuntimeError, OSError) as exc:
             raise RunnerError(f"member '{name}': its host did not take the lease: {exc}") from exc
+        if not _pi_stays_up(name):
+            key_vars = {account.key_env for account in accounts}
+            said = _stderr_tail(
+                paths.root / PI_STDERR_FILE, stderr_from,
+                secrets=[value for var, value in spec["env"].items() if var in key_vars],
+            )
+            # The stop verb below carries no pool token, so the wall that
+            # went up a moment ago comes down first.
+            try:
+                with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
+                    client.lease_clear(pool_token)
+            except (HostUnreachableError, TimeoutError, RuntimeError, OSError):
+                pass  # no host is left to stop
+            raise RunnerError(
+                f"member '{name}' did not start: its pi exited at once. "
+                + (f"pi said: {said}" if said else "pi wrote no error output.")
+            )
     except RunnerError:
         # The CLI may have brought up a host that never answered in time and
         # left it running; it goes, so the name is free for the next start.
@@ -244,12 +288,7 @@ def status(name: str) -> dict | None:
     parse, or one whose host process is gone - a host killed mid-turn leaves
     a file that says working for ever.
     """
-    try:
-        record = read_status(_paths(name).status)
-        os.kill(record["host_pid"], 0)
-    except (OSError, ValueError, KeyError, TypeError):
-        return None
-    return record
+    return _host_record(name)
 
 
 def attach_console(name: str, *, pool_token: str) -> None:
@@ -481,6 +520,59 @@ def _serving(name: str) -> bool:
     return True
 
 
+def _host_record(name: str) -> dict | None:
+    """The record ``status`` gives. ``status`` is what the daemon asks for a
+    holder's last activity, and a test may stand a double in for it; a start
+    needs the host's own record, so it reads it here."""
+    try:
+        record = read_status(_paths(name).status)
+        os.kill(record["host_pid"], 0)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    return record
+
+
+def _pi_stays_up(name: str) -> bool:
+    """Watch the host of *name* for ``PI_START_WATCH`` seconds: does its pi
+    still run at the end of them?
+
+    The host's own record is read, from disk: it says ``exited`` as soon as
+    pi's output ends. A host that is gone has no pi either.
+    """
+    deadline = time.monotonic() + PI_START_WATCH
+    while True:
+        record = _host_record(name)
+        if record is None or record.get("state") == "exited":
+            return False
+        if time.monotonic() >= deadline:
+            return True
+        time.sleep(_WATCH_EVERY)
+
+
+def _size(path: Path) -> int:
+    try:
+        return path.stat().st_size
+    except OSError:
+        return 0
+
+
+def _stderr_tail(path: Path, start: int, *, secrets: Iterable[str]) -> str:
+    """The last lines of pi's error output written at *path* from *start* on,
+    as one short line. No value among *secrets* is given back: a pi that fails
+    to sign in may print the key it was given."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(start)
+            text = f.read().decode("utf-8", errors="replace")
+    except OSError:
+        return ""
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "[key]")
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return " | ".join(lines[-_STDERR_LINES:])[-_STDERR_CHARS:]
+
+
 def _stop_cli(name: str, timeout: float) -> subprocess.CompletedProcess | None:
     """Run ``specflo agent stop`` as the pool, which holds no lease.
 
@@ -556,7 +648,12 @@ def _become_pi(launch_file: str) -> None:
     spec = json.loads(path.read_text(encoding="utf-8"))
     path.unlink()
     # The command is looked up on the member's own PATH, not this process's.
-    os.execvpe(spec["argv"][0], spec["argv"], spec["env"])
+    try:
+        os.execvpe(spec["argv"][0], spec["argv"], spec["env"])
+    except OSError as exc:
+        # One line for the pool to report, with the command's name and nothing
+        # else of the launch: a traceback would say less and show more.
+        sys.exit(f"pi could not be run: {spec['argv'][0]}: {exc.strerror}")
 
 
 if __name__ == "__main__":

@@ -242,7 +242,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   the output of whoever ran it.
 - **What a member is given.** Each lease on a started member runs a fresh
   pi through `specflo agent start`, in a herdr pane named for the member,
-  and the end of the lease stops it. The definition reaches pi as
+  and the end of the lease stops it. A start watches pi for one second
+  before it hands the member over: a member whose pi did not start (a
+  command that names no binary, an option pi turns down) is not granted,
+  its slots are free at once, and the daemon's log has the end of what pi
+  wrote on its standard error, with no key in it. The definition reaches pi as
   `--tools` (or `--no-tools`), `--skill`, `--append-system-prompt` and
   `--no-context-files` unless it asks for the project's context. The
   environment is a short baseline plus the variables the definition lists
