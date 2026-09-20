@@ -296,6 +296,9 @@ as the sole owner, logs every event, and exposes a per-agent Unix socket for
 control. A controller (you, or an orchestrating agent) drives it entirely
 through the CLI; the host never interprets assistant text, so conventions like
 completion phrases stay controller-side.
+An rpc agent answers at its host's socket only: the host starts pi with
+`SPECFLO_AGENT_SERVE=0`, so the specflo pi extension inside that pi serves no
+control socket of its own.
 
 ### Verbs
 

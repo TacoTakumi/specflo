@@ -101,6 +101,9 @@ ENDED_REMEMBERED = 256
 # refresh is an fsynced rewrite of status.json.
 _ACTIVITY_REFRESH = 5.0
 
+# Tells the specflo extension inside pi to serve no control socket of its own.
+ENV_SERVE = "SPECFLO_AGENT_SERVE"
+
 # How long a broadcast send may block on one slow client before it is dropped.
 _SUBSCRIBER_SEND_TIMEOUT = 5.0
 
@@ -188,6 +191,7 @@ class PiHost:
         self.proc = subprocess.Popen(
             self.pi_cmd,
             cwd=self.cwd,
+            env=self._pi_env(),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=self._stderr_f,
@@ -196,6 +200,16 @@ class PiHost:
         self._reader = threading.Thread(target=self._pump, daemon=True)
         self._reader.start()
         return self
+
+    @staticmethod
+    def _pi_env() -> dict[str, str]:
+        """The environment pi starts with: this host's own, serving switched off.
+
+        An rpc agent answers at its host's socket only. A pi that has the
+        specflo extension would bind a second socket, named for its working
+        directory, and that one knows no lease.
+        """
+        return {**os.environ, ENV_SERVE: "0"}
 
     def send(self, obj: Any) -> None:
         """Forward one command frame to pi's stdin."""

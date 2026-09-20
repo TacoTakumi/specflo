@@ -373,7 +373,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   never the pool's to stop: a request for that member is refused naming
   the agent, and the host runs on with nothing written beside it; the
   same holds for an attached console's host, whatever member a
-  configuration later declares under its name.
+  configuration later declares under its name. Every rpc agent host starts
+  its pi with `SPECFLO_AGENT_SERVE=0`, so a console's pi serves no control
+  socket of its own beside the host's, where no lease would be known.
 - **The pool in the web UI.** `/pool` shows every pool, waiting request,
   member, lease, account, standing entry and recent transition to the
   requester and the developer; it carries nothing a member wrote and no

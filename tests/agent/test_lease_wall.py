@@ -437,3 +437,55 @@ def test_an_agent_with_no_lease_bound_prints_its_whole_log(cli_rig):
     assert between.exit_code == 0, between.output
     assert between.stdout.encode() == host.paths.events.read_bytes()
     assert BEFORE in between.stdout and MINE in between.stdout
+
+
+# -- an rpc agent answers at its host's socket only -----------------------------
+
+SERVE = "SPECFLO_AGENT_SERVE"
+
+# Stands in for pi: it writes down the environment it was started with, then
+# waits on stdin as pi does.
+ENV_PI = """\
+import json, os, sys
+with open(sys.argv[1] + ".part", "w", encoding="utf-8") as f:
+    json.dump(dict(os.environ), f)
+os.replace(sys.argv[1] + ".part", sys.argv[1])
+sys.stdin.buffer.read()
+"""
+
+
+@pytest.mark.parametrize("own", [None, "1", "0"], ids=["unset", "on", "off"])
+def test_the_hosts_pi_is_told_to_serve_no_socket_of_its_own(tmp_path, monkeypatch, own):
+    # a pi with the specflo extension would bind a socket named for its working
+    # directory, and that socket knows no lease
+    if own is None:
+        monkeypatch.delenv(SERVE, raising=False)
+    else:
+        monkeypatch.setenv(SERVE, own)
+    monkeypatch.setenv("INHERITED_BY_PI", "kept as it was")
+    script = tmp_path / "env_pi.py"
+    script.write_text(ENV_PI, encoding="utf-8")
+    seen_file = tmp_path / "pi-env.json"
+    inherited = dict(os.environ)
+
+    host = PiHost(
+        "w17",
+        [sys.executable, str(script), str(seen_file)],
+        cwd=tmp_path,
+        base_dir=tmp_path / "state",
+    ).start()
+    try:
+        deadline = time.monotonic() + 10
+        while not seen_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        seen = json.loads(seen_file.read_text(encoding="utf-8"))
+    finally:
+        host.close()
+
+    assert seen.get(SERVE) == "0"
+    # python sets LC_CTYPE by itself when it starts under the C locale
+    differing = {k for k in seen.keys() | inherited.keys() if seen.get(k) != inherited.get(k)}
+    assert differing <= {SERVE, "LC_CTYPE"}
+    assert seen["INHERITED_BY_PI"] == "kept as it was"
+    # the host's own environment is left alone
+    assert os.environ.get(SERVE) == own
