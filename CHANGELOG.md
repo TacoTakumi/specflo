@@ -246,7 +246,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   before it hands the member over: a member whose pi did not start (a
   command that names no binary, an option pi turns down) is not granted,
   its slots are free at once, and the daemon's log has the end of what pi
-  wrote on its standard error, with no key in it. The definition reaches pi as
+  wrote on its standard error, with no key in it. At the end of a lease
+  only a host that cannot be reached at all counts as gone. A host that
+  is there and gives no answer (stopped in place, hung) is sent the stop
+  all the same, and when it still runs the lease's end reports that the
+  member did not stop and leaves its files where they are. The definition reaches pi as
   `--tools` (or `--no-tools`), `--skill`, `--append-system-prompt` and
   `--no-context-files` unless it asks for the project's context. The
   environment is a short baseline plus the variables the definition lists

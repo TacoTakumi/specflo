@@ -247,6 +247,14 @@ def stop(
     too. A host that is already gone is not an error: the lease ends all the
     same.
 
+    Gone is a host that cannot be reached at all: no socket, a socket nothing
+    listens on, a connection the host drops as it goes. A host that is there
+    and gives no answer in time - stopped in place, hung, its queue of
+    callers full - is not gone, and its pi may run on with the account's key.
+    Nor does a probe this process could not make say anything of the host.
+    The stop verb is tried on such a host all the same, and one that still
+    runs after it is a host that did not stop.
+
     A host that answers and does not take *pool_token* is not one this pool
     started: a start binds the token before anything else. It is someone
     else's under the member's name, a developer's or another pool's, and the
@@ -257,6 +265,7 @@ def stop(
     on disk then stays, because the member may still run.
     """
     paths = _paths(name)
+    answered = True
     try:
         with connect(name, connect_timeout=_PROBE_TIMEOUT) as client:
             try:
@@ -267,14 +276,31 @@ def stop(
                 # Said aloud, because the lease ends and the host runs on.
                 _log.warning("agent %s does not take the pool's token: left running", name)
                 return
-    except (HostUnreachableError, TimeoutError, OSError):
+    except HostUnreachableError as exc:
+        # The client says unreachable of a connection that would have had to
+        # wait as well, and that one found a listener: a host whose queue of
+        # callers is full.
+        if not isinstance(exc.__cause__, (BlockingIOError, TimeoutError)):
+            lease.write_ended(paths.root, cause, request_id, holder=holder)
+            _forget(paths)
+            return
+        answered = False
+    except (TimeoutError, OSError):
+        # No answer in time, or no socket to be had in this process.
+        answered = False
+    if answered:
         lease.write_ended(paths.root, cause, request_id, holder=holder)
-        _forget(paths)
-        return
-    lease.write_ended(paths.root, cause, request_id, holder=holder)
     stopped = _stop_cli(name, timeout)
+    if not answered:
+        # Written after the verb: a verb that cannot connect reports the
+        # record it finds, and would say the lease ended for why it failed.
+        lease.write_ended(paths.root, cause, request_id, holder=holder)
     if stopped is None or stopped.returncode != 0:
         detail = _detail(stopped) if stopped is not None else f"no answer in {timeout:.0f}s"
+        if not answered:
+            # The verb's last line: it may end a traceback of its own wait.
+            last = detail.splitlines()[-1]
+            detail = f"the pool had no answer from its host, and the stop verb failed: {last}"
         raise RunnerError(f"member '{name}' did not stop: {detail}")
     _forget(paths)
 

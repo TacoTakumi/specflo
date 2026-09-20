@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import signal
+import socket
 import stat
 import subprocess
 import sys
@@ -552,3 +553,96 @@ def test_stop_leaves_alone_a_host_that_does_not_take_this_pools_token(rig, bound
     state_dir = AgentPaths.resolve("local-1").root
     assert lease.read_ended(state_dir) is None
     assert not (state_dir / lease.ENDED_DIR).exists()
+
+
+def test_stop_does_not_take_a_host_that_gives_no_answer_for_one_that_is_gone(rig):
+    name = rig.start(rig.hosted_member())
+    config_dir = Path(rig.recorded()["env"][launch.AGENT_DIR_ENV])
+    state_dir = AgentPaths.resolve(name).root
+    status = read_status(state_dir / "status.json")
+    # a host that hangs: stopped in place, it takes the connection and says nothing
+    os.kill(status["host_pid"], signal.SIGSTOP)
+    try:
+        with pytest.raises(runner.RunnerError, match="member 'hosted-1' did not stop") as raised:
+            runner.stop(name, "released", pool_token=POOL_TOKEN, holder=HOLDER, timeout=1.0)
+
+        assert "had no answer from its host" in str(raised.value)
+        assert "Traceback" not in str(raised.value)
+        # the member may still run, with its key: what it runs on stays
+        assert pid_alive(status["host_pid"]) and pid_alive(status["pi_pid"])
+        assert config_dir.is_dir()
+        assert (state_dir / runner.CONFIG_DIR_FILE).is_file()
+        assert read_status(state_dir / "status.json")["state"] != "stopped"
+        # the lease has ended all the same, and its holder is told why
+        assert lease.read_ended(state_dir, LEASE_TOKEN)["cause"] == "released"
+    finally:
+        try:
+            os.kill(status["host_pid"], signal.SIGCONT)
+        except OSError:
+            pass  # gone already; the rig's cleanup ends what is left
+
+
+def test_stop_does_not_take_a_host_that_accepts_no_more_connections_for_one_that_is_gone(rig):
+    paths = AgentPaths.resolve("hosted-1").ensure()
+    config_dir = piconfig.create(rig.config_root, rig.hosted_member(), ACCOUNTS)
+    (paths.root / runner.CONFIG_DIR_FILE).write_text(str(config_dir), encoding="utf-8")
+    # a host that hangs for long: it listens, and its queue of callers is full
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    callers = []
+    try:
+        listener.bind(str(paths.socket))
+        listener.listen(0)
+        for _ in range(8):
+            caller = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            callers.append(caller)
+            caller.settimeout(0.2)
+            try:
+                caller.connect(str(paths.socket))
+            except (BlockingIOError, TimeoutError):
+                break  # a full queue turns a caller that will not wait for ever away
+        else:
+            pytest.fail("the listener's queue never filled")
+
+        with pytest.raises(runner.RunnerError, match="member 'hosted-1' did not stop"):
+            runner.stop("hosted-1", "expired", pool_token=POOL_TOKEN, timeout=1.0)
+
+        assert config_dir.is_dir()
+        assert (paths.root / runner.CONFIG_DIR_FILE).is_file()
+        assert lease.read_ended(paths.root)["cause"] == "expired"
+    finally:
+        for sock in [listener, *callers]:
+            sock.close()
+
+
+def test_stopping_a_member_whose_socket_refuses_the_connection_finds_it_gone(rig):
+    paths = AgentPaths.resolve("hosted-1").ensure()
+    config_dir = piconfig.create(rig.config_root, rig.hosted_member(), ACCOUNTS)
+    (paths.root / runner.CONFIG_DIR_FILE).write_text(str(config_dir), encoding="utf-8")
+    # what a killed host leaves: a socket file that nothing listens on
+    left = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    left.bind(str(paths.socket))
+    left.close()
+
+    runner.stop("hosted-1", "expired", pool_token=POOL_TOKEN)
+
+    assert lease.read_ended(paths.root)["cause"] == "expired"
+    assert rig.launch_leftovers("hosted-1") == []
+
+
+def test_a_probe_that_this_process_could_not_make_does_not_say_the_host_is_gone(
+    rig, monkeypatch
+):
+    name = rig.start(rig.hosted_member())
+    status = read_status(AgentPaths.resolve(name).status)
+
+    def no_socket_to_be_had(*args, **kwargs):
+        raise OSError(24, "Too many open files")
+
+    monkeypatch.setattr(runner, "connect", no_socket_to_be_had)
+
+    # the wall still stands, so the stop verb is turned away: the host runs on
+    with pytest.raises(runner.RunnerError, match="member 'hosted-1' did not stop"):
+        runner.stop(name, "released", pool_token=POOL_TOKEN, timeout=5.0)
+
+    assert pid_alive(status["host_pid"]) and pid_alive(status["pi_pid"])
+    assert rig.launch_leftovers(name) != []
