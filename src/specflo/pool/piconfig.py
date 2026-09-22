@@ -44,11 +44,11 @@ import json
 import shutil
 import tempfile
 from copy import deepcopy
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from .config import HOSTED, Account, Member
-from .launch import LaunchError, member_account
+from .launch import AGENT_DIR_ENV, LaunchError, member_account
 
 # The file in a pi configuration directory that declares providers and models.
 MODELS_FILE = "models.json"
@@ -64,10 +64,31 @@ ROUTING: dict[str, dict[str, object]] = {
     "open": {},
 }
 
+# The directory pi discovers a configuration directory's own skills in, one
+# directory per skill, named by the skill. A member's copies go here.
+SKILLS_DIR = "skills"
+
+# Where the operator's pi configuration directory is when the environment
+# names none.
+_DEFAULT_AGENT_DIR = Path(".pi") / "agent"
+
 # Written into every generated directory, and the only thing that lets one be
 # removed: a path that reaches remove() by mistake may be the user's own pi
 # directory.
 MARKER = ".specflo-pool-member"
+
+
+def operator_skills(environ: Mapping[str, str]) -> Path:
+    """The operator's own skills directory, which a member's copies come from.
+
+    It is the ``skills`` of the operator's pi configuration directory, named
+    by the environment or under the home where pi keeps it. The directory
+    holds real skills and links into other checkouts alike; what is done
+    about that is the copy's business, not this one's.
+    """
+    named = environ.get(AGENT_DIR_ENV)
+    home = Path(environ.get("HOME") or Path.home())
+    return (Path(named) if named else home / _DEFAULT_AGENT_DIR) / SKILLS_DIR
 
 
 def models_config(member: Member, account: Account) -> dict[str, object]:
@@ -136,6 +157,9 @@ def create(
     member: Member,
     accounts: Iterable[Account],
     models_file: Path | str | None = None,
+    *,
+    skills: Iterable[str] = (),
+    skills_from: Path | str | None = None,
 ) -> Path:
     """A new pi configuration directory for one lease of *member*, under *root*.
 
@@ -146,6 +170,11 @@ def create(
     A hosted member's models file holds what its egress class asks of
     OpenRouter. A local member's holds the operator's own local provider,
     read from *models_file*, filtered to the model the member declares.
+
+    Every directory gets a ``skills`` of its own, and each name in *skills*
+    is copied into it from *skills_from*, dereferenced. The directory is
+    made whatever the member declares: it says what the member's skills are,
+    and for a member declaring none that is nothing at all.
 
     Raises ``LaunchError`` when a hosted member's account is not among
     *accounts*, and when a local member's model is not in the operator's file
@@ -169,7 +198,28 @@ def create(
         (directory / MODELS_FILE).write_text(
             json.dumps(config, indent=2) + "\n", encoding="utf-8"
         )
+    _copy_skills(directory / SKILLS_DIR, skills, skills_from)
     return directory
+
+
+def _copy_skills(
+    into: Path, skills: Iterable[str], skills_from: Path | str | None
+) -> None:
+    """Copy each named skill from *skills_from* into *into*, links resolved.
+
+    The whole of a skill is copied, so a skill the operator keeps as a link
+    into another checkout arrives as a real directory, and so does a file
+    inside one. The copy is the member's own from then on: editing the
+    source on the host leaves a running member's skill as it was.
+    """
+    into.mkdir(parents=True, exist_ok=True)
+    if skills_from is None:
+        return
+    source = Path(skills_from)
+    for name in skills:
+        held = source / name
+        if held.is_dir():
+            shutil.copytree(held, into / name, symlinks=False)
 
 
 def remove(directory: Path | str | None) -> None:

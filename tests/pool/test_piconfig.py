@@ -193,7 +193,9 @@ def test_the_configuration_names_the_key_variable_and_never_holds_a_key(tmp_path
     directory = piconfig.create(tmp_path, NO_TRAIN_MEMBER, ACCOUNTS)
 
     assert _provider(directory)["apiKey"] == "$TEAM_A_KEY"
-    for path in directory.iterdir():
+    for path in directory.rglob("*"):
+        if not path.is_file():
+            continue
         text = path.read_text(encoding="utf-8")
         assert "key-of-team-a" not in text
         assert "TEAM_B_KEY" not in text

@@ -171,8 +171,9 @@ def start(
     environment, the latter taken from *environ* (this process's by default).
     A pi configuration directory is generated for the member under
     *config_root*; a local member's carries the operator's own provider, read
-    from *models_file*. The call returns once the host serves, the wall is up and
-    pi has run for ``PI_START_WATCH`` seconds.
+    from *models_file*, and every member's carries the skills its definition
+    names, copied from the operator's own. The call returns once the host
+    serves, the wall is up and pi has run for ``PI_START_WATCH`` seconds.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
     and ``RunnerError`` for one already running, one whose host does not come
@@ -190,20 +191,21 @@ def start(
             "daemon's host, and this lease did not start it."
         )
     accounts = tuple(accounts)
-    config_dir = piconfig.create(config_root, member, accounts, models_file)
+    caller = os.environ if environ is None else environ
+    config_dir = piconfig.create(
+        config_root, member, accounts, models_file,
+        skills=definition.skills, skills_from=piconfig.operator_skills(caller),
+    )
     try:
         spec = {
             "argv": launch.member_argv(
-                definition, member,
-                os.environ if environ is None else environ,
+                definition, member, caller,
                 cwd=cwd,
                 state_dir=paths.root.parent,
                 config_dir=config_dir,
             ),
             "env": launch.member_env(
-                definition, member, accounts,
-                os.environ if environ is None else environ,
-                config_dir=config_dir,
+                definition, member, accounts, caller, config_dir=config_dir,
             ),
         }
     except (launch.LaunchError, sandbox.UnknownProfile):
