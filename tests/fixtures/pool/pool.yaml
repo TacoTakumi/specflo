@@ -3,6 +3,10 @@
 # A relative llama_swap path is taken from this file's directory.
 llama_swap: llama-swap.yaml
 
+# Where the operator's own pi models file is. A local member's generated one
+# copies its provider from this, filtered to the model that member declares.
+models_file: models.json
+
 accounts:
   - name: openrouter-main
     cap: 4

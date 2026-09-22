@@ -1,0 +1,35 @@
+{
+  "providers": {
+    "llama-swap": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "a-key-the-rig-accepts",
+      "authHeader": false,
+      "compat": {"maxTokensField": "max_tokens"},
+      "models": [
+        {
+          "id": "model-a",
+          "name": "Model A",
+          "reasoning": false,
+          "contextWindow": 32768,
+          "maxTokens": 4096
+        },
+        {
+          "id": "model-b",
+          "name": "Model B",
+          "reasoning": true,
+          "thinkingLevelMap": {"low": "low", "medium": "medium", "high": "high"},
+          "contextWindow": 131072,
+          "maxTokens": 8192
+        },
+        {
+          "id": "model-c",
+          "name": "Model C",
+          "reasoning": false,
+          "contextWindow": 16384,
+          "maxTokens": 2048
+        }
+      ]
+    }
+  }
+}

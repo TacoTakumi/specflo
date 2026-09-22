@@ -161,6 +161,7 @@ def start(
     pool_token: str,
     lease_token: str,
     config_root: Path | str,
+    models_file: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
     timeout: float = START_TIMEOUT,
 ) -> str:
@@ -168,8 +169,9 @@ def start(
 
     pi runs in *cwd* with the launch builder's command line and scoped
     environment, the latter taken from *environ* (this process's by default).
-    A hosted member's pi configuration directory is generated under
-    *config_root*. The call returns once the host serves, the wall is up and
+    A pi configuration directory is generated for the member under
+    *config_root*; a local member's carries the operator's own provider, read
+    from *models_file*. The call returns once the host serves, the wall is up and
     pi has run for ``PI_START_WATCH`` seconds.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
@@ -188,7 +190,7 @@ def start(
             "daemon's host, and this lease did not start it."
         )
     accounts = tuple(accounts)
-    config_dir = piconfig.create(config_root, member, accounts)
+    config_dir = piconfig.create(config_root, member, accounts, models_file)
     try:
         spec = {
             "argv": launch.member_argv(

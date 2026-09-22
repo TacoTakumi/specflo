@@ -39,6 +39,22 @@ from specflo.pool.config import Account, Member
 from specflo.pool.definitions import AgentDefinition
 
 STUB = Path(__file__).resolve().parents[1] / "agent" / "stub_pi.py"
+
+# The operator's own models file, as a rig has one: a local provider and the
+# models the rig's members declare.
+OPERATOR_MODELS = {
+    "providers": {
+        "llama-swap": {
+            "baseUrl": "http://127.0.0.1:8080/v1",
+            "api": "openai-completions",
+            "apiKey": "a-key-the-rig-accepts",
+            "models": [
+                {"id": name, "name": name, "contextWindow": 32768, "maxTokens": 4096}
+                for name in ("tc3", "model-a", "model-b", "model-c")
+            ],
+        }
+    }
+}
 RECORD_NAME = "record.json"
 PROTOCOL = Path(__file__).resolve().parents[2] / "src" / "specflo" / "agent" / "protocol.py"
 VENV_BIN = str(Path(sys.executable).parent)
@@ -194,6 +210,10 @@ class Rig:
         self.work = tmp_path / "work"
         self.work.mkdir()
         self.config_root = tmp_path / "piconfig"
+        # A local member's models file is a copy of the operator's, so the rig
+        # keeps one holding the models its members declare.
+        self.models_file = tmp_path / "models.json"
+        self.models_file.write_text(json.dumps(OPERATOR_MODELS), encoding="utf-8")
 
         self.herdr_state = tmp_path / "herdr.json"
         bin_dir = tmp_path / "bin"
@@ -297,6 +317,7 @@ class Rig:
         return marker
 
     def start(self, member: Member, **kwargs) -> str:
+        kwargs.setdefault("models_file", self.models_file)
         return runner.start(
             DEFINITION, member, ACCOUNTS,
             cwd=self.work, pool_token=POOL_TOKEN, lease_token=LEASE_TOKEN,

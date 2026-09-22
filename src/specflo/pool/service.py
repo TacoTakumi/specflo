@@ -423,7 +423,8 @@ class PoolService:
                     agent = runner.start(
                         definition, replace(placed.member, name=placed.agent),
                         self.config.accounts, cwd=cwd, pool_token=self.pool_token,
-                        lease_token=token, config_root=self.config_root, environ=self.environ,
+                        lease_token=token, config_root=self.config_root,
+                        models_file=self.config.models_file, environ=self.environ,
                     )
             except Exception as exc:
                 self.end_lease(lease_id, "released", cause=f"member did not start: {exc}")

@@ -16,11 +16,11 @@ import pytest
 from specflo.errors import SpecfloError
 from specflo.pool import piconfig
 
-from .test_piconfig import ACCOUNTS, LOCAL_MEMBER, NO_TRAIN_MEMBER
+from .test_piconfig import ACCOUNTS, LOCAL_MEMBER, NO_TRAIN_MEMBER, operator_models
 
 
 def test_a_local_members_directory_is_gone_when_its_lease_ends(tmp_path: Path) -> None:
-    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+    directory = piconfig.create(tmp_path / 'generated', LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path))
     # what pi wrote there during the lease goes with it
     (directory / "sessions").mkdir()
     (directory / "sessions" / "one.jsonl").write_text("{}\n", encoding="utf-8")
@@ -28,12 +28,12 @@ def test_a_local_members_directory_is_gone_when_its_lease_ends(tmp_path: Path) -
     piconfig.remove(directory)
 
     assert not directory.exists()
-    assert list(tmp_path.iterdir()) == []
+    assert list((tmp_path / "generated").iterdir()) == []
 
 
 def test_one_members_lease_ending_leaves_another_members_directory(tmp_path: Path) -> None:
-    mine = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
-    theirs = piconfig.create(tmp_path, NO_TRAIN_MEMBER, ACCOUNTS)
+    mine = piconfig.create(tmp_path / 'generated', LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path))
+    theirs = piconfig.create(tmp_path / 'generated', NO_TRAIN_MEMBER, ACCOUNTS)
 
     piconfig.remove(mine)
 
@@ -57,7 +57,7 @@ def test_a_directory_that_carries_no_marker_is_refused(tmp_path: Path) -> None:
 def test_a_marker_a_member_removed_during_its_lease_refuses_the_removal(
     tmp_path: Path,
 ) -> None:
-    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+    directory = piconfig.create(tmp_path / 'generated', LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path))
     (directory / piconfig.MARKER).unlink()
 
     with pytest.raises(SpecfloError):
@@ -67,7 +67,7 @@ def test_a_marker_a_member_removed_during_its_lease_refuses_the_removal(
 
 
 def test_ending_a_lease_twice_removes_nothing_the_second_time(tmp_path: Path) -> None:
-    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+    directory = piconfig.create(tmp_path / 'generated', LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path))
 
     piconfig.remove(directory)
     piconfig.remove(directory)

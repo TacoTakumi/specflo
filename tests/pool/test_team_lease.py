@@ -345,6 +345,9 @@ def write_team_pool(rig) -> None:
 
     data = {
         "llama_swap": "llama-swap.yaml",
+        # A local member's models file is a copy of the operator's; the rig's
+        # own stands in for it.
+        "models_file": str(rig.models_file),
         "members": [
             member("local-1", "model-a"), member("local-2", "model-a"),
             member("local-3", "model-c"),

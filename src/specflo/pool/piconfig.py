@@ -19,9 +19,16 @@ it. A ``no-train`` member's file carries both flags; an ``open`` member's
 carries neither.
 
 A local member gets a directory too, and it carries no routing: nothing it
-sends leaves this host, so there is no provider to ask anything of. It gets one
-because the sandbox hides the operator's configuration from every member, and a
-member with no directory of its own would start against nothing at all.
+sends leaves this host, so there is no provider to ask anything of. What it
+carries instead is the operator's own local provider, copied in. A local member
+runs against the rig's llama-swap, and the provider that reaches it - its base
+URL, its API flavour, its key and the compatibility fields that make pi and
+that server agree - is declared in the operator's models file, which the
+sandbox hides. So the file is read at lease start and one provider written out,
+holding exactly the model the member declares with the fields the operator
+curated for it: the context window that model really has, its maximum tokens,
+its thinking levels. A member cannot then reach for a model it was not given,
+and it cannot be given one the operator does not have.
 
 The generated directory stands in for the user's ``~/.pi/agent`` whole, so none
 of the user's settings, extensions, skills, stored credentials or sessions reach
@@ -36,6 +43,7 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+from copy import deepcopy
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -80,25 +88,79 @@ def models_config(member: Member, account: Account) -> dict[str, object]:
     return {"providers": {PROVIDER: provider}}
 
 
-def create(root: Path | str, member: Member, accounts: Iterable[Account]) -> Path:
+def local_models_config(models_file: Path | str, member: Member) -> dict[str, object]:
+    """What ``models.json`` holds for the local *member*, from the operator's file.
+
+    The provider is the operator's own: the one in *models_file* that holds a
+    model whose id is the one the member declares. Every field of it is copied
+    but its model list, so a field pi learns later travels without this knowing
+    of it, and the list holds that one model, copied whole.
+
+    Raises ``LaunchError`` when the file cannot be read or holds no such model,
+    naming the model and never the rest of what the file holds: a member that
+    asked for something the operator does not have is a fault in the member's
+    declaration, and the operator's other models are not the member's business.
+    """
+    try:
+        data = json.loads(Path(models_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise LaunchError(
+            f"member '{member.name}': the operator's models file at {models_file} "
+            f"could not be read ({exc})."
+        ) from exc
+    providers = data.get("providers") if isinstance(data, dict) else None
+    if not isinstance(providers, dict):
+        raise LaunchError(
+            f"member '{member.name}': the operator's models file at {models_file} "
+            "declares no providers."
+        )
+    for name, provider in providers.items():
+        if not isinstance(provider, dict):
+            continue
+        models = provider.get("models")
+        if not isinstance(models, list):
+            continue
+        for entry in models:
+            if isinstance(entry, dict) and entry.get("id") == member.model:
+                copied = {k: v for k, v in provider.items() if k != "models"}
+                copied["models"] = [entry]
+                return {"providers": {name: deepcopy(copied)}}
+    raise LaunchError(
+        f"member '{member.name}' declares the model '{member.model}', which the "
+        f"operator's models file at {models_file} does not hold."
+    )
+
+
+def create(
+    root: Path | str,
+    member: Member,
+    accounts: Iterable[Account],
+    models_file: Path | str | None = None,
+) -> Path:
     """A new pi configuration directory for one lease of *member*, under *root*.
 
     Every member gets one, whatever its backing. Each call makes a directory of
     its own, open to this user alone, so ending one lease of a member that
     serves several leaves the others' in place.
 
-    A hosted member's holds the models file its egress class asks for. A local
-    member's holds none yet: its provider is the operator's own, and copying it
-    in is the next thing this directory learns to do.
+    A hosted member's models file holds what its egress class asks of
+    OpenRouter. A local member's holds the operator's own local provider,
+    read from *models_file*, filtered to the model the member declares.
 
     Raises ``LaunchError`` when a hosted member's account is not among
-    *accounts*, and nothing is made.
+    *accounts*, and when a local member's model is not in the operator's file
+    or no *models_file* is given. Nothing is made in either case.
     """
-    config = (
-        models_config(member, member_account(member, tuple(accounts)))
-        if member.backing == HOSTED
-        else None
-    )
+    if member.backing == HOSTED:
+        config = models_config(member, member_account(member, tuple(accounts)))
+    elif models_file is None:
+        raise LaunchError(
+            f"member '{member.name}' is local, so its models file is a copy of the "
+            "operator's, and the pool was not told where that is. Declare it under "
+            "'models_file' in the pool file."
+        )
+    else:
+        config = local_models_config(models_file, member)
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix=f"{member.name}-", dir=root))

@@ -429,6 +429,7 @@ def write_console_pool(rig) -> None:
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": str(rig.models_file),
         "members": [_changed(CONSOLE, labels=[])],
         "pools": [{
             "name": "rebasers", "definition": "rebaser", "members": [SLOT],

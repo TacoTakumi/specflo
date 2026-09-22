@@ -136,7 +136,14 @@ def write_directory(rig, *, members, pools, teams=None, prompt: str = OLD_PROMPT
     folder.mkdir(parents=True, exist_ok=True)
     (folder / "worker.md").write_text(WORKER.format(prompt=prompt), encoding="utf-8")
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
-    data = {"llama_swap": "llama-swap.yaml", "members": list(members), "pools": list(pools)}
+    # A local member's models file is a copy of the operator's, so the rig's
+    # own stands in for it here.
+    data = {
+        "llama_swap": "llama-swap.yaml",
+        "models_file": str(rig.models_file),
+        "members": list(members),
+        "pools": list(pools),
+    }
     (directory / pool_config.POOL_FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
     shutil.rmtree(directory / TEAMS_DIR, ignore_errors=True)
     for name, roles in (teams or {}).items():

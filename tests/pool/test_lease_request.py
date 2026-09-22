@@ -65,6 +65,9 @@ def write_pool(rig) -> None:
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
     data = {
         "llama_swap": "llama-swap.yaml",
+        # A local member's models file is a copy of the operator's; the rig's
+        # own stands in for it.
+        "models_file": str(rig.models_file),
         "members": [{
             "name": "local-1", "command": rig.command, "backing": "local",
             "model": "model-a", "labels": [], "capacity": 1, "egress": "local",

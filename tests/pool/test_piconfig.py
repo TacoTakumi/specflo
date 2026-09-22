@@ -67,6 +67,26 @@ CALLER = {
 
 NO_TRAIN_ROUTING = {"data_collection": "deny", "zdr": True}
 
+# The operator's own models file, which a local member's generated one copies
+# its provider from.
+OPERATOR_MODELS = {
+    "providers": {
+        "llama-swap": {
+            "baseUrl": "http://127.0.0.1:8080/v1",
+            "api": "openai-completions",
+            "apiKey": "a-key-the-rig-accepts",
+            "models": [{"id": "tc3", "contextWindow": 32768, "maxTokens": 4096}],
+        }
+    }
+}
+
+
+def operator_models(tmp_path):
+    """The operator's models file, written where a test can name it."""
+    path = tmp_path / "operator-models.json"
+    path.write_text(json.dumps(OPERATOR_MODELS), encoding="utf-8")
+    return path
+
 
 def _provider(directory):
     config = json.loads((directory / piconfig.MODELS_FILE).read_text(encoding="utf-8"))
@@ -107,26 +127,31 @@ def test_an_open_member_has_neither_flag(tmp_path):
 
 
 def test_a_local_member_gets_a_directory_of_its_own(tmp_path):
-    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+    directory = piconfig.create(
+        tmp_path / "generated", LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path)
+    )
 
     assert directory is not None
     assert directory.is_dir()
-    assert directory.parent == tmp_path
+    assert directory.parent == tmp_path / "generated"
     assert (directory / piconfig.MARKER).is_file()
 
 
 def test_a_local_member_carries_no_routing(tmp_path):
-    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+    directory = piconfig.create(
+        tmp_path / "generated", LOCAL_MEMBER, ACCOUNTS, operator_models(tmp_path)
+    )
 
-    models = directory / piconfig.MODELS_FILE
-    text = models.read_text(encoding="utf-8") if models.is_file() else ""
+    text = (directory / piconfig.MODELS_FILE).read_text(encoding="utf-8")
     assert "openRouterRouting" not in text
     assert piconfig.PROVIDER not in text
 
 
 def test_a_member_of_any_backing_is_pointed_at_its_own_directory(tmp_path):
     for member in (LOCAL_MEMBER, NO_TRAIN_MEMBER):
-        directory = piconfig.create(tmp_path, member, ACCOUNTS)
+        directory = piconfig.create(
+            tmp_path / "generated", member, ACCOUNTS, operator_models(tmp_path)
+        )
         env = launch.member_env(
             DEFINITION, member, ACCOUNTS, CALLER, config_dir=directory
         )

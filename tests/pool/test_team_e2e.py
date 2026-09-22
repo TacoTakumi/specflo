@@ -98,6 +98,7 @@ def write_shipped_team_pool(rig) -> None:
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": str(rig.models_file),
         "members": [
             {
                 "name": member, "command": member_command(rig, member, reply),

@@ -69,6 +69,7 @@ class PoolRig(Rig):
         return PoolConfig(
             path=self.tmp_path / "pool" / "pool.yaml", accounts=ACCOUNTS,
             members=members, pools=(rebasers,), definitions=(DEFINITION,),
+            models_file=self.models_file,
         )
 
     def service(self, config: PoolConfig) -> PoolService:
