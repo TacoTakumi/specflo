@@ -12,12 +12,17 @@ request leaves it.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import socket
+import threading
+import time
 from pathlib import Path
 
 import httpx
 import pytest
+import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import JSONResponse, StreamingResponse
 from starlette.routing import Route
@@ -259,3 +264,96 @@ def test_the_only_writing_verb_it_names_is_the_one_the_allow_list_carries() -> N
     named = set(re.findall(r'"(POST|PUT|PATCH|DELETE)"', module_text()))
 
     assert named == {method for method, _ in bridge.ALLOWED} - {"GET"}
+
+
+# --- how long the filter waits for llama-swap --------------------------------
+
+# Longer than the wait an HTTP client gives up after by default. llama-swap
+# answers a completion only once the model is loaded, which takes seconds to
+# minutes, and a stream pauses while a long prompt is read.
+SLOW = 6.0
+
+
+def slow_upstream_app() -> Starlette:
+    """A llama-swap that loads a model before it answers, and pauses mid-stream."""
+    async def loading(request):
+        await asyncio.sleep(SLOW)
+        return JSONResponse({"served": request.url.path})
+
+    async def pausing(request):
+        async def chunks():
+            yield f"data: {json.dumps({'token': TOKENS[0]})}\n\n".encode()
+            await asyncio.sleep(SLOW)
+            for token in TOKENS[1:]:
+                yield f"data: {json.dumps({'token': token})}\n\n".encode()
+            yield b"data: [DONE]\n\n"
+
+        return StreamingResponse(chunks(), media_type="text/event-stream")
+
+    return Starlette(routes=[
+        Route("/v1/completions", loading, methods=["POST"]),
+        Route("/v1/chat/completions", pausing, methods=["POST"]),
+    ])
+
+
+@pytest.fixture
+def slow_client():
+    """A client of the filter, whose upstream is the slow app on a loopback
+    port, so the filter makes its own client and its own waits apply."""
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    listener.bind(("127.0.0.1", 0))
+    port = listener.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(
+        slow_upstream_app(), log_config=None, access_log=False, lifespan="off"
+    ))
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
+    thread.start()
+    deadline = time.monotonic() + 10
+    while not server.started:
+        assert time.monotonic() < deadline, "the slow upstream did not start"
+        time.sleep(0.01)
+    try:
+        with TestClient(bridge.filter_app(f"http://127.0.0.1:{port}")) as client:
+            yield client
+    finally:
+        server.should_exit = True
+        thread.join(10)
+        listener.close()
+
+
+def test_a_request_that_waits_on_a_model_load_is_answered(slow_client: TestClient) -> None:
+    started = time.monotonic()
+    answer = ask(slow_client, "POST", "/v1/completions", json={"model": "model-a"})
+
+    assert time.monotonic() - started >= SLOW
+    assert answer.status_code == 200
+    assert answer.json() == {"served": "/v1/completions"}
+
+
+def test_a_stream_that_pauses_between_two_chunks_arrives_whole(slow_client: TestClient) -> None:
+    with slow_client.stream(
+        "POST", "/v1/chat/completions", json={"model": "model-a", "stream": True}
+    ) as answer:
+        assert answer.status_code == 200
+        lines = list(answer.iter_lines())
+
+    read = [
+        json.loads(line.removeprefix("data: "))["token"]
+        for line in lines
+        if line.startswith("data: ") and not line.endswith("[DONE]")
+    ]
+    assert read == list(TOKENS)
+    assert "data: [DONE]" in lines
+
+
+def test_an_upstream_that_is_not_there_fails_at_once() -> None:
+    # Nothing listens on port 1: the filter may wait long for an answer, and
+    # not for a connection that cannot be made.
+    with TestClient(
+        bridge.filter_app("http://127.0.0.1:1"), raise_server_exceptions=False
+    ) as client:
+        started = time.monotonic()
+        answer = ask(client, "GET", "/v1/models")
+
+    assert answer.status_code >= 500
+    assert time.monotonic() - started < 2

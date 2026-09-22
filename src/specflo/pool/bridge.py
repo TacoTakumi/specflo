@@ -68,6 +68,13 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset({
 # should not go looking for the path it spelled wrong.
 REFUSED = 403
 
+# How long the filter waits to connect to llama-swap, in seconds. It waits
+# for nothing else: llama-swap answers a completion only once the model is
+# loaded, which takes from seconds to minutes, and a stream pauses while a
+# long prompt is read. Neither is a fault, and the member decides how long it
+# waits. A llama-swap that is not there is one, and is found at once.
+_CONNECT_TIMEOUT = 5.0
+
 # Headers that belong to one hop and are never passed on to the next.
 _HOP_BY_HOP: frozenset[str] = frozenset({
     "connection", "keep-alive", "proxy-authenticate", "proxy-authorization",
@@ -127,7 +134,10 @@ def filter_app(upstream: str, client: httpx.AsyncClient | None = None) -> ASGIAp
     rather than answered by a router with a status of its own.
     """
     ours = client is None
-    out = httpx.AsyncClient(base_url=upstream) if ours else client
+    out = (
+        httpx.AsyncClient(base_url=upstream, timeout=httpx.Timeout(None, connect=_CONNECT_TIMEOUT))
+        if ours else client
+    )
 
     async def handle(request: Request) -> Response:
         path = request.url.path
