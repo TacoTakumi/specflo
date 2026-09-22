@@ -16,9 +16,12 @@ flag. Every member loads the pool's deny-list extension with ``-e``, and the
 list reaches it in one environment variable. That extension is a guard against
 mistakes, not a limit: see its header.
 
-A hosted member's egress class does not travel as a flag either. It is written
-into a pi configuration directory generated for the member (see ``piconfig``),
-and one environment variable points the member's pi at that directory.
+A member's egress class does not travel as a flag either. It is written into a
+pi configuration directory generated for the member (see ``piconfig``), and one
+environment variable points the member's pi at that directory. Every member
+gets one and no member starts without it: the sandbox hides the operator's own
+configuration, so a member whose pi was not pointed somewhere of its own would
+start against a directory that is not there.
 
 None of that is a boundary by itself: a flag is a request to pi, and what
 pi loads is decided by the machine it runs on. The boundary is the sandbox
@@ -177,11 +180,12 @@ def member_env(
     holds only if its key reaches its own members alone. The deny list comes
     from the definition alone, never from the caller; a definition that denies
     nothing sets no variable. *config_dir* is the pi configuration directory
-    generated for the member, and nothing is written here: with none, the
-    variable that names it is not set.
+    generated for the member, and nothing is written here.
 
     Raises ``LaunchError`` for a hosted member whose account is not among
-    *accounts* or whose key variable is not set.
+    *accounts* or whose key variable is not set, and for any member handed no
+    *config_dir*: every member has one, and a member without it would start
+    against a directory the sandbox hides.
     """
     accounts = tuple(accounts)
     key_vars = {account.key_env for account in accounts}
@@ -195,8 +199,13 @@ def member_env(
     env = {name: environ[name] for name in allowed if name in environ}
     if definition.deny:
         env[DENY_ENV] = json.dumps(list(definition.deny))
-    if config_dir is not None:
-        env[AGENT_DIR_ENV] = str(config_dir)
+    if config_dir is None:
+        raise LaunchError(
+            f"member '{member.name}' has no generated pi configuration directory, so "
+            f"{AGENT_DIR_ENV} cannot be set and it would start against a directory "
+            "the sandbox hides."
+        )
+    env[AGENT_DIR_ENV] = str(config_dir)
     env[SERVE_ENV] = "0"
     env[AGENT_NAME_ENV] = member.name
     env[AGENT_MANAGED_ENV] = "1"

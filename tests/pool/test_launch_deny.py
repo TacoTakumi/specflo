@@ -55,6 +55,18 @@ def _extension_paths(argv):
     return [argv[i + 1] for i, arg in enumerate(argv) if arg == "-e"]
 
 
+
+# Every member starts with a pi configuration directory generated for its
+# lease, so the builder is asked for one here as the runner asks for one.
+CONFIG_DIR = Path("/generated/pi-config")
+
+
+def member_env(definition, member, accounts, environ, **fields):
+    """``launch.member_env`` with the generated directory every member has."""
+    fields.setdefault("config_dir", CONFIG_DIR)
+    return launch.member_env(definition, member, accounts, environ, **fields)
+
+
 def test_the_extension_is_a_file_shipped_inside_the_package():
     path = Path(launch.DENY_EXTENSION)
 
@@ -78,7 +90,7 @@ def test_a_definition_that_denies_nothing_still_loads_the_extension():
 
 def test_the_deny_list_reaches_the_extension_in_one_variable():
     for member in MEMBERS:
-        env = launch.member_env(DEFINITION, member, ACCOUNTS, CALLER)
+        env = member_env(DEFINITION, member, ACCOUNTS, CALLER)
 
         assert json.loads(env[launch.DENY_ENV]) == ["git push", "rm -rf"], member.name
 
@@ -91,7 +103,7 @@ def test_the_deny_list_is_not_put_on_the_command_line():
 
 
 def test_a_definition_that_denies_nothing_sets_no_variable():
-    env = launch.member_env(replace(DEFINITION, deny=()), LOCAL_MEMBER, ACCOUNTS, CALLER)
+    env = member_env(replace(DEFINITION, deny=()), LOCAL_MEMBER, ACCOUNTS, CALLER)
 
     assert launch.DENY_ENV not in env
 
@@ -102,8 +114,8 @@ def test_the_callers_own_deny_variable_never_reaches_a_member():
     caller = {**CALLER, launch.DENY_ENV: json.dumps(["ls"])}
     asking = replace(DEFINITION, env=(launch.DENY_ENV,))
 
-    denying = launch.member_env(asking, LOCAL_MEMBER, ACCOUNTS, caller)
-    open_ = launch.member_env(replace(asking, deny=()), LOCAL_MEMBER, ACCOUNTS, caller)
+    denying = member_env(asking, LOCAL_MEMBER, ACCOUNTS, caller)
+    open_ = member_env(replace(asking, deny=()), LOCAL_MEMBER, ACCOUNTS, caller)
 
     assert json.loads(denying[launch.DENY_ENV]) == ["git push", "rm -rf"]
     assert launch.DENY_ENV not in open_
@@ -113,7 +125,7 @@ def test_building_the_argv_and_the_environment_changes_nothing_in_the_process():
     before = dict(os.environ)
 
     launch.pi_argv(DEFINITION, LOCAL_MEMBER)
-    launch.member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+    member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
 
     assert dict(os.environ) == before
 

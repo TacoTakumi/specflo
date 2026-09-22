@@ -1,4 +1,4 @@
-"""A hosted member's pi configuration directory: where its egress class takes effect.
+"""A member's pi configuration directory: what it loads, and where its class holds.
 
 A hosted member's prompts leave this host, and its egress class says who may
 see them. OpenRouter picks the provider that serves each request, and a request
@@ -13,12 +13,15 @@ routing. pi reaches OpenRouter's Anthropic models through its Anthropic-messages
 client instead, which drops it, so for those models the flags are in the file
 and never in a request. The account's own privacy settings are what holds there.
 
-pi reads ``models.json`` from its configuration directory, so each lease of a
-hosted member gets a directory of its own, generated here, and the member's
-environment points pi at it. A ``no-train`` member's file carries both flags; an
-``open`` member's carries neither. A local member sends nothing off this host
-and nothing is generated for it: it runs against the user's own pi
-configuration, which is where its llama-swap provider is declared.
+pi reads ``models.json`` from its configuration directory, so each lease gets a
+directory of its own, generated here, and the member's environment points pi at
+it. A ``no-train`` member's file carries both flags; an ``open`` member's
+carries neither.
+
+A local member gets a directory too, and it carries no routing: nothing it
+sends leaves this host, so there is no provider to ask anything of. It gets one
+because the sandbox hides the operator's configuration from every member, and a
+member with no directory of its own would start against nothing at all.
 
 The generated directory stands in for the user's ``~/.pi/agent`` whole, so none
 of the user's settings, extensions, skills, stored credentials or sessions reach
@@ -77,23 +80,33 @@ def models_config(member: Member, account: Account) -> dict[str, object]:
     return {"providers": {PROVIDER: provider}}
 
 
-def create(root: Path | str, member: Member, accounts: Iterable[Account]) -> Path | None:
+def create(root: Path | str, member: Member, accounts: Iterable[Account]) -> Path:
     """A new pi configuration directory for one lease of *member*, under *root*.
 
-    Returns None for a member that is not hosted, and writes nothing. Each call
-    makes a directory of its own, open to this user alone, so ending one lease
-    of a member that serves several leaves the others' in place.
+    Every member gets one, whatever its backing. Each call makes a directory of
+    its own, open to this user alone, so ending one lease of a member that
+    serves several leaves the others' in place.
 
-    Raises ``LaunchError`` when the member's account is not among *accounts*.
+    A hosted member's holds the models file its egress class asks for. A local
+    member's holds none yet: its provider is the operator's own, and copying it
+    in is the next thing this directory learns to do.
+
+    Raises ``LaunchError`` when a hosted member's account is not among
+    *accounts*, and nothing is made.
     """
-    if member.backing != HOSTED:
-        return None
-    config = models_config(member, member_account(member, tuple(accounts)))
+    config = (
+        models_config(member, member_account(member, tuple(accounts)))
+        if member.backing == HOSTED
+        else None
+    )
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix=f"{member.name}-", dir=root))
     (directory / MARKER).write_text("", encoding="utf-8")
-    (directory / MODELS_FILE).write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+    if config is not None:
+        (directory / MODELS_FILE).write_text(
+            json.dumps(config, indent=2) + "\n", encoding="utf-8"
+        )
     return directory
 
 

@@ -4,8 +4,13 @@ A hosted member starts against a pi configuration directory generated for it
 alone, and ``PI_CODING_AGENT_DIR`` points its pi there. The ``models.json`` in
 it tells OpenRouter which providers may serve the member: a ``no-train`` member
 is routed only to providers that collect no data and retain none, an ``open``
-member is routed freely. A local member sends nothing off this host, so nothing
-is generated for it. The directory lasts as long as the lease it was made for.
+member is routed freely.
+
+A local member gets a directory of its own too. It sends nothing off this
+host, so it carries no routing; it gets one because the sandbox hides the
+operator's configuration from every member, and a member with no directory of
+its own would start with nothing at all. The directory lasts as long as the
+lease it was made for.
 """
 
 import json
@@ -101,12 +106,36 @@ def test_an_open_member_has_neither_flag(tmp_path):
     assert "openRouterRouting" not in text
 
 
-def test_a_local_member_gets_no_generated_configuration(tmp_path):
-    assert piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS) is None
-    assert list(tmp_path.iterdir()) == []
+def test_a_local_member_gets_a_directory_of_its_own(tmp_path):
+    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
 
-    env = launch.member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
-    assert launch.AGENT_DIR_ENV not in env
+    assert directory is not None
+    assert directory.is_dir()
+    assert directory.parent == tmp_path
+    assert (directory / piconfig.MARKER).is_file()
+
+
+def test_a_local_member_carries_no_routing(tmp_path):
+    directory = piconfig.create(tmp_path, LOCAL_MEMBER, ACCOUNTS)
+
+    models = directory / piconfig.MODELS_FILE
+    text = models.read_text(encoding="utf-8") if models.is_file() else ""
+    assert "openRouterRouting" not in text
+    assert piconfig.PROVIDER not in text
+
+
+def test_a_member_of_any_backing_is_pointed_at_its_own_directory(tmp_path):
+    for member in (LOCAL_MEMBER, NO_TRAIN_MEMBER):
+        directory = piconfig.create(tmp_path, member, ACCOUNTS)
+        env = launch.member_env(
+            DEFINITION, member, ACCOUNTS, CALLER, config_dir=directory
+        )
+        assert env[launch.AGENT_DIR_ENV] == str(directory)
+
+
+def test_a_member_is_never_started_with_the_variable_unset(tmp_path):
+    with pytest.raises(launch.LaunchError, match=launch.AGENT_DIR_ENV):
+        launch.member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
 
 
 def test_the_member_is_pointed_at_its_generated_directory(tmp_path):
@@ -121,14 +150,18 @@ def test_the_member_is_pointed_at_its_generated_directory(tmp_path):
     assert directory.parent == tmp_path
 
 
-def test_the_callers_pi_directory_never_stands_in_for_the_generated_one():
-    # The caller's own pi configuration carries no routing flags, so a
+def test_the_callers_pi_directory_never_stands_in_for_the_generated_one(tmp_path):
+    # The caller's own pi configuration is the one the sandbox hides, so a
     # definition that lists the variable must not bring it in.
     definition = replace(DEFINITION, env=("PI_CODING_AGENT_DIR",))
+    directory = piconfig.create(tmp_path, NO_TRAIN_MEMBER, ACCOUNTS)
 
-    env = launch.member_env(definition, NO_TRAIN_MEMBER, ACCOUNTS, CALLER)
+    env = launch.member_env(
+        definition, NO_TRAIN_MEMBER, ACCOUNTS, CALLER, config_dir=directory
+    )
 
-    assert launch.AGENT_DIR_ENV not in env
+    assert env[launch.AGENT_DIR_ENV] == str(directory)
+    assert env[launch.AGENT_DIR_ENV] != CALLER["PI_CODING_AGENT_DIR"]
 
 
 def test_the_configuration_names_the_key_variable_and_never_holds_a_key(tmp_path):

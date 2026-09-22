@@ -387,7 +387,13 @@ def test_start_runs_the_member_as_launched_in_a_pane_named_for_it(rig):
     assert ENV_STATE_DIR not in env
     assert env["GIT_AUTHOR_NAME"] == "Pool Member"
     assert json.loads(env[launch.DENY_ENV]) == ["git push"]
-    expected = launch.member_env(DEFINITION, member, ACCOUNTS, os.environ)
+    # The generated directory is made for this lease and named after it, so
+    # what it is called is read back rather than built again.
+    generated = env[launch.AGENT_DIR_ENV]
+    assert Path(generated).parent == rig.config_root
+    expected = launch.member_env(
+        DEFINITION, member, ACCOUNTS, os.environ, config_dir=Path(generated)
+    )
     # python may add LC_CTYPE by itself when it coerces the C locale, and the
     # sandbox names the directory it puts the member in, as a login shell would
     added = ("LC_CTYPE", "PWD")
