@@ -13,9 +13,13 @@ surroundings, so the same rig gives the same argv every time and a test can
 read the whole boundary without making one. The caller appends the member's
 own command after the separator the prefix ends with.
 
+Which sandbox a member gets is decided by its egress class, and there is one
+profile for each class the pool declares. A class with no profile is refused
+by name rather than answered with a sandbox nobody chose.
+
 Later mounts overlay earlier ones, so the order is the boundary:
 
-1. the namespace and process-safety flags
+1. the namespace and process-safety flags, and the profile's answer to them
 2. the read-only root, then a fresh dev, proc and temp over it
 3. the writable binds - the member's own working directory and the
    directory generated for its lease - and the pins that hold the hidden
@@ -48,6 +52,8 @@ import subprocess
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+
+from ..errors import SpecfloError
 
 # The operator's directories, relative to the operator's home. Each holds
 # something a member must not have: the stored provider keys and the whole
@@ -123,6 +129,58 @@ def unavailable() -> str | None:
         return None
     said = probe.stderr.strip().splitlines()
     return said[-1] if said else f"bwrap refused the user-namespace probe ({probe.returncode})"
+
+
+class UnknownProfile(SpecfloError):
+    """An egress class with no sandbox profile; the message names the class."""
+
+
+@dataclass(frozen=True)
+class Profile:
+    """The sandbox one egress class gets, beyond the boundary every member has.
+
+    The filesystem boundary is the same for every member, so what a profile
+    decides is the network. A member of the strictest class keeps the empty
+    network namespace the sandbox starts with and reaches its model through
+    a socket bound into it; a member whose prompts leave this host anyway
+    needs the host's network to reach its provider, and shares it.
+    """
+
+    name: str
+    share_net: bool
+
+
+# One profile per declared egress class. A class added to the pool without
+# one is caught by the check that these two agree, not at a member's start.
+PROFILES: dict[str, Profile] = {
+    "local": Profile("isolated", share_net=False),
+    "no-train": Profile("host-network", share_net=True),
+    "open": Profile("host-network", share_net=True),
+}
+
+
+def profile_for(egress: str) -> Profile:
+    """The profile of egress class *egress*, or a refusal naming it.
+
+    A class that reaches here without a profile is a fault in the pool's own
+    code: the classes are declared in one place and the profiles beside them.
+    It is refused rather than answered with the strictest profile, which
+    would start a member under a boundary nobody chose for it, or with none,
+    which would start it under no boundary at all.
+    """
+    profile = PROFILES.get(egress)
+    if profile is None:
+        known = ", ".join(sorted(PROFILES))
+        raise UnknownProfile(
+            f"the egress class '{egress}' has no sandbox profile, so no member of it "
+            f"can be started. The classes with one are: {known}."
+        )
+    return profile
+
+
+def profile_argv(egress: str) -> list[str]:
+    """The flags the profile of *egress* adds to the namespace flags."""
+    return ["--share-net"] if profile_for(egress).share_net else []
 
 
 @dataclass(frozen=True)
@@ -313,6 +371,7 @@ def _within(path: str, root: str) -> bool:
 
 
 def base_argv(
+    egress: str | None = None,
     hidden: Iterable[str] = (),
     empty: Path | str | None = None,
     writable: Iterable[str] = (),
@@ -341,6 +400,11 @@ def base_argv(
     the pins before the hidden set itself, so nothing later in the argv can
     be renamed away by anything the member does under an earlier mount.
 
+    *egress* is the member's egress class, and its profile answers the
+    namespace flags: with none named nothing is added, which is the sandbox
+    at its strictest. A class with no profile raises rather than returning an
+    argv, so a member of one is never started.
+
     *limits* go in front of the whole thing, as a program of their own.
     prlimit stops reading options at the first argument that is not one, so
     the sandbox follows it with no separator between them.
@@ -354,6 +418,7 @@ def base_argv(
         bwrap_path() or "bwrap",
         "--unshare-all",
         "--unshare-cgroup-try",
+        *(profile_argv(egress) if egress is not None else []),
         "--die-with-parent",
         "--new-session",
         "--ro-bind",
