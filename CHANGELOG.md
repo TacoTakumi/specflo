@@ -268,20 +268,67 @@ latter. Release tags are of the form `vX.Y.Z`.
   is there and gives no answer (stopped in place, hung) is sent the stop
   all the same, and when it still runs the lease's end reports that the
   member did not stop and leaves its files where they are. The definition reaches pi as
-  `--tools` (or `--no-tools`), `--skill`, `--append-system-prompt` and
-  `--no-context-files` unless it asks for the project's context. The
+  `--tools` (or `--no-tools`), `--append-system-prompt` and
+  `--no-context-files` unless it asks for the project's context; its skills
+  are copied into the member's generated configuration directory (see
+  **Every member runs in a sandbox**). The
   environment is a short baseline plus the variables the definition lists
   and the key of the member's own account; the prompt and the key never
   sit on a command line. A definition's `deny` list is enforced by a pi
   extension the pool loads on every member. It matches the text of a bash
-  command and is a guard against mistakes, not a security boundary: there
-  is no sandbox, and a member's pi runs as the daemon's user. A member
+  command and is a guard against mistakes, not a security boundary; the
+  boundary is the sandbox, and inside it a member's pi runs as the daemon's
+  user. A member
   loads the extensions the host has installed, specflo's own control
   extension among them, and its environment tells that one to serve no
   control socket of its own, so the member answers at its agent host and
   nowhere else. The launch shim and the member's host run under `python -P`,
   so a file in the lease's working directory named like a library module
   (`shlex.py`, `json.py`) is not run.
+- **Every member runs in a sandbox.** A started member runs inside
+  bubblewrap, behind `prlimit` (512 processes above the sandbox's own by
+  default), with its own mount, user and PID namespaces. The filesystem is
+  the same for every egress class: a read-only root, a fresh `/dev`,
+  `/proc` and `/tmp`, and the operator's home, `~/.pi`, `~/.agents`,
+  `~/.specflo`, the directory `PI_CODING_AGENT_DIR` names and
+  `XDG_RUNTIME_DIR` hidden. A member gets back its harness's installation,
+  the deny-list extension, its working directory and its generated pi
+  configuration directory. An ancestor of a hidden path cannot be renamed
+  from a writable bind, and a member's background process ends with its
+  lease. Each egress class has a sandbox profile, and a class with none is
+  refused by name. A rig where bwrap cannot make an unprivileged user
+  namespace starts no member, and the refusal says why.
+  Every member, local ones too, gets a pi configuration directory
+  generated for its lease and removed at its end, and none starts without
+  one. A directory without the pool's marker file is never removed. A
+  definition's skills are copied into that directory with their links
+  resolved, so a skill edited on the host does not change under a running
+  member. A skill that cannot be found, or a name that walks out of the
+  operator's skills directory, refuses the member before anything is made
+  for its lease.
+  `pool.yaml` gains `models_file`, the path of the operator's pi
+  `models.json`. A local member's generated `models.json` is the operator's
+  provider from that file, filtered to the one model the member declares.
+  Validation refuses a local member whose model the file does not hold,
+  naming only that model, and a member whose command selects a model other
+  than the one it declares. A local member's `model` may be the llama-swap
+  config ID or any of its aliases. The ledger and the matrix use the config
+  ID, and the generated file carries the entry the operator's file holds
+  under any name of that model. The file must hold the model under one name
+  only.
+  A `local` member has a network namespace whose only interface is
+  loopback. It reaches llama-swap through the daemon's bridge: a unix
+  socket in the daemon root (`llama-swap.sock`, mode 0600, held by a lock
+  so a second daemon on the root does not start), bound into the sandbox,
+  with a `socat` forwarder inside that listens on the member's provider
+  port before pi starts. The daemon's side of the socket allows chat
+  completions, completions and the models listing, and answers 403 to
+  everything else of llama-swap's surface, also to a member that stops the
+  forwarder and speaks to the socket itself. It streams both ways and waits
+  as long as a model load or a paused stream takes, and a llama-swap that
+  is not there fails within 5 s. A daemon root whose socket path is longer
+  than a unix socket allows is refused at start. A hosted member keeps the
+  host's network.
 - **`specflo lease request <pool>`, `lease release <lease>` and `lease
   list`.** A request prints the lease id and the agent to drive with the
   `specflo agent` verbs; the member starts in the requester's directory or
