@@ -113,10 +113,13 @@ def create(root: Path | str, member: Member, accounts: Iterable[Account]) -> Pat
 def remove(directory: Path | str | None) -> None:
     """Remove a generated *directory* and all pi wrote there; the lease has ended.
 
-    None, the answer for a local member, and a directory already gone are left
+    Every member has one now, a local member included, so every lease ends
+    with one to remove. Nothing at all, and a directory already gone, are left
     alone, so ending a lease twice is harmless.
 
-    Raises ``LaunchError`` for a directory that was not generated here.
+    Raises ``LaunchError`` for a directory that was not generated here: what
+    reaches this by mistake may be the operator's own configuration, and the
+    marker is the only thing that tells one from the other.
     """
     if directory is None:
         return
