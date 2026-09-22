@@ -1,15 +1,18 @@
 """A member's pi command line: the harness command plus the definition's flags.
 
-A definition reaches pi only as startup flags: its tools, its skills and its
-prompt body. Nothing else in it is put on the command line or into the
-environment, and the project's context files are kept out unless the
-definition asks for them.
+A definition reaches pi as startup flags for its tools and its prompt body.
+Nothing else in it is put on the command line or into the environment, and the
+project's context files are kept out unless the definition asks for them.
+
+Its skills are the exception, and they are not here at all: ``--skill`` is a
+path with no resolver anywhere in pi, so each declared skill is copied into
+the member's generated configuration directory, where pi discovers it by name.
 """
 
 import os
 from dataclasses import replace
 
-from specflo.pool import launch
+from specflo.pool import cli_admin, definitions, launch
 from specflo.pool.config import Member
 from specflo.pool.definitions import AgentDefinition
 
@@ -48,20 +51,32 @@ def test_the_argv_is_the_harness_command_plus_the_definition_flags():
         *HARNESS,
         "-e", launch.DENY_EXTENSION,
         "--tools", "read,bash",
-        "--skill", "model-update-check",
         "--append-system-prompt", PROMPT,
         "--no-context-files",
     ]
 
 
-def test_each_skill_gets_its_own_flag():
+def test_no_skill_a_definition_names_reaches_the_command_line():
     definition = replace(DEFINITION, skills=("model-update-check", "landscape-scan"))
 
     argv = launch.pi_argv(definition, MEMBER)
 
-    assert [argv[i + 1] for i, arg in enumerate(argv) if arg == "--skill"] == [
-        "model-update-check", "landscape-scan",
+    assert "--skill" not in argv
+    assert not any("skill" in arg for arg in argv if arg != PROMPT)
+
+
+def test_no_shipped_definition_puts_a_skill_on_the_command_line():
+    shipped = [
+        definitions.load_definition(path)
+        for path in sorted(cli_admin.SHIPPED_DIR.glob("*.md"))
     ]
+
+    assert any(definition.skills for definition in shipped)
+    for definition in shipped:
+        argv = launch.pi_argv(definition, MEMBER)
+        assert "--skill" not in argv, definition.name
+        for skill in definition.skills:
+            assert skill not in argv, definition.name
 
 
 def test_project_context_requested_keeps_the_context_files():
