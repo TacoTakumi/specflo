@@ -40,6 +40,7 @@ directory, and ``load_pool_config`` reads the whole of it as one configuration.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 from dataclasses import dataclass, replace
@@ -94,7 +95,9 @@ _PROVIDER_PREFIX = "openrouter/"
 # Every key the file may carry, in the order they are written. An account has
 # no field for a provider management key: such a key can mint spending keys,
 # which is more authority than the pool needs.
-SECTIONS: tuple[str, ...] = ("llama_swap", "accounts", "members", "pools")
+SECTIONS: tuple[str, ...] = (
+    "llama_swap", "models_file", "accounts", "members", "pools",
+)
 ACCOUNT_FIELDS: tuple[str, ...] = ("name", "cap", "key_env")
 MEMBER_FIELDS: tuple[str, ...] = (
     "name", "kind", "command", "backing", "model", "account", "labels", "capacity", "egress",
@@ -198,6 +201,7 @@ class PoolConfig:
     definitions: tuple[AgentDefinition, ...] = ()
     llama_swap: Path | None = None
     swap: matrix.SwapConfig | None = None
+    models_file: Path | None = None
     teams: tuple[Team, ...] = ()
 
 
@@ -290,6 +294,7 @@ def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str
 
     needs_swap = any(isinstance(f, dict) and f.get("backing") == LOCAL for _, f in member_entries)
     llama_swap, swap = _llama_swap(path, data.get("llama_swap"), needs_swap, errors)
+    models_file = _models_file(path, data.get("models_file"), errors)
 
     members = []
     for position, fields in member_entries:
@@ -330,6 +335,7 @@ def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str
         tuple(definitions.values()),
         llama_swap,
         swap,
+        models_file,
     ), errors, set(_names(pool_entries))
 
 
@@ -386,6 +392,46 @@ def _llama_swap(
     except SpecfloError as exc:
         errors.append(ConfigError(path, FILE, "llama_swap", f"{exc}."))
         return location, None
+
+
+def _models_file(path: Path, value: object, errors: list[ConfigError]) -> Path | None:
+    """The operator's models file the pool file names; None when it names none.
+
+    A local member's generated models file is a copy of this one, filtered to
+    the model the member declares, so the pool has to be told where it is. A
+    relative path is taken from the pool file's own directory.
+
+    What is checked is the path and not the content: whether it is there, and
+    whether it is a regular file this user can read. A named pipe passes every
+    other check and then holds whoever opens it until a writer comes, and the
+    daemon would wait with it, so a path that is not a regular file is refused
+    before anything opens it.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        errors.append(ConfigError(path, FILE, "models_file", "must be a path."))
+        return None
+    location = path.parent / Path(value).expanduser()
+    problem = _unreadable(location)
+    if problem is not None:
+        errors.append(ConfigError(path, FILE, "models_file", f"{location}: {problem}."))
+    return location
+
+
+def _unreadable(location: Path) -> str | None:
+    """Why the operator's models file cannot be read, or None when it can.
+
+    ``is_file`` follows a link and says of what it leads to, so a link to a
+    regular file passes and a link to a pipe does not.
+    """
+    if not location.exists():
+        return "there is no file there"
+    if not location.is_file():
+        return "is not a regular file"
+    if not os.access(location, os.R_OK):
+        return "cannot be read"
+    return None
 
 
 def _definitions(

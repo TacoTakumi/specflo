@@ -49,6 +49,10 @@ POOL_FILE_EXAMPLE = """\
 # relative path is taken from this file's directory.
 #llama_swap: ~/llama-swap/config.yaml
 #
+# Where your own pi models file is. A local member's generated one is a copy
+# of it, filtered to the model that member declares.
+#models_file: ~/.pi/agent/models.json
+#
 # A provider account: the most leases that may run through it at once, and the
 # NAME of the environment variable that holds its one API key, never the key.
 #accounts:
