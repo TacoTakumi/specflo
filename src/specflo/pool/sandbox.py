@@ -82,8 +82,11 @@ def unavailable() -> str | None:
     if path is None:
         return "bwrap is not on PATH"
     try:
+        # The program is named in the argv and the resolved path is passed
+        # beside it, so what this module starts can be read from the source.
         probe = subprocess.run(
-            [path, *_PROBE],
+            ["bwrap", *_PROBE],
+            executable=path,
             capture_output=True,
             text=True,
             timeout=_PROBE_TIMEOUT,
