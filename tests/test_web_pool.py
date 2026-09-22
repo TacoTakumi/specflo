@@ -425,6 +425,7 @@ def test_the_only_route_that_changes_the_pool_is_the_release_of_a_lease():
 
 def test_what_a_member_answered_is_in_no_pool_page_and_no_pool_route_response(pool_rig):
     write_pool(pool_rig)
+    pool_rig.serve_bridge()
     pool_rig.scenario(reply=MARKER)
     app = create_app(pool_rig.root)
     api = TestClient(app)

@@ -195,6 +195,67 @@ def profile_argv(egress: str) -> list[str]:
 
 
 @dataclass(frozen=True)
+class Bridge:
+    """How a member with no network reaches its model from inside its sandbox.
+
+    *socket* is the daemon's bridge socket, bound into the sandbox at its own
+    path; *port* is the loopback port the member's pi is configured to reach
+    its provider on, where the forwarder listens.
+    """
+
+    socket: str
+    port: int
+
+
+# How long the forwarder may take to listen, in seconds, and how often the
+# launcher looks. It listens within a look or two on this rig.
+FORWARDER_WAIT = 5.0
+_FORWARDER_LOOK = 0.005
+
+# The launcher a member with a bridge starts as, inside its sandbox. It starts
+# the forwarder, waits until the forwarder's socket is listening and becomes
+# pi. The wait reads the process network table, which says a socket listens
+# without connecting to it: a connection would go through to the bridge and
+# reach llama-swap for nothing. The forwarder is a child the launcher leaves
+# behind when it becomes pi, and it goes with the sandbox's process namespace
+# when pi goes.
+_FORWARDER = """port=$1 socket=$2 socat=$3 looks=$4 look=$5
+shift 5
+"$socat" "TCP-LISTEN:$port,bind=127.0.0.1,fork,reuseaddr" "UNIX-CONNECT:$socket" &
+forwarder=$!
+listening=": 0100007F:$(printf %04X "$port") 00000000:0000 0A"
+until grep -q "$listening" /proc/net/tcp; do
+    if ! kill -0 "$forwarder" 2>/dev/null; then
+        echo "the forwarder to llama-swap exited before it listened on 127.0.0.1:$port" >&2
+        exit 1
+    fi
+    looks=$((looks - 1))
+    if [ "$looks" -le 0 ]; then
+        echo "the forwarder to llama-swap did not listen on 127.0.0.1:$port in time" >&2
+        exit 1
+    fi
+    sleep "$look"
+done
+exec "$@"
+"""
+
+
+def forwarder_argv(bridge: Bridge, socat: str) -> list[str]:
+    """The launcher that starts the forwarder to *bridge* and then becomes
+    the command after it; *socat* is the forwarder program's path.
+
+    The forwarder listens on 127.0.0.1 alone: the member's namespace has no
+    other interface, and a name the member resolves to loopback resolves to
+    that address on this rig.
+    """
+    looks = max(1, int(FORWARDER_WAIT / _FORWARDER_LOOK))
+    return [
+        "/bin/sh", "-c", _FORWARDER, "forwarder",
+        str(bridge.port), bridge.socket, socat, str(looks), str(_FORWARDER_LOOK),
+    ]
+
+
+@dataclass(frozen=True)
 class Limits:
     """What one member may use: memory, processor time and processes.
 

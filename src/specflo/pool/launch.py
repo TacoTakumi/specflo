@@ -47,12 +47,13 @@ from __future__ import annotations
 
 import json
 import shlex
+import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from ..errors import SpecfloError
 from . import sandbox
-from .config import Account, Member
+from .config import LOCAL, Account, Member
 from .definitions import AgentDefinition
 
 # The variables every member gets, and the whole of what it gets unasked. pi is
@@ -136,6 +137,7 @@ def member_argv(
     state_dir: Path | str,
     config_dir: Path | str | None = None,
     limits: sandbox.Limits | None = None,
+    bridge: sandbox.Bridge | None = None,
 ) -> list[str]:
     """The whole of what *member* starts as: its sandbox, then its pi.
 
@@ -149,6 +151,12 @@ def member_argv(
     write. *environ* is the daemon's environment, read for the operator's
     paths and for the PATH the harness is looked up on; nothing is written
     to it.
+
+    A local member with a *bridge* gets the bridge socket bound in besides,
+    and starts as the launcher that brings the forwarder up before it
+    becomes pi. A bridge is refused for any other member: one that shares
+    the host's network has no use for it, and would have a second way to
+    llama-swap.
     """
     hidden = sandbox.operator_paths(environ)
     program = shlex.split(member.command)[0]
@@ -157,6 +165,22 @@ def member_argv(
         *sandbox.harness_paths(program, environ),
         str(Path(DENY_EXTENSION).resolve().parent),
     ]
+    forwarder: list[str] = []
+    if bridge is not None:
+        if member.backing != LOCAL:
+            raise LaunchError(
+                f"member '{member.name}' is {member.backing}, and only a local member "
+                "reaches its model through the bridge."
+            )
+        socat = shutil.which("socat", path=environ.get("PATH"))
+        if socat is None:
+            raise LaunchError(
+                f"member '{member.name}' is local and reaches its model through a "
+                "forwarder inside its sandbox, and socat, which the forwarder is, is not "
+                "on the daemon's PATH."
+            )
+        readonly.append(bridge.socket)
+        forwarder = sandbox.forwarder_argv(bridge, socat)
     prefix = sandbox.base_argv(
         egress=member.egress,
         hidden=hidden,
@@ -166,7 +190,7 @@ def member_argv(
         limits=sandbox.DEFAULT_LIMITS if limits is None else limits,
         chdir=cwd,
     )
-    return [*prefix, *pi_argv(definition, member)]
+    return [*prefix, *forwarder, *pi_argv(definition, member)]
 
 
 def member_env(

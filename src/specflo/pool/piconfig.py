@@ -46,6 +46,7 @@ import tempfile
 from copy import deepcopy
 from collections.abc import Iterable, Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from .config import HOSTED, Account, Member
 from .launch import AGENT_DIR_ENV, LaunchError, member_account
@@ -71,6 +72,10 @@ SKILLS_DIR = "skills"
 # Where the operator's pi configuration directory is when the environment
 # names none.
 _DEFAULT_AGENT_DIR = Path(".pi") / "agent"
+
+# The names a local member's provider may be reached at: the forwarder inside
+# its sandbox answers on them.
+_LOOPBACK = frozenset({"127.0.0.1", "localhost"})
 
 # Written into every generated directory, and the only thing that lets one be
 # removed: a path that reaches remove() by mistake may be the user's own pi
@@ -150,6 +155,39 @@ def local_models_config(models_file: Path | str, member: Member) -> dict[str, ob
         f"member '{member.name}' declares the model '{member.model}', which the "
         f"operator's models file at {models_file} does not hold."
     )
+
+
+def local_port(config_dir: Path | str, member: Member) -> int:
+    """The loopback port the local *member*'s pi reaches its provider on.
+
+    It is read from the provider's base URL in the member's generated models
+    file, the one provider it holds. Inside the sandbox the member has
+    loopback alone, and the forwarder to the bridge listens there on this
+    port, so a base URL that is not plain HTTP on this host's IPv4 loopback
+    would reach nothing and is refused naming it.
+    """
+    path = Path(config_dir) / MODELS_FILE
+    try:
+        providers = json.loads(path.read_text(encoding="utf-8"))["providers"]
+        (provider,) = providers.values()
+        base = str(provider["baseUrl"])
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise LaunchError(
+            f"member '{member.name}': its models file at {path} names no one provider "
+            f"base URL ({exc})."
+        ) from exc
+    try:
+        url = urlsplit(base)
+        port = url.port or 80
+    except ValueError:
+        url = None
+    if url is None or url.scheme != "http" or url.hostname not in _LOOPBACK:
+        raise LaunchError(
+            f"member '{member.name}' is local, and its provider's base URL {base} is not "
+            "plain HTTP on 127.0.0.1 or localhost: inside its sandbox the member reaches "
+            "llama-swap on loopback alone."
+        )
+    return port
 
 
 def create(

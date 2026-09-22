@@ -9,15 +9,19 @@ test moves it, and ids and tokens minted by counting.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 import pytest
 
 from specflo.agent.statefiles import AgentPaths, read_status
 from specflo.daemon.poolstore import PoolStore, open_pool_store
-from specflo.pool import accounts
+from specflo.pool import accounts, bridge
 from specflo.pool.config import Member, Pool, PoolConfig
 from specflo.pool.service import PoolService
 
@@ -39,6 +43,30 @@ class FakeClock:
         self.now += timedelta(**delta)
 
 
+@contextlib.contextmanager
+def bridge_served(path: Path, client: httpx.AsyncClient | None = None):
+    """The bridge served at *path* on a loop of its own, as the daemon serves
+    it while it runs. Its upstream is *client*, or a closed port."""
+    loop = asyncio.new_event_loop()
+    ready = threading.Event()
+    stop = asyncio.Event()
+
+    async def main() -> None:
+        async with bridge.serving(path, "http://127.0.0.1:1", client):
+            ready.set()
+            await stop.wait()
+
+    thread = threading.Thread(target=loop.run_until_complete, args=(main(),), daemon=True)
+    thread.start()
+    assert ready.wait(10), "the bridge did not start"
+    try:
+        yield path
+    finally:
+        loop.call_soon_threadsafe(stop.set)
+        thread.join(10)
+        loop.close()
+
+
 class PoolRig(Rig):
     """The runner tests' rig, with a pool store, a clock and a service on it."""
 
@@ -53,6 +81,23 @@ class PoolRig(Rig):
         # minted by counting, across every service made on this rig
         self.ids = (f"lease-{n}" for n in range(1, 1000))
         self.tokens = (f"token-{n}" for n in range(1, 1000))
+        self._bridge = contextlib.ExitStack()
+        self._bridge_served = False
+
+    def serve_bridge(self) -> None:
+        """Serve the bridge on the root's socket until the test ends.
+
+        The daemon serves it while it runs, and a test that asks the daemon's
+        routes for a lease without running the daemon has none: a local
+        member is not started without one.
+        """
+        if not self._bridge_served:
+            self._bridge.enter_context(bridge_served(bridge.socket_path(self.root)))
+            self._bridge_served = True
+
+    def cleanup(self) -> None:
+        super().cleanup()
+        self._bridge.close()
 
     def scenario(self, **keys) -> None:
         """What the stub pi of the members started from now on does."""

@@ -46,7 +46,7 @@ from specflo.cli import app
 from specflo.daemon import auth, pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
-from specflo.pool import accounts, cli_admin, events, watch
+from specflo.pool import accounts, bridge, cli_admin, events, watch
 from specflo.pool import config as pool_config
 from specflo.pool import service as pool_service
 from specflo.pool.console import attach
@@ -215,6 +215,11 @@ class Served:
         return self.developer.post(RELOAD_PATH, json={})
 
     def lease(self, **named):
+        # A daemon whose client runs it serves its own bridge. One that is
+        # only asked over its routes serves none, and a local member does not
+        # start without one.
+        if not bridge.socket_path(self.rig.root).exists():
+            self.rig.serve_bridge()
         return self.developer.post(LEASES_PATH, json={"cwd": str(self.rig.work), **named})
 
     def granted(self, **named) -> dict:
@@ -666,7 +671,10 @@ def test_a_save_from_a_management_page_is_in_force_when_an_expired_member_does_n
     assert [r["operation"] for r in audit_records(pool_rig.root)] == [
         "lease_request", "definition_save", "pool_reload",
     ]
-    # a member started from now on runs what the page saved
+    # a member started from now on runs what the page saved; the record the
+    # first lease left goes first, so the one read is the new start's own
+    for record in pool_rig.tmp_path.rglob(record_name("w-1")):
+        record.unlink()
     assert served.granted(pool="workers")["agent"] == "w-1"
     assert prompt_of(pool_rig, "w-1") == NEW_PROMPT
 

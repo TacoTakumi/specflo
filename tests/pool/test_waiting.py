@@ -354,6 +354,7 @@ def test_a_lease_passing_its_idle_limit_grants_the_waiting_request_with_no_other
     pool_rig,
 ):
     write_pool(pool_rig)
+    pool_rig.serve_bridge()
     application = create_app(pool_rig.root)
     # a member's host stamps with its own clock, so the fake one starts at the real time
     clock = FakeClock(datetime.now(timezone.utc))
@@ -470,6 +471,7 @@ def test_the_route_refuses_a_wait_that_is_no_number_of_seconds(pool_daemon, pool
 
 def test_the_route_refuses_a_wait_above_the_maximum_and_writes_no_row(pool_rig):
     write_pool(pool_rig)
+    pool_rig.serve_bridge()
     client = TestClient(create_app(pool_rig.root))
     client.headers["Authorization"] = f"Bearer {_token(pool_rig.root)}"
     good = {"pool": "rebasers", "cwd": str(pool_rig.work)}

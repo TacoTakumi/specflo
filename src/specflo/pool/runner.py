@@ -68,6 +68,7 @@ import json
 import logging
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import time
@@ -80,7 +81,7 @@ from ..agent.client import HostUnreachableError, connect
 from ..agent.statefiles import AgentPaths, read_status
 from ..errors import SpecfloError
 from . import launch, piconfig, sandbox
-from .config import Account, Member
+from .config import LOCAL, Account, Member
 from .definitions import AgentDefinition
 
 _log = logging.getLogger(__name__)
@@ -164,6 +165,7 @@ def start(
     models_file: Path | str | None = None,
     environ: Mapping[str, str] | None = None,
     timeout: float = START_TIMEOUT,
+    bridge: Path | str | None = None,
 ) -> str:
     """Start *member* for one lease in the role *definition* gives; the agent's name.
 
@@ -174,6 +176,11 @@ def start(
     from *models_file*, and every member's carries the skills its definition
     names, copied from the operator's own. The call returns once the host
     serves, the wall is up and pi has run for ``PI_START_WATCH`` seconds.
+
+    *bridge* is the daemon's bridge socket. A local member gets it bound
+    into its sandbox and a forwarder on the port its models file names, up
+    before pi runs; without one a local member has no way to its model at
+    all. Any other member shares the host's network and is not given it.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
     and ``RunnerError`` for one already running, one whose host does not come
@@ -197,12 +204,18 @@ def start(
         skills=definition.skills, skills_from=piconfig.operator_skills(caller),
     )
     try:
+        reach = (
+            _bridge(bridge, config_dir, member)
+            if bridge is not None and member.backing == LOCAL
+            else None
+        )
         spec = {
             "argv": launch.member_argv(
                 definition, member, caller,
                 cwd=cwd,
                 state_dir=paths.root.parent,
                 config_dir=config_dir,
+                bridge=reach,
             ),
             "env": launch.member_env(
                 definition, member, accounts, caller, config_dir=config_dir,
@@ -758,6 +771,24 @@ def _agent_cli(
 
 def _detail(done: subprocess.CompletedProcess) -> str:
     return (done.stderr or done.stdout).strip() or f"exit code {done.returncode}"
+
+
+def _bridge(path: Path | str, config_dir: Path, member: Member) -> sandbox.Bridge:
+    """How the local *member* reaches its model through the bridge at *path*.
+
+    A socket that is not served would be bound in all the same and every
+    request through it refused, so the start is refused here instead.
+    """
+    try:
+        served = stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        served = False
+    if not served:
+        raise launch.LaunchError(
+            f"member '{member.name}' is local and reaches its model through the bridge "
+            f"at {path}, which is not served: the daemon serves it while it has a pool."
+        )
+    return sandbox.Bridge(socket=str(path), port=piconfig.local_port(config_dir, member))
 
 
 def _write_private(path: Path, text: str) -> None:

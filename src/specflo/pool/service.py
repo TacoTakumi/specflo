@@ -265,6 +265,9 @@ class PoolService:
     # outside the pool, which the ledger counts beside the lease rows. The
     # daemon hands the reader in; without one nothing stands.
     standing: Callable[[], tuple[ledger.Standing, ...]] = tuple
+    # The daemon's bridge socket, which a local member reaches its model
+    # through; without one a local member has no way to its model.
+    bridge: Path | None = None
     _turn: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     # True while the expiry check runs: the endings it makes do not check again.
     _checking: bool = field(default=False, init=False, repr=False)
@@ -425,6 +428,7 @@ class PoolService:
                         self.config.accounts, cwd=cwd, pool_token=self.pool_token,
                         lease_token=token, config_root=self.config_root,
                         models_file=self.config.models_file, environ=self.environ,
+                        bridge=self.bridge,
                     )
             except Exception as exc:
                 self.end_lease(lease_id, "released", cause=f"member did not start: {exc}")

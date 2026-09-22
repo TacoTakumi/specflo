@@ -374,6 +374,7 @@ def test_the_daemons_pool_counts_the_project_agents_of_its_root(pool_rig):
     # the pool on disk has one local member, on model-a
     write_pool(pool_rig)
     set_key(root, config.PROJECT_AGENT_MODEL, "model-b")
+    pool_rig.serve_bridge()
 
     svc, errors = pool_routes.open_pool(root)
 

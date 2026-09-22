@@ -112,7 +112,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
 from ..errors import SpecfloError
-from ..pool import console, egress, ledger, standing, teamlease, waiting
+from ..pool import bridge, console, egress, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, PoolConfig, load_pool_config
 from ..pool.runner import ConsoleBusy, RunnerError
@@ -186,6 +186,8 @@ def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
         open_store=lambda: open_pool_store(root),
         pool_token=pool_token(root),
         config_root=Path(root) / PI_CONFIG_DIRNAME,
+        # served by the daemon while it has a pool, and bound into each local member
+        bridge=bridge.socket_path(root),
         # The project agents of this root that serve now, asked of agent
         # discovery at each request: they take a model or an account slot.
         standing=lambda: standing.entries(
