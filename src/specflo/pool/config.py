@@ -40,6 +40,7 @@ directory, and ``load_pool_config`` reads the whole of it as one configuration.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -294,12 +295,19 @@ def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str
 
     needs_swap = any(isinstance(f, dict) and f.get("backing") == LOCAL for _, f in member_entries)
     llama_swap, swap = _llama_swap(path, data.get("llama_swap"), needs_swap, errors)
+    faults = len(errors)
     models_file = _models_file(path, data.get("models_file"), errors)
+    # A file already reported for its path is not opened, and a member is
+    # checked against the operator's models only when there are some to
+    # check it against.
+    operator = None if len(errors) > faults else _operator_models(models_file)
 
     members = []
     for position, fields in member_entries:
         found = []
-        member = _member(_Entry(path, "member", "members", position, fields, found), declared, swap)
+        member = _member(
+            _Entry(path, "member", "members", position, fields, found), declared, swap, operator
+        )
         errors.extend(found)
         if not found:
             members.append(member)
@@ -417,6 +425,32 @@ def _models_file(path: Path, value: object, errors: list[ConfigError]) -> Path |
     if problem is not None:
         errors.append(ConfigError(path, FILE, "models_file", f"{location}: {problem}."))
     return location
+
+
+def _operator_models(location: Path | None) -> tuple[Path, frozenset[str]] | None:
+    """The operator's models file and every model ID it holds, or None when
+    there is nothing to check a member against.
+
+    None for a pool file that names no such file, and for one whose content
+    is not a provider map: neither leaves a set of models a member could be
+    held to, and the copy made at the start of a lease is what refuses those.
+    """
+    if location is None:
+        return None
+    try:
+        data = json.loads(location.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    providers = data.get("providers") if isinstance(data, dict) else None
+    if not isinstance(providers, dict):
+        return None
+    held = set()
+    for provider in providers.values():
+        models = provider.get("models") if isinstance(provider, dict) else None
+        for entry in models if isinstance(models, list) else ():
+            if isinstance(entry, dict) and isinstance(entry.get("id"), str):
+                held.add(entry["id"])
+    return (location, frozenset(held))
 
 
 def _unreadable(location: Path) -> str | None:
@@ -541,7 +575,12 @@ def _account(entry: _Entry) -> Account:
     )
 
 
-def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -> Member:
+def _member(
+    entry: _Entry,
+    accounts: set[str],
+    swap: matrix.SwapConfig | None,
+    operator: tuple[Path, frozenset[str]] | None = None,
+) -> Member:
     entry.known(MEMBER_FIELDS)
     name = entry.fields.get("name")
     if isinstance(name, str) and name.strip() and not AGENT_NAME.match(name):
@@ -577,6 +616,8 @@ def _member(entry: _Entry, accounts: set[str], swap: matrix.SwapConfig | None) -
             model = entry.text("model", "one concrete llama-swap model ID")
             if model and swap is not None and model not in swap.model_ids:
                 entry.fault("model", _not_a_model_id(model, swap))
+            elif model and operator is not None and model not in operator[1]:
+                entry.fault("model", _not_in_operator_models(model, operator[0]))
         if account is not None:
             entry.fault(
                 "account", "not for a local member; only a hosted member runs through an account."
@@ -732,6 +773,19 @@ def _routed(entry: _Entry, field: str, model: str) -> None:
             f"routing, so the {NO_TRAIN} flags would not reach the provider. Name another "
             "vendor's model, or declare the member 'open'."
         )
+
+
+def _not_in_operator_models(model: str, location: Path) -> str:
+    """Why a local member cannot run the model it declares.
+
+    The message names that model alone. What else the operator holds is not
+    the member's business, and a roster is read by more people than the
+    operator.
+    """
+    return (
+        f"'{model}' is not in the operator's models file at {location}, and a local "
+        "member's models file is a copy of that one, filtered to this model."
+    )
 
 
 def _not_a_model_id(model: str, swap: matrix.SwapConfig) -> str:

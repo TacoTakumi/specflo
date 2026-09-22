@@ -126,14 +126,17 @@ def test_a_second_init_changes_no_file(tmp_path):
 
 
 def test_the_example_filled_from_the_fixture_passes_validate(tmp_path):
-    # The example names the rig's llama-swap file and one of its models; the
-    # fixture stands in for the rig.
+    # The example names the rig's llama-swap file, one of its models and the
+    # operator's own models file; the fixtures stand in for the rig, so the
+    # check reads none of this machine's own configuration.
     root = tmp_path / "daemon"
     _init(root)
     directory = cli_admin.pool_dir(root)
     data = _example(directory)
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    shutil.copy(FIXTURES / "models.json", directory / "models.json")
     data["llama_swap"] = "llama-swap.yaml"
+    data["models_file"] = "models.json"
     for member in data["members"]:
         if member["backing"] == config.LOCAL:
             member["model"] = "model-a"
