@@ -11,19 +11,22 @@ UI in :mod:`specflo.daemon.web` serves its pages behind a browser session.
 While a daemon with a pool serves, it reads llama-swap's event stream
 (:mod:`specflo.pool.events`), the event logs of its leased hosted members
 (:mod:`specflo.pool.watch`) and the keys of its declared accounts
-(:mod:`specflo.pool.accounts`).
+(:mod:`specflo.pool.accounts`), and serves the bridge its local members reach
+llama-swap through (:mod:`specflo.pool.bridge`).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import FastAPI
 
-from ..pool import accounts, events, watch
+from ..pool import accounts, bridge, events, watch
+from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
 from .routes import router
 
@@ -41,25 +44,40 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
     configuration in force, and opens the pool of a daemon whose
     configuration did not stand at the start. A reader with nothing to read,
     and every reader of a daemon with no pool, reads nothing and waits.
+
+    A root with a pool directory when the daemon starts has the bridge served
+    on its socket until the daemon stops, whatever the configuration in the
+    directory says: the filter reads none of it. The socket is made before
+    anything else runs, so a daemon that cannot have it - another daemon
+    serves it - does not start.
     """
 
     def pool():
         return app.state.pool
 
-    readers = (events.reader_for(pool()), watch.watcher_for(pool()), accounts.reader_for(pool()))
-    readers = [reader for reader in readers if reader is not None]
-    for reader in readers:
-        # made for the pool of this moment, and told where the one in force is
-        reader.pool = pool
-    tasks = [asyncio.create_task(reader.run()) for reader in readers]
-    try:
-        yield
-    finally:
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+    async with contextlib.AsyncExitStack() as serving:
+        root = app.state.root
+        if pool_dir(root).is_dir():
+            upstream = os.environ.get(events.URL_ENV) or events.DEFAULT_URL
+            await serving.enter_async_context(
+                bridge.serving(bridge.socket_path(root), upstream)
+            )
+        readers = (
+            events.reader_for(pool()), watch.watcher_for(pool()), accounts.reader_for(pool())
+        )
+        readers = [reader for reader in readers if reader is not None]
+        for reader in readers:
+            # made for the pool of this moment, and told where the one in force is
+            reader.pool = pool
+        tasks = [asyncio.create_task(reader.run()) for reader in readers]
+        try:
+            yield
+        finally:
+            for task in tasks:
+                task.cancel()
+            for task in tasks:
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
 
 
 def create_app(root: Path, *, url: str | None = None) -> FastAPI:
