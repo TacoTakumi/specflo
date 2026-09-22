@@ -23,8 +23,8 @@ daemon's pool store, no member process, and no lease token under the checkout.
 from __future__ import annotations
 
 import json
+import shlex
 import shutil
-import sys
 from pathlib import Path
 
 import pytest
@@ -38,7 +38,7 @@ from specflo.pool.teams import TEAMS_DIR
 from . import test_lease_request
 from .test_lease_request import FIXTURES, checkout, runner  # noqa: F401  (fixtures)
 from .test_lease_request import pool_daemon as plain_daemon  # noqa: F401  (fixture)
-from .test_runner import STUB, pid_alive, wait_until
+from .test_runner import pid_alive, wait_until
 from .test_team_lease import active
 
 TASK = "Add a --dry-run flag to the sync command and a test for it."
@@ -53,14 +53,24 @@ CAST = {
 }
 
 
-def record_of(rig, member: str) -> Path:
-    """Where the recorder writes what *member*'s pi was started with."""
-    return rig.tmp_path / f"record-{member}.json"
+def record_name(member: str) -> str:
+    """What the recorder calls the file it writes for *member*.
+
+    It is a name and not a path: a member runs inside a sandbox and writes
+    in the working directory of its lease, which is the one place it may.
+    """
+    return f"record-{member}.json"
 
 
-def capture_of(rig, member: str) -> Path:
-    """Where *member*'s pi writes every frame it is sent."""
-    return rig.tmp_path / f"capture-{member}.jsonl"
+def capture_name(member: str) -> str:
+    """What *member*'s pi calls the file it writes every frame it is sent to."""
+    return f"capture-{member}.jsonl"
+
+
+def written_by(rig, name: str) -> Path | None:
+    """Where a member wrote *name*, wherever its lease ran, or None."""
+    found = [p for p in rig.tmp_path.rglob(name) if p.is_file()]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
 def member_command(rig, member: str, reply: str) -> str:
@@ -70,11 +80,13 @@ def member_command(rig, member: str, reply: str) -> str:
     it, so a revised result differs from the first and shows one context."""
     scenario = rig.tmp_path / f"scenario-{member}.json"
     scenario.write_text(
-        json.dumps({"reply": reply, "recall": True, "capture": str(capture_of(rig, member))}),
+        json.dumps({"reply": reply, "recall": True, "capture": capture_name(member)}),
         encoding="utf-8",
     )
     recorder = rig.tmp_path / "recorder.py"
-    return f"{sys.executable} {recorder} {record_of(rig, member)} {STUB} {scenario}"
+    stub = rig.tmp_path / "stub_pi.py"
+    harness = shlex.split(rig.command)[0]
+    return f"{harness} {recorder} {record_name(member)} {stub} {scenario}"
 
 
 def write_shipped_team_pool(rig) -> None:
@@ -133,15 +145,19 @@ def agent(*args: str) -> str:
 
 def prompts_sent_to(rig, member: str) -> list[str]:
     """The text of every prompt *member*'s pi was sent, in order."""
-    lines = capture_of(rig, member).read_text(encoding="utf-8").splitlines()
+    capture = written_by(rig, capture_name(member))
+    assert capture is not None, f"the pi of {member} was sent nothing"
+    lines = capture.read_text(encoding="utf-8").splitlines()
     frames = [json.loads(line) for line in lines if line]
     return [frame["message"] for frame in frames if frame["type"] == "prompt"]
 
 
 def started_with(rig, member: str) -> list[str]:
     """The command line *member*'s pi was started with."""
-    record = record_of(rig, member)
-    assert wait_until(record.is_file), f"the pi of {member} never started"
+    assert wait_until(lambda: written_by(rig, record_name(member)) is not None), (
+        f"the pi of {member} never started"
+    )
+    record = written_by(rig, record_name(member))
     assert wait_until(lambda: record.read_text(encoding="utf-8").endswith("}"))
     return json.loads(record.read_text(encoding="utf-8"))["argv"]
 

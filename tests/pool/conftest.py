@@ -47,7 +47,9 @@ class PoolRig(Rig):
         self.root = tmp_path / "daemon"
         self.root.mkdir()
         self.clock = FakeClock()
-        self.capture = tmp_path / "capture.jsonl"
+        # A member writes inside its sandbox, where the working directory of
+        # its lease is the one place it may.
+        self.capture = self.work / "capture.jsonl"
         # minted by counting, across every service made on this rig
         self.ids = (f"lease-{n}" for n in range(1, 1000))
         self.tokens = (f"token-{n}" for n in range(1, 1000))

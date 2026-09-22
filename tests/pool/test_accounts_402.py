@@ -526,7 +526,7 @@ class Shared:
 
     def lease(self):
         """One more lease on the member; its pi is refused what the provider holds now."""
-        capture = self.rig.tmp_path / f"capture-{len(self.captures) + 1}.jsonl"
+        capture = self.rig.work / f"capture-{len(self.captures) + 1}.jsonl"
         self.rig.scenario(
             reply=REPLY, capture=str(capture), provider_errors=self.provider.as_pi_reports()
         )

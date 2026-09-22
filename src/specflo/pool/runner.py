@@ -79,7 +79,7 @@ from ..agent import lease
 from ..agent.client import HostUnreachableError, connect
 from ..agent.statefiles import AgentPaths, read_status
 from ..errors import SpecfloError
-from . import launch, piconfig
+from . import launch, piconfig, sandbox
 from .config import Account, Member
 from .definitions import AgentDefinition
 
@@ -191,14 +191,20 @@ def start(
     config_dir = piconfig.create(config_root, member, accounts)
     try:
         spec = {
-            "argv": launch.pi_argv(definition, member),
+            "argv": launch.member_argv(
+                definition, member,
+                os.environ if environ is None else environ,
+                cwd=cwd,
+                state_dir=paths.root.parent,
+                config_dir=config_dir,
+            ),
             "env": launch.member_env(
                 definition, member, accounts,
                 os.environ if environ is None else environ,
                 config_dir=config_dir,
             ),
         }
-    except launch.LaunchError:
+    except (launch.LaunchError, sandbox.UnknownProfile):
         piconfig.remove(config_dir)
         raise
     paths.ensure()
@@ -775,11 +781,18 @@ def _forget(paths: AgentPaths) -> None:
 
 
 def _become_pi(launch_file: str) -> None:
-    """Replace this process with the member's pi, as the launch file says."""
+    """Replace this process with the member's sandbox, as the launch file says.
+
+    The command line the file holds is the sandbox with the member's pi after
+    it, so this process becomes the sandbox and the sandbox becomes pi. That
+    is the one place a member is started, and there is no other: the file is
+    read and removed here, and what it says is what runs.
+    """
     path = Path(launch_file)
     spec = json.loads(path.read_text(encoding="utf-8"))
     path.unlink()
-    # The command is looked up on the member's own PATH, not this process's.
+    # The first word is the sandbox, not pi, and it is looked up on the
+    # member's own PATH as pi would have been.
     try:
         os.execvpe(spec["argv"][0], spec["argv"], spec["env"])
     except OSError as exc:

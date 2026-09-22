@@ -20,6 +20,13 @@ A hosted member's egress class does not travel as a flag either. It is written
 into a pi configuration directory generated for the member (see ``piconfig``),
 and one environment variable points the member's pi at that directory.
 
+None of that is a boundary by itself: a flag is a request to pi, and what
+pi loads is decided by the machine it runs on. The boundary is the sandbox
+the member starts inside, and ``member_argv`` is where the two meet - the
+sandbox prefix in front, the pi command line behind it. Every member start
+goes through that one function, so there is no second way to start a member
+with the flags and without the boundary.
+
 pi loads the extensions a developer has installed, in a member as anywhere
 else, and one of them is specflo's own control extension. A member is reached
 through its agent host, whose socket is where the lease wall stands, so the
@@ -36,6 +43,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 
 from ..errors import SpecfloError
+from . import sandbox
 from .config import Account, Member
 from .definitions import AgentDefinition
 
@@ -109,6 +117,48 @@ def pi_argv(definition: AgentDefinition, member: Member) -> list[str]:
     if not definition.project_context:
         argv.append("--no-context-files")
     return argv
+
+
+def member_argv(
+    definition: AgentDefinition,
+    member: Member,
+    environ: Mapping[str, str],
+    *,
+    cwd: Path | str,
+    state_dir: Path | str,
+    config_dir: Path | str | None = None,
+    limits: sandbox.Limits | None = None,
+) -> list[str]:
+    """The whole of what *member* starts as: its sandbox, then its pi.
+
+    The sandbox comes from the member's own egress class, and a class with no
+    profile raises here rather than starting the member without one.
+
+    What the member gets back from under the swept home is the least that
+    lets it run: the harness's own installation, the pool's deny-list
+    extension, which ships inside this package and is read by the member's
+    pi, and its working directory and generated directory, the two it may
+    write. *environ* is the daemon's environment, read for the operator's
+    paths and for the PATH the harness is looked up on; nothing is written
+    to it.
+    """
+    hidden = sandbox.operator_paths(environ)
+    program = shlex.split(member.command)[0]
+    writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]
+    readonly = [
+        *sandbox.harness_paths(program, environ),
+        str(Path(DENY_EXTENSION).resolve().parent),
+    ]
+    prefix = sandbox.base_argv(
+        egress=member.egress,
+        hidden=hidden,
+        empty=sandbox.empty_file(state_dir),
+        writable=writable,
+        readonly=readonly,
+        limits=sandbox.DEFAULT_LIMITS if limits is None else limits,
+        chdir=cwd,
+    )
+    return [*prefix, *pi_argv(definition, member)]
 
 
 def member_env(

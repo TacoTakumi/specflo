@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import sys
 import threading
@@ -64,7 +65,7 @@ from . import test_lease_request
 from .test_console_attach import AGENT, SLOT, start_host
 from .test_lease_request import FIXTURES, audit_records, checkout, runner  # noqa: F401
 from .test_lease_request import pool_daemon as plain_daemon  # noqa: F401  (fixture)
-from .test_runner import STUB, pid_alive, wait_until
+from .test_runner import pid_alive, wait_until
 from .test_team_lease import active
 
 OLD_PROMPT = "You are the worker."
@@ -84,19 +85,31 @@ egress: local
 # -- the pool directory, as an admin writes it ---------------------------------
 
 
-def record_of(rig, member: str) -> Path:
-    """Where the recorder writes what *member*'s pi was started with."""
-    return rig.tmp_path / f"record-{member}.json"
+def record_name(member: str) -> str:
+    """What the recorder calls the file it writes for *member*.
+
+    It is a name and not a path: a member writes it in the working directory
+    of its lease, the one place inside its sandbox it may write.
+    """
+    return f"record-{member}.json"
+
+
+def record_of(rig, member: str) -> Path | None:
+    """Where *member*'s record is, wherever its lease ran, or None."""
+    found = [p for p in rig.tmp_path.rglob(record_name(member)) if p.is_file()]
+    return max(found, key=lambda p: p.stat().st_mtime) if found else None
 
 
 def member(rig, name: str, model: str = "model-a", **fields) -> dict:
     """A local member that starts the rig's pi double behind a record of its own."""
     recorder = rig.tmp_path / "recorder.py"
     scenario = rig.tmp_path / "scenario.json"
+    stub = rig.tmp_path / "stub_pi.py"
+    harness = shlex.split(rig.command)[0]
     return {
         "name": name, "backing": "local", "model": model, "labels": [], "capacity": 1,
         "egress": "local",
-        "command": f"{sys.executable} {recorder} {record_of(rig, name)} {STUB} {scenario}",
+        "command": f"{harness} {recorder} {record_name(name)} {stub} {scenario}",
         **fields,
     }
 
@@ -158,8 +171,10 @@ def break_directory(rig) -> list[str]:
 
 def started_with(rig, name: str) -> dict:
     """What the pi of the member *name* was started with."""
+    assert wait_until(lambda: record_of(rig, name) is not None), (
+        f"the pi of {name} never started"
+    )
     record = record_of(rig, name)
-    assert wait_until(record.is_file), f"the pi of {name} never started"
     assert wait_until(lambda: record.read_text(encoding="utf-8").endswith("}"))
     return json.loads(record.read_text(encoding="utf-8"))
 
@@ -248,7 +263,6 @@ def test_a_lease_from_before_the_edit_runs_the_old_prompt_and_one_after_it_the_n
     assert pool_rig.status("w-1")["pi_pid"] == pi_before
     assert pid_alive(pi_before)
     assert prompt_of(pool_rig, "w-1") == OLD_PROMPT
-    assert started_with(pool_rig, "w-1")["pid"] == pi_before
 
 
 def test_without_a_reload_the_edit_is_not_in_force(served, pool_rig):

@@ -7,11 +7,13 @@ decided by the machine, so the claim held only as far as the list did. The
 sandbox makes the class a property of the namespaces the process runs in,
 which no extension, skill or subprocess of the member can argue with.
 
-This module builds the argv and nothing else. It starts no process, reads no
-configuration and asks the caller for nothing it could take from the
-surroundings, so the same rig gives the same argv every time and a test can
-read the whole boundary without making one. The caller appends the member's
-own command after the separator the prefix ends with.
+This module builds the argv and starts nothing. It reads no configuration and
+asks the caller for every path it mounts, so the same rig gives the same argv
+every time and a test can read the whole boundary without making one. What it
+does touch of the host is presence - whether a path to hide is there, and a
+directory or a file - and the one empty file a hidden file is covered with,
+which it makes if it is not there yet. The caller appends the member's own
+command after the separator the prefix ends with.
 
 Which sandbox a member gets is decided by its egress class, and there is one
 profile for each class the pool declares. A class with no profile is refused
@@ -21,11 +23,20 @@ Later mounts overlay earlier ones, so the order is the boundary:
 
 1. the namespace and process-safety flags, and the profile's answer to them
 2. the read-only root, then a fresh dev, proc and temp over it
-3. the writable binds - the member's own working directory and the
+3. the hidden paths that lie above a writable bind, the home most of all:
+   a member's working directory is under the operator's home, so the home
+   is swept first and the working directory bound back on top of it
+4. the read-only binds: what a member needs back from under the swept
+   home and cannot do without, the harness it runs as above all - pi is
+   installed under the operator's home on this rig, so a swept home with
+   nothing bound back leaves nothing to start
+5. the writable binds - the member's own working directory and the
    directory generated for its lease - and the pins that hold the hidden
    set up inside them
-4. the hidden set: a tmpfs over each of the operator's directories and an
-   empty file over each of its files
+6. the rest of the hidden set: a tmpfs over each of the operator's
+   directories and an empty file over each of its files. These come last,
+   so a bind of either kind cannot bring back what one of them covers
+7. the working directory the member starts in
 
 A fresh ``/tmp`` matters more than it looks: it is the one directory every
 tool writes to, so a member sharing the host's would read what the operator's
@@ -196,6 +207,19 @@ class Limits:
     max_procs: int = 0
 
 
+# What every member gets where the pool declares nothing of its own.
+#
+# The process limit is the one worth having: it stops a member that forks
+# without end from taking the rig down, and a member needs nothing like 512
+# processes to work. The other two are left off on purpose. An address-space
+# ceiling counts what the harness reserves rather than what it uses, and the
+# harness reserves tens of gigabytes of address space it never touches, so a
+# value low enough to catch anything stops it from starting at all. A
+# processor-time ceiling ends a member at the moment it has used its seconds,
+# and a member is meant to live as long as its lease.
+DEFAULT_LIMITS = Limits(max_procs=512)
+
+
 def prlimit_path() -> str | None:
     """Where prlimit is on this rig, or None when it is not on PATH."""
     return shutil.which("prlimit")
@@ -284,6 +308,64 @@ def operator_paths(environ: Mapping[str, str]) -> tuple[str, ...]:
         Path(runtime),
     ]
     return tuple(dict.fromkeys(str(path.resolve()) for path in paths))
+
+
+def harness_paths(program: str, environ: Mapping[str, str]) -> tuple[str, ...]:
+    """The installations the member's harness needs bound back to run at all.
+
+    Sweeping the operator's home takes the harness with it: pi is installed
+    under the home on this rig, through a node version manager, and a member
+    whose home is a fresh tmpfs has nothing left to start. So the
+    installation the member's command names is bound back read-only.
+
+    *program* is the first word of that command, looked up on the member's
+    own PATH and then followed link by link to what it really is: a launcher
+    on PATH is usually a link into the package that holds the code, and it
+    may go through an environment of its own on the way. Every step is taken
+    back to its installation - the directory above a ``bin`` that holds it,
+    since a harness reads its own library beside its executable, and
+    otherwise the directory it sits in - because a step left out is a link
+    that leads nowhere once the sandbox is made.
+
+    An installation already on the read-only root and covered by nothing is
+    bound again all the same. It costs one mount and it says plainly what a
+    member needs, and the sweeps are not the only thing that can take an
+    installation away: the fresh temp directory takes one installed under it
+    too. The root itself is never bound again.
+    """
+    found = shutil.which(program, path=environ.get("PATH"))
+    if found is None:
+        return ()
+    paths: list[str] = []
+    for candidate in _link_chain(os.path.abspath(found)):
+        directory = os.path.dirname(candidate)
+        prefix = (
+            os.path.dirname(directory)
+            if os.path.basename(directory) == "bin"
+            else directory
+        )
+        if prefix == os.sep or not os.path.isdir(prefix):
+            continue
+        if any(_within(prefix, kept) for kept in paths):
+            continue
+        paths = [kept for kept in paths if not _within(kept, prefix)]
+        paths.append(prefix)
+    return tuple(paths)
+
+
+def _link_chain(path: str, limit: int = 40) -> list[str]:
+    """*path* and every link it leads through, ending at what is really there."""
+    chain = [path]
+    for _ in range(limit):
+        try:
+            target = os.readlink(chain[-1])
+        except OSError:
+            break
+        step = os.path.abspath(os.path.join(os.path.dirname(chain[-1]), target))
+        if step in chain:
+            break
+        chain.append(step)
+    return chain
 
 
 def empty_file(state_dir: Path | str) -> Path:
@@ -375,7 +457,9 @@ def base_argv(
     hidden: Iterable[str] = (),
     empty: Path | str | None = None,
     writable: Iterable[str] = (),
+    readonly: Iterable[str] = (),
     limits: Limits | None = None,
+    chdir: Path | str | None = None,
 ) -> list[str]:
     """The prefix every member's command runs behind, ending with the separator.
 
@@ -395,10 +479,19 @@ def base_argv(
     caller that hides nothing needs no file, and one that hides a file and
     gives no file to hide it with is asking for a boundary that is not there.
 
-    *writable* are the paths the member may write, each bound over itself.
-    They come before the pins that hold the hidden set up inside them, and
-    the pins before the hidden set itself, so nothing later in the argv can
-    be renamed away by anything the member does under an earlier mount.
+    *readonly* and *writable* are the paths a member gets back from under
+    the swept home, each bound over itself: the harness's own installation
+    is the first of them, and the member's working directory and generated
+    directory are the ones it may write. A hidden path standing above a bind
+    is mounted first and the bind put back on top - that is how a member
+    works in a directory under the operator's home while the home itself is
+    swept - and every other hidden path comes after both kinds of bind, so
+    nothing a bind covers can be brought back. The pins that stop a rename
+    inside a writable bind come between the two.
+
+    *chdir* is where the member starts. Without it the sandbox keeps the
+    directory it was started from, which is a path that may no longer be
+    there once the mounts are made.
 
     *egress* is the member's egress class, and its profile answers the
     namespace flags: with none named nothing is added, which is the sandbox
@@ -409,10 +502,14 @@ def base_argv(
     prlimit stops reading options at the first argument that is not one, so
     the sandbox follows it with no separator between them.
     """
-    hidden = list(hidden)
+    hidden = [os.path.abspath(path) for path in hidden]
     writable = [os.path.abspath(path) for path in writable]
+    readonly = [os.path.abspath(path) for path in readonly]
     if hidden and empty is None:
         empty = ""
+    bound = [*readonly, *writable]
+    over = [path for path in hidden if any(_within(root, path) for root in bound)]
+    under = [path for path in hidden if path not in over]
     return [
         *(limit_argv(limits) if limits is not None else []),
         bwrap_path() or "bwrap",
@@ -430,8 +527,11 @@ def base_argv(
         "/proc",
         "--tmpfs",
         "/tmp",
+        *(hidden_argv(over, empty) if empty is not None else []),
+        *[word for path in readonly for word in ("--ro-bind", path, path)],
         *[word for path in writable for word in ("--bind", path, path)],
-        *pin_argv(writable, hidden),
-        *(hidden_argv(hidden, empty) if empty is not None else []),
+        *pin_argv(writable, under),
+        *(hidden_argv(under, empty) if empty is not None else []),
+        *(["--chdir", str(chdir)] if chdir is not None else []),
         "--",
     ]

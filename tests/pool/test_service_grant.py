@@ -233,18 +233,21 @@ def test_a_member_whose_host_came_up_and_did_not_take_the_lease_is_stopped(
     with pytest.raises(service.runner.RunnerError, match="did not take the lease"):
         svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
 
-    # the pool started this one, so it goes with the grant that failed
-    started = pool_rig.recorded()["pid"]
-    assert wait_until(lambda: not pid_alive(started))
-    assert pool_rig.pane_names() == []
+    # the pool started this one, so it goes with the grant that failed. The
+    # member runs inside a sandbox, where the pid it knows is its own in a
+    # namespace of its own; the pane is what says the process is gone, since
+    # the fake herdr lists one for as long as what runs in it lives.
+    assert pool_rig.recorded()["pid"]
+    assert wait_until(lambda: pool_rig.pane_names() == [])
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []
         (ended,) = store.list_transitions()
     assert (ended.kind, "did not take the lease" in ended.cause) == ("released", True)
     # the slot and the name are free: the next request starts the member afresh
-    pool_rig.record.unlink()
+    pool_rig.forget_records()
     assert svc.grant("rebasers", holder_label="b", cwd=pool_rig.work).agent == "local-1"
-    assert pool_rig.recorded()["pid"] != started
+    # a record written after the last one was forgotten is a process that ran
+    assert pool_rig.recorded()["pid"]
 
 
 # -- one lease after another on one member ----------------------------------

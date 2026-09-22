@@ -39,6 +39,8 @@ from specflo.pool.config import Account, Member
 from specflo.pool.definitions import AgentDefinition
 
 STUB = Path(__file__).resolve().parents[1] / "agent" / "stub_pi.py"
+RECORD_NAME = "record.json"
+PROTOCOL = Path(__file__).resolve().parents[2] / "src" / "specflo" / "agent" / "protocol.py"
 VENV_BIN = str(Path(sys.executable).parent)
 
 # Stands where pi stands: writes down its command line, environment and
@@ -192,18 +194,36 @@ class Rig:
         self.work = tmp_path / "work"
         self.work.mkdir()
         self.config_root = tmp_path / "piconfig"
-        self.record = tmp_path / "record.json"
+
         self.herdr_state = tmp_path / "herdr.json"
         bin_dir = tmp_path / "bin"
         bin_dir.mkdir()
         script = bin_dir / "herdr"
         script.write_text(FAKE_HERDR, encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
+        # Stands where the harness stands: a program on the member's PATH,
+        # whose installation the sandbox binds back the way it binds pi's.
+        (bin_dir / "pi").symlink_to(sys.executable)
         recorder = tmp_path / "recorder.py"
         recorder.write_text(RECORDER, encoding="utf-8")
+        stub = tmp_path / "stub_pi.py"
+        stub.write_text(STUB.read_text(encoding="utf-8"), encoding="utf-8")
+        # The stub speaks pi's frames through the package's own protocol
+        # module, and the checkout it is installed from is not somewhere a
+        # member can read. A copy beside the stub is: a script's directory
+        # comes first on the path it imports from.
+        protocol = tmp_path / "specflo" / "agent"
+        protocol.mkdir(parents=True)
+        (protocol.parent / "__init__.py").write_text("", encoding="utf-8")
+        (protocol / "__init__.py").write_text("", encoding="utf-8")
+        (protocol / "protocol.py").write_text(
+            PROTOCOL.read_text(encoding="utf-8"), encoding="utf-8"
+        )
         scenario = tmp_path / "scenario.json"
         scenario.write_text(json.dumps({"reply": "done"}), encoding="utf-8")
-        self.command = f"{sys.executable} {recorder} {self.record} {STUB} {scenario}"
+        # The record is written in the member's own working directory, the
+        # one place every member may write, whichever directory a lease names.
+        self.command = f"{bin_dir / 'pi'} {recorder} {RECORD_NAME} {stub} {scenario}"
         # never the real herdr
         monkeypatch.setenv("PATH", ":".join([str(bin_dir), VENV_BIN, "/usr/bin", "/bin"]))
         monkeypatch.setenv(ENV_STATE_DIR, str(self.base))
@@ -237,10 +257,25 @@ class Rig:
 
     def failing_command(self, after: str = "0") -> str:
         """A member's command whose pi exits with an error *after* seconds."""
-        script = self.tmp_path / "failing-pi"
+        script = self.work / "failing-pi"
         script.write_text(FAILING_PI, encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         return f"{script} {after}"
+
+    def records(self) -> list[Path]:
+        """Every record a member wrote, the newest last.
+
+        A member runs inside a sandbox and writes where it may write, which
+        is the working directory of its lease; a test that names one of its
+        own gets its record there rather than in this rig's.
+        """
+        found = [p for p in self.tmp_path.rglob(RECORD_NAME) if p.is_file()]
+        return sorted(found, key=lambda p: p.stat().st_mtime)
+
+    def forget_records(self) -> None:
+        """Remove every record, so the next one read is the next one written."""
+        for record in self.records():
+            record.unlink()
 
     def launch_leftovers(self, name: str) -> list[str]:
         """What a launch of *name* writes that must not outlive it."""
@@ -284,9 +319,10 @@ class Rig:
         return read_status(AgentPaths.resolve(name).status)
 
     def recorded(self) -> dict:
-        assert wait_until(self.record.is_file), "the member's pi never started"
-        assert wait_until(lambda: self.record.read_text(encoding="utf-8").endswith("}"))
-        return json.loads(self.record.read_text(encoding="utf-8"))
+        assert wait_until(lambda: self.records() != []), "the member's pi never started"
+        record = self.records()[-1]
+        assert wait_until(lambda: record.read_text(encoding="utf-8").endswith("}"))
+        return json.loads(record.read_text(encoding="utf-8"))
 
     def pane_names(self) -> list[str]:
         """The labels of the tabs that hold a listed pane."""
@@ -340,7 +376,11 @@ def test_start_runs_the_member_as_launched_in_a_pane_named_for_it(rig):
     # python drops the interpreter from argv; the rest is the builder's line
     assert recorded["argv"] == launch.pi_argv(DEFINITION, member)[1:]
     assert recorded["cwd"] == str(rig.work)
-    assert recorded["pid"] == status["pi_pid"]
+    # The pid the host knows is the process it started, which is the sandbox;
+    # the member's own pid is the one it has inside, where it is the first
+    # process of a namespace of its own.
+    assert status["pi_pid"] not in (None, recorded["pid"])
+    assert recorded["pid"] < 10
     env = recorded["env"]
     assert "SECRET_X" not in env
     assert "TEAM_A_KEY" not in env
@@ -348,10 +388,13 @@ def test_start_runs_the_member_as_launched_in_a_pane_named_for_it(rig):
     assert env["GIT_AUTHOR_NAME"] == "Pool Member"
     assert json.loads(env[launch.DENY_ENV]) == ["git push"]
     expected = launch.member_env(DEFINITION, member, ACCOUNTS, os.environ)
-    # python may add LC_CTYPE by itself when it coerces the C locale
-    assert {k: v for k, v in env.items() if k != "LC_CTYPE"} == {
-        k: v for k, v in expected.items() if k != "LC_CTYPE"
+    # python may add LC_CTYPE by itself when it coerces the C locale, and the
+    # sandbox names the directory it puts the member in, as a login shell would
+    added = ("LC_CTYPE", "PWD")
+    assert {k: v for k, v in env.items() if k not in added} == {
+        k: v for k, v in expected.items() if k not in added
     }
+    assert env["PWD"] == str(rig.work)
 
 
 def ran(marker: Path) -> list[str]:
@@ -455,13 +498,19 @@ def test_a_preempted_lease_records_the_preempting_request(rig):
 def test_the_next_lease_gets_a_fresh_process_and_no_ended_record(rig):
     member = rig.local_member()
     name = rig.start(member)
-    first = rig.recorded()["pid"]
+    # The pid inside is the member's in its own namespace, and the first
+    # process of every one of them has the same number: the pid that tells
+    # one lease's process from the next is the one the host knows.
+    with connect(name) as client:
+        first = client.status()["status"]["pi_pid"]
     runner.stop(name, "released", pool_token=POOL_TOKEN)
-    rig.record.unlink()
+    rig.forget_records()
 
     assert rig.start(member) == name
 
-    assert rig.recorded()["pid"] != first
+    assert rig.recorded()["pid"]
+    with connect(name) as client:
+        assert client.status()["status"]["pi_pid"] != first
     assert lease.read_ended(AgentPaths.resolve(name).root) is None
     assert rig.pane_names() == ["local-1"]
 
@@ -485,7 +534,7 @@ def test_a_start_whose_host_never_answers_is_cleaned_up_and_raises(rig, monkeypa
         rig.start(rig.hosted_member(), timeout=2.0)
 
     assert isinstance(raised.value, SpecfloError)
-    assert not rig.record.exists()
+    assert rig.records() == []
     assert list(rig.config_root.iterdir()) == []
     state_dir = AgentPaths.resolve("hosted-1").root
     leftovers = [p.name for p in state_dir.iterdir()] if state_dir.is_dir() else []
@@ -542,7 +591,7 @@ def test_the_error_reported_for_a_pi_that_did_not_start_carries_no_account_key(
     rig, monkeypatch
 ):
     rig.watch_as_shipped(monkeypatch)
-    script = rig.tmp_path / "leaking-pi"
+    script = rig.work / "leaking-pi"
     script.write_text('#!/bin/sh\necho "cannot sign in with $TEAM_A_KEY" >&2\nexit 1\n')
     script.chmod(script.stat().st_mode | stat.S_IEXEC)
 
