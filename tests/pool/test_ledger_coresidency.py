@@ -357,6 +357,13 @@ CARDS = (
 # Every llama-swap request that changes something is one of these, but GET /unload.
 WRITING_VERBS = ("POST", "PUT", "PATCH", "DELETE")
 
+# The bridge is the one module that carries a request to llama-swap, and the
+# request is a member's own, on a path the member may ask for. It names the
+# completion paths and the method they are made with because that is its
+# allow list, so the two text scans below leave it out. What it may name and
+# may not is checked where the filter is: test_bridge_filter.py.
+RELAYS = "bridge.py"
+
 
 def modules() -> dict[str, ast.Module]:
     found = {
@@ -379,7 +386,8 @@ def texts(tree: ast.Module) -> list[str]:
 def test_no_module_of_the_pool_names_a_llama_swap_load_unload_profile_or_card_request():
     named = {
         (name, mark)
-        for name, tree in modules().items() for text in texts(tree)
+        for name, tree in modules().items() if name != RELAYS
+        for text in texts(tree)
         for mark in (*LOADS, *UNLOADS, *PROFILES, *CARDS) if mark in text
     }
 
@@ -390,7 +398,8 @@ def test_no_module_of_the_pool_sends_a_request_that_writes():
     verbs = {verb.lower() for verb in WRITING_VERBS}
     sent = set()
     for name, tree in modules().items():
-        sent.update((name, text) for text in texts(tree) if text.strip().lower() in verbs)
+        if name != RELAYS:
+            sent.update((name, text) for text in texts(tree) if text.strip().lower() in verbs)
         sent.update(
             (name, ast.unparse(node.func)) for node in ast.walk(tree)
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)

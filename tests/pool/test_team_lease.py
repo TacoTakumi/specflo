@@ -594,7 +594,13 @@ def test_the_pool_offers_no_member_to_member_message_route():
             else getattr(node.func, "id", "")
             for node in ast.walk(tree) if isinstance(node, ast.Call)
         }
-        assert not called & {"prompt", "steer", "send", "send_message"}, path.name
+        speaks = {"prompt", "steer", "send", "send_message"}
+        if path.name == "bridge.py":
+            # Its client sends the one request it relays to llama-swap. A
+            # member speaks to the bridge; the bridge answers it and reaches
+            # no other member.
+            speaks -= {"send"}
+        assert not called & speaks, path.name
 
 
 def test_the_team_lease_module_imports_no_agent_code_and_runs_nothing_by_itself():
