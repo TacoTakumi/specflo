@@ -27,6 +27,12 @@ A fresh ``/tmp`` matters more than it looks: it is the one directory every
 tool writes to, so a member sharing the host's would read what the operator's
 own work left there and leave its own behind for the next lease.
 
+The resource limits are a program in front of all of it. prlimit(1) sets
+them on itself and execs bwrap, so they are in place before the sandbox is
+made and nothing of the daemon's own runs between the fork and the exec: the
+daemon is threaded, and a pre-exec callback in a threaded process is
+documented as unsafe.
+
 The sandbox is only as good as the kernel and the policy under it. On a rig
 where an unprivileged user namespace cannot be made, bwrap refuses and there
 is no boundary to have; ``unavailable`` says so in one line, for a test to
@@ -36,9 +42,11 @@ skip on and for a start to refuse with.
 from __future__ import annotations
 
 import os
+import resource
 import shutil
 import subprocess
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 
 # The operator's directories, relative to the operator's home. Each holds
@@ -59,6 +67,19 @@ _AGENT_DIR_VAR = "PI_CODING_AGENT_DIR"
 # but reads back EACCES, because bwrap remounts a bind nodev inside the user
 # namespace. An empty regular file is the one thing that reads as nothing.
 _EMPTY_NAME = ".empty"
+
+# What the sandbox itself forks before the member's own command runs: bwrap,
+# the init it puts at pid 1 inside, the shell the command arrives as and what
+# that shell starts. The process limit stands above these, so a member's
+# allowance is what the member may add.
+_SANDBOX_PROCESSES = 16
+
+# The prlimit flag each limit is set through.
+_LIMIT_FLAGS: dict[int, str] = {
+    resource.RLIMIT_AS: "--as",
+    resource.RLIMIT_CPU: "--cpu",
+    resource.RLIMIT_NPROC: "--nproc",
+}
 
 # What the probe runs: the smallest sandbox bwrap can be asked for.
 _PROBE = ("--unshare-user", "--ro-bind", "/", "/", "true")
@@ -102,6 +123,79 @@ def unavailable() -> str | None:
         return None
     said = probe.stderr.strip().splitlines()
     return said[-1] if said else f"bwrap refused the user-namespace probe ({probe.returncode})"
+
+
+@dataclass(frozen=True)
+class Limits:
+    """What one member may use: memory, processor time and processes.
+
+    A value of zero leaves its limit out, so a pool that declares nothing
+    gets a sandbox and no ceiling rather than a ceiling of zero.
+    """
+
+    memory_mb: int = 0
+    cpu_seconds: int = 0
+    max_procs: int = 0
+
+
+def prlimit_path() -> str | None:
+    """Where prlimit is on this rig, or None when it is not on PATH."""
+    return shutil.which("prlimit")
+
+
+def uid_threads(uid: int | None = None) -> int:
+    """The threads this user runs on the whole host, counted from /proc.
+
+    The process limit counts threads rather than processes, and it counts
+    them for the user across the host: a user namespace does not give a
+    member a count of its own. So a desktop already running a browser is
+    most of the number, and a limit below it would stop the sandbox being
+    made at all.
+    """
+    uid = os.getuid() if uid is None else uid
+    count = 0
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        process = os.path.join("/proc", name)
+        try:
+            if os.stat(process).st_uid == uid:
+                count += len(os.listdir(os.path.join(process, "task")))
+        except OSError:
+            continue
+    return count
+
+
+def limit_argv(limits: Limits, path: str | None = None) -> list[str]:
+    """The prlimit prefix applying *limits*, or nothing when none are set.
+
+    Each limit is set as both the soft and the hard one, and a value above
+    the hard limit this process inherited is brought down to it: raising a
+    hard limit needs a capability the daemon does not have, and asking would
+    fail the start rather than the limit.
+
+    The process limit is the user's current thread count plus what the
+    member may add plus the sandbox's own processes, since the kernel counts
+    threads per user across the host whatever namespace they run in.
+    """
+    values: dict[int, int] = {}
+    if limits.memory_mb:
+        values[resource.RLIMIT_AS] = limits.memory_mb * 1024 * 1024
+    if limits.cpu_seconds:
+        values[resource.RLIMIT_CPU] = limits.cpu_seconds
+    if limits.max_procs:
+        values[resource.RLIMIT_NPROC] = (
+            uid_threads() + limits.max_procs + _SANDBOX_PROCESSES
+        )
+    if not values:
+        return []
+    argv = [path or prlimit_path() or "prlimit"]
+    for which, value in values.items():
+        _, hard = resource.getrlimit(which)
+        if hard != resource.RLIM_INFINITY:
+            value = min(value, hard)
+        argv.append(f"{_LIMIT_FLAGS[which]}={value}")
+    return argv
 
 
 def operator_paths(environ: Mapping[str, str]) -> tuple[str, ...]:
@@ -222,6 +316,7 @@ def base_argv(
     hidden: Iterable[str] = (),
     empty: Path | str | None = None,
     writable: Iterable[str] = (),
+    limits: Limits | None = None,
 ) -> list[str]:
     """The prefix every member's command runs behind, ending with the separator.
 
@@ -245,12 +340,17 @@ def base_argv(
     They come before the pins that hold the hidden set up inside them, and
     the pins before the hidden set itself, so nothing later in the argv can
     be renamed away by anything the member does under an earlier mount.
+
+    *limits* go in front of the whole thing, as a program of their own.
+    prlimit stops reading options at the first argument that is not one, so
+    the sandbox follows it with no separator between them.
     """
     hidden = list(hidden)
     writable = [os.path.abspath(path) for path in writable]
     if hidden and empty is None:
         empty = ""
     return [
+        *(limit_argv(limits) if limits is not None else []),
         bwrap_path() or "bwrap",
         "--unshare-all",
         "--unshare-cgroup-try",
