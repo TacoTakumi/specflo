@@ -17,7 +17,10 @@ Later mounts overlay earlier ones, so the order is the boundary:
 
 1. the namespace and process-safety flags
 2. the read-only root, then a fresh dev, proc and temp over it
-3. the hidden set: a tmpfs over each of the operator's directories and an
+3. the writable binds - the member's own working directory and the
+   directory generated for its lease - and the pins that hold the hidden
+   set up inside them
+4. the hidden set: a tmpfs over each of the operator's directories and an
    empty file over each of its files
 
 A fresh ``/tmp`` matters more than it looks: it is the one directory every
@@ -166,9 +169,59 @@ def hidden_argv(paths: Iterable[str], empty: Path | str) -> list[str]:
     return argv
 
 
+def pin_argv(writable: Iterable[str], hidden: Iterable[str]) -> list[str]:
+    """Bind over itself each ancestor of a hidden path lying inside a writable bind.
+
+    A hidden path is a mount point and cannot be renamed, but its parent can
+    where the member has a writable bind above it: a working directory
+    holding the lease tokens of the project it is in is the case this is
+    written for. A member that renames the parent leaves the next sandbox
+    nothing to hide at the old path, while what was hidden reads fine under
+    the new name. Binding an ancestor over itself makes it a mount point too,
+    so a rename or a remove of it fails while it stays as writable as the
+    bind around it: a pin gives away nothing the bind had not given already.
+
+    An ancestor is passed over where it is not a directory on the host, or is
+    a symlink there - a mount cannot pin a link, it would bind the target
+    instead - and where a pin was emitted for it already. A bind is at its
+    own path, so a pin is the ancestor over itself and nothing is reached
+    through a bind's source that the destination did not already name.
+    """
+    roots = [os.path.abspath(root) for root in writable]
+    paths = [os.path.abspath(path) for path in hidden]
+    pinned: set[str] = set(roots)
+    argv: list[str] = []
+    for root in roots:
+        for path in paths:
+            for ancestor in _ancestors_within(path, root):
+                if ancestor in pinned:
+                    continue
+                pinned.add(ancestor)
+                if not os.path.isdir(ancestor) or os.path.islink(ancestor):
+                    continue
+                argv += ["--bind", ancestor, ancestor]
+    return argv
+
+
+def _ancestors_within(path: str, root: str) -> list[str]:
+    """The ancestors of *path* strictly inside *root*, the outermost first."""
+    found: list[str] = []
+    parent = os.path.dirname(path)
+    while parent != root and _within(parent, root):
+        found.append(parent)
+        parent = os.path.dirname(parent)
+    found.reverse()
+    return found
+
+
+def _within(path: str, root: str) -> bool:
+    return path == root or path.startswith(root.rstrip(os.sep) + os.sep)
+
+
 def base_argv(
     hidden: Iterable[str] = (),
     empty: Path | str | None = None,
+    writable: Iterable[str] = (),
 ) -> list[str]:
     """The prefix every member's command runs behind, ending with the separator.
 
@@ -187,8 +240,14 @@ def base_argv(
     *empty* a hidden file is passed over and a hidden directory is not: a
     caller that hides nothing needs no file, and one that hides a file and
     gives no file to hide it with is asking for a boundary that is not there.
+
+    *writable* are the paths the member may write, each bound over itself.
+    They come before the pins that hold the hidden set up inside them, and
+    the pins before the hidden set itself, so nothing later in the argv can
+    be renamed away by anything the member does under an earlier mount.
     """
     hidden = list(hidden)
+    writable = [os.path.abspath(path) for path in writable]
     if hidden and empty is None:
         empty = ""
     return [
@@ -206,6 +265,8 @@ def base_argv(
         "/proc",
         "--tmpfs",
         "/tmp",
+        *[word for path in writable for word in ("--bind", path, path)],
+        *pin_argv(writable, hidden),
         *(hidden_argv(hidden, empty) if empty is not None else []),
         "--",
     ]
