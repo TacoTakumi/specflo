@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -35,6 +35,20 @@ class SwapConfig:
     model_ids: tuple[str, ...]
     vars: dict[str, str]
     combinations: tuple[Combination, ...]
+    # Every alias a model is given, to the model ID it names. llama-swap
+    # answers a model under its ID and under each of these.
+    aliases: dict[str, str] = field(default_factory=dict)
+
+    def config_id(self, name: str) -> str | None:
+        """The model ID llama-swap serves *name* under: *name* itself when it
+        is one, the model it is an alias of, or None."""
+        if name in self.model_ids:
+            return name
+        return self.aliases.get(name)
+
+    def names(self, model_id: str) -> tuple[str, ...]:
+        """Every name llama-swap answers *model_id* under, the ID first."""
+        return (model_id, *(alias for alias, named in self.aliases.items() if named == model_id))
 
     def model_id(self, name: str) -> str:
         """The model ID behind *name*, which is a matrix var or already a
@@ -69,7 +83,14 @@ def read(path: Path | str) -> SwapConfig:
     if not isinstance(data, dict):
         raise SpecfloError(f"llama-swap configuration {path} is not a mapping")
 
-    model_ids = tuple(str(m) for m in (data.get("models") or {}))
+    models = data.get("models") or {}
+    model_ids = tuple(str(m) for m in models)
+    aliases = {
+        str(alias): str(model)
+        for model, entry in models.items()
+        if isinstance(entry, dict) and isinstance(entry.get("aliases"), list)
+        for alias in entry["aliases"]
+    }
     block = data.get("matrix") or {}
     names = {str(k): str(v) for k, v in (block.get("vars") or {}).items()}
     for var, model in names.items():
@@ -83,7 +104,7 @@ def read(path: Path | str) -> SwapConfig:
     combos: list[Combination] = []
     for name in sets:
         combos.extend(expander.expand(name))
-    return SwapConfig(model_ids, names, tuple(combos))
+    return SwapConfig(model_ids, names, tuple(combos), aliases)
 
 
 class _Expander:

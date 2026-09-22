@@ -171,6 +171,10 @@ class Member:
     model: str | None = None
     account: str | None = None
     kind: str = STARTED
+    # The ID the operator's models file holds a local member's model under,
+    # which may be one of its llama-swap aliases; ``model`` is its llama-swap
+    # ID. None where nothing was checked against that file.
+    pi_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -610,14 +614,25 @@ def _member(
     egress = entry.one_of("egress", EGRESS_CLASSES)
 
     model = entry.fields.get("model")
+    selected = model
+    pi_model = None
     account = entry.fields.get("account")
     if backing == LOCAL:
         if not any(key in entry.fields for key in _NOT_A_MODEL):
-            model = entry.text("model", "one concrete llama-swap model ID")
-            if model and swap is not None and model not in swap.model_ids:
-                entry.fault("model", _not_a_model_id(model, swap))
-            elif model and operator is not None and model not in operator[1]:
-                entry.fault("model", _not_in_operator_models(model, operator[0]))
+            model = entry.text("model", "one concrete llama-swap model ID or alias")
+            names: tuple[str, ...] = (model,) if model else ()
+            if model and swap is not None:
+                served = swap.config_id(model)
+                if served is None:
+                    entry.fault("model", _not_a_model_id(model, swap))
+                    names = ()
+                else:
+                    names = swap.names(served)
+            if names and operator is not None:
+                pi_model = _held_as(entry, model, names, operator)
+                selected = pi_model or model
+            if names:
+                model = names[0]
         if account is not None:
             entry.fault(
                 "account", "not for a local member; only a hosted member runs through an account."
@@ -641,7 +656,7 @@ def _member(
             for named in _command_models(command):
                 _routed(entry, "command", named)
     if kind != CONSOLE:
-        _one_model(entry, command, model)
+        _one_model(entry, command, selected)
 
     return Member(
         name=str(entry.fields.get("name")),
@@ -653,6 +668,7 @@ def _member(
         model=model if isinstance(model, str) else None,
         account=account if isinstance(account, str) else None,
         kind=kind or STARTED,
+        pi_model=pi_model,
     )
 
 
@@ -826,6 +842,35 @@ def _routed(entry: _Entry, field: str, model: str) -> None:
             f"routing, so the {NO_TRAIN} flags would not reach the provider. Name another "
             "vendor's model, or declare the member 'open'."
         )
+
+
+def _held_as(
+    entry: _Entry, declared: str, names: tuple[str, ...], operator: tuple[Path, frozenset[str]]
+) -> str | None:
+    """The ID the operator's models file holds the member's model under, or
+    None with a fault noted.
+
+    *names* are every name llama-swap answers the model under, and the file
+    may hold it under any one of them. The name the member declares wins when
+    the file holds it. Otherwise the file must hold exactly one of the names:
+    two entries for one model may differ in every setting, and nothing says
+    which the member runs with.
+    """
+    location, held = operator
+    if declared in held:
+        return declared
+    found = [name for name in names if name in held]
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        entry.fault("model", _not_in_operator_models(declared, location))
+    else:
+        entry.fault(
+            "model", f"'{declared}' is held in the operator's models file at {location} under "
+            + " and ".join(f"'{name}'" for name in found)
+            + "; declare the one the member runs."
+        )
+    return None
 
 
 def _not_in_operator_models(model: str, location: Path) -> str:

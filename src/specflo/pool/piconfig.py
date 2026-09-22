@@ -117,10 +117,11 @@ def models_config(member: Member, account: Account) -> dict[str, object]:
 def local_models_config(models_file: Path | str, member: Member) -> dict[str, object]:
     """What ``models.json`` holds for the local *member*, from the operator's file.
 
-    The provider is the operator's own: the one in *models_file* that holds a
-    model whose id is the one the member declares. Every field of it is copied
-    but its model list, so a field pi learns later travels without this knowing
-    of it, and the list holds that one model, copied whole.
+    The provider is the operator's own: the one in *models_file* that holds
+    the member's model under the ID the pool file check found it by, which may
+    be one of its llama-swap aliases. Every field of it is copied but its model
+    list, so a field pi learns later travels without this knowing of it, and
+    the list holds that one model, copied whole.
 
     Raises ``LaunchError`` when the file cannot be read or holds no such model,
     naming the model and never the rest of what the file holds: a member that
@@ -147,7 +148,7 @@ def local_models_config(models_file: Path | str, member: Member) -> dict[str, ob
         if not isinstance(models, list):
             continue
         for entry in models:
-            if isinstance(entry, dict) and entry.get("id") == member.model:
+            if isinstance(entry, dict) and entry.get("id") == (member.pi_model or member.model):
                 copied = {k: v for k, v in provider.items() if k != "models"}
                 copied["models"] = [entry]
                 return {"providers": {name: deepcopy(copied)}}
