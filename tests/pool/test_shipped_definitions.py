@@ -139,6 +139,7 @@ def test_the_example_filled_from_the_fixture_passes_validate(tmp_path):
     data["models_file"] = "models.json"
     for member in data["members"]:
         if member["backing"] == config.LOCAL:
+            member["command"] = member["command"].replace(member["model"], "model-a")
             member["model"] = "model-a"
     (directory / config.POOL_FILE).write_text(yaml.safe_dump(data), encoding="utf-8")
 

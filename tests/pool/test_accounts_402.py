@@ -1003,7 +1003,8 @@ def write_hosted_pool(rig) -> None:
         "accounts": [{"name": "team-a", "cap": 2, "key_env": "TEAM_A_KEY"}],
         "members": [{
             "name": "hosted-1", "command": rig.command, "backing": "hosted",
-            "account": "team-a", "labels": [], "capacity": 1, "egress": "no-train",
+            "model": "vendor/strong", "account": "team-a", "labels": [],
+            "capacity": 1, "egress": "no-train",
         }],
         "pools": [{
             "name": "rebasers", "definition": "rebaser", "members": ["hosted-1"],

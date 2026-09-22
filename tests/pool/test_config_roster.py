@@ -335,7 +335,9 @@ def test_a_member_without_labels_has_none(tmp_path):
 
 
 def test_a_duplicate_member_name_is_refused(tmp_path):
-    error = _refused(_write(tmp_path, members=[LOCAL, _changed(LOCAL, model="model-b")]))
+    duplicate = _changed(LOCAL, model="model-b", command="pi --mode rpc --model model-b")
+
+    error = _refused(_write(tmp_path, members=[LOCAL, duplicate]))
 
     assert (error.entry, error.field) == ("member 'coder-a'", "name")
 

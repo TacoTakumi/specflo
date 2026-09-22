@@ -28,7 +28,7 @@ OTHERS = ("model-b", "model-c")
 
 LOCAL = {
     "name": "coder-a",
-    "command": "pi --mode rpc --provider llama-swap --model model-a",
+    "command": f"pi --mode rpc --provider llama-swap --model {HELD}",
     "backing": "local",
     "model": HELD,
     "labels": ["code"],
@@ -45,6 +45,14 @@ HOSTED = {
     "egress": "no-train",
 }
 ACCOUNT = {"name": "openrouter-main", "cap": 4, "key_env": "OPENROUTER_API_KEY"}
+
+
+def on_model(model: str) -> dict:
+    """The local member running *model*, its command selecting the same one."""
+    return {
+        **LOCAL, "model": model,
+        "command": f"pi --mode rpc --provider llama-swap --model {model}",
+    }
 
 
 def write_pool(tmp_path: Path, members, *, models_file: str | None = "models.json") -> Path:
@@ -72,14 +80,14 @@ def faults_of(path: Path) -> list[config.ConfigError]:
 
 
 def test_a_local_member_on_a_model_the_file_does_not_hold_is_refused(tmp_path: Path) -> None:
-    faults = faults_of(write_pool(tmp_path, [{**LOCAL, "model": UNHELD}]))
+    faults = faults_of(write_pool(tmp_path, [on_model(UNHELD)]))
 
     assert [(f.entry, f.field) for f in faults] == [("member 'coder-a'", "model")]
     assert UNHELD in str(faults[0])
 
 
 def test_the_message_names_no_other_model_the_file_holds(tmp_path: Path) -> None:
-    faults = faults_of(write_pool(tmp_path, [{**LOCAL, "model": UNHELD}]))
+    faults = faults_of(write_pool(tmp_path, [on_model(UNHELD)]))
 
     assert not any(other in str(faults[0]) for other in OTHERS)
 
@@ -97,7 +105,7 @@ def test_a_hosted_member_is_not_checked_against_the_operators_file(tmp_path: Pat
 def test_a_pool_file_that_names_no_models_file_is_not_checked(tmp_path: Path) -> None:
     # There is nothing to check against; the copy at the start of a lease is
     # what refuses such a member, and it names the missing declaration.
-    path = write_pool(tmp_path, [{**LOCAL, "model": UNHELD}], models_file=None)
+    path = write_pool(tmp_path, [on_model(UNHELD)], models_file=None)
 
     assert faults_of(path) == []
 
@@ -108,7 +116,7 @@ def test_a_models_file_that_cannot_be_parsed_is_reported_once_and_not_as_the_mod
     # The path is what this file's declaration is checked for; content that is
     # not a provider map leaves no model ids to check a member against, and
     # the copy at the start of a lease is what reports it.
-    path = write_pool(tmp_path, [{**LOCAL, "model": UNHELD}])
+    path = write_pool(tmp_path, [on_model(UNHELD)])
     (path.parent / "models.json").write_text("not json at all", encoding="utf-8")
 
     assert faults_of(path) == []

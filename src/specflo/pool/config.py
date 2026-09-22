@@ -640,6 +640,8 @@ def _member(
                 _routed(entry, "model", model)
             for named in _command_models(command):
                 _routed(entry, "command", named)
+    if kind != CONSOLE:
+        _one_model(entry, command, model)
 
     return Member(
         name=str(entry.fields.get("name")),
@@ -754,6 +756,57 @@ def _command_models(command: str) -> list[str]:
         return []
     models = [after for arg, after in zip(argv, argv[1:]) if arg == "--model"]
     return models + [arg.removeprefix("--model=") for arg in argv if arg.startswith("--model=")]
+
+
+def _one_model(entry: _Entry, command: str, model: object) -> None:
+    """Note a fault unless the member runs the one model it names.
+
+    A member's generated models file holds the model it declares and no
+    other, and the co-residency ledger accounts for that one, so a command
+    selecting another model would run the member on a model neither knows
+    about. A command that selects none is no fault: the generated file leaves
+    one model to resolve to. A member that names none anywhere is refused,
+    because then nothing says which model that is.
+
+    A declaration already at fault is left alone, and so is a command the
+    shell rules cannot split; one fault is enough, and an unsplittable
+    command selects nothing this could read.
+    """
+    if any(error.field == "model" for error in entry.errors):
+        return
+    try:
+        shlex.split(command)
+    except ValueError:
+        # A command the shell rules cannot split says nothing about which
+        # model it selects; it is the launch that refuses it.
+        return
+    declared = model.strip() if isinstance(model, str) and model.strip() else None
+    selected = _command_models(command)
+    if declared is None:
+        if not selected:
+            entry.fault(
+                "model", "required; neither the declaration nor the command names a "
+                "model, and a member runs the one model it names."
+            )
+        return
+    for named in selected:
+        if _same_model(named, declared):
+            continue
+        entry.fault(
+            "command", f"selects '{named}', and the member declares '{declared}'; a member "
+            "runs the one model it names, and its generated models file holds that one alone."
+        )
+        return
+
+
+def _same_model(named: str, declared: str) -> bool:
+    """Whether two ways of writing a model name the same model. pi matches a
+    model ID without regard to case, and names a provider's model with the
+    provider in front of it."""
+    def bare(value: str) -> str:
+        return value.strip().lower().removeprefix(_PROVIDER_PREFIX)
+
+    return bare(named) == bare(declared)
 
 
 def _routed(entry: _Entry, field: str, model: str) -> None:

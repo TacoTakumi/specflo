@@ -193,7 +193,6 @@ def test_the_same_member_with_class_open_passes(tmp_path, changes):
         {"command": _command("--model=openrouter/vendor/strong")},
         # The vendor's name inside another vendor's model ID is not a prefix.
         {"model": "vendor/anthropic/claude-sonnet-5"},
-        {},
     ],
 )
 def test_a_no_train_member_on_another_vendors_model_passes(tmp_path, changes):
