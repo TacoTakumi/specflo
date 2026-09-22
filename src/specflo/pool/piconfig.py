@@ -177,9 +177,11 @@ def create(
     and for a member declaring none that is nothing at all.
 
     Raises ``LaunchError`` when a hosted member's account is not among
-    *accounts*, and when a local member's model is not in the operator's file
-    or no *models_file* is given. Nothing is made in either case.
+    *accounts*, when a local member's model is not in the operator's file or
+    no *models_file* is given, and when a declared skill cannot be found.
+    Nothing is made in any of those cases.
     """
+    sources = _skill_sources(member, skills, skills_from)
     if member.backing == HOSTED:
         config = models_config(member, member_account(member, tuple(accounts)))
     elif models_file is None:
@@ -198,14 +200,45 @@ def create(
         (directory / MODELS_FILE).write_text(
             json.dumps(config, indent=2) + "\n", encoding="utf-8"
         )
-    _copy_skills(directory / SKILLS_DIR, skills, skills_from)
+    _copy_skills(directory / SKILLS_DIR, sources)
     return directory
 
 
-def _copy_skills(
-    into: Path, skills: Iterable[str], skills_from: Path | str | None
-) -> None:
-    """Copy each named skill from *skills_from* into *into*, links resolved.
+def _skill_sources(
+    member: Member, skills: Iterable[str], skills_from: Path | str | None
+) -> list[tuple[str, Path]]:
+    """Where each skill *member* declares is, in the order it was declared.
+
+    A definition's skills are the member's whole set, because the sandbox
+    hides every other place pi would find one, so a skill that cannot be
+    copied in is one the member would run without. Such a member is refused
+    here, before anything is made for its lease, and the message names the
+    skill so the admin knows which line of the definition to fix.
+
+    A name is one directory in the operator's skills directory: a name that
+    walks out of it would copy whatever it reached, and is refused like a
+    name that is not there at all.
+    """
+    source = None if skills_from is None else Path(skills_from)
+    found = []
+    for name in skills:
+        if source is None:
+            raise LaunchError(
+                f"member '{member.name}' declares the skill '{name}', and the pool was "
+                "not told where the operator's skills are."
+            )
+        held = source / name if name == Path(name).name else None
+        if held is None or not held.is_dir():
+            raise LaunchError(
+                f"member '{member.name}' declares the skill '{name}', which is not a "
+                f"directory in the operator's skills at {source}."
+            )
+        found.append((name, held))
+    return found
+
+
+def _copy_skills(into: Path, sources: Iterable[tuple[str, Path]]) -> None:
+    """Copy each skill in *sources* into *into*, links resolved.
 
     The whole of a skill is copied, so a skill the operator keeps as a link
     into another checkout arrives as a real directory, and so does a file
@@ -213,13 +246,8 @@ def _copy_skills(
     source on the host leaves a running member's skill as it was.
     """
     into.mkdir(parents=True, exist_ok=True)
-    if skills_from is None:
-        return
-    source = Path(skills_from)
-    for name in skills:
-        held = source / name
-        if held.is_dir():
-            shutil.copytree(held, into / name, symlinks=False)
+    for name, held in sources:
+        shutil.copytree(held, into / name, symlinks=False)
 
 
 def remove(directory: Path | str | None) -> None:
