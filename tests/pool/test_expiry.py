@@ -588,6 +588,14 @@ def test_expired_leases_are_ended_by_the_check_and_through_end_lease():
     assert expiring_functions() == {("pool/service.py", "expire_due")}
 
 
+# The entry points that do not check expiry first, each for its reason.
+UNCHECKED = (
+    # The bridge asks on every completion, and the check takes the pool's
+    # turn, which a grant holds for as long as its members take to start.
+    "held_models",
+)
+
+
 def test_every_entry_point_of_the_service_checks_expiry_first():
     tree = ast.parse((SRC / "pool" / "service.py").read_text(encoding="utf-8"))
     cls = next(
@@ -597,7 +605,7 @@ def test_every_entry_point_of_the_service_checks_expiry_first():
     entry_points = [
         node for node in cls.body
         if isinstance(node, ast.FunctionDef)
-        and not node.name.startswith("_") and node.name != "expire_due"
+        and not node.name.startswith("_") and node.name not in ("expire_due", *UNCHECKED)
     ]
     assert {"grant", "end_lease"} <= {node.name for node in entry_points}
     for function in entry_points:

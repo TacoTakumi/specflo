@@ -285,10 +285,12 @@ class PoolService:
         """Every name llama-swap answers a model under that an active lease or
         a project agent holds now; the ledger says which (``ledger.held``).
 
-        The bridge asks on every completion, from a thread of its own, so the
-        wait for a lease start that holds the turn falls on that one request.
+        The bridge asks on every completion, so this is the one entry point
+        that does not run the expiry check first: the check takes the pool's
+        turn, which a grant holds while its members start, and every member's
+        completion would wait on that. A lease past its idle limit keeps its
+        model held until the next entry point ends it, which costs nothing.
         """
-        self.expire_due()
         with self.open_store() as store:
             leases = store.list_leases(state=ledger.ACTIVE)
         return ledger.held(self.config, [*leases, *self.standing()])

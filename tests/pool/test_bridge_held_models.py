@@ -13,6 +13,7 @@ Nothing here reaches the rig: the store is a stub holding lease rows.
 from __future__ import annotations
 
 import contextlib
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -53,21 +54,13 @@ def lease(*resources: tuple[str, str]) -> SimpleNamespace:
 def service(
     leases: list, standing: tuple = (), swap: matrix.SwapConfig | None = SWAP
 ) -> PoolService:
-    return unexpiring(PoolService(
+    return PoolService(
         config=PoolConfig(path=Path("pool.yaml"), swap=swap),
         open_store=lambda: contextlib.nullcontext(Store(leases)),
         pool_token="token",
         config_root=Path("piconfig"),
         standing=lambda: standing,
-    ))
-
-
-def unexpiring(pool: PoolService) -> PoolService:
-    """*pool* with its expiry pass stubbed out. The pass comes first, as at
-    every entry point, and the stub store holds too little of a lease row for
-    the real one; the structural test of entry points holds it in place."""
-    pool.expire_due = lambda own=None: []
-    return pool
+    )
 
 
 def test_a_leased_model_is_held_under_its_id_and_every_alias() -> None:
@@ -91,16 +84,41 @@ def test_every_active_lease_and_project_agent_holds_its_model() -> None:
 
 def test_only_active_leases_are_read() -> None:
     store = Store([lease((ledger.MODEL, "coder-q3"))])
-    pool = unexpiring(PoolService(
+    pool = PoolService(
         config=PoolConfig(path=Path("pool.yaml"), swap=SWAP),
         open_store=lambda: contextlib.nullcontext(store),
         pool_token="token",
         config_root=Path("piconfig"),
-    ))
+    )
 
     pool.held_models()
 
     assert store.asked == [ledger.ACTIVE]
+
+
+def test_the_held_models_are_read_while_a_grant_holds_the_pools_turn() -> None:
+    # A grant holds the turn while its members start, which takes up to a
+    # minute for each; a completion asks for the held models all the while.
+    pool = service([lease((ledger.MODEL, "coder-q3"))])
+    taken, done = threading.Event(), threading.Event()
+
+    def grant() -> None:
+        with pool._turn:
+            taken.set()
+            done.wait(10)
+
+    holder = threading.Thread(target=grant)
+    holder.start()
+    taken.wait(5)
+    try:
+        read: list = []
+        asking = threading.Thread(target=lambda: read.append(pool.held_models()))
+        asking.start()
+        asking.join(2)
+        assert read == [{"coder-q3", "Coder-Q3", "coder-small"}]
+    finally:
+        done.set()
+        holder.join(5)
 
 
 def test_nothing_is_held_with_no_lease_out() -> None:
