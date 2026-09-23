@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from specflo.agent import lease
 from specflo.pool import launch, sandbox
 from specflo.pool.config import Member
 
@@ -216,3 +217,7 @@ def test_the_daemon_root_reads_as_empty_but_for_what_the_member_is_given(
     assert found["read"][str(mine / "models.json")] == "MY-MODELS"
     for path in (root / "pool-token", root / "tokens.json", other / "models.json"):
         assert found["read"][str(path)] in ("", "No such file or directory"), path
+
+
+def test_checkout_secrets_name_the_directory_the_lease_verbs_write_to() -> None:
+    assert launch.TOKEN_DIRNAME == lease.TOKEN_DIR.name

@@ -52,7 +52,6 @@ import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from ..agent.lease import TOKEN_DIR
 from ..config import CONFIG_DIRNAME, REMOTES_DIRNAME
 from ..errors import SpecfloError
 from . import sandbox
@@ -78,6 +77,11 @@ DENY_EXTENSION = str(Path(__file__).resolve().parent / "pi_extension" / "deny.ts
 # The variable the extension reads the deny list from, as a JSON array of
 # strings. The name is fixed on both sides; deny.ts holds the other copy.
 DENY_ENV = "SPECFLO_POOL_DENY"
+
+# Where a checkout keeps the lease tokens its holder was granted, under its
+# .specflo directory. The name is fixed on both sides: the agent subsystem's
+# lease module holds the other copy, and this module does not import it.
+TOKEN_DIRNAME = "leases"
 
 # The variable that tells pi where its configuration directory is. It is set
 # only to a directory generated for the member, never from the caller: the
@@ -280,7 +284,7 @@ def checkout_secrets(cwd: Path | str) -> tuple[str, ...]:
         checkout = directory / CONFIG_DIRNAME
         if not checkout.is_dir():
             continue
-        for held in (checkout / TOKEN_DIR.name, checkout / REMOTES_DIRNAME):
+        for held in (checkout / TOKEN_DIRNAME, checkout / REMOTES_DIRNAME):
             try:
                 held.mkdir(mode=0o700, exist_ok=True)
             except OSError:
