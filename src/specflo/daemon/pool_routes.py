@@ -188,6 +188,7 @@ def open_pool(root: Path) -> tuple[PoolService | None, tuple[ConfigError, ...]]:
         config_root=Path(root) / PI_CONFIG_DIRNAME,
         # served by the daemon while it has a pool, and bound into each local member
         bridge=bridge.socket_path(root),
+        daemon_root=Path(root),
         # The project agents of this root that serve now, asked of agent
         # discovery at each request: they take a model or an account slot.
         standing=lambda: standing.entries(

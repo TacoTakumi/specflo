@@ -166,6 +166,7 @@ def start(
     environ: Mapping[str, str] | None = None,
     timeout: float = START_TIMEOUT,
     bridge: Path | str | None = None,
+    daemon_root: Path | str | None = None,
 ) -> str:
     """Start *member* for one lease in the role *definition* gives; the agent's name.
 
@@ -181,6 +182,9 @@ def start(
     into its sandbox and a forwarder on the port its models file names, up
     before pi runs; without one a local member has no way to its model at
     all. Any other member shares the host's network and is not given it.
+
+    *daemon_root* is the daemon's own directory, which the member's sandbox
+    hides: it holds the pool's token and every client's.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
     and ``RunnerError`` for one already running, one whose host does not come
@@ -216,6 +220,7 @@ def start(
                 state_dir=paths.root.parent,
                 config_dir=config_dir,
                 bridge=reach,
+                daemon_root=daemon_root,
             ),
             "env": launch.member_env(
                 definition, member, accounts, caller, config_dir=config_dir,

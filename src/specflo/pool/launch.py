@@ -46,11 +46,14 @@ answers for the member with no lease behind it.
 from __future__ import annotations
 
 import json
+import os
 import shlex
 import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from ..agent.lease import TOKEN_DIR
+from ..config import CONFIG_DIRNAME, REMOTES_DIRNAME
 from ..errors import SpecfloError
 from . import sandbox
 from .config import LOCAL, Account, Member
@@ -138,11 +141,18 @@ def member_argv(
     config_dir: Path | str | None = None,
     limits: sandbox.Limits | None = None,
     bridge: sandbox.Bridge | None = None,
+    daemon_root: Path | str | None = None,
 ) -> list[str]:
     """The whole of what *member* starts as: its sandbox, then its pi.
 
     The sandbox comes from the member's own egress class, and a class with no
     profile raises here rather than starting the member without one.
+
+    Besides the operator's paths, the sandbox hides the secrets a checkout
+    keeps beside the working directory (``checkout_secrets``) and
+    *daemon_root*, the daemon's own directory, which holds the pool's token
+    and every client's. The member's generated directory and the bridge
+    socket are under that root, and come back as any bind does.
 
     What the member gets back from under the swept home is the least that
     lets it run: the harness's own installation, the pool's deny-list
@@ -158,7 +168,11 @@ def member_argv(
     the host's network has no use for it, and would have a second way to
     llama-swap.
     """
-    hidden = sandbox.operator_paths(environ)
+    hidden = [
+        *sandbox.operator_paths(environ),
+        *([str(Path(daemon_root).resolve())] if daemon_root is not None else []),
+        *checkout_secrets(cwd),
+    ]
     program = shlex.split(member.command)[0]
     writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]
     readonly = [
@@ -191,6 +205,38 @@ def member_argv(
         chdir=cwd,
     )
     return [*prefix, *forwarder, *pi_argv(definition, member)]
+
+
+def checkout_secrets(cwd: Path | str) -> tuple[str, ...]:
+    """The directories of secrets kept by every checkout *cwd* is in, made if need be.
+
+    A checkout keeps each lease token its holder was granted in
+    ``.specflo/leases`` and the bearer token of each daemon it reaches in
+    ``.specflo/remotes``. A member usually works in the checkout it was leased
+    from, or below it, and the agent verbs look for a token from the working
+    directory upward, so every checkout from *cwd* up to the root is looked
+    at.
+
+    Both directories are made (this user's alone) in a checkout that does
+    not have them yet: a sandbox does not hide a path that is not there, and
+    the token of a lease is written once its member has started. The
+    commands that write to them leave a directory that is there already as
+    it is.
+    """
+    here = Path(os.path.abspath(cwd))
+    found: list[str] = []
+    for directory in (here, *here.parents):
+        checkout = directory / CONFIG_DIRNAME
+        if not checkout.is_dir():
+            continue
+        for held in (checkout / TOKEN_DIR.name, checkout / REMOTES_DIRNAME):
+            try:
+                held.mkdir(mode=0o700, exist_ok=True)
+            except OSError:
+                # One this user cannot make is one no token is written to.
+                continue
+            found.append(str(held.resolve()))
+    return tuple(found)
 
 
 def member_env(
