@@ -517,8 +517,10 @@ def write_pool(root: Path) -> None:
         encoding="utf-8",
     )
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    shutil.copy(FIXTURES / "models.json", directory / "models.json")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": "models.json",
         "members": [{
             "name": "local-1", "command": "pi --mode rpc", "backing": "local",
             "model": "model-a", "labels": [], "capacity": 1, "egress": "local",
