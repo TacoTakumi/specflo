@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from specflo.pool import piconfig
 
 from .test_piconfig import ACCOUNTS, NO_TRAIN_MEMBER
@@ -116,3 +118,19 @@ def test_the_operators_skills_fall_back_to_the_home_rooted_directory() -> None:
     assert piconfig.operator_skills({"HOME": "/home/pool"}) == Path(
         "/home/pool/.pi/agent/skills"
     )
+
+
+def test_a_skill_that_cannot_be_copied_is_named_and_leaves_no_directory(
+    tmp_path: Path,
+) -> None:
+    skills = operator_skills(tmp_path)
+    (skills / "rebaser" / "gone").symlink_to(tmp_path / "never-was")
+    root = tmp_path / "generated"
+
+    with pytest.raises(piconfig.LaunchError) as caught:
+        piconfig.create(
+            root, NO_TRAIN_MEMBER, ACCOUNTS, skills=["rebaser"], skills_from=skills,
+        )
+
+    assert "rebaser" in str(caught.value)
+    assert list(root.iterdir()) == []

@@ -218,8 +218,8 @@ def create(
 
     Raises ``LaunchError`` when a hosted member's account is not among
     *accounts*, when a local member's model is not in the operator's file or
-    no *models_file* is given, and when a declared skill cannot be found.
-    Nothing is made in any of those cases.
+    no *models_file* is given, and when a declared skill cannot be found or
+    cannot be copied whole. Nothing is left behind in any of those cases.
     """
     sources = _skill_sources(member, skills, skills_from)
     if member.backing == HOSTED:
@@ -235,14 +235,19 @@ def create(
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix=f"{member.name}-", dir=root))
-    (directory / MARKER).write_text("", encoding="utf-8")
-    if config is not None:
-        # This user's alone from the moment it is made: a local member's copy
-        # carries the operator's provider key as written.
-        made = os.open(directory / MODELS_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(made, "w", encoding="utf-8") as file:
-            file.write(json.dumps(config, indent=2) + "\n")
-    _copy_skills(directory / SKILLS_DIR, sources)
+    try:
+        (directory / MARKER).write_text("", encoding="utf-8")
+        if config is not None:
+            # This user's alone from the moment it is made: a local member's
+            # copy carries the operator's provider key as written.
+            made = os.open(directory / MODELS_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(made, "w", encoding="utf-8") as file:
+                file.write(json.dumps(config, indent=2) + "\n")
+        _copy_skills(directory / SKILLS_DIR, sources, member)
+    except BaseException:
+        # A directory half made is not handed on, and may hold the key already.
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     return directory
 
 
@@ -279,17 +284,25 @@ def _skill_sources(
     return found
 
 
-def _copy_skills(into: Path, sources: Iterable[tuple[str, Path]]) -> None:
+def _copy_skills(into: Path, sources: Iterable[tuple[str, Path]], member: Member) -> None:
     """Copy each skill in *sources* into *into*, links resolved.
 
     The whole of a skill is copied, so a skill the operator keeps as a link
     into another checkout arrives as a real directory, and so does a file
     inside one. The copy is the member's own from then on: editing the
-    source on the host leaves a running member's skill as it was.
+    source on the host leaves a running member's skill as it was. A skill
+    that cannot be copied whole is refused by name, as one that is not there
+    is: the member would run without part of it.
     """
     into.mkdir(parents=True, exist_ok=True)
     for name, held in sources:
-        shutil.copytree(held, into / name, symlinks=False)
+        try:
+            shutil.copytree(held, into / name, symlinks=False)
+        except (shutil.Error, OSError):
+            raise LaunchError(
+                f"member '{member.name}' declares the skill '{name}', which cannot be "
+                "copied whole: a file in it cannot be read, or is a link to nothing."
+            ) from None
 
 
 def remove(directory: Path | str | None) -> None:
