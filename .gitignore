@@ -24,3 +24,6 @@ specflo-feedback*
 
 # Local specflo state (active project, per-machine settings); git noise.
 .specflo/
+
+# Local secrets, such as the OpenRouter key a rig check starts the daemon with.
+.env
