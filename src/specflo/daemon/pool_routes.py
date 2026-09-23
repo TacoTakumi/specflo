@@ -112,7 +112,7 @@ from starlette.concurrency import run_in_threadpool
 
 from ..config import load_config
 from ..errors import SpecfloError
-from ..pool import bridge, console, egress, ledger, standing, teamlease, waiting
+from ..pool import bridge, console, egress, launch, ledger, standing, teamlease, waiting
 from ..pool.cli_admin import pool_dir
 from ..pool.config import ConfigError, PoolConfig, load_pool_config
 from ..pool.runner import ConsoleBusy, RunnerError
@@ -607,6 +607,14 @@ async def lease_request(
             detail=f"The working directory '{cwd}' is not a directory on the daemon's host; "
             "a member starts in an absolute path that is there.",
         )
+    # Refused here as well as at the start, so nothing waits for a member
+    # that could never start.
+    fault = launch.working_directory_fault(
+        cwd, service.environ if service.environ is not None else os.environ,
+        request.app.state.root,
+    )
+    if fault is not None:
+        raise HTTPException(status_code=400, detail=fault[0].upper() + fault[1:])
     # Read once, as the request arrives: the pin it waits under is the one it came under.
     project = _text(fields, "project")
     pinned = await run_in_threadpool(_pinned, request.app.state.root, project)

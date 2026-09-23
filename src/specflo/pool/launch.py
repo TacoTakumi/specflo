@@ -168,11 +168,10 @@ def member_argv(
     the host's network has no use for it, and would have a second way to
     llama-swap.
     """
-    hidden = [
-        *sandbox.operator_paths(environ),
-        *([str(Path(daemon_root).resolve())] if daemon_root is not None else []),
-        *checkout_secrets(cwd),
-    ]
+    fault = working_directory_fault(cwd, environ, daemon_root)
+    if fault is not None:
+        raise LaunchError(f"member '{member.name}' cannot start: {fault}")
+    hidden = [*_swept(environ, daemon_root), *checkout_secrets(cwd)]
     program = shlex.split(member.command)[0]
     writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]
     readonly = [
@@ -205,6 +204,58 @@ def member_argv(
         chdir=cwd,
     )
     return [*prefix, *forwarder, *pi_argv(definition, member)]
+
+
+def working_directory_fault(
+    cwd: Path | str, environ: Mapping[str, str], daemon_root: Path | str | None = None
+) -> str | None:
+    """Why a member may not work in *cwd*, in one sentence, or None when it may.
+
+    A member's working directory is bound in writable after the directories
+    lying above a bind are hidden, so it brings back whatever of them it
+    covers. A working directory at or above a hidden path brings all of it
+    back: with the home, the member reads the operator's keys and writes the
+    shell files the operator runs next. One inside a hidden path brings back
+    that part of it. The home is the one hidden path a member may work
+    inside, since the sandbox is built for exactly that.
+
+    A checkout's token directories are hidden too, and a working directory
+    inside any ``.specflo`` directory is refused for them. *environ* is the
+    daemon's environment and *daemon_root* its own directory, as for
+    ``member_argv``.
+    """
+    here = os.path.realpath(cwd)
+    swept = _swept(environ, daemon_root)
+    home = swept[0]
+    for path in swept:
+        if os.path.commonpath([path, here]) == here:
+            what = "is the operator's home or holds it" if path == home else (
+                "holds a directory the sandbox hides from every member"
+            )
+            return (
+                f"the working directory '{cwd}' {what}, and a working directory is bound in "
+                "writable over what it holds, so the member would have it back. Start the "
+                "member in a directory below the home that holds none of those."
+            )
+        if path != home and os.path.commonpath([path, here]) == path:
+            return (
+                f"the working directory '{cwd}' is inside a directory the sandbox hides from "
+                "every member, and the member would have that part of it back."
+            )
+    if CONFIG_DIRNAME in Path(here).parts:
+        return (
+            f"the working directory '{cwd}' is inside a {CONFIG_DIRNAME} directory, which "
+            "holds lease and daemon tokens the sandbox hides from every member."
+        )
+    return None
+
+
+def _swept(environ: Mapping[str, str], daemon_root: Path | str | None) -> list[str]:
+    """The operator's paths, the home first, and the daemon root after them."""
+    return [
+        *sandbox.operator_paths(environ),
+        *([str(Path(daemon_root).resolve())] if daemon_root is not None else []),
+    ]
 
 
 def checkout_secrets(cwd: Path | str) -> tuple[str, ...]:
