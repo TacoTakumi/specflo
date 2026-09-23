@@ -70,7 +70,12 @@ def upstream_app() -> Starlette:
         body = await request.body()
         asked = json.loads(body or b"{}") if body.startswith(b"{") else {}
         if not asked.get("stream"):
-            return JSONResponse({"served": request.url.path, "body": body.decode("utf-8")})
+            return JSONResponse({
+                "served": request.url.path,
+                "body": body.decode("utf-8"),
+                "query": request.url.query,
+                "type": request.headers.get("content-type", ""),
+            })
 
         async def chunks():
             for token in TOKENS:
@@ -440,3 +445,48 @@ def test_a_held_completion_body_arrives_whole(held_client) -> None:
     answer = ask(held_client, "POST", "/v1/completions", content=body.encode())
 
     assert json.loads(answer.json()["body"]) == json.loads(body)
+
+
+# llama-swap does not read the model the way the filter does. For a JSON body
+# it takes the first "model" key, where Python keeps the last; for any other
+# content type it reads a form value, and the query string is one. So what
+# reaches it is a body the filter wrote itself, as JSON, with nothing else to
+# read a model from.
+
+
+def test_a_completion_with_a_repeated_model_key_arrives_naming_the_checked_model(
+    held_client,
+) -> None:
+    content = b'{"model": "model-b", "model": "model-a", "prompt": "hi"}'
+    answer = ask(held_client, "POST", "/v1/chat/completions", content=content)
+
+    assert answer.status_code == 200
+    arrived = answer.json()
+    assert arrived["body"].count('"model"') == 1
+    assert json.loads(arrived["body"]) == {"model": "model-a", "prompt": "hi"}
+    assert "model-b" not in arrived["body"]
+
+
+def test_a_completion_arrives_as_json_with_no_query_whatever_the_member_sent(
+    held_client,
+) -> None:
+    answer = held_client.post(
+        "/v1/chat/completions?model=model-b",
+        content=b'{"model": "model-a"}',
+        headers={"Content-Type": "text/plain"},
+    )
+
+    assert answer.status_code == 200
+    arrived = answer.json()
+    assert arrived["query"] == ""
+    assert arrived["type"] == "application/json"
+    assert json.loads(arrived["body"]) == {"model": "model-a"}
+
+
+@pytest.mark.parametrize("content", [b'{"model": "model-a", "t": NaN}', b'{"model": "model-a", "t": 1e400}'])
+def test_a_completion_that_cannot_be_written_again_as_json_is_refused(
+    held_client, content
+) -> None:
+    answer = ask(held_client, "POST", "/v1/chat/completions", content=content)
+
+    assert answer.status_code == bridge.REFUSED

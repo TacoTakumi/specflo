@@ -99,6 +99,12 @@ _HOP_BY_HOP: frozenset[str] = frozenset({
 # through: the length upstream declared is not this response's to promise.
 _REWRITTEN: frozenset[str] = _HOP_BY_HOP | {"content-length"}
 
+# What describes a body as it arrived, and is wrong for one written again.
+_WRITTEN_AGAIN: frozenset[str] = frozenset({"content-type", "content-length", "content-encoding"})
+
+# The content type of a completion's body as the filter writes it again.
+_JSON = "application/json"
+
 # The socket's name in the daemon root. A daemon reaches one llama-swap, so
 # there is one.
 SOCKET_NAME = "llama-swap.sock"
@@ -153,8 +159,9 @@ def filter_app(
     stands in its way, and the path alone does not say which: a member that
     asks for a model nothing holds would load one the ledger did not admit,
     over a model another lease holds. Such a completion's body is read whole
-    before it is forwarded, which a completion's body is small enough for;
-    its answer still streams. With no *models* the body is not read.
+    before it is forwarded, which a completion's body is small enough for,
+    and what is forwarded is that body written again as JSON, with no query
+    string; its answer still streams. With no *models* the body is not read.
 
     There is no route table: every request of every method arrives at the
     one decision below, so a method nobody thought of is refused there
@@ -174,23 +181,32 @@ def filter_app(
                 "requests a pooled member may make of llama-swap."
             )
         content: bytes | AsyncIterator[bytes]
+        query = request.url.query
+        headers = _passed(request.headers.items(), _HOP_BY_HOP | {"host"})
         if models is not None and _normalized(path) in _COMPLETIONS:
-            content = await request.body()
-            named = _model_of(content)
-            if named is None:
-                return _refusal("A completion must name its model.")
+            written = _written_again(await request.body())
+            named = written[0].get("model") if written is not None else None
+            if not isinstance(named, str):
+                return _refusal("A completion must be a JSON object that names its model.")
             # the pool is asked off the loop: the loop serves every member
             if named not in await asyncio.to_thread(models):
                 return _refusal(
                     f"'{named}' is not a model the pool holds now; a member asks "
                     "only for the model it was leased with."
                 )
+            # llama-swap reads the model again, and not as this filter did: the
+            # first of two "model" keys, or a form value, which the query
+            # string is, when the body is not JSON. So it is given only what
+            # was checked: the body written again, as JSON, and no query.
+            content = written[1]
+            query = ""
+            headers = [*_passed(headers, _WRITTEN_AGAIN), ("content-type", _JSON)]
         else:
             content = _body(request)
         upward = out.build_request(
             request.method,
-            httpx.URL(url=_normalized(path), query=request.url.query.encode("ascii")),
-            headers=_passed(request.headers.items(), _HOP_BY_HOP | {"host"}),
+            httpx.URL(url=_normalized(path), query=query.encode("ascii")),
+            headers=headers,
             content=content,
         )
         answer = await out.send(upward, stream=True)
@@ -218,14 +234,19 @@ def _refusal(message: str) -> JSONResponse:
     )
 
 
-def _model_of(body: bytes) -> str | None:
-    """The model a completion's body names, or None when it names none."""
+def _written_again(body: bytes) -> tuple[dict, bytes] | None:
+    """A completion's body as a JSON object, and that object written again;
+    None when it is not one, or holds a number JSON cannot carry.
+
+    A repeated key is kept once, as the last of them, which is the one read.
+    """
     try:
         data = json.loads(body)
+        if not isinstance(data, dict):
+            return None
+        return data, json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
     except ValueError:
         return None
-    model = data.get("model") if isinstance(data, dict) else None
-    return model if isinstance(model, str) else None
 
 
 async def _lifespan(receive: Receive, send: Send, close: httpx.AsyncClient | None) -> None:
