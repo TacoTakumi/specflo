@@ -41,6 +41,7 @@ with it when the lease ends.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 from copy import deepcopy
@@ -236,9 +237,11 @@ def create(
     directory = Path(tempfile.mkdtemp(prefix=f"{member.name}-", dir=root))
     (directory / MARKER).write_text("", encoding="utf-8")
     if config is not None:
-        (directory / MODELS_FILE).write_text(
-            json.dumps(config, indent=2) + "\n", encoding="utf-8"
-        )
+        # This user's alone from the moment it is made: a local member's copy
+        # carries the operator's provider key as written.
+        made = os.open(directory / MODELS_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(made, "w", encoding="utf-8") as file:
+            file.write(json.dumps(config, indent=2) + "\n")
     _copy_skills(directory / SKILLS_DIR, sources)
     return directory
 

@@ -300,7 +300,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   namespace starts no member, and the refusal says why.
   Every member, local ones too, gets a pi configuration directory
   generated for its lease and removed at its end, and none starts without
-  one. A directory without the pool's marker file is never removed. A
+  one. The directory is the daemon user's alone, and so is the models file
+  in it, which is made with mode 0600. A directory without the pool's marker file is never removed. A
   definition's skills are copied into that directory with their links
   resolved, so a skill edited on the host does not change under a running
   member. A skill that cannot be found, or a name that walks out of the

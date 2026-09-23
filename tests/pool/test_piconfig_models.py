@@ -11,6 +11,8 @@ fields the operator curated for it.
 from __future__ import annotations
 
 import json
+import os
+import stat
 from dataclasses import replace
 from pathlib import Path
 
@@ -146,3 +148,48 @@ def test_a_hosted_member_is_untouched_by_the_operators_file(
 
     config = json.loads((directory / piconfig.MODELS_FILE).read_text(encoding="utf-8"))
     assert list(config["providers"]) == [piconfig.PROVIDER]
+
+
+# --- who may read the generated file ------------------------------------------
+
+# A local member's file carries the operator's provider key as written, so it
+# is this user's alone, like the directory around it. Under a umask of 0 a
+# file takes the mode it was made with and no other.
+
+
+@pytest.fixture
+def open_umask():
+    before = os.umask(0)
+    try:
+        yield
+    finally:
+        os.umask(before)
+
+
+@pytest.mark.parametrize("member", [LOCAL_MEMBER, NO_TRAIN_MEMBER], ids=["local", "hosted"])
+def test_the_generated_models_file_is_the_users_alone(
+    tmp_path: Path, models_file: Path, open_umask, member
+) -> None:
+    directory = piconfig.create(tmp_path / "generated", member, ACCOUNTS, models_file=models_file)
+
+    assert stat.S_IMODE(os.stat(directory / piconfig.MODELS_FILE).st_mode) == 0o600
+
+
+def test_the_generated_models_file_is_made_owner_only_and_never_wider_first(
+    tmp_path: Path, models_file: Path, monkeypatch
+) -> None:
+    made: list[tuple[str, int]] = []
+    real_open = os.open
+
+    def recording(path, flags, mode=0o777, *args, **kwargs):
+        if flags & os.O_CREAT:
+            made.append((os.fspath(path), mode))
+        return real_open(path, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", recording)
+    directory = piconfig.create(
+        tmp_path / "generated", LOCAL_MEMBER, ACCOUNTS, models_file=models_file
+    )
+
+    target = os.fspath(directory / piconfig.MODELS_FILE)
+    assert [mode for path, mode in made if path == target] == [0o600]
