@@ -317,10 +317,11 @@ def test_the_service_asks_one_ledger_function_whether_a_request_fits():
     assert fit_calls["_place"].count("place") == 1
     # and the only other thing asked of the ledger is a lease's agent name
     assert {call for calls in asking.values() for call in calls} <= {
-        "place", "Request", "agent_of",
+        "place", "Request", "agent_of", "held",
     }
     # the service counts nothing itself: it reads the active leases to hand
-    # them over, and to check expiry
+    # them over, to the placement and to the models the bridge allows, and to
+    # check expiry
     readers = {
         name for name, node in functions.items()
         if any(
@@ -328,7 +329,7 @@ def test_the_service_asks_one_ledger_function_whether_a_request_fits():
             and n.func.attr == "list_leases" for n in ast.walk(node)
         )
     }
-    assert readers == {"_place", "expire_due"}
+    assert readers == {"_place", "expire_due", "held_models"}
     source = ast.unparse(tree)
     assert ".capacity" not in source and ".size" not in source
 

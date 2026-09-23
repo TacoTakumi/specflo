@@ -25,7 +25,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
-from ..pool import accounts, bridge, events, watch
+from ..pool import accounts, bridge, events, service, watch
 from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
 from .routes import router
@@ -47,7 +47,8 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
 
     A root with a pool directory when the daemon starts has the bridge served
     on its socket until the daemon stops, whatever the configuration in the
-    directory says: the filter reads none of it. The socket is made before
+    directory says. The filter asks the pool in force which models it holds,
+    on each completion; with no pool in force it holds none. The socket is made before
     anything else runs, so a daemon that cannot have it - another daemon
     serves it - does not start.
     """
@@ -59,9 +60,11 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
         root = app.state.root
         if pool_dir(root).is_dir():
             upstream = os.environ.get(events.URL_ENV) or events.DEFAULT_URL
-            await serving.enter_async_context(
-                bridge.serving(bridge.socket_path(root), upstream)
-            )
+            await serving.enter_async_context(bridge.serving(
+                bridge.socket_path(root), upstream,
+                # the pool in force at each request: a reload can change it
+                models=lambda: service.held_models(pool()),
+            ))
         readers = (
             events.reader_for(pool()), watch.watcher_for(pool()), accounts.reader_for(pool())
         )

@@ -237,6 +237,13 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+def held_models(pool: PoolService | None) -> frozenset[str]:
+    """The models *pool* holds now, and none for a daemon with no pool in
+    force: with no pool there is no lease, so nothing a member asks for is
+    held."""
+    return frozenset() if pool is None else pool.held_models()
+
+
 def _mint_id() -> str:
     return f"lease-{secrets.token_hex(8)}"
 
@@ -271,6 +278,18 @@ class PoolService:
     _turn: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     # True while the expiry check runs: the endings it makes do not check again.
     _checking: bool = field(default=False, init=False, repr=False)
+
+    def held_models(self) -> frozenset[str]:
+        """Every name llama-swap answers a model under that an active lease or
+        a project agent holds now; the ledger says which (``ledger.held``).
+
+        The bridge asks on every completion, from a thread of its own, so the
+        wait for a lease start that holds the turn falls on that one request.
+        """
+        self.expire_due()
+        with self.open_store() as store:
+            leases = store.list_leases(state=ledger.ACTIVE)
+        return ledger.held(self.config, [*leases, *self.standing()])
 
     def expire_due(self, own: str | None = None) -> list[Ended]:
         """End every lease that has been idle for its limit; the endings made.

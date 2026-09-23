@@ -357,3 +357,86 @@ def test_an_upstream_that_is_not_there_fails_at_once() -> None:
 
     assert answer.status_code >= 500
     assert time.monotonic() - started < 2
+
+
+# --- which models a completion may name --------------------------------------
+
+# The names llama-swap answers the held model under, as the daemon hands them
+# to the filter: a config ID and its alias.
+HELD = frozenset({"model-a", "Model-A"})
+
+
+@pytest.fixture
+def held_client() -> TestClient:
+    """A client of the filter that forwards a completion only for a held model."""
+    upstream = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=upstream_app()), base_url="http://llama-swap"
+    )
+    app = bridge.filter_app("http://llama-swap", upstream, models=lambda: HELD)
+    with TestClient(app) as client:
+        yield client
+
+
+@pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/completions"])
+@pytest.mark.parametrize("model", sorted(HELD))
+def test_a_completion_for_a_held_model_is_forwarded(held_client, path, model) -> None:
+    answer = ask(held_client, "POST", path, json={"model": model})
+
+    assert answer.status_code == 200
+    assert json.loads(answer.json()["body"]) == {"model": model}
+
+
+@pytest.mark.parametrize("path", ["/v1/chat/completions", "/v1/completions"])
+def test_a_completion_for_a_model_nothing_holds_is_refused(held_client, path) -> None:
+    answer = ask(held_client, "POST", path, json={"model": "model-b"})
+
+    assert answer.status_code == bridge.REFUSED
+    message = answer.json()["error"]["message"]
+    assert "model-b" in message
+    assert not any(name in message for name in HELD)
+
+
+@pytest.mark.parametrize(
+    "content", [b"{}", b'{"model": 7}', b"not json", b"", b'["model-a"]']
+)
+def test_a_completion_that_names_no_model_is_refused(held_client, content) -> None:
+    answer = ask(held_client, "POST", "/v1/chat/completions", content=content)
+
+    assert answer.status_code == bridge.REFUSED
+
+
+def test_with_nothing_held_every_completion_is_refused() -> None:
+    upstream = httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=upstream_app()), base_url="http://llama-swap"
+    )
+    with TestClient(
+        bridge.filter_app("http://llama-swap", upstream, models=frozenset)
+    ) as client:
+        answer = ask(client, "POST", "/v1/chat/completions", json={"model": "model-a"})
+
+    assert answer.status_code == bridge.REFUSED
+
+
+def test_the_models_listing_is_not_held_to_a_model(held_client) -> None:
+    assert ask(held_client, "GET", "/v1/models").status_code == 200
+
+
+def test_a_held_completion_still_streams_token_by_token(held_client) -> None:
+    with held_client.stream(
+        "POST", "/v1/chat/completions", json={"model": "model-a", "stream": True}
+    ) as answer:
+        assert answer.status_code == 200
+        read = [
+            json.loads(line.removeprefix("data: "))["token"]
+            for line in answer.iter_lines()
+            if line.startswith("data: ") and not line.endswith("[DONE]")
+        ]
+
+    assert read == list(TOKENS)
+
+
+def test_a_held_completion_body_arrives_whole(held_client) -> None:
+    body = json.dumps({"model": "model-a", "prompt": "x" * 100_000})
+    answer = ask(held_client, "POST", "/v1/completions", content=body.encode())
+
+    assert json.loads(answer.json()["body"]) == json.loads(body)

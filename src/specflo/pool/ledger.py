@@ -264,6 +264,25 @@ def place(
     )
 
 
+def held(config: PoolConfig, holders: Iterable[Lease | Standing]) -> frozenset[str]:
+    """Every name llama-swap answers a model under that *holders* hold: the
+    model's ID and each of its aliases, or the ID alone with no llama-swap
+    configuration to read them from.
+
+    The bridge forwards a completion only for these. A model nothing holds
+    is one this ledger did not admit, and loading it could evict a model a
+    lease holds.
+    """
+    ids = {
+        resource.name
+        for holder in holders
+        for resource in holder.resources
+        if resource.kind == MODEL
+    }
+    swap = config.swap
+    return frozenset(name for model in ids for name in (swap.names(model) if swap else (model,)))
+
+
 def agent_of(lease: Lease) -> str:
     """The name the agent of *lease* runs under: the one on its row, or its member's."""
     return next((r.name for r in lease.resources if r.kind == AGENT), lease.member)

@@ -324,7 +324,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   port before pi starts. The daemon's side of the socket allows chat
   completions, completions and the models listing, and answers 403 to
   everything else of llama-swap's surface, also to a member that stops the
-  forwarder and speaks to the socket itself. It streams both ways and waits
+  forwarder and speaks to the socket itself. A completion is forwarded only
+  when it names a model an active lease or a project agent holds, by its
+  llama-swap ID or an alias, so a member cannot load a model the ledger did
+  not admit. It streams both ways and waits
   as long as a model load or a paused stream takes, and a llama-swap that
   is not there fails within 5 s. A daemon root whose socket path is longer
   than a unix socket allows is refused at start. A hosted member keeps the

@@ -19,6 +19,15 @@ is refused, whether or not it exists upstream and whether or not llama-swap
 grows a new endpoint tomorrow. A path is matched after it is normalized, so
 nothing reaches an allowed name by walking up from another.
 
+A completion is also held to the models the pool holds now. llama-swap loads
+whatever model a request names, and evicts what stands in its way, so a
+member that names a model no lease holds could push out another member's.
+The daemon hands the filter the models held by an active lease or a project
+agent, under every name llama-swap answers them by, and a completion naming
+any other is refused. A member can still name a model another lease holds:
+the ledger let the two stand together, so that loads nothing and evicts
+nothing, and what it costs is a share of that model's turns.
+
 The filter is the boundary itself, not a convenience: the forwarder inside a
 member's sandbox is the member's to kill, and a member that speaks to the
 bound socket with a client of its own arrives right here.
@@ -39,11 +48,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import fcntl
+import json
 import os
 import posixpath
 import socket
 import stat
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Callable, Collection, Iterable
 from pathlib import Path
 
 import httpx
@@ -62,6 +72,10 @@ ALLOWED: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/v1/completions"),
     ("GET", "/v1/models"),
 })
+
+# The requests that name a model in their body: a completion is forwarded only
+# for a model the pool holds now.
+_COMPLETIONS: frozenset[str] = frozenset(path for method, path in ALLOWED if method == "POST")
 
 # What a refused request is answered with. It is not 404: the endpoint is
 # there and the member may not have it, and a member that reads the answer
@@ -122,12 +136,25 @@ def _passed(headers: Iterable[tuple[str, str]], drop: frozenset[str]) -> list[tu
     return [(name, value) for name, value in headers if name.lower() not in drop]
 
 
-def filter_app(upstream: str, client: httpx.AsyncClient | None = None) -> ASGIApp:
+def filter_app(
+    upstream: str,
+    client: httpx.AsyncClient | None = None,
+    models: Callable[[], Collection[str]] | None = None,
+) -> ASGIApp:
     """An app that answers for llama-swap at *upstream*, allow list first.
 
     *client* is the client the allowed requests go out on; one is made for
     *upstream* when none is given. A request is streamed both ways, so a
     completion that arrives token by token reaches the member that way.
+
+    *models* says which models a completion may name: every name of every
+    model the pool holds now. A completion naming another, or none, is
+    refused. llama-swap loads whatever model a request names, evicting what
+    stands in its way, and the path alone does not say which: a member that
+    asks for a model nothing holds would load one the ledger did not admit,
+    over a model another lease holds. Such a completion's body is read whole
+    before it is forwarded, which a completion's body is small enough for;
+    its answer still streams. With no *models* the body is not read.
 
     There is no route table: every request of every method arrives at the
     one decision below, so a method nobody thought of is refused there
@@ -142,21 +169,29 @@ def filter_app(upstream: str, client: httpx.AsyncClient | None = None) -> ASGIAp
     async def handle(request: Request) -> Response:
         path = request.url.path
         if not allowed(request.method, path):
-            return JSONResponse(
-                {"error": {
-                    "message": (
-                        f"'{request.method} {_normalized(path)}' is not one of the "
-                        "requests a pooled member may make of llama-swap."
-                    ),
-                    "type": "specflo_pool_refused",
-                }},
-                status_code=REFUSED,
+            return _refusal(
+                f"'{request.method} {_normalized(path)}' is not one of the "
+                "requests a pooled member may make of llama-swap."
             )
+        content: bytes | AsyncIterator[bytes]
+        if models is not None and _normalized(path) in _COMPLETIONS:
+            content = await request.body()
+            named = _model_of(content)
+            if named is None:
+                return _refusal("A completion must name its model.")
+            # the pool is asked off the loop: the loop serves every member
+            if named not in await asyncio.to_thread(models):
+                return _refusal(
+                    f"'{named}' is not a model the pool holds now; a member asks "
+                    "only for the model it was leased with."
+                )
+        else:
+            content = _body(request)
         upward = out.build_request(
             request.method,
             httpx.URL(url=_normalized(path), query=request.url.query.encode("ascii")),
             headers=_passed(request.headers.items(), _HOP_BY_HOP | {"host"}),
-            content=_body(request),
+            content=content,
         )
         answer = await out.send(upward, stream=True)
         return StreamingResponse(
@@ -174,6 +209,23 @@ def filter_app(upstream: str, client: httpx.AsyncClient | None = None) -> ASGIAp
             await answer(scope, receive, send)
 
     return app
+
+
+def _refusal(message: str) -> JSONResponse:
+    return JSONResponse(
+        {"error": {"message": message, "type": "specflo_pool_refused"}},
+        status_code=REFUSED,
+    )
+
+
+def _model_of(body: bytes) -> str | None:
+    """The model a completion's body names, or None when it names none."""
+    try:
+        data = json.loads(body)
+    except ValueError:
+        return None
+    model = data.get("model") if isinstance(data, dict) else None
+    return model if isinstance(model, str) else None
 
 
 async def _lifespan(receive: Receive, send: Send, close: httpx.AsyncClient | None) -> None:
@@ -205,12 +257,15 @@ def socket_path(root: Path) -> Path:
 
 @contextlib.asynccontextmanager
 async def serving(
-    path: Path, upstream: str, client: httpx.AsyncClient | None = None
+    path: Path,
+    upstream: str,
+    client: httpx.AsyncClient | None = None,
+    models: Callable[[], Collection[str]] | None = None,
 ) -> AsyncIterator[None]:
     """Serve the filter for llama-swap at *upstream* on a unix socket at
     *path* while the block runs, and remove the socket after it.
 
-    *client* is handed to ``filter_app`` as it is. The server runs on the
+    *client* and *models* are handed to ``filter_app`` as they are. The server runs on the
     running event loop and leaves the process's signals alone: they are the
     daemon's, and the daemon ends the block when it stops.
 
@@ -229,7 +284,7 @@ async def serving(
         listener = _bind(path)
         made = _identity(path)
         server = _Server(uvicorn.Config(
-            filter_app(upstream, client),
+            filter_app(upstream, client, models),
             lifespan="on",
             # the daemon's logging is configured already, and stays as it is
             log_config=None,
