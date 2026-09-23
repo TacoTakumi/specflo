@@ -290,8 +290,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   default), with its own mount, user and PID namespaces. The filesystem is
   the same for every egress class: a read-only root, a fresh `/dev`,
   `/proc` and `/tmp`, and the operator's home, `~/.pi`, `~/.agents`,
-  `~/.specflo`, the directory `PI_CODING_AGENT_DIR` names and
-  `XDG_RUNTIME_DIR` hidden. A member gets back its harness's installation,
+  `~/.specflo`, the directory `PI_CODING_AGENT_DIR` names,
+  `XDG_RUNTIME_DIR` and the daemon root hidden, with the `.specflo/leases`
+  and `.specflo/remotes` directories of every checkout from the member's
+  working directory up, which hold lease and daemon tokens. A working
+  directory that would bring a hidden path back is refused, at the request
+  and at the start: `/`, the home or a directory above it, a hidden
+  directory or one above or inside it, and one inside `.specflo`. A member gets back its harness's installation,
   the deny-list extension, its working directory and its generated pi
   configuration directory. An ancestor of a hidden path cannot be renamed
   from a writable bind, and a member's background process ends with its
@@ -306,11 +311,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   resolved, so a skill edited on the host does not change under a running
   member. A skill that cannot be found, or a name that walks out of the
   operator's skills directory, refuses the member before anything is made
-  for its lease.
+  for its lease. A skill that cannot be copied whole refuses it too, and
+  leaves nothing behind.
   `pool.yaml` gains `models_file`, the path of the operator's pi
   `models.json`. A local member's generated `models.json` is the operator's
   provider from that file, filtered to the one model the member declares.
-  Validation refuses a local member whose model the file does not hold,
+  Validation refuses a pool file that declares a local member and no
+  `models_file`, and a local member whose model the file does not hold,
   naming only that model, and a member whose command selects a model other
   than the one it declares. A local member's `model` may be the llama-swap
   config ID or any of its aliases. The ledger and the matrix use the config
@@ -328,7 +335,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   forwarder and speaks to the socket itself. A completion is forwarded only
   when it names a model an active lease or a project agent holds, by its
   llama-swap ID or an alias, so a member cannot load a model the ledger did
-  not admit. It streams both ways and waits
+  not admit. The daemon forwards it as a JSON body it writes again, with no
+  query string, so llama-swap reads the model that was checked, and the
+  check does not wait while a member starts. It streams both ways and waits
   as long as a model load or a paused stream takes, and a llama-swap that
   is not there fails within 5 s. A daemon root whose socket path is longer
   than a unix socket allows is refused at start. A hosted member keeps the
