@@ -300,7 +300,7 @@ def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str
     needs_swap = any(isinstance(f, dict) and f.get("backing") == LOCAL for _, f in member_entries)
     llama_swap, swap = _llama_swap(path, data.get("llama_swap"), needs_swap, errors)
     faults = len(errors)
-    models_file = _models_file(path, data.get("models_file"), errors)
+    models_file = _models_file(path, data.get("models_file"), needs_swap, errors)
     # A file already reported for its path is not opened, and a member is
     # checked against the operator's models only when there are some to
     # check it against.
@@ -406,12 +406,16 @@ def _llama_swap(
         return location, None
 
 
-def _models_file(path: Path, value: object, errors: list[ConfigError]) -> Path | None:
+def _models_file(
+    path: Path, value: object, needed: bool, errors: list[ConfigError]
+) -> Path | None:
     """The operator's models file the pool file names; None when it names none.
 
     A local member's generated models file is a copy of this one, filtered to
-    the model the member declares, so the pool has to be told where it is. A
-    relative path is taken from the pool file's own directory.
+    the model the member declares, so the pool has to be told where it is,
+    and a file declaring a local member and no models file is refused: every
+    lease of that member would fail at its start. A relative path is taken
+    from the pool file's own directory.
 
     What is checked is the path and not the content: whether it is there, and
     whether it is a regular file this user can read. A named pipe passes every
@@ -420,6 +424,12 @@ def _models_file(path: Path, value: object, errors: list[ConfigError]) -> Path |
     before anything opens it.
     """
     if value is None:
+        if needed:
+            errors.append(ConfigError(
+                path, FILE, "models_file",
+                "required; a local member's models file is a copy of the operator's, "
+                "and this is where that is.",
+            ))
         return None
     if not isinstance(value, str) or not value.strip():
         errors.append(ConfigError(path, FILE, "models_file", "must be a path."))

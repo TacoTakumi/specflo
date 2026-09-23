@@ -63,12 +63,14 @@ POOL = {
 def _write(tmp_path, pools=(POOL,), members=(CODER_A, CODER_B, HOSTED), definitions=None):
     """A pool directory: pool.yaml, the llama-swap fixture and definitions/."""
     shutil.copy(FIXTURES / "llama-swap.yaml", tmp_path / "llama-swap.yaml")
+    shutil.copy(FIXTURES / "models.json", tmp_path / "models.json")
     folder = tmp_path / config.DEFINITIONS_DIR
     folder.mkdir()
     for name, text in ({"worker": WORKER} if definitions is None else definitions).items():
         (folder / f"{name}.md").write_text(text, encoding="utf-8")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": "models.json",
         "accounts": [ACCOUNT],
         "members": list(members),
         "pools": list(pools),

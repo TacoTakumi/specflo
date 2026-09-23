@@ -201,9 +201,11 @@ def pools_root(tmp_path):
     folder.mkdir(parents=True)
     (folder / "rebaser.md").write_text(test_lease_request.REBASER, encoding="utf-8")
     shutil.copy(test_lease_request.FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    shutil.copy(test_lease_request.FIXTURES / "models.json", directory / "models.json")
     members = {POOL: "local-1", REVIEWERS: "local-2"}
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": "models.json",
         "members": [{
             "name": member, "command": "pi", "backing": "local", "model": "model-a",
             "labels": [], "capacity": 1, "egress": "local",

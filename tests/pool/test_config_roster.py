@@ -44,7 +44,8 @@ HOSTED = {
 def _write(tmp_path, accounts=(ACCOUNT,), members=(LOCAL, HOSTED), **top):
     """A pool file beside a copy of the llama-swap fixture."""
     shutil.copy(FIXTURES / "llama-swap.yaml", tmp_path / "llama-swap.yaml")
-    data = {"llama_swap": "llama-swap.yaml", "accounts": list(accounts), "members": list(members)}
+    shutil.copy(FIXTURES / "models.json", tmp_path / "models.json")
+    data = {"llama_swap": "llama-swap.yaml", "models_file": "models.json", "accounts": list(accounts), "members": list(members)}
     data.update(top)
     path = tmp_path / "pool.yaml"
     path.write_text(yaml.safe_dump(copy.deepcopy(data)), encoding="utf-8")

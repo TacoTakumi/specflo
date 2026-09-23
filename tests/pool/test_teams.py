@@ -79,12 +79,14 @@ def _team(roles, notes="The orchestrator leads; members do not message each othe
 def _write(tmp_path, team_files=None, pools=(WORKERS, CRITICS), members=(CODER_A, CODER_B, HOSTED)):
     """A pool directory: pool.yaml, the llama-swap fixture, definitions/ and teams/."""
     shutil.copy(FIXTURES / "llama-swap.yaml", tmp_path / "llama-swap.yaml")
+    shutil.copy(FIXTURES / "models.json", tmp_path / "models.json")
     folder = tmp_path / config.DEFINITIONS_DIR
     folder.mkdir()
     for name, text in {"worker": WORKER, "critic": CRITIC}.items():
         (folder / f"{name}.md").write_text(text, encoding="utf-8")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": "models.json",
         "accounts": [ACCOUNT],
         "members": list(members),
         "pools": list(pools),

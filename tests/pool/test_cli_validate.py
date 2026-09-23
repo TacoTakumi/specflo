@@ -86,12 +86,14 @@ def _write(root, members=(CODER_A, CODER_B, HOSTED), roles=(DESIGNER, REVIEWER))
     directory = root / cli_admin.POOL_DIRNAME
     directory.mkdir(parents=True)
     shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    shutil.copy(FIXTURES / "models.json", directory / "models.json")
     folder = directory / config.DEFINITIONS_DIR
     folder.mkdir()
     for name, text in {"worker": WORKER, "critic": CRITIC}.items():
         (folder / f"{name}.md").write_text(text, encoding="utf-8")
     data = {
         "llama_swap": "llama-swap.yaml",
+        "models_file": "models.json",
         "accounts": [ACCOUNT],
         "members": list(members),
         "pools": [WORKERS, CRITICS],

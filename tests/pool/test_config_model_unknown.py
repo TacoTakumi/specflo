@@ -102,12 +102,16 @@ def test_a_hosted_member_is_not_checked_against_the_operators_file(tmp_path: Pat
     assert faults_of(write_pool(tmp_path, [LOCAL, HOSTED])) == []
 
 
-def test_a_pool_file_that_names_no_models_file_is_not_checked(tmp_path: Path) -> None:
-    # There is nothing to check against; the copy at the start of a lease is
-    # what refuses such a member, and it names the missing declaration.
+def test_a_pool_file_that_names_no_models_file_is_faulted_for_that_alone(
+    tmp_path: Path,
+) -> None:
+    # There is nothing to check the member's model against, so the one fault
+    # is the missing declaration.
     path = write_pool(tmp_path, [on_model(UNHELD)], models_file=None)
 
-    assert faults_of(path) == []
+    (fault,) = faults_of(path)
+    assert "models_file" in str(fault)
+    assert UNHELD not in str(fault)
 
 
 def test_a_models_file_that_cannot_be_parsed_is_reported_once_and_not_as_the_model(

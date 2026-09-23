@@ -12,11 +12,14 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import pytest
 
 from specflo.pool import config as pool_config
+
+FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "pool"
 
 MODELS = {"providers": {"llama-swap": {"baseUrl": "http://127.0.0.1:8080/v1"}}}
 
@@ -127,7 +130,7 @@ def test_a_named_pipe_is_refused_rather_than_read(tmp_path: Path) -> None:
     assert any("models_file" in fault for fault in faults)
 
 
-def test_a_pool_file_that_names_none_is_no_fault(tmp_path: Path) -> None:
+def test_a_pool_file_of_hosted_members_that_names_none_is_no_fault(tmp_path: Path) -> None:
     directory = write_pool(tmp_path, "models.json")
     (directory / "pool.yaml").write_text(
         "\n".join(
@@ -149,3 +152,39 @@ def test_a_declaration_that_is_not_a_path_fails(tmp_path: Path) -> None:
     faults = faults_of(write_pool(tmp_path, "[]"))
 
     assert any("models_file" in fault for fault in faults)
+
+
+LOCAL_POOL = """\
+llama_swap: llama-swap.yaml
+members:
+  - name: local-1
+    command: pi --mode rpc
+    backing: local
+    model: model-a
+    labels: []
+    capacity: 1
+    egress: local
+pools:
+  - name: rebasers
+    definition: rebaser
+    members: [local-1]
+    size: 1
+    idle_default: 10m
+    idle_max: 4h
+"""
+
+
+def test_a_pool_file_with_a_local_member_that_names_no_models_file_fails(
+    tmp_path: Path,
+) -> None:
+    # Every lease of such a member would fail at its start, where its models
+    # file is copied from the operator's.
+    directory = write_pool(tmp_path, "models.json")
+    shutil.copy(FIXTURES / "llama-swap.yaml", directory / "llama-swap.yaml")
+    (directory / "pool.yaml").write_text(LOCAL_POOL, encoding="utf-8")
+
+    faults = faults_of(directory)
+
+    assert len(faults) == 1
+    assert "models_file" in faults[0]
+    assert "local" in faults[0]
