@@ -102,9 +102,9 @@ def record_of(rig, member: str) -> Path | None:
 
 def member(rig, name: str, model: str = "model-a", **fields) -> dict:
     """A local member that starts the rig's pi double behind a record of its own."""
-    recorder = rig.tmp_path / "recorder.py"
-    scenario = rig.tmp_path / "scenario.json"
-    stub = rig.tmp_path / "stub_pi.py"
+    recorder = rig.harness / "recorder.py"
+    scenario = rig.harness / "scenario.json"
+    stub = rig.harness / "stub_pi.py"
     harness = shlex.split(rig.command)[0]
     return {
         "name": name, "backing": "local", "model": model, "labels": [], "capacity": 1,

@@ -216,30 +216,34 @@ class Rig:
         self.models_file.write_text(json.dumps(OPERATOR_MODELS), encoding="utf-8")
 
         self.herdr_state = tmp_path / "herdr.json"
-        bin_dir = tmp_path / "bin"
-        bin_dir.mkdir()
+        # The harness's installation, which the sandbox binds back: a
+        # directory of its own, since one that held the test's other
+        # directories would bring back what the sandbox hides.
+        self.harness = tmp_path / "harness"
+        bin_dir = self.harness / "bin"
+        bin_dir.mkdir(parents=True)
         script = bin_dir / "herdr"
         script.write_text(FAKE_HERDR, encoding="utf-8")
         script.chmod(script.stat().st_mode | stat.S_IEXEC)
         # Stands where the harness stands: a program on the member's PATH,
         # whose installation the sandbox binds back the way it binds pi's.
         (bin_dir / "pi").symlink_to(sys.executable)
-        recorder = tmp_path / "recorder.py"
+        recorder = self.harness / "recorder.py"
         recorder.write_text(RECORDER, encoding="utf-8")
-        stub = tmp_path / "stub_pi.py"
+        stub = self.harness / "stub_pi.py"
         stub.write_text(STUB.read_text(encoding="utf-8"), encoding="utf-8")
         # The stub speaks pi's frames through the package's own protocol
         # module, and the checkout it is installed from is not somewhere a
         # member can read. A copy beside the stub is: a script's directory
         # comes first on the path it imports from.
-        protocol = tmp_path / "specflo" / "agent"
+        protocol = self.harness / "specflo" / "agent"
         protocol.mkdir(parents=True)
         (protocol.parent / "__init__.py").write_text("", encoding="utf-8")
         (protocol / "__init__.py").write_text("", encoding="utf-8")
         (protocol / "protocol.py").write_text(
             PROTOCOL.read_text(encoding="utf-8"), encoding="utf-8"
         )
-        scenario = tmp_path / "scenario.json"
+        scenario = self.harness / "scenario.json"
         scenario.write_text(json.dumps({"reply": "done"}), encoding="utf-8")
         # The record is written in the member's own working directory, the
         # one place every member may write, whichever directory a lease names.
@@ -442,7 +446,7 @@ def test_a_pane_start_reads_no_module_from_the_leases_working_directory(rig):
 
 
 def test_a_headless_start_reads_no_module_from_the_leases_working_directory(rig):
-    (rig.tmp_path / "bin" / "herdr").unlink()
+    (rig.harness / "bin" / "herdr").unlink()
     marker = rig.shadow_modules("shlex", "json")
 
     rig.start(rig.local_member())

@@ -101,7 +101,7 @@ class PoolRig(Rig):
 
     def scenario(self, **keys) -> None:
         """What the stub pi of the members started from now on does."""
-        (self.tmp_path / "scenario.json").write_text(json.dumps(keys), encoding="utf-8")
+        (self.harness / "scenario.json").write_text(json.dumps(keys), encoding="utf-8")
 
     def config(self, *members: Member, size: int | None = None, **pool) -> PoolConfig:
         """One pool, "rebasers", of *members*; by default as large as they are many."""

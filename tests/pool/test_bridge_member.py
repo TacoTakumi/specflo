@@ -182,7 +182,7 @@ def test_a_forwarder_slow_to_listen_is_listening_before_pi_runs(rig, socket_path
     # The forwarder, found on the daemon's PATH ahead of the real one, takes
     # far longer to listen than the member takes to ask: a launcher that did
     # not wait for it would hand pi a closed port.
-    slow = rig.tmp_path / "bin" / "socat"
+    slow = rig.harness / "bin" / "socat"
     slow.write_text(f"#!/bin/sh\nsleep 0.3\nexec {shutil.which('socat')} \"$@\"\n")
     slow.chmod(0o755)
     out = rig.work / "probe.json"
@@ -196,7 +196,7 @@ def test_a_forwarder_slow_to_listen_is_listening_before_pi_runs(rig, socket_path
 
 def test_a_forwarder_that_never_listens_fails_the_start_saying_so(rig, socket_path) -> None:
     skip_without_a_forwarder()
-    broken = rig.tmp_path / "bin" / "socat"
+    broken = rig.harness / "bin" / "socat"
     broken.write_text("#!/bin/sh\nexit 3\n")
     broken.chmod(0o755)
 

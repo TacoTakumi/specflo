@@ -78,13 +78,13 @@ def member_command(rig, member: str, reply: str) -> str:
 
     The stub recalls: a reply names the prompts the same session had before
     it, so a revised result differs from the first and shows one context."""
-    scenario = rig.tmp_path / f"scenario-{member}.json"
+    scenario = rig.harness / f"scenario-{member}.json"
     scenario.write_text(
         json.dumps({"reply": reply, "recall": True, "capture": capture_name(member)}),
         encoding="utf-8",
     )
-    recorder = rig.tmp_path / "recorder.py"
-    stub = rig.tmp_path / "stub_pi.py"
+    recorder = rig.harness / "recorder.py"
+    stub = rig.harness / "stub_pi.py"
     harness = shlex.split(rig.command)[0]
     return f"{harness} {recorder} {record_name(member)} {stub} {scenario}"
 
