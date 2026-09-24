@@ -406,9 +406,9 @@ def idle_seconds(text: str) -> int:
 
 def member_directory(cwd: Path | None) -> Path:
     """Where the member starts: *cwd*, taken from the working directory when it
-    is relative, or the working directory itself."""
+    is relative, or the working directory itself, at its real path."""
     directory = Path.cwd() if cwd is None else (Path.cwd() / cwd)
-    directory = Path(os.path.abspath(directory))
+    directory = Path(os.path.realpath(directory))
     if not directory.is_dir():
         raise SpecfloError(f"The working directory '{directory}' is not a directory.")
     return directory

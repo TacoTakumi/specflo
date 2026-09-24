@@ -45,6 +45,7 @@ answers for the member with no lease behind it.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import shlex
@@ -171,10 +172,20 @@ def member_argv(
     becomes pi. A bridge is refused for any other member: one that shares
     the host's network has no use for it, and would have a second way to
     llama-swap.
+
+    The working directory, the generated directory and the bridge socket are
+    taken at their real paths. The hidden paths are real paths, and a bind at
+    a link's own path would bring a checkout back under a name none of them
+    covers.
     """
     fault = working_directory_fault(cwd, environ, daemon_root)
     if fault is not None:
         raise LaunchError(f"member '{member.name}' cannot start: {fault}")
+    cwd = os.path.realpath(cwd)
+    if config_dir is not None:
+        config_dir = os.path.realpath(config_dir)
+    if bridge is not None:
+        bridge = dataclasses.replace(bridge, socket=os.path.realpath(bridge.socket))
     hidden = [*_swept(environ, daemon_root), *checkout_secrets(cwd)]
     program = shlex.split(member.command)[0]
     writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]

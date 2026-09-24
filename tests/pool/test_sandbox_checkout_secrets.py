@@ -33,14 +33,14 @@ from specflo.pool.config import Member
 
 from .test_runner import DEFINITION
 
-# Lists each directory it is given and reads each file, and writes what it
-# found. The member's own command line follows its arguments, and it
+# Lists each directory it is given, reads each file and tries each rename,
+# and writes what it found. The member's own command line follows its arguments, and it
 # ignores that.
 PROBE = '''import json, os, sys
 
 out = sys.argv[1]
 asked = json.loads(sys.argv[2])
-found = {"listed": {}, "read": {}}
+found = {"listed": {}, "read": {}, "renamed": {}}
 for path in asked["directories"]:
     try:
         found["listed"][path] = sorted(os.listdir(path))
@@ -52,6 +52,12 @@ for path in asked["files"]:
             found["read"][path] = f.read()
     except OSError as exc:
         found["read"][path] = exc.strerror
+for source, target in asked.get("renames", []):
+    try:
+        os.rename(source, target)
+        found["renamed"][source] = "renamed"
+    except OSError as exc:
+        found["renamed"][source] = exc.strerror
 with open(out, "w", encoding="utf-8") as f:
     json.dump(found, f)
 '''
@@ -162,6 +168,40 @@ def test_checkout_secrets_written_after_the_sandbox_is_built_read_as_empty(
 
     assert found["listed"] == {str(leases): []}
     assert "WRITTEN-LATER" not in found["read"][str(leases / "mine.token")]
+
+
+def test_a_working_directory_given_through_a_symlink_hides_the_checkout_secrets(
+    tmp_path, environ, checkout
+) -> None:
+    skip_without_a_sandbox()
+    # The link is under the home, which the sandbox sweeps: a bind at the
+    # link's own path would bring the checkout back under a name the hidden
+    # paths, which are real paths, do not cover.
+    link = Path(environ["HOME"]) / "w"
+    link.symlink_to(checkout)
+    member, out = probed(tmp_path, checkout, {
+        "directories": [str(link / ".specflo" / "leases"), str(checkout / ".specflo" / "leases")],
+        "files": [
+            str(link / ".specflo" / "leases" / "other.token"),
+            str(checkout / ".specflo" / "remotes" / "rig.json"),
+        ],
+        "renames": [
+            [str(link / ".specflo"), str(link / ".renamed")],
+            [str(checkout / ".specflo"), str(checkout / ".renamed")],
+        ],
+    })
+
+    command = argv(tmp_path, environ, member, link)
+    found = run(command, out)
+
+    assert command[command.index("--chdir") + 1] == str(checkout)
+    for listed in found["listed"].values():
+        assert "other.token" not in listed
+    for text in found["read"].values():
+        assert "SECRET-LEASE-TOKEN" not in text
+        assert "DAEMON-BEARER" not in text
+    assert "renamed" not in found["renamed"].values()
+    assert (checkout / ".specflo" / "leases" / "other.token").exists()
 
 
 def test_checkout_secrets_of_every_ancestor_checkout_are_hidden(
