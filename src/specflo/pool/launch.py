@@ -232,10 +232,11 @@ def member_argv(
             )
         readonly.append(bridge.socket)
         forwarder = sandbox.forwarder_argv(bridge, socat)
-    limits = sandbox.DEFAULT_LIMITS if limits is None else limits
     # A member's process count is its scope's own when the user manager can
     # make one; the per-uid count prlimit sets counts the whole host.
-    scoped = bool(limits.max_procs) and sandbox.scope_fault(environ) is None
+    scope, limits = sandbox.member_limits(
+        sandbox.DEFAULT_LIMITS if limits is None else limits, environ
+    )
     prefix = sandbox.base_argv(
         egress=member.egress,
         hidden=hidden,
@@ -243,10 +244,9 @@ def member_argv(
         writable=writable,
         readonly=readonly,
         links=links,
-        limits=dataclasses.replace(limits, max_procs=0) if scoped else limits,
+        limits=limits,
         chdir=cwd,
     )
-    scope = sandbox.scope_argv(limits.max_procs, environ) if scoped else []
     return [*scope, *prefix, *forwarder, *pi_argv(definition, member)]
 
 

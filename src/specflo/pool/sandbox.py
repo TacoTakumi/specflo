@@ -56,12 +56,13 @@ skip on and for a start to refuse with.
 
 from __future__ import annotations
 
+import logging
 import os
 import resource
 import shutil
 import subprocess
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from ..errors import SpecfloError
@@ -367,6 +368,44 @@ def scope_argv(tasks: int, environ: Mapping[str, str]) -> list[str]:
         "--user", "--scope", "--quiet", "-p", f"TasksMax={tasks}", "--",
         env, *[word for name in (RUNTIME_DIR_VAR, *_SCOPE_ADDS) for word in ("-u", name)],
     ]
+
+
+# The margin above the uid's threads a member gets when no scope can be made.
+# The per-uid count is shared with the host and every other member, so it is
+# twice the task limit a member has in a scope of its own.
+FALLBACK_MARGIN = 1024
+
+_log = logging.getLogger(__name__)
+
+# Whether this daemon has said that members start without a scope. It is said
+# once: it is a fact of the daemon's session, not of any one member.
+_told_no_scope = False
+
+
+def member_limits(limits: Limits, environ: Mapping[str, str]) -> tuple[list[str], Limits]:
+    """The scope prefix a member starts under and the limits prlimit sets.
+
+    With the user manager reachable from *environ*, the daemon's environment,
+    the member's process count is its scope's task limit and prlimit sets
+    none. Without it, there is no scope, and prlimit sets the per-uid count
+    with ``FALLBACK_MARGIN`` above the uid's threads, or the member's own limit
+    where that is larger; the first time, the daemon logs why.
+    """
+    global _told_no_scope
+    if not limits.max_procs:
+        return [], limits
+    fault = scope_fault(environ)
+    if fault is None:
+        return scope_argv(limits.max_procs, environ), replace(limits, max_procs=0)
+    if not _told_no_scope:
+        _told_no_scope = True
+        _log.warning(
+            "members start under the per-uid process limit, not a scope of their own: "
+            "the user manager cannot be reached (%s). Start the daemon in a login session "
+            "with %s set, and enable linger if members must outlive a logout.",
+            fault, RUNTIME_DIR_VAR,
+        )
+    return [], replace(limits, max_procs=max(limits.max_procs, FALLBACK_MARGIN))
 
 
 def prlimit_path() -> str | None:
