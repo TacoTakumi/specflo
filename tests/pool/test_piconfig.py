@@ -134,7 +134,6 @@ def test_a_local_member_gets_a_directory_of_its_own(tmp_path):
     assert directory is not None
     assert directory.is_dir()
     assert directory.parent == tmp_path / "generated"
-    assert (directory / piconfig.MARKER).is_file()
 
 
 def test_a_local_member_carries_no_routing(tmp_path):
@@ -220,7 +219,7 @@ def test_two_leases_on_one_member_get_a_directory_each(tmp_path):
 
     assert first != second
     # Ending one lease leaves the other's configuration in place.
-    piconfig.remove(first)
+    piconfig.remove(first, tmp_path)
     assert not first.exists()
     assert _provider(second)["compat"]["openRouterRouting"] == NO_TRAIN_ROUTING
 
@@ -231,13 +230,13 @@ def test_the_directory_is_removed_when_the_lease_ends(tmp_path):
     (directory / "sessions").mkdir()
     (directory / "sessions" / "one.jsonl").write_text("{}\n", encoding="utf-8")
 
-    piconfig.remove(directory)
+    piconfig.remove(directory, tmp_path)
 
     assert not directory.exists()
     assert list(tmp_path.iterdir()) == []
     # Ending a lease twice, or a local member's lease, removes nothing.
-    piconfig.remove(directory)
-    piconfig.remove(None)
+    piconfig.remove(directory, tmp_path)
+    piconfig.remove(None, tmp_path)
 
 
 def test_a_directory_that_was_not_generated_is_never_removed(tmp_path):
@@ -246,7 +245,7 @@ def test_a_directory_that_was_not_generated_is_never_removed(tmp_path):
     (own / piconfig.MODELS_FILE).write_text("{}", encoding="utf-8")
 
     with pytest.raises(launch.LaunchError):
-        piconfig.remove(own)
+        piconfig.remove(own, tmp_path / "generated")
 
     assert (own / piconfig.MODELS_FILE).exists()
 

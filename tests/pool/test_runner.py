@@ -304,7 +304,7 @@ class Rig:
     def launch_leftovers(self, name: str) -> list[str]:
         """What a launch of *name* writes that must not outlive it."""
         state_dir = AgentPaths.resolve(name).root
-        left = [f for f in (runner.LAUNCH_FILE, runner.CONFIG_DIR_FILE)
+        left = [f for f in (runner.LAUNCH_FILE, runner.CONFIG_DIR_FILE, runner.CONFIG_ROOT_FILE)
                 if (state_dir / f).exists()]
         if self.config_root.is_dir():
             left += [p.name for p in self.config_root.iterdir()]
@@ -737,7 +737,7 @@ def test_stop_does_not_take_a_host_that_gives_no_answer_for_one_that_is_gone(rig
 def test_stop_does_not_take_a_host_that_accepts_no_more_connections_for_one_that_is_gone(rig):
     paths = AgentPaths.resolve("hosted-1").ensure()
     config_dir = piconfig.create(rig.config_root, rig.hosted_member(), ACCOUNTS)
-    (paths.root / runner.CONFIG_DIR_FILE).write_text(str(config_dir), encoding="utf-8")
+    runner._record_config(paths, config_dir, rig.config_root)
     # a host that hangs for long: it listens, and its queue of callers is full
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     callers = []
@@ -769,7 +769,7 @@ def test_stop_does_not_take_a_host_that_accepts_no_more_connections_for_one_that
 def test_stopping_a_member_whose_socket_refuses_the_connection_finds_it_gone(rig):
     paths = AgentPaths.resolve("hosted-1").ensure()
     config_dir = piconfig.create(rig.config_root, rig.hosted_member(), ACCOUNTS)
-    (paths.root / runner.CONFIG_DIR_FILE).write_text(str(config_dir), encoding="utf-8")
+    runner._record_config(paths, config_dir, rig.config_root)
     # what a killed host leaves: a socket file that nothing listens on
     left = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     left.bind(str(paths.socket))

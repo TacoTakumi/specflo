@@ -95,6 +95,9 @@ LAUNCH_FILE = "pool-launch.json"
 # the agent's state directory so that the end of the lease finds it again,
 # from a fresh daemon process too. A local member has none.
 CONFIG_DIR_FILE = "pool-config-dir"
+# The configuration root it was made in, beside it: only a direct child of
+# that root is ever removed.
+CONFIG_ROOT_FILE = "pool-config-root"
 
 # Where the agent host keeps what pi writes on its standard error, in the
 # agent's state directory. The host appends to it, lease after lease.
@@ -232,12 +235,12 @@ def start(
         # The host appends pi's error output to what former leases left.
         stderr_from = _size(paths.root / PI_STDERR_FILE)
         _write_private(paths.root / LAUNCH_FILE, json.dumps(spec))
-        _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
+        _record_config(paths, config_dir, config_root)
     except BaseException:
         # Until the record is written no stop can find the directory, and a
         # local member's holds the provider key.
         (paths.root / LAUNCH_FILE).unlink(missing_ok=True)
-        piconfig.remove(config_dir)
+        piconfig.remove(config_dir, config_root)
         raise
     # -P: the launch runs in the lease's working directory, with the host's
     # environment, and takes no module of its own from there.
@@ -807,17 +810,42 @@ def _write_private(path: Path, text: str) -> None:
         f.write(text)
 
 
+def _record_config(paths: AgentPaths, config_dir: Path | str, config_root: Path | str) -> None:
+    """Keep, in the agent's state directory, the generated directory of its
+    lease and the configuration root it was made in. The state directory is
+    the daemon's, and the sandbox hides it from the member."""
+    _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
+    _write_private(paths.root / CONFIG_ROOT_FILE, str(config_root))
+
+
 def _forget(paths: AgentPaths) -> None:
     """Remove what a lease left on disk: the launch file, if pi never read it,
-    and the generated pi configuration directory."""
+    and the generated pi configuration directory the daemon's record names.
+
+    A record whose directory is not a direct child of the root it names is
+    not acted on: the refusal is logged, and the record goes.
+    """
     (paths.root / LAUNCH_FILE).unlink(missing_ok=True)
     record = paths.root / CONFIG_DIR_FILE
+    root_record = paths.root / CONFIG_ROOT_FILE
     try:
         config_dir = record.read_text(encoding="utf-8").strip()
     except OSError:
         return
-    piconfig.remove(config_dir or None)
+    try:
+        config_root = root_record.read_text(encoding="utf-8").strip()
+    except OSError:
+        config_root = ""
+    try:
+        if not config_root:
+            raise launch.LaunchError(
+                f"{config_dir} has no configuration root on record; it is not removed."
+            )
+        piconfig.remove(config_dir or None, config_root)
+    except launch.LaunchError as exc:
+        _log.warning("agent %s: generated directory left: %s", paths.name, exc)
     record.unlink(missing_ok=True)
+    root_record.unlink(missing_ok=True)
 
 
 # -- becoming pi (``python -m specflo.pool.runner <launch file>``) ----------

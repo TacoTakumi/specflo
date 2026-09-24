@@ -90,11 +90,6 @@ _DEFAULT_AGENT_DIR = Path(".pi") / "agent"
 # its sandbox answers on them.
 _LOOPBACK = frozenset({"127.0.0.1", "localhost"})
 
-# Written into every generated directory, and the only thing that lets one be
-# removed: a path that reaches remove() by mistake may be the user's own pi
-# directory.
-MARKER = ".specflo-pool-member"
-
 
 def operator_skills(environ: Mapping[str, str]) -> Path:
     """The operator's own skills directory, which a member's copies come from.
@@ -262,7 +257,6 @@ def create(
     root.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix=f"{member.name}-", dir=root))
     try:
-        (directory / MARKER).write_text("", encoding="utf-8")
         if config is not None:
             # This user's alone from the moment it is made: a local member's
             # copy carries the operator's provider key as written.
@@ -383,23 +377,30 @@ def _copy_skills(into: Path, sources: Iterable[tuple[str, Path]], member: Member
             ) from None
 
 
-def remove(directory: Path | str | None) -> None:
+def remove(directory: Path | str | None, root: Path | str) -> None:
     """Remove a generated *directory* and all pi wrote there; the lease has ended.
 
     Every member has one now, a local member included, so every lease ends
     with one to remove. Nothing at all, and a directory already gone, are left
     alone, so ending a lease twice is harmless.
 
-    Raises ``LaunchError`` for a directory that was not generated here: what
-    reaches this by mistake may be the operator's own configuration, and the
-    marker is the only thing that tells one from the other.
+    What is removed is decided by where *directory* is and never by what is in
+    it: the member writes in its directory and may take anything out of it.
+    Raises ``LaunchError`` for a path that is not a direct child of the
+    configuration *root*, the one directory every generated directory is made
+    in: what reaches this by mistake may be the operator's own configuration.
     """
     if directory is None:
         return
-    directory = Path(directory)
-    if not directory.exists():
+    directory = Path(os.path.abspath(directory))
+    if directory.parent != Path(os.path.abspath(root)):
+        raise LaunchError(
+            f"{directory} is not a generated pi configuration directory, a direct child of "
+            f"{root}; it is not removed."
+        )
+    if not os.path.lexists(directory):
         return
-    if not (directory / MARKER).is_file():
+    if directory.is_symlink() or not directory.is_dir():
         raise LaunchError(
             f"{directory} is not a generated pi configuration directory; it is not removed."
         )
