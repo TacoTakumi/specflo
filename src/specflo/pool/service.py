@@ -133,6 +133,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import secrets
 import threading
 from collections.abc import Callable, Collection, Mapping, Sequence
@@ -147,9 +148,10 @@ from ..daemon.poolstore import (
     Transition,
     WaitingRequest,
 )
+from ..agent.statefiles import AgentPaths
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, console, expiry, ledger, preempt, runner, teamlease
+from . import accounts, console, expiry, ledger, piconfig, preempt, runner, teamlease
 from .config import CONSOLE, Pool, PoolConfig
 from .teams import Team
 
@@ -312,6 +314,9 @@ class PoolService:
         The one caller it is told to is the one that came to end that lease,
         *own*: the error is raised to it when the pass is done, as
         the failure of a stop it had made itself would be.
+
+        The pass then sweeps the configuration root: a generated directory no
+        live member record names is one a failed removal left, and it goes.
         """
         with self._turn:
             if self._checking:
@@ -334,11 +339,30 @@ class PoolService:
                             failed = exc
                         with self.open_store() as store:
                             ended.append(_recorded_end(store, lease_id))
+                self._sweep()
                 if failed is not None:
                     raise failed
                 return ended
             finally:
                 self._checking = False
+
+    def _sweep(self) -> None:
+        """Remove every child of the configuration root that the record of no
+        active lease's member names. Called in the turn, so no start is making
+        one meanwhile; a removal that fails is logged and the others go on."""
+        root = Path(self.config_root)
+        if not root.is_dir():
+            return
+        with self.open_store() as store:
+            active = store.list_leases(state="active")
+        named = {_recorded_config_dir(ledger.agent_of(lease)) for lease in active}
+        for child in sorted(root.iterdir()):
+            if os.path.abspath(child) in named:
+                continue
+            try:
+                piconfig.remove(child, root)
+            except (SpecfloError, OSError) as exc:
+                _log.warning("a generated directory no lease names, %s: %s", child, exc)
 
     def read(self, leases: Sequence[Lease]) -> list[expiry.Read]:
         """*leases* as the expiry rule reads them: each row with the status of
@@ -844,6 +868,16 @@ def _idle_limit(pool: Pool, asked: int | None) -> int:
             f"'{pool.name}', {_duration(pool.idle_max)}."
         )
     return asked
+
+
+def _recorded_config_dir(agent: str) -> str | None:
+    """The generated directory the daemon's record for *agent* names, as an
+    absolute path; None when there is no record."""
+    try:
+        record = AgentPaths.resolve(agent).root / runner.CONFIG_DIR_FILE
+        return os.path.abspath(record.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return None
 
 
 def _recorded_end(store: PoolStore, lease_id: str) -> Ended:

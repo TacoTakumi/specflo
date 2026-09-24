@@ -659,3 +659,44 @@ def test_the_cli_has_no_renew_verb():
     every = list(verbs(get_command(app)))
     assert ("agent", "prompt") in every  # the walk reaches the verbs
     assert not [path for path in every if "renew" in path[-1]]
+
+
+# -- the orphan sweep ------------------------------------------------------------
+
+
+def test_the_expiry_pass_removes_a_directory_no_live_record_names(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    (leased,) = list(pool_rig.config_root.iterdir())
+    kept = sorted(str(p) for p in leased.rglob("*"))
+    orphan = pool_rig.config_root / "local-1-orphaned"
+    (orphan / "sessions").mkdir(parents=True)
+    (orphan / "sessions" / "one.jsonl").write_text("{}\n", encoding="utf-8")
+
+    svc.expire_due()
+
+    assert not orphan.exists()
+    assert sorted(str(p) for p in leased.rglob("*")) == kept
+    svc.end_lease(grant.lease_id, "released")
+
+
+def test_a_sweep_removal_that_fails_is_logged_and_the_others_go(pool_rig, monkeypatch, caplog):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    pool_rig.config_root.mkdir(parents=True, exist_ok=True)
+    stuck, gone = pool_rig.config_root / "a-stuck", pool_rig.config_root / "b-gone"
+    stuck.mkdir()
+    gone.mkdir()
+    real = service.piconfig.remove
+
+    def remove(directory, root):
+        if Path(directory).name == stuck.name:
+            raise OSError(13, "Permission denied", str(directory))
+        real(directory, root)
+
+    monkeypatch.setattr(service.piconfig, "remove", remove)
+    with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):
+        assert svc.expire_due() == []
+
+    assert stuck.is_dir()
+    assert not gone.exists()
+    assert str(stuck) in caplog.text
