@@ -823,7 +823,9 @@ def _forget(paths: AgentPaths) -> None:
     and the generated pi configuration directory the daemon's record names.
 
     A record whose directory is not a direct child of the root it names is
-    not acted on: the refusal is logged, and the record goes.
+    not acted on, and a removal that fails is left as it failed: the lease has
+    ended all the same, so either is logged and the record goes. A directory
+    left behind is the orphan sweep's to take.
     """
     (paths.root / LAUNCH_FILE).unlink(missing_ok=True)
     record = paths.root / CONFIG_DIR_FILE
@@ -842,7 +844,7 @@ def _forget(paths: AgentPaths) -> None:
                 f"{config_dir} has no configuration root on record; it is not removed."
             )
         piconfig.remove(config_dir or None, config_root)
-    except launch.LaunchError as exc:
+    except (launch.LaunchError, OSError) as exc:
         _log.warning("agent %s: generated directory left: %s", paths.name, exc)
     record.unlink(missing_ok=True)
     root_record.unlink(missing_ok=True)
