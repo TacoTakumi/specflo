@@ -194,8 +194,14 @@ def test_a_forwarder_slow_to_listen_is_listening_before_pi_runs(rig, socket_path
     assert found["/v1/models"] == [200, {"served": "/v1/models"}]
 
 
-def test_a_forwarder_that_never_listens_fails_the_start_saying_so(rig, socket_path) -> None:
+def test_a_forwarder_that_never_listens_fails_the_start_saying_so(
+    rig, socket_path, monkeypatch
+) -> None:
     skip_without_a_forwarder()
+    # The forwarder gives up after the member's host is up, and a member in a
+    # scope of its own gets there a little later, so the start watches pi for
+    # as long as it does when shipped.
+    rig.watch_as_shipped(monkeypatch)
     broken = rig.harness / "bin" / "socat"
     broken.write_text("#!/bin/sh\nexit 3\n")
     broken.chmod(0o755)
