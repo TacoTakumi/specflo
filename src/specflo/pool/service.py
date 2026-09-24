@@ -304,12 +304,13 @@ class PoolService:
         cannot be read is none, so such a row fails no caller and ends at its
         limit (see ``expiry.read``).
 
-        An expired lease whose member does not stop has ended all the same,
-        and its slot is free. Whoever came here came for something else, so
+        An expired lease whose member does not stop, or whose generated
+        directory cannot be removed, has ended all the same, and its slot is
+        free. Whoever came here came for something else, so
         that failure is logged and fails no one: the leases due after it are
         ended in the same pass, and the caller is served as after any check.
         The one caller it is told to is the one that came to end that lease,
-        *own*: the ``RunnerError`` is raised to it when the pass is done, as
+        *own*: the error is raised to it when the pass is done, as
         the failure of a stop it had made itself would be.
         """
         with self._turn:
@@ -327,7 +328,7 @@ class PoolService:
                 for lease_id in due:
                     try:
                         ended.append(self.end_lease(lease_id, "expired"))
-                    except runner.RunnerError as exc:
+                    except SpecfloError as exc:
                         _log.warning("the expired lease %s: %s", lease_id, exc)
                         if lease_id == own:
                             failed = exc

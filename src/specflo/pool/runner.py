@@ -226,16 +226,18 @@ def start(
                 definition, member, accounts, caller, config_dir=config_dir,
             ),
         }
-    except (launch.LaunchError, sandbox.UnknownProfile):
+        paths.ensure()
+        lease.clear_ended(paths.root)
+        # The host appends pi's error output to what former leases left.
+        stderr_from = _size(paths.root / PI_STDERR_FILE)
+        _write_private(paths.root / LAUNCH_FILE, json.dumps(spec))
+        _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
+    except BaseException:
+        # Until the record is written no stop can find the directory, and a
+        # local member's holds the provider key.
+        (paths.root / LAUNCH_FILE).unlink(missing_ok=True)
         piconfig.remove(config_dir)
         raise
-    paths.ensure()
-    lease.clear_ended(paths.root)
-    # The host appends pi's error output to what former leases left.
-    stderr_from = _size(paths.root / PI_STDERR_FILE)
-    _write_private(paths.root / LAUNCH_FILE, json.dumps(spec))
-    if config_dir is not None:
-        _write_private(paths.root / CONFIG_DIR_FILE, str(config_dir))
     # -P: the launch runs in the lease's working directory, with the host's
     # environment, and takes no module of its own from there.
     pi_cmd = shlex.join([sys.executable, "-P", "-m", __name__, str(paths.root / LAUNCH_FILE)])

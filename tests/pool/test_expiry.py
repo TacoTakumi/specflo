@@ -31,7 +31,7 @@ from specflo.agent.cli import agent_app
 from specflo.agent.client import connect
 from specflo.cli import app
 from specflo.daemon.poolstore import Lease, Resource
-from specflo.pool import expiry, runner, service, waiting
+from specflo.pool import expiry, launch, runner, service, waiting
 from specflo.pool.service import Grant
 
 from .conftest import START
@@ -364,6 +364,33 @@ def test_the_leases_due_after_one_whose_member_does_not_stop_are_ended_in_the_sa
     assert wait_until(lambda: not pid_alive(pi_after))
     assert ["did not stop" in r.getMessage() for r in caplog.records] == [True]
     assert svc.expire_due() == []
+
+
+def test_an_expired_member_whose_directory_cannot_be_removed_fails_no_request(
+    pool_rig, monkeypatch, caplog
+):
+    real_time(pool_rig)
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member(), pool_rig.hosted_member()))
+    stuck = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    after = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    pool_rig.clock.advance(minutes=11)
+    real_stop = runner.stop
+
+    # the member deleted what marks its directory as generated, so the stop
+    # stops it and then refuses to remove the directory
+    def stop(name, cause, **tokens):
+        real_stop(name, cause, **tokens)
+        if name == stuck.agent:
+            raise launch.LaunchError("not a generated pi configuration directory")
+
+    monkeypatch.setattr(service.runner, "stop", stop)
+    with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):
+        ended = svc.expire_due()
+
+    assert [(e.lease_id, e.state) for e in ended] == [
+        (stuck.lease_id, "expired"), (after.lease_id, "expired"),
+    ]
+    assert ["not a generated" in r.getMessage() for r in caplog.records] == [True]
 
 
 def test_a_request_that_waits_keeps_its_row_and_its_place_when_an_expired_member_does_not_stop(

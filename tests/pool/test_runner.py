@@ -661,6 +661,20 @@ def test_a_member_that_cannot_be_launched_starts_nothing(rig, monkeypatch):
     assert not rig.config_root.exists() or list(rig.config_root.iterdir()) == []
 
 
+def test_a_start_that_fails_once_the_generated_directory_is_made_removes_it(rig, monkeypatch):
+    # the state directory cannot take the launch file
+    def refused(path, text):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(runner, "_write_private", refused)
+
+    with pytest.raises(OSError):
+        rig.start(rig.hosted_member())
+
+    assert rig.pane_names() == []
+    assert not rig.config_root.exists() or list(rig.config_root.iterdir()) == []
+
+
 def test_stopping_a_member_whose_host_is_gone_still_records_the_cause(rig):
     runner.stop("local-1", "expired", pool_token=POOL_TOKEN)
 
