@@ -230,3 +230,34 @@ def test_neither_the_caller_nor_the_definition_sets_the_handshake():
     assert env[launch.SERVE_ENV] == "0"
     assert env.get(launch.AGENT_NAME_ENV) == LOCAL_MEMBER.name
     assert env.get(launch.AGENT_MANAGED_ENV) == "1"
+
+
+def test_the_git_global_variable_names_the_generated_file_when_there_is_one(tmp_path):
+    (tmp_path / launch.GITCONFIG_FILE).write_text("[user]\n\tname = Op\n", encoding="utf-8")
+
+    env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, config_dir=tmp_path)
+
+    assert env[launch.GIT_CONFIG_GLOBAL_ENV] == str(tmp_path / launch.GITCONFIG_FILE)
+
+
+def test_with_no_generated_git_file_the_git_global_variable_is_not_set():
+    env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    assert launch.GIT_CONFIG_GLOBAL_ENV not in env
+
+
+@pytest.mark.parametrize("listed", ["env", "credentials"])
+def test_neither_the_caller_nor_the_definition_sets_the_git_global_variable(tmp_path, listed):
+    definition = replace(DEFINITION, **{listed: (launch.GIT_CONFIG_GLOBAL_ENV,)})
+    caller = {**CALLER, launch.GIT_CONFIG_GLOBAL_ENV: "/home/pool/.gitconfig"}
+    with_file = tmp_path / "with"
+    with_file.mkdir()
+    (with_file / launch.GITCONFIG_FILE).write_text("", encoding="utf-8")
+    without_file = tmp_path / "without"
+    without_file.mkdir()
+
+    given = member_env(definition, LOCAL_MEMBER, ACCOUNTS, caller, config_dir=with_file)
+    none = member_env(definition, LOCAL_MEMBER, ACCOUNTS, caller, config_dir=without_file)
+
+    assert given[launch.GIT_CONFIG_GLOBAL_ENV] == str(with_file / launch.GITCONFIG_FILE)
+    assert launch.GIT_CONFIG_GLOBAL_ENV not in none

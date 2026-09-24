@@ -105,11 +105,18 @@ AGENT_MANAGED_ENV = "SPECFLO_AGENT_MANAGED"
 TMPDIR_ENV = "TMPDIR"
 MEMBER_TMPDIR = "/tmp"
 
+# The git global configuration a member reads: a file in its generated
+# directory holding the operator's identity alone. The home the sandbox sweeps
+# has none, and git refuses to commit without one.
+GIT_CONFIG_GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
+GITCONFIG_FILE = "gitconfig"
+
 # The variables the pool alone says, whatever a definition lists or a caller
 # exports. A member that could set one of these could give itself a name, a
 # deny list or a pi configuration of its own choosing.
 _POOL_SAYS: tuple[str, ...] = (
     DENY_ENV, AGENT_DIR_ENV, SERVE_ENV, AGENT_NAME_ENV, AGENT_MANAGED_ENV, TMPDIR_ENV,
+    GIT_CONFIG_GLOBAL_ENV,
 )
 
 
@@ -354,7 +361,8 @@ def member_env(
     holds only if its key reaches its own members alone. The deny list comes
     from the definition alone, never from the caller; a definition that denies
     nothing sets no variable. *config_dir* is the pi configuration directory
-    generated for the member, and nothing is written here.
+    generated for the member, and nothing is written here; git is pointed at
+    the configuration file in it when there is one.
 
     Raises ``LaunchError`` for a hosted member whose account is not among
     *accounts* or whose key variable is not set, and for any member handed no
@@ -384,6 +392,9 @@ def member_env(
     env[AGENT_NAME_ENV] = member.name
     env[AGENT_MANAGED_ENV] = "1"
     env[TMPDIR_ENV] = MEMBER_TMPDIR
+    gitconfig = Path(config_dir) / GITCONFIG_FILE
+    if gitconfig.is_file():
+        env[GIT_CONFIG_GLOBAL_ENV] = str(gitconfig)
     return env
 
 

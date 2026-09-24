@@ -36,6 +36,11 @@ the member. The one thing pi still needs from there is a key, and the file
 names the variable that holds the key of the member's account; the key itself
 is never written. pi keeps the lease's sessions under the directory, and they go
 with it when the lease ends.
+
+The directory also holds the member's git global configuration: the user.name
+and user.email the daemon's git reports outside any repository, and nothing
+else of the operator's, so a member can commit under the operator's name
+without being handed a credential helper, an include or a signing key.
 """
 
 from __future__ import annotations
@@ -43,6 +48,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import tempfile
 from copy import deepcopy
 from collections.abc import Iterable, Mapping
@@ -50,7 +56,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from .config import HOSTED, Account, Member
-from .launch import AGENT_DIR_ENV, LaunchError, member_account
+from .launch import AGENT_DIR_ENV, GITCONFIG_FILE, LaunchError, member_account
 
 # The file in a pi configuration directory that declares providers and models.
 MODELS_FILE = "models.json"
@@ -229,6 +235,9 @@ def create(
     made whatever the member declares: it says what the member's skills are,
     and for a member declaring none that is nothing at all.
 
+    The git configuration file holds the operator's identity, as
+    ``operator_identity`` reads it; with none, no file is written.
+
     Each of ``TOOLS`` that *tools_from* holds is copied into ``bin``, as a
     file of the member's own. Without it a local member's search tools fail,
     and a hosted member's fetch the program again for every lease.
@@ -260,6 +269,7 @@ def create(
             made = os.open(directory / MODELS_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(made, "w", encoding="utf-8") as file:
                 file.write(json.dumps(config, indent=2) + "\n")
+        _write_gitconfig(directory / GITCONFIG_FILE, operator_identity())
         _copy_skills(directory / SKILLS_DIR, sources, member)
         _copy_tools(directory / TOOLS_DIR, tools_from)
     except BaseException:
@@ -267,6 +277,44 @@ def create(
         shutil.rmtree(directory, ignore_errors=True)
         raise
     return directory
+
+
+def operator_identity() -> dict[str, str]:
+    """The user.name and user.email this process's git reports outside any
+    repository, by key; a key git has no value for is left out."""
+    identity: dict[str, str] = {}
+    for key in ("name", "email"):
+        try:
+            done = subprocess.run(
+                ["git", "config", "--get", f"user.{key}"],
+                cwd=os.path.abspath(os.sep), capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        value = done.stdout.removesuffix("\n")
+        if done.returncode == 0 and value:
+            identity[key] = value
+    return identity
+
+
+def _write_gitconfig(path: Path, identity: Mapping[str, str]) -> None:
+    """Write *identity* as the user section of a git configuration file at
+    *path*, this user's alone; with nothing in it, write nothing."""
+    if not identity:
+        return
+    lines = ["[user]"] + [f"\t{key} = {_quoted(value)}" for key, value in identity.items()]
+    made = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(made, "w", encoding="utf-8") as file:
+        file.write("\n".join(lines) + "\n")
+
+
+def _quoted(value: str) -> str:
+    """*value* as a quoted git configuration value, read back unchanged."""
+    escaped = (
+        value.replace("\\", "\\\\").replace('"', '\\"')
+        .replace("\n", "\\n").replace("\t", "\\t")
+    )
+    return f'"{escaped}"'
 
 
 def _copy_tools(target: Path, tools_from: Path | str | None) -> None:
