@@ -794,6 +794,11 @@ def add_remote(root: Path, name: str, url: str, token: str) -> bool:
     created = not path.is_file()
     path.touch(mode=0o600, exist_ok=True)
     path.write_text(json.dumps({"url": url, "token": token}, indent=2) + "\n")
+    # The pool hides this checkout's tokens from a member that lists a
+    # directory above it, and finds the checkout through the register.
+    from .checkouts import record
+
+    record(root)
     return created
 
 

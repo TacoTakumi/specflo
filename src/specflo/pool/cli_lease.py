@@ -42,6 +42,7 @@ from pathlib import Path
 
 import typer
 
+from .. import checkouts
 from ..errors import SpecfloError
 
 # An idle limit as the pool file writes one: a whole number and a unit.
@@ -436,6 +437,9 @@ def store_token(root: Path, agent: str, token: str) -> Path:
         # A file left by an earlier lease keeps the mode it had.
         os.fchmod(descriptor, 0o600)
         file.write(token + "\n")
+    # The pool hides this checkout's tokens from a member that lists a
+    # directory above it, and finds the checkout through the register.
+    checkouts.record(root)
     return path
 
 

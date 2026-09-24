@@ -20,7 +20,7 @@ from agentsquire.sources import default_source
 
 from . import __version__
 from . import auto as auto_module
-from . import brainstorm, checkpoint, config, continuation, guide as guide_module, hook, plan, projects, spec
+from . import brainstorm, checkpoint, checkouts, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import doc as doc_module
 from . import graph as graph_module
 from . import extension_install as extension_module
@@ -134,6 +134,7 @@ def _root(
 ) -> None:
     """A spec-driven software-engineering workflow."""
     if directory is None:
+        _record_checkout()
         return
     # The caller's cwd may already be gone (a shell left in a deleted directory)
     # or vanish while the command runs; -C exists to make that cwd irrelevant,
@@ -154,6 +155,14 @@ def _root(
         "directory": directory,
         "directory_source": "env" if from_env else "flag",
     }
+    _record_checkout()
+
+
+def _record_checkout() -> None:
+    """Record the checkout the command runs in when it holds tokens, so the
+    pool can hide them from a member that lists a directory above it."""
+    with contextlib.suppress(OSError):
+        checkouts.record_if_held(Path.cwd())
 
 
 def _restore_cwd(previous: str) -> None:

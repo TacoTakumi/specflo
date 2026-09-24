@@ -101,6 +101,26 @@ def _no_checkout_remotes(monkeypatch, tmp_path_factory):
 
 
 @pytest.fixture(autouse=True)
+def _no_operator_register(monkeypatch, tmp_path_factory):
+    """Keep every test off the operator's register of checkouts.
+
+    The commands that store a token record the checkout in a file under the
+    home, and a test that runs one would add its throwaway root to the real
+    register. With no home given the register is one of this test's own; a
+    test that names a home keeps the register under it.
+    """
+    from specflo import checkouts
+
+    own = tmp_path_factory.mktemp("register") / checkouts.REGISTER_FILENAME
+    real = checkouts.register_file
+
+    def register_file(home=None):
+        return own if home is None else real(home)
+
+    monkeypatch.setattr(checkouts, "register_file", register_file)
+
+
+@pytest.fixture(autouse=True)
 def _fresh_config_warnings():
     """Clear the once-per-process invalid-value warnings between tests.
 
