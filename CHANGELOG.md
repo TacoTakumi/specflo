@@ -289,7 +289,7 @@ latter. Release tags are of the form `vX.Y.Z`.
   bubblewrap, behind `prlimit` (512 processes above the sandbox's own by
   default), with its own mount, user and PID namespaces. The filesystem is
   the same for every egress class: a read-only root, a fresh `/dev`,
-  `/proc` and `/tmp`, and the operator's home, `~/.pi`, `~/.agents`,
+  `/proc`, `/tmp` and `/run`, and the operator's home, `~/.pi`, `~/.agents`,
   `~/.specflo`, the directory `PI_CODING_AGENT_DIR` names,
   `XDG_RUNTIME_DIR` and the daemon root hidden, with the `.specflo/leases`
   and `.specflo/remotes` directories of every checkout from the member's
@@ -315,14 +315,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   one. The directory is the daemon user's alone, and so is the models file
   in it, which is made with mode 0600. A directory without the pool's marker file is never removed.
   A start that fails after the directory is made removes it, whatever
-  failed, and an idle lease whose directory cannot be removed still ends
+  failed. A directory the member locked is opened again and removed, and an idle lease whose directory cannot be removed still ends
   and fails no other request. A
   definition's skills are copied into that directory with their links
   resolved, so a skill edited on the host does not change under a running
   member. A skill that cannot be found, or a name that walks out of the
   operator's skills directory, refuses the member before anything is made
   for its lease. A skill that cannot be copied whole refuses it too, and
-  leaves nothing behind.
+  leaves nothing behind. The operator's pi `fd` and `rg` are copied into
+  the directory as well, so a member's search tools need no download.
+  The fresh `/run` keeps every member from the host daemons' sockets
+  there, such as the container engine's; a hosted member gets back only
+  the resolver file. A member's `TMPDIR` is the sandbox's `/tmp`.
   `pool.yaml` gains `models_file`, the path of the operator's pi
   `models.json`. A local member's generated `models.json` is the operator's
   provider from that file, filtered to the one model the member declares.
