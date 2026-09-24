@@ -249,3 +249,40 @@ def test_a_directory_that_was_not_generated_is_never_removed(tmp_path):
         piconfig.remove(own)
 
     assert (own / piconfig.MODELS_FILE).exists()
+
+
+def test_the_operator_s_fd_and_rg_are_copied_as_files_of_the_member_s_own(tmp_path):
+    tools = tmp_path / "operator-bin"
+    tools.mkdir()
+    (tools / "real-fd").write_text("#!/bin/sh\necho fd\n", encoding="utf-8")
+    (tools / "real-fd").chmod(0o755)
+    (tools / "fd").symlink_to(tools / "real-fd")
+    (tools / "rg").write_text("#!/bin/sh\necho rg\n", encoding="utf-8")
+    (tools / "rg").chmod(0o755)
+    (tools / "other").write_text("not a tool pi fetches", encoding="utf-8")
+
+    directory = piconfig.create(
+        tmp_path / "generated", OPEN_MEMBER, ACCOUNTS, tools_from=tools
+    )
+
+    copied = directory / piconfig.TOOLS_DIR
+    assert sorted(p.name for p in copied.iterdir()) == ["fd", "rg"]
+    for name in ("fd", "rg"):
+        assert not (copied / name).is_symlink()
+        assert (copied / name).stat().st_mode & 0o100
+    assert (copied / "fd").read_text(encoding="utf-8") == "#!/bin/sh\necho fd\n"
+
+
+def test_no_tool_is_made_where_the_operator_has_none(tmp_path):
+    directory = piconfig.create(
+        tmp_path / "generated", OPEN_MEMBER, ACCOUNTS, tools_from=tmp_path / "absent"
+    )
+
+    assert not (directory / piconfig.TOOLS_DIR).exists()
+
+
+def test_the_operator_s_tools_are_in_the_bin_of_the_agent_directory():
+    assert piconfig.operator_tools(CALLER) == piconfig.Path("/home/pool/.pi/agent/bin")
+    assert piconfig.operator_tools({"HOME": "/home/pool"}) == piconfig.Path(
+        "/home/pool/.pi/agent/bin"
+    )

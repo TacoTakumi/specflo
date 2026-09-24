@@ -206,6 +206,7 @@ def start(
     config_dir = piconfig.create(
         config_root, member, accounts, models_file,
         skills=definition.skills, skills_from=piconfig.operator_skills(caller),
+        tools_from=piconfig.operator_tools(caller),
     )
     try:
         reach = (

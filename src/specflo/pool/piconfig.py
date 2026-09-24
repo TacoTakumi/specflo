@@ -70,6 +70,12 @@ ROUTING: dict[str, dict[str, object]] = {
 # directory per skill, named by the skill. A member's copies go here.
 SKILLS_DIR = "skills"
 
+# Where pi looks first for the programs its tools run, under its
+# configuration directory, and the programs it fetches from the internet
+# when it finds them nowhere. The sandbox hides the operator's copies.
+TOOLS_DIR = "bin"
+TOOLS = ("fd", "rg")
+
 # Where the operator's pi configuration directory is when the environment
 # names none.
 _DEFAULT_AGENT_DIR = Path(".pi") / "agent"
@@ -95,6 +101,12 @@ def operator_skills(environ: Mapping[str, str]) -> Path:
     named = environ.get(AGENT_DIR_ENV)
     home = Path(environ.get("HOME") or Path.home())
     return (Path(named) if named else home / _DEFAULT_AGENT_DIR) / SKILLS_DIR
+
+
+def operator_tools(environ: Mapping[str, str]) -> Path:
+    """The ``bin`` of the operator's pi configuration directory, where pi keeps
+    the programs it fetched for its tools."""
+    return operator_skills(environ).parent / TOOLS_DIR
 
 
 def models_config(member: Member, account: Account) -> dict[str, object]:
@@ -200,6 +212,7 @@ def create(
     *,
     skills: Iterable[str] = (),
     skills_from: Path | str | None = None,
+    tools_from: Path | str | None = None,
 ) -> Path:
     """A new pi configuration directory for one lease of *member*, under *root*.
 
@@ -215,6 +228,10 @@ def create(
     is copied into it from *skills_from*, dereferenced. The directory is
     made whatever the member declares: it says what the member's skills are,
     and for a member declaring none that is nothing at all.
+
+    Each of ``TOOLS`` that *tools_from* holds is copied into ``bin``, as a
+    file of the member's own. Without it a local member's search tools fail,
+    and a hosted member's fetch the program again for every lease.
 
     Raises ``LaunchError`` when a hosted member's account is not among
     *accounts*, when a local member's model is not in the operator's file or
@@ -244,11 +261,24 @@ def create(
             with os.fdopen(made, "w", encoding="utf-8") as file:
                 file.write(json.dumps(config, indent=2) + "\n")
         _copy_skills(directory / SKILLS_DIR, sources, member)
+        _copy_tools(directory / TOOLS_DIR, tools_from)
     except BaseException:
         # A directory half made is not handed on, and may hold the key already.
         shutil.rmtree(directory, ignore_errors=True)
         raise
     return directory
+
+
+def _copy_tools(target: Path, tools_from: Path | str | None) -> None:
+    """Copy each of ``TOOLS`` that *tools_from* holds into *target*, links followed."""
+    if tools_from is None:
+        return
+    for name in TOOLS:
+        source = Path(tools_from) / name
+        if not source.is_file():
+            continue
+        target.mkdir(mode=0o700, exist_ok=True)
+        shutil.copy(source, target / name)
 
 
 def _skill_sources(
