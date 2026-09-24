@@ -150,7 +150,7 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, console, expiry, ledger, piconfig, preempt, runner, teamlease
+from . import accounts, console, expiry, ledger, piconfig, preempt, runner, sandbox, teamlease
 from .config import CONSOLE, Pool, PoolConfig
 from .teams import Team
 
@@ -316,6 +316,8 @@ class PoolService:
 
         The pass then sweeps the configuration root: a generated directory no
         live member record names is one a failed removal left, and it goes.
+        So does a member scope with no task in it, which a member killed while
+        its scope was being made leaves behind.
         """
         with self._turn:
             if self._checking:
@@ -340,6 +342,7 @@ class PoolService:
                         with self.open_store() as store:
                             ended.append(_recorded_end(store, lease_id))
                 self._sweep(active)
+                sandbox.stop_empty_scopes(os.environ if self.environ is None else self.environ)
                 if failed is not None:
                     raise failed
                 return ended

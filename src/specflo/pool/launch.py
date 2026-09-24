@@ -235,7 +235,7 @@ def member_argv(
     # A member's process count is its scope's own when the user manager can
     # make one; the per-uid count prlimit sets counts the whole host.
     scope, limits = sandbox.member_limits(
-        sandbox.DEFAULT_LIMITS if limits is None else limits, environ
+        sandbox.DEFAULT_LIMITS if limits is None else limits, environ, member.name
     )
     prefix = sandbox.base_argv(
         egress=member.egress,

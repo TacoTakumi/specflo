@@ -492,6 +492,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   ends. Without a user manager (no login session, or a logout with no
   linger) a member starts under the per-uid process limit, now with a
   margin of 1024 above the uid's threads, and the daemon logs why once.
+  Each scope is a unit named `specflo-member-<agent>-<id>`; the expiry
+  pass stops an empty one, which a member killed while its scope is being
+  made leaves behind.
 - **Pool members commit under the operator's name.** Each member's
   generated directory holds a git configuration with the `user.name` and
   `user.email` the daemon's git reports outside any repository, and nothing

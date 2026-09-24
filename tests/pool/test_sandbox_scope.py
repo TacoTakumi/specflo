@@ -115,9 +115,12 @@ def test_the_member_argv_is_the_scope_then_prlimit_without_a_process_count_then_
 
     names = [Path(word).name for word in command]
     run = names.index("systemd-run")
-    assert command[run + 1:run + 7] == [
-        "--user", "--scope", "--quiet", "-p", f"TasksMax={LIMIT}", "--",
-    ]
+    scoped = command[run + 1:command.index("--", run)]
+    assert scoped[:4] == ["--user", "--scope", "--quiet", "--collect"]
+    assert [word for word in scoped if word.startswith("--unit=")][0].startswith(
+        "--unit=specflo-member-hosted-1-"
+    )
+    assert scoped[-2:] == ["-p", f"TasksMax={LIMIT}"]
     prlimit = names.index("prlimit")
     bwrap = names.index("bwrap")
     assert run < prlimit < bwrap

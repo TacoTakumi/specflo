@@ -61,7 +61,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import resource
+import secrets
 import shutil
 import subprocess
 from collections.abc import Iterable, Mapping
@@ -355,9 +357,19 @@ def scope_fault(environ: Mapping[str, str]) -> str | None:
     return None
 
 
-def scope_argv(tasks: int, environ: Mapping[str, str]) -> list[str]:
+# Every member's scope is a unit of this prefix, the member's name and an id
+# of the start, so the daemon finds its own scopes among the user's units.
+SCOPE_PREFIX = "specflo-member-"
+
+# What a unit name may hold; any other character of a member's name is written
+# as an underscore.
+_UNIT_UNSAFE = re.compile(r"[^A-Za-z0-9:_.-]")
+
+
+def scope_argv(tasks: int, environ: Mapping[str, str], member: str) -> list[str]:
     """The prefix that starts what follows in a systemd scope of its own whose
-    task limit is *tasks*, the user manager found through *environ*.
+    task limit is *tasks*, the user manager found through *environ*. The
+    scope's unit is named for *member*, with an id of its own for each start.
 
     The scope command runs its command in place, so the pid chain is kept.
     It needs the runtime directory to reach the user manager, and the
@@ -368,7 +380,10 @@ def scope_argv(tasks: int, environ: Mapping[str, str]) -> list[str]:
     return [
         env, f"{RUNTIME_DIR_VAR}={environ[RUNTIME_DIR_VAR]}",
         systemd_run_path(environ) or "systemd-run",
-        "--user", "--scope", "--quiet", "-p", f"TasksMax={tasks}", "--",
+        # --collect: a scope that failed is unloaded too, not kept listed.
+        "--user", "--scope", "--quiet", "--collect",
+        f"--unit={SCOPE_PREFIX}{_UNIT_UNSAFE.sub('_', member)}-{secrets.token_hex(4)}",
+        "-p", f"TasksMax={tasks}", "--",
         env, *[word for name in (RUNTIME_DIR_VAR, *_SCOPE_ADDS) for word in ("-u", name)],
     ]
 
@@ -385,12 +400,14 @@ _log = logging.getLogger(__name__)
 _told_no_scope = False
 
 
-def member_limits(limits: Limits, environ: Mapping[str, str]) -> tuple[list[str], Limits]:
+def member_limits(
+    limits: Limits, environ: Mapping[str, str], member: str
+) -> tuple[list[str], Limits]:
     """The scope prefix a member starts under and the limits prlimit sets.
 
     With the user manager reachable from *environ*, the daemon's environment,
-    the member's process count is its scope's task limit and prlimit sets
-    none. Without it, there is no scope, and prlimit sets the per-uid count
+    the member's process count is the task limit of its scope, named for
+    *member*, and prlimit sets none. Without it, there is no scope, and prlimit sets the per-uid count
     with ``FALLBACK_MARGIN`` above the uid's threads, or the member's own limit
     where that is larger; the first time, the daemon logs why.
     """
@@ -399,7 +416,7 @@ def member_limits(limits: Limits, environ: Mapping[str, str]) -> tuple[list[str]
         return [], limits
     fault = scope_fault(environ)
     if fault is None:
-        return scope_argv(limits.max_procs, environ), replace(limits, max_procs=0)
+        return scope_argv(limits.max_procs, environ, member), replace(limits, max_procs=0)
     if not _told_no_scope:
         _told_no_scope = True
         _log.warning(
@@ -409,6 +426,65 @@ def member_limits(limits: Limits, environ: Mapping[str, str]) -> tuple[list[str]
             fault, RUNTIME_DIR_VAR,
         )
     return [], replace(limits, max_procs=max(limits.max_procs, FALLBACK_MARGIN))
+
+
+def _systemctl_env(environ: Mapping[str, str]) -> dict[str, str]:
+    return {
+        RUNTIME_DIR_VAR: environ.get(RUNTIME_DIR_VAR, ""),
+        "PATH": environ.get("PATH", os.defpath),
+    }
+
+
+def member_scopes(environ: Mapping[str, str]) -> dict[str, int]:
+    """Each active member scope of the user manager by unit name, with the
+    tasks in it; none when the manager cannot be reached."""
+    if not environ.get(RUNTIME_DIR_VAR):
+        return {}
+    try:
+        listed = subprocess.run(
+            ["systemctl", "--user", "show", "--state=active", "-p", "Id",
+             "-p", "TasksCurrent", f"{SCOPE_PREFIX}*.scope"],
+            env=_systemctl_env(environ), capture_output=True, text=True,
+            timeout=SCOPE_PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {}
+    found: dict[str, int] = {}
+    for block in listed.stdout.split("\n\n"):
+        fields = dict(line.split("=", 1) for line in block.splitlines() if "=" in line)
+        unit, tasks = fields.get("Id", ""), fields.get("TasksCurrent", "")
+        if unit.startswith(SCOPE_PREFIX) and tasks.isdigit():
+            found[unit] = int(tasks)
+    return found
+
+
+def _stop_scope(unit: str, environ: Mapping[str, str]) -> None:
+    try:
+        done = subprocess.run(
+            ["systemctl", "--user", "stop", unit], env=_systemctl_env(environ),
+            capture_output=True, text=True, timeout=SCOPE_PROBE_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise SpecfloError(f"systemctl did not stop it: {exc}") from exc
+    if done.returncode != 0:
+        raise SpecfloError(done.stderr.strip() or f"systemctl exited {done.returncode}")
+
+
+def stop_empty_scopes(environ: Mapping[str, str]) -> None:
+    """Stop every member scope with no task in it.
+
+    A member killed while systemd-run is still making its scope leaves the
+    scope behind, empty, and systemd keeps it for as long as the user manager
+    runs. A scope that holds a task is a member's, and is left alone. A stop
+    that fails is logged and the others go on.
+    """
+    for unit, tasks in member_scopes(environ).items():
+        if tasks:
+            continue
+        try:
+            _stop_scope(unit, environ)
+        except SpecfloError as exc:
+            _log.warning("the empty member scope %s was not stopped: %s", unit, exc)
 
 
 def prlimit_path() -> str | None:
