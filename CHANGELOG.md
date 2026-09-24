@@ -509,11 +509,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   in a swept directory is made again, so a uv tool on `PATH` runs by its
   name when its environment is listed too. A path that is missing, at or
   above a hidden path, inside a hidden path other than the home, in or
-  holding a `.specflo` directory, in the fresh `/tmp` or `/run` and not in
-  the home (so no host socket such as the container engine's comes back),
-  or a link to any of those is refused by `pool validate` and at the
-  member's start. The shipped definitions list
-  none.
+  directly holding a `.specflo` directory, in the fresh `/tmp` or `/run`
+  and not in the home (so no host socket such as the container engine's
+  comes back), or a link to any of those is refused by `pool validate` and
+  at the member's start. A checkout deeper below a listed directory keeps
+  its token directories hidden when it is in the new register
+  `~/.specflo/checkouts`, which storing a lease token, adding a remote, or
+  running any specflo command inside a checkout that holds tokens fills.
+  The shipped definitions list none.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

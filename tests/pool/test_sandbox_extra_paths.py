@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from specflo import checkouts
 from specflo.pool import launch
 from specflo.pool.config import Member
 
@@ -183,3 +184,29 @@ def test_a_start_whose_listed_path_is_now_at_fault_is_refused_naming_it(
             replace(DEFINITION, paths=("~/data",)), member, environ,
             cwd=work, state_dir=tmp_path / "state",
         )
+
+
+@pytest.mark.parametrize("listed", ["~/src", "~/linked"])
+def test_a_registered_checkout_two_levels_below_a_listed_directory_keeps_its_tokens_hidden(
+    tmp_path, environ, home, listed
+):
+    skip_without_a_sandbox()
+    src = home / "src"
+    checkout = src / "group" / "proj"
+    folder = checkout / ".specflo"
+    (folder / "leases").mkdir(parents=True)
+    (folder / "remotes").mkdir()
+    (folder / "config.yaml").write_text("projects_dir: docs/projects\n", encoding="utf-8")
+    (folder / "leases" / "coder.token").write_text("LEASETOKEN\n", encoding="utf-8")
+    (folder / "remotes" / "rig.json").write_text('{"token": "SECRET"}\n', encoding="utf-8")
+    (checkout / "readme.txt").write_text("readme\n", encoding="utf-8")
+    (home / "linked").symlink_to(src)
+    checkouts.record(checkout, home=home)
+
+    found = started(tmp_path, environ, (listed,), {
+        "directories": [str(folder / "leases"), str(folder / "remotes")],
+        "files": [str(checkout / "readme.txt")],
+    })
+
+    assert found["listed"] == {str(folder / "leases"): [], str(folder / "remotes"): []}
+    assert found["read"] == {str(checkout / "readme.txt"): "readme\n"}

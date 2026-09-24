@@ -53,6 +53,7 @@ import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
+from .. import checkouts
 from ..config import CONFIG_DIRNAME, CONFIG_FILENAME, REMOTES_DIRNAME
 from ..errors import SpecfloError
 from . import sandbox
@@ -166,7 +167,8 @@ def member_argv(
     profile raises here rather than starting the member without one.
 
     Besides the operator's paths, the sandbox hides the secrets a checkout
-    keeps beside the working directory (``checkout_secrets``) and
+    keeps beside the working directory (``checkout_secrets``), those of each
+    registered checkout below a listed path (``listed_checkout_secrets``), and
     *daemon_root*, the daemon's own directory, which holds the pool's token
     and every client's. The member's generated directory and the bridge
     socket are under that root, and come back as any bind does.
@@ -216,6 +218,7 @@ def member_argv(
             )
     listed, links = _listed_binds(definition, member, environ, daemon_root, hidden)
     readonly.extend(listed)
+    hidden.extend(listed_checkout_secrets(listed, environ))
     forwarder: list[str] = []
     if bridge is not None:
         if member.backing != LOCAL:
@@ -436,21 +439,51 @@ def checkout_secrets(cwd: Path | str) -> tuple[str, ...]:
     here = Path(os.path.abspath(cwd))
     found: list[str] = []
     for directory in (here, *here.parents):
-        folder = directory / CONFIG_DIRNAME
-        if not folder.is_dir():
-            continue
-        checkout = (folder / CONFIG_FILENAME).is_file()
-        for held in (folder / TOKEN_DIRNAME, folder / REMOTES_DIRNAME):
-            if checkout:
-                try:
-                    held.mkdir(mode=0o700, exist_ok=True)
-                except OSError:
-                    # One this user cannot make is one no token is written to.
-                    continue
-            elif not held.is_dir():
-                continue
-            found.append(str(held.resolve()))
+        found.extend(_token_dirs(directory))
     return tuple(found)
+
+
+def listed_checkout_secrets(listed: Iterable[str], environ: Mapping[str, str]) -> tuple[str, ...]:
+    """The token directories of every registered checkout below one of *listed*.
+
+    *listed* are the real paths a member's definition gets bound read-only,
+    and a bind brings back the token directories of each checkout below it.
+    A checkout at a listed path or its direct child is refused by
+    validation; one deeper is found in the operator's register of checkouts
+    (see ``checkouts``), read from the home in *environ*, rather than by
+    walking the listed path. Its token directories are made if need be, as
+    for ``checkout_secrets``. A checkout the register does not know stays
+    where the bind puts it.
+    """
+    tops = [os.path.abspath(path) for path in listed]
+    found: list[str] = []
+    for root in checkouts.recorded(environ.get("HOME") or None):
+        real = os.path.realpath(root)
+        if any(real != top and os.path.commonpath([real, top]) == top for top in tops):
+            found.extend(_token_dirs(Path(real)))
+    return tuple(dict.fromkeys(found))
+
+
+def _token_dirs(directory: Path) -> list[str]:
+    """The real paths of the token directories of *directory*'s ``.specflo``,
+    made (this user's alone) when *directory* is a checkout; none when it has
+    no ``.specflo`` folder."""
+    folder = directory / CONFIG_DIRNAME
+    if not folder.is_dir():
+        return []
+    checkout = (folder / CONFIG_FILENAME).is_file()
+    found: list[str] = []
+    for held in (folder / TOKEN_DIRNAME, folder / REMOTES_DIRNAME):
+        if checkout:
+            try:
+                held.mkdir(mode=0o700, exist_ok=True)
+            except OSError:
+                # One this user cannot make is one no token is written to.
+                continue
+        elif not held.is_dir():
+            continue
+        found.append(str(held.resolve()))
+    return found
 
 
 def member_env(
