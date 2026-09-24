@@ -83,6 +83,7 @@ def checkout(tmp_path: Path) -> Path:
     """A checkout holding a lease token and a remote with the daemon's token."""
     checkout = tmp_path / "checkout"
     (checkout / ".specflo" / "leases").mkdir(parents=True)
+    (checkout / ".specflo" / "config.yaml").write_text("projects_dir: docs/projects\n")
     (checkout / ".specflo" / "remotes").mkdir()
     (checkout / ".specflo" / "leases" / "other.token").write_text(
         "SECRET-LEASE-TOKEN", encoding="utf-8"
@@ -155,6 +156,7 @@ def test_checkout_secrets_written_after_the_sandbox_is_built_read_as_empty(
     # once the member it is for has started.
     checkout = tmp_path / "fresh"
     (checkout / ".specflo").mkdir(parents=True)
+    (checkout / ".specflo" / "config.yaml").write_text("projects_dir: docs/projects\n")
     leases = checkout / ".specflo" / "leases"
     member, out = probed(tmp_path, checkout, {
         "directories": [str(leases)], "files": [str(leases / "mine.token")],
@@ -261,3 +263,58 @@ def test_the_daemon_root_reads_as_empty_but_for_what_the_member_is_given(
 
 def test_checkout_secrets_name_the_directory_the_lease_verbs_write_to() -> None:
     assert launch.TOKEN_DIRNAME == lease.TOKEN_DIR.name
+
+
+def contents(directory: Path) -> list[str]:
+    return sorted(str(path.relative_to(directory)) for path in directory.rglob("*"))
+
+
+def test_nothing_is_made_in_a_specflo_folder_that_is_no_checkout(tmp_path, environ) -> None:
+    # A .specflo folder with no configuration file in it, such as the agent
+    # state directory in the home, is no checkout: no lease or remote is kept
+    # there, so a start leaves it as it is.
+    outer = tmp_path / "outer"
+    (outer / ".specflo").mkdir(parents=True)
+    (outer / ".specflo" / "state.json").write_text("{}", encoding="utf-8")
+    work = outer / "work"
+    work.mkdir()
+    before = contents(outer / ".specflo")
+    member, _ = probed(tmp_path, work, {"directories": [], "files": []})
+
+    command = argv(tmp_path, environ, member, work)
+
+    assert contents(outer / ".specflo") == before
+    assert str(outer / ".specflo" / "leases") not in command
+
+
+def test_token_folders_already_in_a_specflo_folder_that_is_no_checkout_stay_hidden(
+    tmp_path, environ
+) -> None:
+    outer = tmp_path / "outer"
+    (outer / ".specflo" / "leases").mkdir(parents=True)
+    work = outer / "work"
+    work.mkdir()
+    member, _ = probed(tmp_path, work, {"directories": [], "files": []})
+
+    command = argv(tmp_path, environ, member, work)
+
+    hidden = str(outer / ".specflo" / "leases")
+    assert ["--tmpfs", hidden] == command[command.index(hidden) - 1:command.index(hidden) + 1]
+    assert not (outer / ".specflo" / "remotes").exists()
+
+
+def test_a_checkout_above_a_specflo_folder_that_is_no_checkout_is_still_hidden(
+    tmp_path, environ, checkout
+) -> None:
+    inner = checkout / "sub"
+    (inner / ".specflo").mkdir(parents=True)
+    work = inner / "work"
+    work.mkdir()
+    member, _ = probed(tmp_path, work, {"directories": [], "files": []})
+
+    command = argv(tmp_path, environ, member, work)
+
+    for name in ("leases", "remotes"):
+        hidden = str(checkout / ".specflo" / name)
+        assert ["--tmpfs", hidden] == command[command.index(hidden) - 1:command.index(hidden) + 1]
+    assert contents(inner / ".specflo") == []

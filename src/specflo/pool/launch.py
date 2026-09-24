@@ -53,7 +53,7 @@ import shutil
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 
-from ..config import CONFIG_DIRNAME, REMOTES_DIRNAME
+from ..config import CONFIG_DIRNAME, CONFIG_FILENAME, REMOTES_DIRNAME
 from ..errors import SpecfloError
 from . import sandbox
 from .config import LOCAL, Account, Member
@@ -307,23 +307,32 @@ def checkout_secrets(cwd: Path | str) -> tuple[str, ...]:
     directory upward, so every checkout from *cwd* up to the root is looked
     at.
 
-    Both directories are made (this user's alone) in a checkout that does
-    not have them yet: a sandbox does not hide a path that is not there, and
-    the token of a lease is written once its member has started. The
-    commands that write to them leave a directory that is there already as
-    it is.
+    A directory is a checkout when its ``.specflo`` folder holds the
+    configuration file, the test the commands use to find one. Both
+    directories are made (this user's alone) in a checkout that does not have
+    them yet: a sandbox does not hide a path that is not there, and the token
+    of a lease is written once its member has started. The commands that
+    write to them leave a directory that is there already as it is.
+
+    A ``.specflo`` folder with no configuration file, such as the agent state
+    directory in the home, is no checkout, and nothing is made in it; a
+    token directory already there is hidden all the same.
     """
     here = Path(os.path.abspath(cwd))
     found: list[str] = []
     for directory in (here, *here.parents):
-        checkout = directory / CONFIG_DIRNAME
-        if not checkout.is_dir():
+        folder = directory / CONFIG_DIRNAME
+        if not folder.is_dir():
             continue
-        for held in (checkout / TOKEN_DIRNAME, checkout / REMOTES_DIRNAME):
-            try:
-                held.mkdir(mode=0o700, exist_ok=True)
-            except OSError:
-                # One this user cannot make is one no token is written to.
+        checkout = (folder / CONFIG_FILENAME).is_file()
+        for held in (folder / TOKEN_DIRNAME, folder / REMOTES_DIRNAME):
+            if checkout:
+                try:
+                    held.mkdir(mode=0o700, exist_ok=True)
+                except OSError:
+                    # One this user cannot make is one no token is written to.
+                    continue
+            elif not held.is_dir():
                 continue
             found.append(str(held.resolve()))
     return tuple(found)
