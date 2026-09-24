@@ -3,6 +3,7 @@
 import ast
 import inspect
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -74,6 +75,29 @@ def _no_directory_override(monkeypatch):
     each test's tmp repo. Tests that exercise the env var set it themselves.
     """
     monkeypatch.delenv("SPECFLO_DIRECTORY", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _no_checkout_remotes(monkeypatch, tmp_path_factory):
+    """Make the remote lookup find nothing in this checkout.
+
+    The checkout may hold a registered remote with a durable token for a live
+    daemon, and a test that runs a verb from the repository root would reach
+    it. Every lookup of the checkout's remotes lands in an empty directory
+    instead, so a verb that picks a remote fails closed. A test's own root
+    keeps its real remotes directory.
+    """
+    from specflo import config
+
+    checkout = Path(__file__).resolve().parents[1]
+    real = config.remotes_dir
+
+    def remotes_dir(root: Path) -> Path:
+        if Path(root).resolve() == checkout:
+            return tmp_path_factory.mktemp("no-remotes")
+        return real(root)
+
+    monkeypatch.setattr(config, "remotes_dir", remotes_dir)
 
 
 @pytest.fixture(autouse=True)
