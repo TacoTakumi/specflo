@@ -14,10 +14,13 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from specflo.pool import launch
+from specflo.pool.config import Member
 from specflo.pool.sandbox import (
     base_argv,
     empty_file,
@@ -25,6 +28,8 @@ from specflo.pool.sandbox import (
     operator_paths,
     unavailable,
 )
+
+from .test_runner import DEFINITION
 
 
 @pytest.fixture
@@ -187,3 +192,51 @@ def test_a_named_file_outside_the_hidden_directories_reads_empty(tmp_path) -> No
     assert inside.returncode == 0, inside.stderr
     assert inside.stdout == ""
     assert token.read_text(encoding="utf-8") == "a-lease-token"
+
+
+def installed(bin_dir: Path) -> Path:
+    """A harness in *bin_dir*: a shell wrapper, as an operator might put one."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    program = bin_dir / "pi"
+    program.write_text("#!/bin/sh\nexec true\n", encoding="utf-8")
+    program.chmod(0o755)
+    return program
+
+
+def started(tmp_path: Path, environ, program: Path, daemon_root: Path | None = None) -> list[str]:
+    member = Member(
+        name="hosted-1", command=str(program), backing="hosted", labels=(), capacity=1,
+        egress="no-train", model="some-vendor/some-model", account="team-a",
+    )
+    cwd = Path(environ["HOME"]) / "work"
+    return launch.member_argv(
+        DEFINITION, replace(member, command=f"{program} --mode rpc"), environ,
+        cwd=cwd, state_dir=tmp_path / "state", daemon_root=daemon_root,
+    )
+
+
+def test_a_harness_installed_at_or_above_a_hidden_path_is_refused(
+    tmp_path, environ, home
+) -> None:
+    daemon_root = home / "daemon"
+    daemon_root.mkdir()
+    (tmp_path / "linked").symlink_to(home)
+    refused = {
+        "in the home's own bin": installed(home / "bin"),
+        "in the daemon root's bin": installed(daemon_root / "bin"),
+        "in a bin whose real place is the home's": tmp_path / "linked" / "bin" / "pi",
+    }
+    for why, program in refused.items():
+        with pytest.raises(launch.LaunchError) as caught:
+            started(tmp_path, environ, program, daemon_root)
+        assert f"'{program}'" in str(caught.value), why
+        assert "hides" in str(caught.value), why
+
+
+def test_a_harness_installed_below_the_home_starts(tmp_path, environ, home) -> None:
+    program = installed(home / "tools" / "bin")
+
+    argv = started(tmp_path, environ, program)
+
+    at = argv.index(str(home / "tools"))
+    assert argv[at - 1:at + 2] == ["--ro-bind", str(home / "tools"), str(home / "tools")]

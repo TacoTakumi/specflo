@@ -193,6 +193,15 @@ def member_argv(
         *sandbox.harness_paths(program, environ),
         str(Path(DENY_EXTENSION).resolve().parent),
     ]
+    for path in readonly:
+        covered = _covered(path, hidden)
+        if covered is not None:
+            raise LaunchError(
+                f"member '{member.name}' cannot start: its harness '{program}' is read from "
+                f"'{path}', which holds '{covered}', a directory the sandbox hides from every "
+                "member, and a read-only bind would bring it back. Install the harness under "
+                "a directory below the home that holds none of those."
+            )
     forwarder: list[str] = []
     if bridge is not None:
         if member.backing != LOCAL:
@@ -262,6 +271,16 @@ def working_directory_fault(
             f"the working directory '{cwd}' is inside a {CONFIG_DIRNAME} directory, which "
             "holds lease and daemon tokens the sandbox hides from every member."
         )
+    return None
+
+
+def _covered(path: str, hidden: Iterable[str]) -> str | None:
+    """The first of *hidden* that *path*, by its given or its real path, is at
+    or above, or None when it covers none of them."""
+    forms = {os.path.abspath(path), os.path.realpath(path)}
+    for held in hidden:
+        if any(os.path.commonpath([form, held]) == form for form in forms):
+            return held
     return None
 
 
