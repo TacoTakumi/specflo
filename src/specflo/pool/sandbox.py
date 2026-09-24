@@ -29,7 +29,8 @@ Later mounts overlay earlier ones, so the order is the boundary:
 4. the read-only binds: what a member needs back from under the swept
    home and cannot do without, the harness it runs as above all - pi is
    installed under the operator's home on this rig, so a swept home with
-   nothing bound back leaves nothing to start
+   nothing bound back leaves nothing to start - and the paths its
+   definition lists, with each swept link on the way to one made again
 5. the writable binds - the member's own working directory and the
    directory generated for its lease - and the pins that hold the hidden
    set up inside them
@@ -46,12 +47,14 @@ The resource limits are a program in front of all of it. prlimit(1) sets
 them on itself and execs bwrap, so they are in place before the sandbox is
 made and nothing of the daemon's own runs between the fork and the exec: the
 daemon is threaded, and a pre-exec callback in a threaded process is
-documented as unsafe.
+documented as unsafe. In front of prlimit, when the user manager can be
+reached, is the member's systemd scope, whose task limit is the member's
+process limit; each runs the next in place, so the pid chain is kept.
 
 The sandbox is only as good as the kernel and the policy under it. On a rig
 where an unprivileged user namespace cannot be made, bwrap refuses and there
-is no boundary to have; ``unavailable`` says so in one line, for a test to
-skip on and for a start to refuse with.
+is no boundary to have; ``unavailable`` says so in one line for a test to
+skip on, and a member started there exits at once, which its start reports.
 """
 
 from __future__ import annotations

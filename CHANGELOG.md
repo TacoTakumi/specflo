@@ -483,6 +483,32 @@ latter. Release tags are of the form `vX.Y.Z`.
   deleted. Accounts, members and named pools have no edit pages and no
   page runs an agent.
 
+- **Each pool member runs in a systemd scope of its own.** When the user
+  manager can be reached, a member starts under `systemd-run --user
+  --scope` with a task limit of 512, so its process count is its own: host
+  load cannot starve it, and one member's fork loop stops at its own limit
+  without taking another member's room. The scope runs the member in place,
+  so its pid, pipes and pane are as before, and it is gone when the lease
+  ends. Without a user manager (no login session, or a logout with no
+  linger) a member starts under the per-uid process limit, now with a
+  margin of 1024 above the uid's threads, and the daemon logs why once.
+- **Pool members commit under the operator's name.** Each member's
+  generated directory holds a git configuration with the `user.name` and
+  `user.email` the daemon's git reports outside any repository, and nothing
+  else of the operator's; `GIT_CONFIG_GLOBAL` points at it and is the
+  pool's alone to set. A repository's own identity still wins. With no
+  identity to give, no file is written.
+- **A definition may list paths to bind back read-only.** The new `paths`
+  field of an agent definition names files and directories (a leading `~`
+  is the home) that its members get back, read-only, inside the sandbox;
+  each is bound at its real path, and each link on the way to it that lies
+  in a swept directory is made again, so a uv tool on `PATH` runs by its
+  name when its environment is listed too. A path that is missing, at or
+  above a hidden path, inside a hidden path other than the home, in or
+  holding a `.specflo` directory, or a link to any of those is refused by
+  `pool validate` and at the member's start. The shipped definitions list
+  none.
+
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,
   `brainstorm start`, `spec start`, `plan start`, `review start`, and
@@ -616,6 +642,24 @@ latter. Release tags are of the form `vX.Y.Z`.
   `.specflo`, that a member started there with bash or read can read them,
   and that a `--cwd` outside the checkout avoids it.
 
+- **A hosted member that declares a model must select it.** Its generated
+  `models.json` pins no model, so a hosted member with a `model` and no
+  `--model` naming it in its `command` would run the provider's default;
+  `pool validate` now refuses it, naming the member and the model.
+- **Only a `.specflo` folder with a configuration file is a checkout** in
+  the sandbox's walk up from a member's working directory. A start no
+  longer makes `leases` and `remotes` folders in one without it, such as
+  the agent state directory in the home; one already there stays hidden.
+- **A generated directory is removed by where it is, not by what it
+  holds.** The marker file is gone: removal takes only a direct child of
+  the configuration root the daemon recorded at the start, whatever the
+  member did inside its directory, and a record naming anything else is
+  refused and logged. The expiry pass also removes each generated
+  directory that no active lease's record names.
+- **The pool client builds its records from the keys it knows.** A lease,
+  team member, waiting notice, grant or lease end from a newer daemon with
+  a field this client does not know is read as if the field were absent.
+
 ### Fixed
 
 - **A turn the provider refused no longer looks like an empty answer.**
@@ -630,6 +674,20 @@ latter. Release tags are of the form `vX.Y.Z`.
   active-project pointer. `complete` and `shelve` both leave the pointer
   where it is, so a completed or shelved project used to keep the marker
   next to its own `complete/...` state.
+
+- **A named pipe in place of `pool.yaml` or the llama-swap file no longer
+  hangs the daemon.** Both are checked for being regular files before they
+  are read, and `pool validate`, the daemon's start and reload, the pool
+  page and the plan read each answer at once with a fault naming the path.
+- **A daemon answer the client cannot use is an error line, not a
+  traceback.** A `200` answer that is not JSON, has no result, has a result
+  of the wrong type, or lacks a field a record needs makes the project,
+  product, work item and pool verbs exit non-zero with one line naming the
+  answer.
+- **A release whose cleanup fails still ends the lease.** When the
+  generated directory cannot be removed, the release through the API, a
+  team release and the pool page's control all end the lease, write the
+  audit line and answer success; the failure is logged.
 
 ## [0.14.0]
 
