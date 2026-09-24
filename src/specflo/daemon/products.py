@@ -181,9 +181,13 @@ class DaemonClient:
         )
         self.client.headers["Authorization"] = f"Bearer {token}"
 
-    def _request(self, method: str, path: str, **kwargs):
+    def _request(self, method: str, path: str, *, into=None, **kwargs):
+        """The daemon's result for ``method`` on ``path``, decoded as ``into``."""
         return daemon_result(
-            self.url, f"{method} {path}", lambda: self.client.request(method, path, **kwargs)
+            self.url,
+            f"{method} {path}",
+            lambda: self.client.request(method, path, **kwargs),
+            lambda result: wire.decode(result, into),
         )
 
 
@@ -198,35 +202,34 @@ class RemoteProducts(DaemonClient):
             body["slug"] = slug
         if repo is not None:
             body["repo"] = repo
-        return self._product(self._request("POST", PRODUCTS_PATH, json=body))
+        return self._request("POST", PRODUCTS_PATH, json=body, into=Product)
 
     def list(self) -> list[Product]:
-        return [self._product(item) for item in self._request("GET", PRODUCTS_PATH)]
+        return self._request("GET", PRODUCTS_PATH, into=list[Product])
 
     def show(self, slug: str) -> Product:
-        return self._product(self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}"))
+        return self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}", into=Product)
 
     def set_vision(self, slug: str, vision: str) -> Product:
-        return self._product(
-            self._request("PUT", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/vision", json={"vision": vision})
+        return self._request(
+            "PUT", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/vision", json={"vision": vision},
+            into=Product,
         )
 
     def list_pieces(self, slug: str) -> list[str]:
-        return self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces")
+        return self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces", into=list[str])
 
     def add_piece(self, slug: str, name: str) -> list[str]:
-        return self._request("POST", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces", json={"name": name})
+        return self._request(
+            "POST", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces", json={"name": name},
+            into=list[str],
+        )
 
     def remove_piece(self, slug: str, name: str) -> list[str]:
         return self._request(
-            "DELETE", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces/{quote(name, safe='')}"
+            "DELETE", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/pieces/{quote(name, safe='')}",
+            into=list[str],
         )
 
     def roadmap(self, slug: str) -> Roadmap:
-        return wire.decode(
-            self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/roadmap"), Roadmap
-        )
-
-    @staticmethod
-    def _product(encoded) -> Product:
-        return wire.decode(encoded, Product)
+        return self._request("GET", f"{PRODUCTS_PATH}/{quote(slug, safe='')}/roadmap", into=Roadmap)

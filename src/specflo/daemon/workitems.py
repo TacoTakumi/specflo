@@ -233,7 +233,7 @@ class RemoteWorkItems(DaemonClient):
         ):
             if value is not None:
                 body[key] = value
-        return self._item(self._request("POST", WORK_ITEMS_PATH, json=body))
+        return self._request("POST", WORK_ITEMS_PATH, json=body, into=WorkItem)
 
     def list(
         self,
@@ -247,21 +247,16 @@ class RemoteWorkItems(DaemonClient):
             for key, value in (("product", product), ("status", status), ("kind", kind))
             if value is not None
         }
-        return [self._item(item) for item in self._request("GET", WORK_ITEMS_PATH, params=params)]
+        return self._request("GET", WORK_ITEMS_PATH, params=params, into=list[WorkItem])
 
     def show(self, item_id: int) -> WorkItem:
-        return self._item(self._request("GET", f"{WORK_ITEMS_PATH}/{item_id}"))
+        return self._request("GET", f"{WORK_ITEMS_PATH}/{item_id}", into=WorkItem)
 
     def set_status(self, item_id: int, status: str) -> WorkItem:
-        return self._item(
-            self._request("PUT", f"{WORK_ITEMS_PATH}/{item_id}/status", json={"status": status})
+        return self._request(
+            "PUT", f"{WORK_ITEMS_PATH}/{item_id}/status", json={"status": status}, into=WorkItem
         )
 
     def spawn(self, item_id: int, *, name: str | None = None) -> Spawned:
         body = {} if name is None else {"name": name}
-        encoded = self._request("POST", f"{WORK_ITEMS_PATH}/{item_id}/spawn", json=body)
-        return wire.decode(encoded, Spawned)
-
-    @staticmethod
-    def _item(encoded) -> WorkItem:
-        return wire.decode(encoded, WorkItem)
+        return self._request("POST", f"{WORK_ITEMS_PATH}/{item_id}/spawn", json=body, into=Spawned)

@@ -49,29 +49,42 @@ class RemoteProjectService:
         self.client.headers["Authorization"] = f"Bearer {token}"
 
     def _call(self, operation: str, arguments: dict):
-        result = daemon_result(
+        return daemon_result(
             self.url,
             operation,
             lambda: self.client.post(wire.route_path(operation), json=wire.encode(arguments)),
+            lambda result: wire.decode(result, wire.OPERATIONS[operation].returns),
         )
-        return wire.decode(result, wire.OPERATIONS[operation].returns)
 
 
-def daemon_result(url: str, asked: str, send: Callable[[], httpx.Response]):
+def daemon_result(
+    url: str,
+    asked: str,
+    send: Callable[[], httpx.Response],
+    decode: Callable[[object], object] = lambda result: result,
+):
     """The result the daemon at ``url`` answers ``send`` with, or the refusal it stands for.
 
     One mapping for every client of the daemon: a daemon that cannot be
     reached, a token it refuses (401), a refusal of its own (400 or 422,
     raised with the daemon's message and nothing else, so a command cannot
     tell remote from in-process), and any other status, which names what was
-    ``asked``.
+    ``asked``. A 200 answer's result is passed through ``decode``; one that is
+    not JSON, has no result, or that ``decode`` cannot use is refused with
+    the answer it was.
     """
     try:
         response = send()
     except httpx.HTTPError as exc:
         raise SpecfloError(f"Cannot reach the remote at {url}: {exc}") from exc
     if response.status_code == 200:
-        return response.json()["result"]
+        try:
+            return decode(response.json()["result"])
+        except (ValueError, KeyError, TypeError) as exc:
+            raise SpecfloError(
+                f"The remote at {url} answered {asked} with a malformed result:"
+                f" {_excerpt(response.text)}"
+            ) from exc
     detail = response_detail(response)
     if response.status_code == 401:
         raise SpecfloError(f"The remote at {url} refused the token: {detail}")
@@ -80,6 +93,12 @@ def daemon_result(url: str, asked: str, send: Callable[[], httpx.Response]):
     raise SpecfloError(
         f"The remote at {url} answered {response.status_code} to {asked}: {detail}"
     )
+
+
+def _excerpt(text: str, limit: int = 200) -> str:
+    """``text`` on one line, cut to ``limit`` characters."""
+    line = " ".join(text.split())
+    return line if len(line) <= limit else line[:limit] + "..."
 
 
 def response_detail(response: httpx.Response) -> str:
