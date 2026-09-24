@@ -74,7 +74,11 @@ def test_it_ends_with_the_separator_so_a_command_can_follow() -> None:
 def test_the_builder_reads_nothing_from_the_caller_s_environment(monkeypatch) -> None:
     monkeypatch.setenv("HOME", "/nowhere")
     monkeypatch.setenv("TMPDIR", "/nowhere")
-    assert base_argv() == base_argv()
+    first = base_argv(egress="open")
+    monkeypatch.setenv("HOME", "/elsewhere")
+    monkeypatch.setenv("TMPDIR", "/elsewhere")
+    monkeypatch.setenv("XDG_RUNTIME_DIR", "/elsewhere")
+    assert base_argv(egress="open") == first
 
 
 def test_a_command_behind_the_prefix_runs_and_is_in_its_own_namespaces() -> None:

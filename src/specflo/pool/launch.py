@@ -63,12 +63,12 @@ from .definitions import AgentDefinition
 # a node program started through "env node", so it needs PATH to be found and
 # HOME for its settings, models and sessions; the rest are what a program
 # expects of any login: who it runs as, the shell its bash tool starts, the
-# locale, the time zone, the terminal type and the temp directory. None of
-# them holds a secret. Proxy settings, editor choices and anything a version
+# locale, the time zone and the terminal type. None of them holds a secret.
+# The temp directory is the pool's to say: the sandbox's /tmp is its own. Proxy settings, editor choices and anything a version
 # manager exports are not here; a definition that needs one lists it.
 BASELINE_ENV: tuple[str, ...] = (
     "PATH", "HOME", "USER", "LOGNAME", "SHELL",
-    "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "TMPDIR",
+    "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM",
 )
 
 # The pi extension that enforces a definition's deny list. It ships inside
@@ -100,11 +100,16 @@ SERVE_ENV = "SPECFLO_AGENT_SERVE"
 AGENT_NAME_ENV = "SPECFLO_AGENT_NAME"
 AGENT_MANAGED_ENV = "SPECFLO_AGENT_MANAGED"
 
+# Where a member keeps its temporary files: the sandbox's fresh /tmp, since a
+# temp directory the daemon names elsewhere is not there inside.
+TMPDIR_ENV = "TMPDIR"
+MEMBER_TMPDIR = "/tmp"
+
 # The variables the pool alone says, whatever a definition lists or a caller
 # exports. A member that could set one of these could give itself a name, a
 # deny list or a pi configuration of its own choosing.
 _POOL_SAYS: tuple[str, ...] = (
-    DENY_ENV, AGENT_DIR_ENV, SERVE_ENV, AGENT_NAME_ENV, AGENT_MANAGED_ENV,
+    DENY_ENV, AGENT_DIR_ENV, SERVE_ENV, AGENT_NAME_ENV, AGENT_MANAGED_ENV, TMPDIR_ENV,
 )
 
 
@@ -369,6 +374,7 @@ def member_env(
     env[SERVE_ENV] = "0"
     env[AGENT_NAME_ENV] = member.name
     env[AGENT_MANAGED_ENV] = "1"
+    env[TMPDIR_ENV] = MEMBER_TMPDIR
     return env
 
 

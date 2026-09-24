@@ -93,7 +93,7 @@ def test_the_baseline_is_a_fixed_list_that_lets_pi_start():
     # pi is a node program found on PATH; it keeps its settings under HOME.
     assert launch.BASELINE_ENV == (
         "PATH", "HOME", "USER", "LOGNAME", "SHELL",
-        "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM", "TMPDIR",
+        "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TERM",
     )
 
 
@@ -105,7 +105,6 @@ def test_the_environment_is_the_baseline_plus_what_is_listed_and_nothing_else():
         "HOME": CALLER["HOME"],
         "LANG": CALLER["LANG"],
         "TERM": CALLER["TERM"],
-        "TMPDIR": CALLER["TMPDIR"],
         "GIT_AUTHOR_NAME": CALLER["GIT_AUTHOR_NAME"],
         "GH_READ_TOKEN": CALLER["GH_READ_TOKEN"],
         # What the pool says about the member itself, never the caller.
@@ -113,16 +112,25 @@ def test_the_environment_is_the_baseline_plus_what_is_listed_and_nothing_else():
         launch.AGENT_NAME_ENV: LOCAL_MEMBER.name,
         launch.AGENT_MANAGED_ENV: "1",
         launch.AGENT_DIR_ENV: str(CONFIG_DIR),
+        launch.TMPDIR_ENV: "/tmp",
     }
 
 
 def test_a_name_the_caller_does_not_have_is_left_out_not_set_empty():
-    caller = {k: v for k, v in CALLER.items() if k not in ("TMPDIR", "GIT_AUTHOR_NAME")}
+    caller = {k: v for k, v in CALLER.items() if k not in ("LANG", "GIT_AUTHOR_NAME")}
 
     env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, caller)
 
-    assert "TMPDIR" not in env
+    assert "LANG" not in env
     assert "GIT_AUTHOR_NAME" not in env
+
+
+def test_the_temp_directory_is_the_sandbox_s_own_whatever_the_caller_or_definition_says():
+    definition = replace(DEFINITION, env=(*DEFINITION.env, "TMPDIR"))
+
+    env = member_env(definition, LOCAL_MEMBER, ACCOUNTS, {**CALLER, "TMPDIR": "/var/tmp"})
+
+    assert env["TMPDIR"] == "/tmp"
 
 
 def test_a_hosted_member_gets_the_key_of_its_own_account_and_no_other():
