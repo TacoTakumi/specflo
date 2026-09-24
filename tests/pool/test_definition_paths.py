@@ -19,7 +19,7 @@ import pytest
 from typer.testing import CliRunner
 
 from specflo.cli import app as cli
-from specflo.pool import cli_admin, definitions
+from specflo.pool import cli_admin, definitions, launch
 from specflo.pool import config as pool_config
 
 runner = CliRunner()
@@ -143,3 +143,20 @@ def test_pool_validate_reports_the_path(rig):
 
     assert done.exit_code == 1
     assert "~/.pi/agent/sessions" in done.output
+
+
+def test_loading_the_pool_records_where_each_listed_path_leads(rig):
+    (rig["home"] / "link").symlink_to(rig["home"] / "tools")
+    listing(rig, "~/tools/bin", "~/link")
+
+    config, _ = pool_config.load_pool_config(cli_admin.pool_dir(rig["root"]))
+
+    (lister,) = [d for d in config.definitions if d.name == "lister"]
+    tools = str((rig["home"] / "tools").resolve())
+    assert lister.resolved == (
+        (str(rig["home"] / "tools" / "bin"), tools + "/bin"),
+        (str(rig["home"] / "link"), str(rig["home"] / "tools"), tools),
+    )
+    assert lister.resolved == tuple(
+        launch.listed_resolution(path, {"HOME": str(rig["home"])}) for path in lister.paths
+    )

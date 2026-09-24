@@ -266,11 +266,15 @@ def _listed_binds(
 
     Each listed path is checked again here, as validation checked it: it may
     have gone, or become a link to a secret, since. Raises ``LaunchError``
-    naming the path when it is at fault, or when it covers one of *hidden*.
+    naming the path when it is at fault, when it covers one of *hidden*, or
+    when it leads elsewhere than it did when the pool file was loaded: a
+    member that can write a listed path could have pointed it at any path
+    under the home, and the next member of the definition would get that.
     """
     real: list[str] = []
     links: list[tuple[str, str]] = []
-    for listed in definition.paths:
+    recorded = definition.resolved
+    for index, listed in enumerate(definition.paths):
         fault = listed_path_fault(listed, environ, daemon_root)
         given = listed_path(listed, environ)
         covered = _covered(given, hidden) if fault is None and given is not None else None
@@ -284,6 +288,15 @@ def _listed_binds(
                 f"member '{member.name}' cannot start: definition '{definition.name}' "
                 f"lists a path it may not have: {fault}"
             )
+        if recorded is not None:
+            was, now = recorded[index], listed_resolution(listed, environ)
+            if now != was:
+                raise LaunchError(
+                    f"member '{member.name}' cannot start: definition '{definition.name}' "
+                    f"lists '{listed}', which leads to '{now[-1]}' now and led to "
+                    f"'{was[-1]}' when the pool file was loaded. If the change is meant, "
+                    "reload the pool to accept it."
+                )
         chain = sandbox.link_chain(os.path.abspath(given))
         for step in chain[:-1]:
             swept = any(os.path.commonpath([step, held]) == held for held in hidden)
@@ -344,6 +357,16 @@ def listed_path(listed: str, environ: Mapping[str, str]) -> str | None:
         home = environ.get("HOME") or str(Path.home())
         return os.path.join(home, listed[2:]) if listed != "~" else home
     return listed if os.path.isabs(listed) else None
+
+
+def listed_resolution(listed: str, environ: Mapping[str, str]) -> tuple[str, ...]:
+    """Where a definition's *listed* path leads: the path, each link it goes
+    through, and last its real path; empty for a path that is neither
+    absolute nor under ``~``."""
+    given = listed_path(listed, environ)
+    if given is None:
+        return ()
+    return (*sandbox.link_chain(os.path.abspath(given)), os.path.realpath(given))
 
 
 def listed_path_fault(

@@ -502,10 +502,11 @@ def _definitions(
     Each path a definition lists is checked against what the sandbox hides,
     as this process's environment names it and with the daemon root the one
     that holds the pool directory; a definition with a path at fault does not
-    stand.
+    stand. Where each path leads is recorded on the definition that stands,
+    and a member start refuses one that leads elsewhere by then.
     """
     # The launch module builds on this one, so it is imported only here.
-    from .launch import listed_path_fault
+    from .launch import listed_path_fault, listed_resolution
 
     loaded: dict[str, AgentDefinition] = {}
     names: set[str] = set()
@@ -525,7 +526,9 @@ def _definitions(
         ]
         errors.extend(ConfigError(file, label, "paths", fault) for fault in found)
         if not found:
-            loaded[file.stem] = definition
+            loaded[file.stem] = replace(definition, resolved=tuple(
+                listed_resolution(listed, os.environ) for listed in definition.paths
+            ))
     return loaded, names
 
 

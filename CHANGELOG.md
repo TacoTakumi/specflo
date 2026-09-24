@@ -516,7 +516,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   its token directories hidden when it is in the new register
   `~/.specflo/checkouts`, which storing a lease token, adding a remote, or
   running any specflo command inside a checkout that holds tokens fills.
-  The shipped definitions list none.
+  Where each listed path leads, link by link to its real path, is recorded
+  when the daemon reads the pool directory, and a member start whose path
+  leads elsewhere by then is refused until `serve pool reload` accepts the
+  change. The shipped definitions list none.
 
 ### Changed
 - **Artifact locators replace paths on the human line.** `new`,

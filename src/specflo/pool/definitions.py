@@ -15,7 +15,7 @@ refusal names the file and the field at fault.
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import yaml
@@ -82,6 +82,10 @@ class AgentDefinition:
     paths: tuple[str, ...] = ()
     egress: str = DEFAULT_EGRESS
     project_context: bool = False
+    # Where each of paths led when the pool file was loaded: the links it went
+    # through and its real path. A start refuses a path that leads elsewhere
+    # now. None when the definition was not loaded as part of a pool.
+    resolved: tuple[tuple[str, ...], ...] | None = field(default=None, compare=False)
 
 
 def not_a_file(path: Path) -> bool:

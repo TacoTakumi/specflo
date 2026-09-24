@@ -210,3 +210,62 @@ def test_a_registered_checkout_two_levels_below_a_listed_directory_keeps_its_tok
 
     assert found["listed"] == {str(folder / "leases"): [], str(folder / "remotes"): []}
     assert found["read"] == {str(checkout / "readme.txt"): "readme\n"}
+
+
+def _redirected(tmp_path, environ, home):
+    """A definition listing ~/data as the pool file's load recorded it, then
+    ~/data replaced with a link to ~/.ssh, as a member that could write it
+    might; and the member to start."""
+    listed = home / "data"
+    definition = replace(
+        DEFINITION, paths=("~/data",), resolved=(launch.listed_resolution("~/data", environ),)
+    )
+    (home / ".ssh").mkdir()
+    (home / ".ssh" / "id_ed25519").write_text("PRIVATE KEY\n", encoding="utf-8")
+    (listed / "inside.txt").unlink()
+    listed.rmdir()
+    listed.symlink_to(home / ".ssh")
+    (tmp_path / "work").mkdir()
+    member = Member(
+        name="hosted-1", backing="hosted", labels=(), capacity=1, egress="no-train",
+        model="some-vendor/some-model", account="team-a", command=sys.executable,
+    )
+    return definition, member
+
+
+def test_a_start_whose_listed_path_leads_elsewhere_than_at_load_is_refused(
+    tmp_path, environ, home
+):
+    definition, member = _redirected(tmp_path, environ, home)
+
+    with pytest.raises(launch.LaunchError, match="~/data.*reload"):
+        launch.member_argv(
+            definition, member, environ, cwd=tmp_path / "work", state_dir=tmp_path / "state"
+        )
+
+
+def test_after_a_reload_the_new_target_is_bound_as_any_listed_path(tmp_path, environ, home):
+    definition, member = _redirected(tmp_path, environ, home)
+    reloaded = replace(definition, resolved=(launch.listed_resolution("~/data", environ),))
+
+    argv = launch.member_argv(
+        reloaded, member, environ, cwd=tmp_path / "work", state_dir=tmp_path / "state"
+    )
+
+    ssh = str((home / ".ssh").resolve())
+    assert any(argv[i:i + 3] == ["--ro-bind", ssh, ssh] for i in range(len(argv)))
+
+
+def test_a_listed_path_that_leads_where_it_did_at_load_starts(tmp_path, environ, home):
+    (tmp_path / "work").mkdir()
+    definition = replace(
+        DEFINITION, paths=("~/data",), resolved=(launch.listed_resolution("~/data", environ),)
+    )
+    member = Member(
+        name="hosted-1", backing="hosted", labels=(), capacity=1, egress="no-train",
+        model="some-vendor/some-model", account="team-a", command=sys.executable,
+    )
+
+    launch.member_argv(
+        definition, member, environ, cwd=tmp_path / "work", state_dir=tmp_path / "state"
+    )
