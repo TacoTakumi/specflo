@@ -419,7 +419,7 @@ def harness_paths(program: str, environ: Mapping[str, str]) -> tuple[str, ...]:
     if found is None:
         return ()
     paths: list[str] = []
-    for candidate in _link_chain(os.path.abspath(found)):
+    for candidate in link_chain(os.path.abspath(found)):
         directory = os.path.dirname(candidate)
         prefix = (
             os.path.dirname(directory)
@@ -435,7 +435,7 @@ def harness_paths(program: str, environ: Mapping[str, str]) -> tuple[str, ...]:
     return tuple(paths)
 
 
-def _link_chain(path: str, limit: int = 40) -> list[str]:
+def link_chain(path: str, limit: int = 40) -> list[str]:
     """*path* and every link it leads through, ending at what is really there."""
     chain = [path]
     for _ in range(limit):
@@ -540,6 +540,7 @@ def base_argv(
     empty: Path | str | None = None,
     writable: Iterable[str] = (),
     readonly: Iterable[str] = (),
+    links: Iterable[tuple[str, str]] = (),
     limits: Limits | None = None,
     chdir: Path | str | None = None,
 ) -> list[str]:
@@ -564,6 +565,10 @@ def base_argv(
     *empty* a hidden file is passed over and a hidden directory is not: a
     caller that hides nothing needs no file, and one that hides a file and
     gives no file to hide it with is asking for a boundary that is not there.
+
+    *links* are (target, path) pairs, each a link made again at *path* after
+    the read-only binds: a link on the way to a bound path that lies in a
+    swept directory is gone with it, and what it leads to is bound on its own.
 
     *readonly* and *writable* are the paths a member gets back from under
     the swept home, each bound over itself: the harness's own installation
@@ -618,6 +623,7 @@ def base_argv(
         *resolver_argv(egress),
         *(hidden_argv(over, empty) if empty is not None else []),
         *[word for path in readonly for word in ("--ro-bind", path, path)],
+        *[word for target, path in links for word in ("--symlink", target, path)],
         *[word for path in writable for word in ("--bind", path, path)],
         *pin_argv(writable, under),
         *(hidden_argv(under, empty) if empty is not None else []),

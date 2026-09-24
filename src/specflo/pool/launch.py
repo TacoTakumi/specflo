@@ -214,6 +214,8 @@ def member_argv(
                 "member, and a read-only bind would bring it back. Install the harness under "
                 "a directory below the home that holds none of those."
             )
+    listed, links = _listed_binds(definition, member, environ, daemon_root, hidden)
+    readonly.extend(listed)
     forwarder: list[str] = []
     if bridge is not None:
         if member.backing != LOCAL:
@@ -236,10 +238,51 @@ def member_argv(
         empty=sandbox.empty_file(state_dir),
         writable=writable,
         readonly=readonly,
+        links=links,
         limits=sandbox.DEFAULT_LIMITS if limits is None else limits,
         chdir=cwd,
     )
     return [*prefix, *forwarder, *pi_argv(definition, member)]
+
+
+def _listed_binds(
+    definition: AgentDefinition,
+    member: Member,
+    environ: Mapping[str, str],
+    daemon_root: Path | str | None,
+    hidden: list[str],
+) -> tuple[list[str], list[tuple[str, str]]]:
+    """The real paths of the paths *definition* lists, to bind read-only, and
+    the links on the way to each that lie in a swept directory, as (target,
+    path) pairs to make again.
+
+    Each listed path is checked again here, as validation checked it: it may
+    have gone, or become a link to a secret, since. Raises ``LaunchError``
+    naming the path when it is at fault, or when it covers one of *hidden*.
+    """
+    real: list[str] = []
+    links: list[tuple[str, str]] = []
+    for listed in definition.paths:
+        fault = listed_path_fault(listed, environ, daemon_root)
+        given = listed_path(listed, environ)
+        covered = _covered(given, hidden) if fault is None and given is not None else None
+        if covered is not None:
+            fault = (
+                f"'{listed}' holds '{covered}', a directory the sandbox hides from every "
+                "member, and a bind would bring it back."
+            )
+        if fault is not None:
+            raise LaunchError(
+                f"member '{member.name}' cannot start: definition '{definition.name}' "
+                f"lists a path it may not have: {fault}"
+            )
+        chain = sandbox.link_chain(os.path.abspath(given))
+        for step in chain[:-1]:
+            swept = any(os.path.commonpath([step, held]) == held for held in hidden)
+            if swept and os.path.islink(step):
+                links.append((os.readlink(step), step))
+        real.append(os.path.realpath(given))
+    return real, links
 
 
 def working_directory_fault(
