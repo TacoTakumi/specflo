@@ -352,8 +352,9 @@ class PoolService:
     def _sweep(self, active: Sequence[Lease]) -> None:
         """Remove every child of the configuration root that the record of no
         member of the *active* leases names. A lease the pass has just ended
-        has no record left, or one kept because its member may still run.
-        Called in the turn, so no start is making one meanwhile; a removal
+        has no record left, or one kept because its host did not stop; that
+        lease is not active, so its directory is removed here too, even if
+        its member still runs. Called in the turn, so no start is making one meanwhile; a removal
         that fails is logged and the others go on."""
         root = Path(self.config_root)
         if not root.is_dir():

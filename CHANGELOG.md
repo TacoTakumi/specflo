@@ -491,7 +491,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   so its pid, pipes and pane are as before, and it is gone when the lease
   ends. Without a user manager (no login session, or a logout with no
   linger) a member starts under the per-uid process limit, now with a
-  margin of 1024 above the uid's threads, and the daemon logs why once.
+  margin of 1024 above the uid's threads plus the 16 processes the sandbox
+  itself forks, and the daemon logs why once.
   Each scope is a unit named `specflo-member-<agent>-<id>`; the expiry
   pass stops an empty one, which a member killed while its scope is being
   made leaves behind.

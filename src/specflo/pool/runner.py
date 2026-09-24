@@ -320,7 +320,9 @@ def stop(
     directory: nothing is stopped and no record is written.
 
     Raises ``RunnerError`` when the host does not stop; what the lease left
-    on disk then stays, because the member may still run.
+    on disk then stays for now, because the member may still run. The lease
+    has ended all the same, so the next expiry pass removes the generated
+    directory that no active lease names.
     """
     paths = _paths(name)
     answered = True
