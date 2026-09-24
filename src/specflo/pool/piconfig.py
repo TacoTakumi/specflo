@@ -355,4 +355,21 @@ def remove(directory: Path | str | None) -> None:
         raise LaunchError(
             f"{directory} is not a generated pi configuration directory; it is not removed."
         )
-    shutil.rmtree(directory)
+    try:
+        shutil.rmtree(directory)
+    except OSError:
+        # The member may write here, and a directory it took its own rights
+        # from is still this user's to open again.
+        _reopen(directory)
+        shutil.rmtree(directory)
+
+
+def _reopen(directory: Path) -> None:
+    """Give this user back every right on each directory under *directory*,
+    from the top down, following no link."""
+    left = [directory]
+    while left:
+        here = left.pop()
+        os.chmod(here, 0o700)
+        with os.scandir(here) as entries:
+            left.extend(entry.path for entry in entries if entry.is_dir(follow_symlinks=False))

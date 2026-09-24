@@ -366,8 +366,12 @@ def test_the_leases_due_after_one_whose_member_does_not_stop_are_ended_in_the_sa
     assert svc.expire_due() == []
 
 
+@pytest.mark.parametrize("error", [
+    launch.LaunchError("not a generated pi configuration directory"),
+    PermissionError(13, "Permission denied: not a generated pi configuration directory"),
+], ids=["refused", "not permitted"])
 def test_an_expired_member_whose_directory_cannot_be_removed_fails_no_request(
-    pool_rig, monkeypatch, caplog
+    pool_rig, monkeypatch, caplog, error
 ):
     real_time(pool_rig)
     svc = pool_rig.service(pool_rig.config(pool_rig.local_member(), pool_rig.hosted_member()))
@@ -381,7 +385,7 @@ def test_an_expired_member_whose_directory_cannot_be_removed_fails_no_request(
     def stop(name, cause, **tokens):
         real_stop(name, cause, **tokens)
         if name == stuck.agent:
-            raise launch.LaunchError("not a generated pi configuration directory")
+            raise error
 
     monkeypatch.setattr(service.runner, "stop", stop)
     with caplog.at_level(logging.WARNING, logger="specflo.pool.service"):

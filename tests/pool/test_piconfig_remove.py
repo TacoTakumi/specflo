@@ -78,3 +78,16 @@ def test_ending_a_lease_twice_removes_nothing_the_second_time(tmp_path: Path) ->
 def test_nothing_to_remove_is_not_a_failure(tmp_path: Path) -> None:
     piconfig.remove(None)
     piconfig.remove(tmp_path / "never-was")
+
+
+def test_a_directory_the_member_made_unreadable_is_removed_all_the_same(tmp_path: Path) -> None:
+    directory = piconfig.create(tmp_path / 'generated', NO_TRAIN_MEMBER, ACCOUNTS)
+    locked = directory / "sessions" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "one.jsonl").write_text("{}\n", encoding="utf-8")
+    locked.chmod(0o000)
+    (directory / "sessions").chmod(0o500)
+
+    piconfig.remove(directory)
+
+    assert not directory.exists()

@@ -328,7 +328,7 @@ class PoolService:
                 for lease_id in due:
                     try:
                         ended.append(self.end_lease(lease_id, "expired"))
-                    except SpecfloError as exc:
+                    except (SpecfloError, OSError) as exc:
                         _log.warning("the expired lease %s: %s", lease_id, exc)
                         if lease_id == own:
                             failed = exc
