@@ -298,7 +298,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   and at the start: `/`, the home or a directory above it, a hidden
   directory or one above or inside it, and one inside `.specflo`. A member gets back its harness's installation,
   the deny-list extension, its working directory and its generated pi
-  configuration directory. An ancestor of a hidden path cannot be renamed
+  configuration directory, the last two at their real paths, so a
+  working directory given through a symlink cannot bring a checkout's
+  tokens back. A member whose harness is installed at or above a hidden
+  path, such as a `pi` in `~/bin`, is refused, naming the program. The
+  sandbox keeps a member from the operator's secrets by ordinary means; it
+  is not a jail against a determined process of the operator's user, and
+  the README's Known limits name what it leaves open, among them the X
+  server a hosted member reaches through the shared network. An ancestor of a hidden path cannot be renamed
   from a writable bind, and a member's background process ends with its
   lease. Each egress class has a sandbox profile, and a class with none is
   refused by name. A rig where bwrap cannot make an unprivileged user
@@ -306,7 +313,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   Every member, local ones too, gets a pi configuration directory
   generated for its lease and removed at its end, and none starts without
   one. The directory is the daemon user's alone, and so is the models file
-  in it, which is made with mode 0600. A directory without the pool's marker file is never removed. A
+  in it, which is made with mode 0600. A directory without the pool's marker file is never removed.
+  A start that fails after the directory is made removes it, whatever
+  failed, and an idle lease whose directory cannot be removed still ends
+  and fails no other request. A
   definition's skills are copied into that directory with their links
   resolved, so a skill edited on the host does not change under a running
   member. A skill that cannot be found, or a name that walks out of the
@@ -335,7 +345,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   forwarder and speaks to the socket itself. A completion is forwarded only
   when it names a model an active lease or a project agent holds, by its
   llama-swap ID or an alias, so a member cannot load a model the ledger did
-  not admit. The daemon forwards it as a JSON body it writes again, with no
+  not admit. A body that is not a JSON object, or is nested too deeply to
+  read, is refused. The daemon forwards it as a JSON body it writes again, with no
   query string, so llama-swap reads the model that was checked, and the
   check does not wait while a member starts. It streams both ways and waits
   as long as a model load or a paused stream takes, and a llama-swap that
