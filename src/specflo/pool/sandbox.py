@@ -194,6 +194,27 @@ def profile_argv(egress: str) -> list[str]:
     return ["--share-net"] if profile_for(egress).share_net else []
 
 
+# Where the host's resolver configuration is named.
+RESOLVER = "/etc/resolv.conf"
+
+
+def resolver_argv(egress: str | None) -> list[str]:
+    """The resolver file a member that shares the host's network gets back.
+
+    ``/run`` is covered for every member, since the host's daemons listen
+    there on sockets that trust the operator's user: the container engine,
+    the system bus, the resolver's own. ``/etc/resolv.conf`` is often a link
+    into it, and a member that reaches its provider by name needs that one
+    file, read-only. A member with no network needs nothing of it.
+    """
+    if egress is None or not profile_for(egress).share_net:
+        return []
+    target = os.path.realpath(RESOLVER)
+    if not _within(target, "/run") or not os.path.isfile(target):
+        return []
+    return ["--ro-bind", target, target]
+
+
 @dataclass(frozen=True)
 class Bridge:
     """How a member with no network reaches its model from inside its sandbox.
@@ -534,6 +555,10 @@ def base_argv(
     member off the terminal that started it, which is a herdr pane the
     operator is watching.
 
+    ``/tmp`` and ``/run`` are fresh: the host's daemons listen under ``/run``
+    on sockets that trust the operator's user, and a member of a class that
+    shares the network gets the resolver file back (``resolver_argv``).
+
     *hidden* is the set from ``operator_paths``, mounted after the root so it
     overlays it, and *empty* the file a hidden file is covered with. With no
     *empty* a hidden file is passed over and a hidden directory is not: a
@@ -588,6 +613,9 @@ def base_argv(
         "/proc",
         "--tmpfs",
         "/tmp",
+        "--tmpfs",
+        "/run",
+        *resolver_argv(egress),
         *(hidden_argv(over, empty) if empty is not None else []),
         *[word for path in readonly for word in ("--ro-bind", path, path)],
         *[word for path in writable for word in ("--bind", path, path)],

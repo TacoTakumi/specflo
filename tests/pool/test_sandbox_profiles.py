@@ -11,7 +11,11 @@ for either way.
 
 from __future__ import annotations
 
+import json
+import os
+import stat
 import subprocess
+import sys
 
 import pytest
 
@@ -88,3 +92,76 @@ def test_a_local_member_sees_loopback_alone_and_a_hosted_one_sees_the_host_s() -
         pytest.skip(f"no sandbox on this rig: {reason}")
     assert interfaces(base_argv(egress="local")) == {"lo"}
     assert interfaces(base_argv(egress="open")) > {"lo"}
+
+
+def inside(argv: list[str], script: str) -> str:
+    read = subprocess.run(
+        [*argv, sys.executable, "-c", script], capture_output=True, text=True, timeout=60
+    )
+    assert read.returncode == 0, read.stderr
+    return read.stdout
+
+
+# Lists /run, tries every socket the host has there, and reads the resolver
+# file; one line of JSON.
+RUN_PROBE = '''import json, os, socket
+found = {"run": sorted(os.listdir("/run")), "connected": []}
+for path in json.loads(os.environ["HOST_SOCKETS"]):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(path)
+        found["connected"].append(path)
+    except OSError:
+        pass
+    finally:
+        s.close()
+try:
+    with open("/etc/resolv.conf", encoding="utf-8") as f:
+        found["resolver"] = f.read()
+except OSError as exc:
+    found["resolver"] = None
+print(json.dumps(found))
+'''
+
+
+def host_sockets() -> list[str]:
+    """The unix sockets under the host's /run that this user can reach, outside the runtime directory."""
+    found = []
+    for directory, dirs, files in os.walk("/run", onerror=lambda exc: None):
+        if directory.startswith("/run/user"):
+            dirs.clear()
+            continue
+        for name in files:
+            path = os.path.join(directory, name)
+            try:
+                if stat.S_ISSOCK(os.lstat(path).st_mode):
+                    found.append(path)
+            except OSError:
+                pass
+    return found
+
+
+@pytest.mark.parametrize("egress", sorted(PROFILES))
+def test_a_member_reaches_no_socket_under_run_and_a_hosted_one_still_resolves(egress) -> None:
+    reason = unavailable()
+    if reason is not None:
+        pytest.skip(f"no sandbox on this rig: {reason}")
+    sockets = host_sockets()
+    argv = base_argv(egress=egress)
+
+    found = json.loads(inside(
+        [argv[0], *argv[1:-1], "--setenv", "HOST_SOCKETS", json.dumps(sockets), "--"],
+        RUN_PROBE,
+    ))
+
+    assert found["connected"] == []
+    resolver = os.path.realpath("/etc/resolv.conf")
+    if PROFILES[egress].share_net:
+        with open("/etc/resolv.conf", encoding="utf-8") as f:
+            assert found["resolver"] == f.read()
+        kept = {resolver.split("/")[2]} if resolver.startswith("/run/") else set()
+        assert set(found["run"]) == kept
+    else:
+        assert found["run"] == []
+        if resolver.startswith("/run/"):
+            assert found["resolver"] is None
