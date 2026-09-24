@@ -70,8 +70,14 @@ class SwapConfig:
 
 
 def read(path: Path | str) -> SwapConfig:
-    """Load the llama-swap configuration at *path*."""
+    """Load the llama-swap configuration at *path*.
+
+    A path that is not a regular file is refused before it is opened: a named
+    pipe would hold the reader until a writer comes.
+    """
     path = Path(path)
+    if path.exists() and not path.is_file():
+        raise SpecfloError(f"llama-swap configuration {path} is not a regular file")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     except OSError as exc:

@@ -58,6 +58,7 @@ from .definitions import (
     AgentDefinition,
     DefinitionError,
     load_definition,
+    not_a_file,
 )
 
 if TYPE_CHECKING:
@@ -136,6 +137,8 @@ AGENT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 # The entry an error names when the fault is not in one account or member.
 FILE = "file"
+
+NOT_A_POOL_FILE = "not a regular file; put the pool's YAML file there."
 
 
 class ConfigError(SpecfloError):
@@ -259,7 +262,13 @@ def check_pool_file(path: Path | str) -> tuple[PoolConfig, list[ConfigError]]:
 
 def _check_pool_file(path: Path) -> tuple[PoolConfig, list[ConfigError], set[str]]:
     """As ``check_pool_file``, and with every name a pool entry gives, whether
-    or not the pool stands."""
+    or not the pool stands.
+
+    A pool file that is not a regular file is refused before it is opened: a
+    named pipe would hold the reader until a writer comes.
+    """
+    if not_a_file(path):
+        return PoolConfig(path), [ConfigError(path, FILE, "file", NOT_A_POOL_FILE)], set()
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except OSError as exc:
