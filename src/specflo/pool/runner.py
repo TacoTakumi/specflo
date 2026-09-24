@@ -818,6 +818,19 @@ def _record_config(paths: AgentPaths, config_dir: Path | str, config_root: Path 
     _write_private(paths.root / CONFIG_ROOT_FILE, str(config_root))
 
 
+def recorded_config_dirs(names: Iterable[str]) -> set[str]:
+    """The generated directories the daemon's records for the agents *names*
+    name, as absolute paths; an agent with no record names none."""
+    found = set()
+    for name in names:
+        try:
+            record = _paths(name).root / CONFIG_DIR_FILE
+            found.add(os.path.abspath(record.read_text(encoding="utf-8").strip()))
+        except (OSError, RunnerError):
+            continue
+    return found
+
+
 def _forget(paths: AgentPaths) -> None:
     """Remove what a lease left on disk: the launch file, if pi never read it,
     and the generated pi configuration directory the daemon's record names.

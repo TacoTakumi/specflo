@@ -148,7 +148,6 @@ from ..daemon.poolstore import (
     Transition,
     WaitingRequest,
 )
-from ..agent.statefiles import AgentPaths
 from ..errors import SpecfloError
 from . import egress as egress_classes
 from . import accounts, console, expiry, ledger, piconfig, preempt, runner, teamlease
@@ -327,7 +326,8 @@ class PoolService:
                 with self.open_store() as store:
                     # A row whose agent has no status that can be read is
                     # judged by the row alone, and fails no caller.
-                    read = expiry.read(store.list_leases(state="active"), runner.status)
+                    active = store.list_leases(state="active")
+                    read = expiry.read(active, runner.status)
                 due = [lease.id for lease in expiry.due(read, now)]
                 ended, failed = [], None
                 for lease_id in due:
@@ -339,23 +339,23 @@ class PoolService:
                             failed = exc
                         with self.open_store() as store:
                             ended.append(_recorded_end(store, lease_id))
-                self._sweep()
+                self._sweep(active)
                 if failed is not None:
                     raise failed
                 return ended
             finally:
                 self._checking = False
 
-    def _sweep(self) -> None:
+    def _sweep(self, active: Sequence[Lease]) -> None:
         """Remove every child of the configuration root that the record of no
-        active lease's member names. Called in the turn, so no start is making
-        one meanwhile; a removal that fails is logged and the others go on."""
+        member of the *active* leases names. A lease the pass has just ended
+        has no record left, or one kept because its member may still run.
+        Called in the turn, so no start is making one meanwhile; a removal
+        that fails is logged and the others go on."""
         root = Path(self.config_root)
         if not root.is_dir():
             return
-        with self.open_store() as store:
-            active = store.list_leases(state="active")
-        named = {_recorded_config_dir(ledger.agent_of(lease)) for lease in active}
+        named = runner.recorded_config_dirs(ledger.agent_of(lease) for lease in active)
         for child in sorted(root.iterdir()):
             if os.path.abspath(child) in named:
                 continue
@@ -868,16 +868,6 @@ def _idle_limit(pool: Pool, asked: int | None) -> int:
             f"'{pool.name}', {_duration(pool.idle_max)}."
         )
     return asked
-
-
-def _recorded_config_dir(agent: str) -> str | None:
-    """The generated directory the daemon's record for *agent* names, as an
-    absolute path; None when there is no record."""
-    try:
-        record = AgentPaths.resolve(agent).root / runner.CONFIG_DIR_FILE
-        return os.path.abspath(record.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
-        return None
 
 
 def _recorded_end(store: PoolStore, lease_id: str) -> Ended:
