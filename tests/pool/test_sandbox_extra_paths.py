@@ -154,7 +154,7 @@ def test_a_tool_on_path_that_links_into_its_own_environment_runs_by_its_name(
     assert found["ran"]["tool"] == [0, "tool ran\n"]
 
 
-@pytest.mark.parametrize("became", ["missing", "a link to a hidden directory"])
+@pytest.mark.parametrize("became", ["missing", "a link to a hidden directory", "a link into /run"])
 def test_a_start_whose_listed_path_is_now_at_fault_is_refused_naming_it(
     tmp_path, environ, home, became
 ):
@@ -162,11 +162,15 @@ def test_a_start_whose_listed_path_is_now_at_fault_is_refused_naming_it(
     if became == "missing":
         (listed / "inside.txt").unlink()
         listed.rmdir()
-    else:
+    elif became == "a link to a hidden directory":
         (home / ".pi" / "agent").mkdir(parents=True)
         (listed / "inside.txt").unlink()
         listed.rmdir()
         listed.symlink_to(home / ".pi" / "agent")
+    else:
+        (listed / "inside.txt").unlink()
+        listed.rmdir()
+        listed.symlink_to("/run")
     work = tmp_path / "work"
     work.mkdir()
     member = Member(

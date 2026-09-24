@@ -6,8 +6,9 @@ leading ``~`` stands for the home. The sandbox hides the home, the operator's
 directories under it, the runtime directory, the daemon's root and every
 checkout's token directories, and a bind brings back whatever it covers. So a
 listed path is refused when it is at or above any hidden path, when it lies in
-a hidden path other than the home, when it is a link whose real path is any of
-those, and when it does not exist. Each refusal names the path.
+a hidden path other than the home, when it lies in the fresh /tmp or /run and
+not in the home, when it is a link whose real path is any of those, and when
+it does not exist. Each refusal names the path.
 """
 
 from __future__ import annotations
@@ -96,12 +97,15 @@ REFUSED = {
     "a checkout's token directory": "~/proj/.specflo/leases",
     "a checkout that holds token directories": "~/proj",
     "a relative path": "tools/bin",
+    "the fresh /run": "/run",
+    "in the fresh /tmp, outside the home": "{tmp}/outside",
 }
 
 
 @pytest.mark.parametrize("case", REFUSED)
 def test_a_path_that_would_bring_back_what_is_hidden_is_refused_naming_it(rig, case):
     listed = REFUSED[case].format(tmp=rig["tmp"], home=rig["home"], runtime=rig["runtime"])
+    (rig["tmp"] / "outside").mkdir(exist_ok=True)
     listing(rig, "~/tools/bin", listed)
 
     found = faults(rig)
@@ -110,7 +114,9 @@ def test_a_path_that_would_bring_back_what_is_hidden_is_refused_naming_it(rig, c
     assert listed in str(found[0])
 
 
-@pytest.mark.parametrize("target", ["~/.pi/agent", "~/specflo-daemon", "~/proj/.specflo/leases"])
+@pytest.mark.parametrize(
+    "target", ["~/.pi/agent", "~/specflo-daemon", "~/proj/.specflo/leases", "/run"]
+)
 def test_a_link_whose_real_path_is_hidden_is_refused_naming_it(rig, target):
     link = rig["home"] / "tools" / "innocent"
     link.symlink_to(Path(target.replace("~", str(rig["home"]))))

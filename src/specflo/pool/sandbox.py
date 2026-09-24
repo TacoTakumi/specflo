@@ -80,6 +80,11 @@ from ..errors import SpecfloError
 # could drive another member through.
 _UNDER_HOME = (".pi", ".agents", ".specflo")
 
+# The directories every sandbox mounts fresh and empty over the host's: the
+# host's /tmp holds other programs' files and the display's sockets, and its
+# /run the sockets the host's daemons listen on.
+FRESH_DIRS = ("/tmp", "/run")
+
 # The variable naming the pi configuration directory. The daemon's own value
 # is the operator's directory; a member's is the one generated for its lease,
 # which is bound back over the hidden set and is not read here.
@@ -801,10 +806,7 @@ def base_argv(
         "/dev",
         "--proc",
         "/proc",
-        "--tmpfs",
-        "/tmp",
-        "--tmpfs",
-        "/run",
+        *[word for path in FRESH_DIRS for word in ("--tmpfs", path)],
         *resolver_argv(egress),
         *(hidden_argv(over, empty) if empty is not None else []),
         *[word for path in readonly for word in ("--ro-bind", path, path)],

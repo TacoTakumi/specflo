@@ -353,8 +353,10 @@ def listed_path_fault(
     back whatever of them it covers. One at or above a hidden path, or at or
     below one other than the home, is refused, by its given and by its real
     path, and so is one in or holding a checkout's ``.specflo`` directory,
-    which holds lease and daemon tokens. So is a path that does not exist,
-    and one that is neither absolute nor under ``~``. *environ* is the
+    which holds lease and daemon tokens. So is one in the fresh ``/tmp`` or
+    ``/run`` and not in the home, which would bring back the host's sockets
+    there. So is a path that does not exist, and one that is neither
+    absolute nor under ``~``. *environ* is the
     daemon's environment and *daemon_root* its own directory, as for
     ``member_argv``.
     """
@@ -378,6 +380,12 @@ def listed_path_fault(
                     f"'{listed}' is inside '{held}', a directory the sandbox hides from every "
                     "member, and a bind would bring that part of it back."
                 )
+        fresh = next((d for d in sandbox.FRESH_DIRS if os.path.commonpath([form, d]) == d), None)
+        if fresh is not None and os.path.commonpath([form, home]) != home:
+            return (
+                f"'{listed}' is in '{fresh}', which the sandbox mounts fresh for every "
+                "member, and a bind would bring back what the host keeps there."
+            )
         if CONFIG_DIRNAME in Path(form).parts or os.path.isdir(os.path.join(form, CONFIG_DIRNAME)):
             return (
                 f"'{listed}' is or holds a {CONFIG_DIRNAME} directory, which holds lease and "

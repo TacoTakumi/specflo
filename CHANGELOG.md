@@ -508,8 +508,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   in a swept directory is made again, so a uv tool on `PATH` runs by its
   name when its environment is listed too. A path that is missing, at or
   above a hidden path, inside a hidden path other than the home, in or
-  holding a `.specflo` directory, or a link to any of those is refused by
-  `pool validate` and at the member's start. The shipped definitions list
+  holding a `.specflo` directory, in the fresh `/tmp` or `/run` and not in
+  the home (so no host socket such as the container engine's comes back),
+  or a link to any of those is refused by `pool validate` and at the
+  member's start. The shipped definitions list
   none.
 
 ### Changed

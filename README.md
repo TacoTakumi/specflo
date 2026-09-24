@@ -523,7 +523,7 @@ A definition's `paths` bring back what its role needs from under the swept home,
 paths: [~/.local/bin/tvly, ~/.local/share/uv/tools/tavily-cli]
 ```
 
-A uv tool's environment runs on an interpreter uv manages under `~/.local/share/uv/python`, which is swept too; list the interpreter's directory as well, or install the tool on a system Python. A path that is missing, that is at or above a hidden path, inside a hidden path other than the home, in or holding a `.specflo` directory, or a link to any of those is refused by `pool validate` and again at the member's start. The shipped definitions list none.
+A uv tool's environment runs on an interpreter uv manages under `~/.local/share/uv/python`, which is swept too; list the interpreter's directory as well, or install the tool on a system Python. A path that is missing, that is at or above a hidden path, inside a hidden path other than the home, in or holding a `.specflo` directory, in the fresh `/tmp` or `/run` and not in the home, or a link to any of those is refused by `pool validate` and again at the member's start. So a listed path cannot bring back a host socket such as the container engine's or the display's. The shipped definitions list none.
 
 Every member's git has the operator's identity and nothing else of the operator's configuration: the generated directory holds a git configuration file with the `user.name` and `user.email` the daemon's git reports outside any repository, and `GIT_CONFIG_GLOBAL` names it. A member commits and rebases under that name, and a repository with an identity of its own keeps it. With no identity to give, no file is written and the variable is not set; a definition cannot set it.
 
