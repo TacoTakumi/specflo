@@ -43,6 +43,11 @@ def _command(*model_args):
     return " ".join(("pi --mode rpc --provider openrouter", *model_args))
 
 
+def _declared(model):
+    """A declared model, which a hosted member's command must also select."""
+    return {"model": model, "command": _command("--model", model)}
+
+
 # --- the refused prefixes ------------------------------------------------
 
 
@@ -158,7 +163,7 @@ def test_a_no_train_member_whose_model_is_part_of_a_model_is_refused(tmp_path, m
 
 @pytest.mark.parametrize(
     "changes",
-    [{"model": "sonnet"}, {"command": _command("--model", "sonnet")}],
+    [_declared("sonnet"), {"command": _command("--model", "sonnet")}],
 )
 def test_a_partial_model_name_on_a_member_of_class_open_passes(tmp_path, changes):
     path = _write(tmp_path, egress="open", **changes)
@@ -172,7 +177,7 @@ def test_a_partial_model_name_on_a_member_of_class_open_passes(tmp_path, changes
 @pytest.mark.parametrize(
     "changes",
     [
-        {"model": "anthropic/claude-sonnet-5"},
+        _declared("anthropic/claude-sonnet-5"),
         {"command": _command("--model", "anthropic/claude-sonnet-5")},
         {"command": _command("--model=openrouter/anthropic/claude-sonnet-5")},
     ],
@@ -187,12 +192,12 @@ def test_the_same_member_with_class_open_passes(tmp_path, changes):
 @pytest.mark.parametrize(
     "changes",
     [
-        {"model": "vendor/strong"},
-        {"model": "openrouter/vendor/strong"},
+        _declared("vendor/strong"),
+        _declared("openrouter/vendor/strong"),
         {"command": _command("--model", "vendor/strong")},
         {"command": _command("--model=openrouter/vendor/strong")},
         # The vendor's name inside another vendor's model ID is not a prefix.
-        {"model": "vendor/anthropic/claude-sonnet-5"},
+        _declared("vendor/anthropic/claude-sonnet-5"),
     ],
 )
 def test_a_no_train_member_on_another_vendors_model_passes(tmp_path, changes):

@@ -146,3 +146,33 @@ def test_a_declaration_already_at_fault_is_not_reported_twice(tmp_path: Path) ->
 
     assert [(f.entry, f.field) for f in faults] == [("member 'coder-a'", "model")]
     assert "required" in str(faults[0])
+
+
+def test_a_hosted_member_whose_command_selects_no_model_is_refused(tmp_path: Path) -> None:
+    # A hosted member's generated models file pins no model, so a command that
+    # selects none runs the provider's default, not the declared model.
+    member = {**HOSTED, "model": "vendor/strong", "command": "pi --mode rpc --provider openrouter"}
+
+    faults = faults_of(write_pool(tmp_path, [member]))
+
+    assert [(f.entry, f.field) for f in faults] == [("member 'strong-hosted'", "command")]
+    assert "vendor/strong" in str(faults[0])
+
+
+def test_a_hosted_member_whose_command_selects_another_model_is_refused(tmp_path: Path) -> None:
+    member = {
+        **HOSTED,
+        "model": "vendor/strong",
+        "command": "pi --mode rpc --provider openrouter --model vendor/other",
+    }
+
+    faults = faults_of(write_pool(tmp_path, [member]))
+
+    assert [(f.entry, f.field) for f in faults] == [("member 'strong-hosted'", "command")]
+    assert "vendor/strong" in str(faults[0])
+
+
+def test_a_hosted_member_whose_command_selects_the_declared_model_passes(tmp_path: Path) -> None:
+    member = {**HOSTED, "model": "vendor/strong"}
+
+    assert faults_of(write_pool(tmp_path, [member])) == []

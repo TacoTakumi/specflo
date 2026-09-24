@@ -351,7 +351,7 @@ def write_open_pool(rig) -> None:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     data["accounts"] = [{"name": "team-a", "cap": 2, "key_env": "TEAM_A_KEY"}]
     data["members"].append({
-        "name": "open-1", "command": rig.command, "backing": "hosted",
+        "name": "open-1", "command": f"{rig.command} --model some-vendor/some-model", "backing": "hosted",
         "model": "some-vendor/some-model", "account": "team-a", "labels": [],
         "capacity": 1, "egress": "open",
     })

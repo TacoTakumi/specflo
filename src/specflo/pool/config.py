@@ -675,7 +675,7 @@ def _member(
             for named in _command_models(command):
                 _routed(entry, "command", named)
     if kind != CONSOLE:
-        _one_model(entry, command, selected)
+        _one_model(entry, command, selected, hosted=backing == HOSTED)
 
     return Member(
         name=str(entry.fields.get("name")),
@@ -793,14 +793,17 @@ def _command_models(command: str) -> list[str]:
     return models + [arg.removeprefix("--model=") for arg in argv if arg.startswith("--model=")]
 
 
-def _one_model(entry: _Entry, command: str, model: object) -> None:
+def _one_model(entry: _Entry, command: str, model: object, *, hosted: bool = False) -> None:
     """Note a fault unless the member runs the one model it names.
 
-    A member's generated models file holds the model it declares and no
-    other, and the co-residency ledger accounts for that one, so a command
+    A local member's generated models file holds the model it declares and
+    no other, and the co-residency ledger accounts for that one, so a command
     selecting another model would run the member on a model neither knows
-    about. A command that selects none is no fault: the generated file leaves
-    one model to resolve to. A member that names none anywhere is refused,
+    about. A local member's command that selects none is no fault: the
+    generated file leaves one model to resolve to. A *hosted* member's
+    generated file pins no model, so a hosted member that declares a model
+    must select it in its command; one that selects none would run the
+    provider's default. A member that names none anywhere is refused,
     because then nothing says which model that is.
 
     A declaration already at fault is left alone, and so is a command the
@@ -823,6 +826,13 @@ def _one_model(entry: _Entry, command: str, model: object) -> None:
                 "model", "required; neither the declaration nor the command names a "
                 "model, and a member runs the one model it names."
             )
+        return
+    if hosted and not selected:
+        entry.fault(
+            "command", f"selects no model, and the member declares '{declared}'; a hosted "
+            "member's generated models file pins none, so its command must select "
+            f"'{declared}' with --model."
+        )
         return
     for named in selected:
         if _same_model(named, declared):

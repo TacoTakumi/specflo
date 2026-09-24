@@ -1002,7 +1002,7 @@ def write_hosted_pool(rig) -> None:
         "llama_swap": "llama-swap.yaml",
         "accounts": [{"name": "team-a", "cap": 2, "key_env": "TEAM_A_KEY"}],
         "members": [{
-            "name": "hosted-1", "command": rig.command, "backing": "hosted",
+            "name": "hosted-1", "command": f"{rig.command} --model vendor/strong", "backing": "hosted",
             "model": "vendor/strong", "account": "team-a", "labels": [],
             "capacity": 1, "egress": "no-train",
         }],
