@@ -81,10 +81,7 @@ def daemon_result(
         try:
             return decode(response.json()["result"])
         except (ValueError, KeyError, TypeError) as exc:
-            raise SpecfloError(
-                f"The remote at {url} answered {asked} with a malformed result:"
-                f" {_excerpt(response.text)}"
-            ) from exc
+            raise malformed(url, asked, response.text) from exc
     detail = response_detail(response)
     if response.status_code == 401:
         raise SpecfloError(f"The remote at {url} refused the token: {detail}")
@@ -92,6 +89,14 @@ def daemon_result(
         raise SpecfloError(detail)
     raise SpecfloError(
         f"The remote at {url} answered {response.status_code} to {asked}: {detail}"
+    )
+
+
+def malformed(url: str, asked: str, text: str) -> SpecfloError:
+    """The error for an answer to ``asked`` that the client cannot use; it
+    names the answer, ``text``."""
+    return SpecfloError(
+        f"The remote at {url} answered {asked} with a malformed result: {_excerpt(text)}"
     )
 
 

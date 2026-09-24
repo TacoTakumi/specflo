@@ -42,7 +42,7 @@ from urllib.parse import quote
 import httpx
 
 from ..daemon.products import DaemonClient
-from .remote import daemon_result
+from .remote import daemon_result, malformed
 
 POOL_PATH = "/api/pool"
 # A lease is made by a POST here; the verbs on one lease live below it.
@@ -150,8 +150,57 @@ class LeaseEnd:
     held: bool
 
 
+def _record(kind, fields):
+    """A *kind* record built from the keys of *fields* it knows. A key of a
+    later release is let go; a missing one, or fields that are no object,
+    raise ``TypeError``."""
+    if not isinstance(fields, dict):
+        raise TypeError(f"{kind.__name__} is not an object")
+    known = {field.name for field in dataclasses.fields(kind)}
+    return kind(**{key: value for key, value in fields.items() if key in known})
+
+
+def _team_grant(granted) -> TeamLeaseGrant:
+    if not isinstance(granted, dict):
+        raise TypeError("the team grant is not an object")
+    members = granted["members"]
+    if not isinstance(members, list):
+        raise TypeError("the team's members are not a list")
+    return TeamLeaseGrant(
+        team_lease_id=granted["team_lease_id"],
+        members=tuple(_record(TeamMember, member) for member in members),
+    )
+
+
+def _held(answered) -> list[HeldLease | None]:
+    if not isinstance(answered, list):
+        raise TypeError("the held leases are not a list")
+    return [None if lease is None else _record(HeldLease, lease) for lease in answered]
+
+
+def _keys(*names: str):
+    """A decode that takes an answer object with each of *names*, and only
+    those keys."""
+
+    def decode(answer) -> dict:
+        if not isinstance(answer, dict):
+            raise TypeError("the answer is not an object")
+        return {name: answer[name] for name in names}
+
+    return decode
+
+
 class RemotePool(DaemonClient):
     """The pool verbs over HTTP to the daemon at ``url``."""
+
+    def _answer(self, method: str, path: str, decode, **kwargs):
+        """The daemon's result for *method* on *path*, built by *decode*."""
+        return daemon_result(
+            self.url,
+            f"{method} {path}",
+            lambda: self.client.request(method, path, **kwargs),
+            decode,
+        )
 
     def request(
         self,
@@ -178,12 +227,10 @@ class RemotePool(DaemonClient):
         once, as soon as the daemon says the request has to wait; with none
         the daemon is not asked to say so.
         """
-        granted = self._ask(
-            {"pool": pool}, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
-            egress=egress, project=project, on_waiting=on_waiting,
-        )
-        return LeaseGrant(
-            lease_id=granted["lease_id"], agent=granted["agent"], token=granted["token"]
+        return self._ask(
+            {"pool": pool}, lambda granted: _record(LeaseGrant, granted), cwd=cwd,
+            idle_limit=idle_limit, label=label, wait=wait, egress=egress, project=project,
+            on_waiting=on_waiting,
         )
 
     def request_team(
@@ -201,18 +248,15 @@ class RemotePool(DaemonClient):
         """Ask for every role member of *team*, all or nothing, each to run in
         *cwd* on the daemon's host. The rest is what ``request`` takes; the
         team waits as one request and holds nothing while it does."""
-        granted = self._ask(
-            {"team": team}, cwd=cwd, idle_limit=idle_limit, label=label, wait=wait,
-            egress=egress, project=project, on_waiting=on_waiting,
-        )
-        return TeamLeaseGrant(
-            team_lease_id=granted["team_lease_id"],
-            members=tuple(TeamMember(**member) for member in granted["members"]),
+        return self._ask(
+            {"team": team}, _team_grant, cwd=cwd, idle_limit=idle_limit, label=label,
+            wait=wait, egress=egress, project=project, on_waiting=on_waiting,
         )
 
     def _ask(
         self,
         named: dict,
+        decode,
         *,
         cwd: str,
         idle_limit: int | None,
@@ -223,7 +267,7 @@ class RemotePool(DaemonClient):
         on_waiting: Callable[[WaitNotice], None] | None,
     ) -> dict:
         """The daemon's answer to a lease request for what *named* names, a
-        pool or a team."""
+        pool or a team, built by *decode*."""
         body: dict = {**named, "cwd": cwd}
         if idle_limit is not None:
             body["idle_limit"] = idle_limit
@@ -236,10 +280,10 @@ class RemotePool(DaemonClient):
         if project is not None:
             body["project"] = project
         if on_waiting is None:
-            return self._request("POST", LEASES_PATH, json=body)
-        return self._request_told(body, on_waiting)
+            return self._answer("POST", LEASES_PATH, decode, json=body)
+        return self._request_told(body, decode, on_waiting)
 
-    def _request_told(self, body: dict, on_waiting: Callable[[WaitNotice], None]):
+    def _request_told(self, body: dict, decode, on_waiting: Callable[[WaitNotice], None]):
         """The result of the lease request *body*, from a daemon asked to say
         when the request waits. What ends an answer in lines is mapped as the
         same answer with no line before it, so a refusal reads the same."""
@@ -253,25 +297,31 @@ class RemotePool(DaemonClient):
                     response.read()
                     return response
                 for line in response.iter_lines():
-                    told = json.loads(line)
-                    if "waiting" in told:
-                        on_waiting(WaitNotice(**told["waiting"]))
-                    elif "refused" in told:
-                        refused = told["refused"]
-                        return httpx.Response(
-                            refused["status"], json={"detail": refused["detail"]}
-                        )
-                    else:
-                        return httpx.Response(200, json=told)
+                    try:
+                        told = json.loads(line)
+                        if not isinstance(told, dict):
+                            raise TypeError("the line is not an object")
+                        if "waiting" in told:
+                            notice = _record(WaitNotice, told["waiting"])
+                        elif "refused" in told:
+                            refused = told["refused"]
+                            return httpx.Response(
+                                refused["status"], json={"detail": refused["detail"]}
+                            )
+                        else:
+                            return httpx.Response(200, json=told)
+                    except (ValueError, KeyError, TypeError) as exc:
+                        raise malformed(self.url, asked, line) from exc
+                    on_waiting(notice)
             raise httpx.RemoteProtocolError("the answer ended before its result")
 
-        return daemon_result(self.url, f"POST {LEASES_PATH}", send)
+        asked = f"POST {LEASES_PATH}"
+        return daemon_result(self.url, asked, send, decode)
 
     def held(self, tokens: list[str]) -> list[HeldLease | None]:
         """The lease each of *tokens* holds, in their order; None for a token
         that holds none. The daemon answers for these tokens and no others."""
-        answered = self._request("POST", HELD_PATH, json={"tokens": list(tokens)})
-        return [None if lease is None else HeldLease(**lease) for lease in answered]
+        return self._answer("POST", HELD_PATH, _held, json={"tokens": list(tokens)})
 
     def release(self, lease_id: str, *, token: str | None = None) -> LeaseEnd:
         """Give back the lease *lease_id*, as the holder *token* proves.
@@ -282,8 +332,9 @@ class RemotePool(DaemonClient):
         any one of them proves; one member lease of a team is refused.
         """
         body = {} if token is None else {"token": token}
-        ended = self._request("POST", release_path(lease_id), json=body)
-        return LeaseEnd(lease_id=ended["lease_id"], state=ended["state"], held=ended["held"])
+        return self._answer(
+            "POST", release_path(lease_id), lambda ended: _record(LeaseEnd, ended), json=body
+        )
 
     def status(self) -> list[dict]:
         """Each pool's name, size and leases in use."""
@@ -292,15 +343,24 @@ class RemotePool(DaemonClient):
     def console_attach(self, slot: str, agent: str) -> dict:
         """Attach the agent host *agent*, which runs on the daemon's host, to
         the console *slot*; the slot, the agent and the slot's state."""
-        return self._request("POST", CONSOLE_ATTACH_PATH, json={"slot": slot, "agent": agent})
+        return self._answer(
+            "POST", CONSOLE_ATTACH_PATH, _keys("slot", "agent", "state"),
+            json={"slot": slot, "agent": agent},
+        )
 
     def console_detach(self, slot: str) -> dict:
         """Detach the console *slot*, which then takes no new lease; the slot
         and its state, draining while a lease is out on it."""
-        return self._request("POST", CONSOLE_DETACH_PATH, json={"slot": slot})
+        return self._answer(
+            "POST", CONSOLE_DETACH_PATH, _keys("slot", "state"), json={"slot": slot}
+        )
 
     def reload(self) -> dict:
         """Ask the daemon to read its pool directory again and put it in
         force: the daemon's process id, the directory it read, and how many
         definitions, accounts, members, pools and teams stand now."""
-        return self._request("POST", RELOAD_PATH, json={})
+        return self._answer(
+            "POST", RELOAD_PATH,
+            _keys("pid", "directory", "definitions", "accounts", "members", "pools", "teams"),
+            json={},
+        )
