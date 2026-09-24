@@ -302,6 +302,73 @@ class Limits:
 DEFAULT_LIMITS = Limits(max_procs=512)
 
 
+# How long the probe of the user manager may take before it counts as no
+# answer. It answers in about 20 ms on this rig.
+SCOPE_PROBE_TIMEOUT = 5.0
+
+# The variable systemd-run finds the user manager through. A member's
+# environment does not carry it, so the scope prefix sets it for systemd-run
+# alone and takes it away again before the member's command.
+RUNTIME_DIR_VAR = "XDG_RUNTIME_DIR"
+
+# What systemd-run adds to the environment of the command it runs in a scope;
+# the member's environment is the pool's to say, so it is taken away.
+_SCOPE_ADDS = ("INVOCATION_ID",)
+
+
+def systemd_run_path(environ: Mapping[str, str] | None = None) -> str | None:
+    """Where systemd-run is on the PATH of *environ*, or None."""
+    return shutil.which("systemd-run", path=(environ or os.environ).get("PATH"))
+
+
+def scope_fault(environ: Mapping[str, str]) -> str | None:
+    """Why a member cannot start in a systemd scope of its own, or None when it can.
+
+    *environ* is the daemon's environment. The probe is the scope command
+    itself running ``true``, asked at each start: the user manager goes at
+    logout, when the user has no linger, and comes back at the next login,
+    all while the daemon runs.
+    """
+    path = systemd_run_path(environ)
+    if path is None:
+        return "systemd-run is not on the daemon's PATH"
+    runtime = environ.get(RUNTIME_DIR_VAR)
+    if not runtime:
+        return f"{RUNTIME_DIR_VAR} is not set, so the user manager cannot be found"
+    try:
+        done = subprocess.run(
+            ["systemd-run", "--user", "--scope", "--quiet", "-p", "TasksMax=1", "--", "true"],
+            env={RUNTIME_DIR_VAR: runtime, "PATH": environ.get("PATH", os.defpath)},
+            capture_output=True, text=True, timeout=SCOPE_PROBE_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired:
+        return f"systemd-run gave no answer in {SCOPE_PROBE_TIMEOUT:.0f} s"
+    except OSError as exc:
+        return f"systemd-run could not be run: {exc.strerror}"
+    if done.returncode != 0:
+        said = done.stderr.strip().splitlines()
+        return said[-1] if said else f"systemd-run exited {done.returncode}"
+    return None
+
+
+def scope_argv(tasks: int, environ: Mapping[str, str]) -> list[str]:
+    """The prefix that starts what follows in a systemd scope of its own whose
+    task limit is *tasks*, the user manager found through *environ*.
+
+    The scope command runs its command in place, so the pid chain is kept.
+    It needs the runtime directory to reach the user manager, and the
+    member's environment has none, so ``env`` sets it for the scope command
+    and takes it away before what follows, with what the scope command adds.
+    """
+    env = shutil.which("env", path=environ.get("PATH")) or "/usr/bin/env"
+    return [
+        env, f"{RUNTIME_DIR_VAR}={environ[RUNTIME_DIR_VAR]}",
+        systemd_run_path(environ) or "systemd-run",
+        "--user", "--scope", "--quiet", "-p", f"TasksMax={tasks}", "--",
+        env, *[word for name in (RUNTIME_DIR_VAR, *_SCOPE_ADDS) for word in ("-u", name)],
+    ]
+
+
 def prlimit_path() -> str | None:
     """Where prlimit is on this rig, or None when it is not on PATH."""
     return shutil.which("prlimit")

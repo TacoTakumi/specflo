@@ -197,10 +197,12 @@ def test_the_one_builder_puts_the_sandbox_in_front_of_every_member(rig) -> None:
             DEFINITION, member, dict(os.environ),
             cwd=rig.work, state_dir=rig.tmp_path, config_dir=None,
         )
-        assert Path(argv[0]).name in ("prlimit", "bwrap")
-        assert "bwrap" in [Path(word).name for word in argv]
-        assert argv[: argv.index("--")] != []
-        assert argv[argv.index("--") + 1 :] == launch.pi_argv(DEFINITION, member)
+        names = [Path(word).name for word in argv]
+        # A scope of its own comes first when the user manager can make one.
+        assert names[0] in ("env", "prlimit", "bwrap")
+        bwrap = names.index("bwrap")
+        separator = argv.index("--", bwrap)
+        assert argv[separator + 1 :] == launch.pi_argv(DEFINITION, member)
 
 
 def test_a_member_of_a_class_with_no_profile_is_refused_rather_than_started(rig) -> None:
