@@ -4,8 +4,8 @@ A definition says what a role is, not what runs it. The YAML front matter
 names the role, the tools and skills it may use, the commands it must not
 run, the environment variables and credentials it may be given, the
 capability labels it needs from a member, the most open egress class it
-accepts, and whether it wants the project's context files. The body is the
-system prompt.
+accepts, whether it wants the project's context files, and the paths bound
+back read-only into its members' sandboxes. The body is the system prompt.
 
 Loading is strict: a definition is the only limit on what a member is handed,
 so a key this module does not know is refused rather than ignored, and every
@@ -31,7 +31,9 @@ EGRESS_CLASSES: tuple[str, ...] = ("local", "no-train", "open")
 DEFAULT_EGRESS = "no-train"
 
 # The front-matter keys that hold a list of strings.
-LIST_FIELDS: tuple[str, ...] = ("tools", "skills", "deny", "env", "credentials", "needs")
+LIST_FIELDS: tuple[str, ...] = (
+    "tools", "skills", "deny", "env", "credentials", "needs", "paths",
+)
 
 # Every front-matter key a definition may carry, in the order they are written.
 FIELDS: tuple[str, ...] = ("role", *LIST_FIELDS, "egress", "project_context")
@@ -76,6 +78,8 @@ class AgentDefinition:
     env: tuple[str, ...] = ()
     credentials: tuple[str, ...] = ()
     needs: tuple[str, ...] = ()
+    # Paths bound back read-only into each member's sandbox; a leading ~ is the home.
+    paths: tuple[str, ...] = ()
     egress: str = DEFAULT_EGRESS
     project_context: bool = False
 

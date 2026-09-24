@@ -286,6 +286,58 @@ def working_directory_fault(
     return None
 
 
+def listed_path(listed: str, environ: Mapping[str, str]) -> str | None:
+    """The absolute path a definition's *listed* path names, a leading ``~``
+    taken as the home in *environ*; None for a path that is neither."""
+    if listed == "~" or listed.startswith("~/"):
+        home = environ.get("HOME") or str(Path.home())
+        return os.path.join(home, listed[2:]) if listed != "~" else home
+    return listed if os.path.isabs(listed) else None
+
+
+def listed_path_fault(
+    listed: str, environ: Mapping[str, str], daemon_root: Path | str | None = None
+) -> str | None:
+    """Why a definition's *listed* path may not be bound into a member's
+    sandbox, in one sentence naming it, or None when it may.
+
+    A listed path is bound read-only after the hidden paths are, so it brings
+    back whatever of them it covers. One at or above a hidden path, or at or
+    below one other than the home, is refused, by its given and by its real
+    path, and so is one in or holding a checkout's ``.specflo`` directory,
+    which holds lease and daemon tokens. So is a path that does not exist,
+    and one that is neither absolute nor under ``~``. *environ* is the
+    daemon's environment and *daemon_root* its own directory, as for
+    ``member_argv``.
+    """
+    given = listed_path(listed, environ)
+    if given is None:
+        return f"'{listed}' is neither an absolute path nor one under ~; write it as either."
+    if not os.path.exists(given):
+        return f"'{listed}' does not exist, so there is nothing to bind."
+    swept = _swept(environ, daemon_root)
+    home = swept[0]
+    forms = {os.path.abspath(given), os.path.realpath(given)}
+    for form in forms:
+        for held in swept:
+            if os.path.commonpath([form, held]) == form:
+                return (
+                    f"'{listed}' holds '{held}', a directory the sandbox hides from every "
+                    "member, and a bind would bring it back."
+                )
+            if held != home and os.path.commonpath([form, held]) == held:
+                return (
+                    f"'{listed}' is inside '{held}', a directory the sandbox hides from every "
+                    "member, and a bind would bring that part of it back."
+                )
+        if CONFIG_DIRNAME in Path(form).parts or os.path.isdir(os.path.join(form, CONFIG_DIRNAME)):
+            return (
+                f"'{listed}' is or holds a {CONFIG_DIRNAME} directory, which holds lease and "
+                "daemon tokens the sandbox hides from every member."
+            )
+    return None
+
+
 def _covered(path: str, hidden: Iterable[str]) -> str | None:
     """The first of *hidden* that *path*, by its given or its real path, is at
     or above, or None when it covers none of them."""

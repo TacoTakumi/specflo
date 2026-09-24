@@ -498,16 +498,34 @@ def _definitions(
 
     A file that cannot be loaded is reported under its own path and name, so a
     pool that binds it is not also told the definition is undeclared.
+
+    Each path a definition lists is checked against what the sandbox hides,
+    as this process's environment names it and with the daemon root the one
+    that holds the pool directory; a definition with a path at fault does not
+    stand.
     """
+    # The launch module builds on this one, so it is imported only here.
+    from .launch import listed_path_fault
+
     loaded: dict[str, AgentDefinition] = {}
     names: set[str] = set()
+    daemon_root = folder.parent.parent
     for file in sorted(folder.glob("*.md")):
         names.add(file.stem)
+        label = f"definition '{file.stem}'"
         try:
-            loaded[file.stem] = load_definition(file)
+            definition = load_definition(file)
         except DefinitionError as exc:
             problem = str(exc).removeprefix(f"{exc.path}: {exc.field}: ")
-            errors.append(ConfigError(file, f"definition '{file.stem}'", exc.field, problem))
+            errors.append(ConfigError(file, label, exc.field, problem))
+            continue
+        found = [
+            fault for listed in definition.paths
+            if (fault := listed_path_fault(listed, os.environ, daemon_root)) is not None
+        ]
+        errors.extend(ConfigError(file, label, "paths", fault) for fault in found)
+        if not found:
+            loaded[file.stem] = definition
     return loaded, names
 
 
