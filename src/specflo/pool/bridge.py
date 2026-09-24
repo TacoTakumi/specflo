@@ -236,7 +236,8 @@ def _refusal(message: str) -> JSONResponse:
 
 def _written_again(body: bytes) -> tuple[dict, bytes] | None:
     """A completion's body as a JSON object, and that object written again;
-    None when it is not one, or holds a number JSON cannot carry.
+    None when it is not one, holds a number JSON cannot carry, or is nested
+    deeper than the parser goes.
 
     A repeated key is kept once, as the last of them, which is the one read.
     """
@@ -245,7 +246,7 @@ def _written_again(body: bytes) -> tuple[dict, bytes] | None:
         if not isinstance(data, dict):
             return None
         return data, json.dumps(data, ensure_ascii=False, allow_nan=False).encode("utf-8")
-    except ValueError:
+    except (ValueError, RecursionError):
         return None
 
 

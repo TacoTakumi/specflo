@@ -490,3 +490,16 @@ def test_a_completion_that_cannot_be_written_again_as_json_is_refused(
     answer = ask(held_client, "POST", "/v1/chat/completions", content=content)
 
     assert answer.status_code == bridge.REFUSED
+
+
+DEEP = 100_000
+
+
+@pytest.mark.parametrize("content", [
+    b"[" * DEEP + b"]" * DEEP,
+    b'{"model": "model-a", "t": ' + b"[" * DEEP + b"]" * DEEP + b"}",
+], ids=["a list", "an object naming a held model"])
+def test_a_completion_nested_too_deeply_to_read_is_refused(held_client, content) -> None:
+    answer = ask(held_client, "POST", "/v1/chat/completions", content=content)
+
+    assert answer.status_code == bridge.REFUSED
