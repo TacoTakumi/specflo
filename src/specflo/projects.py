@@ -17,7 +17,7 @@ import yaml
 from .config import SpecfloConfig, save_config
 from .errors import ProjectNotFound, SpecfloError
 from .locking import lock_path_for, locked
-from .workflow import next_phase, resolve_reopen_target
+from .workflow import next_phase, phases_for, resolve_reopen_target
 
 PROJECT_FILENAME = "project.md"
 INITIAL_PHASE = "brainstorm"
@@ -180,7 +180,7 @@ def create_project(
         name=name,
         slug=slug,
         created=created or datetime.date.today().isoformat(),
-        phase=INITIAL_PHASE,
+        phase=phases_for(level)[0],
         status=INITIAL_STATUS,
         path=directory,
         summary=summary or NEEDS_SUMMARY,
@@ -306,7 +306,7 @@ def reopen_project(
     """
     project = load_project(root, cfg, slug)
     try:
-        dest = resolve_reopen_target(project.phase, target)
+        dest = resolve_reopen_target(project.phase, target, project.level)
     except ValueError as exc:
         raise SpecfloError(str(exc)) from exc
     project.phase = dest

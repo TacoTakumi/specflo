@@ -267,6 +267,11 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert svc.show_document("copy", "spec") == copied["spec.md"]
 
     # a light project moves up a level, never down
+    quick = svc.create_project("Quick", level="quick")
+    assert quick.phase == "execute"
+    brief_path, created = svc.start_brief(quick.slug)
+    assert created and brief_path.name == "brief.md"
+    assert svc.start_brief(quick.slug)[1] is False
     lite = svc.create_project("Lite", level="fast")
     assert lite.level == "fast"
     moved, review = svc.set_level(lite.slug, "full")
@@ -384,7 +389,7 @@ _ARTIFACT_MODULES = {
 _ARTIFACT_MODULE_ALLOWLIST = {
     "specflo.projects": {
         "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
-        "LEVELS", "FULL_LEVEL", "validate_level",
+        "LEVELS", "QUICK_LEVEL", "FAST_LEVEL", "FULL_LEVEL", "validate_level",
     },
     "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
     "specflo.spec": {"SPEC_FILENAME"},

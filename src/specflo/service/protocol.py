@@ -146,6 +146,10 @@ class ProjectService(Protocol):
 
     # --- brainstorm: decisions --------------------------------------------
 
+    def start_brief(self, slug: str) -> tuple[Path, bool]:
+        """Create or locate a quick project's brief; ``(path, created)``."""
+        ...
+
     def start_brainstorm(self, slug: str) -> tuple[Path, bool]:
         """Create or locate the brainstorm; ``(path, created)``."""
         ...

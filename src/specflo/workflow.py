@@ -7,6 +7,15 @@ lift this into a YAML schema.
 
 PHASES: list[str] = ["brainstorm", "spec", "plan", "execute"]
 
+# Quick level has one phase: the brief is written and worked in execute, and
+# no approval sits between the two, so a phase boundary would do nothing.
+_QUICK_PHASES: list[str] = ["execute"]
+
+
+def phases_for(level: str) -> list[str]:
+    """The phases a project at ``level`` goes through, in order."""
+    return _QUICK_PHASES if level == "quick" else PHASES
+
 _NEXT_STEP: dict[str, str] = {
     "brainstorm": "Brainstorm and research; capture decisions, then write the spec.",
     "spec": "Write the spec: testable requirements and scenarios.",
@@ -31,7 +40,9 @@ def next_phase(phase: str) -> str | None:
     return None
 
 
-def resolve_reopen_target(phase: str, target: str | None = None) -> str:
+def resolve_reopen_target(
+    phase: str, target: str | None = None, level: str = "full"
+) -> str:
     """Return the earlier phase ``reopen`` should move to, or raise ``ValueError``.
 
     ``reopen`` is the strict inverse of ``advance``: it only moves *backward*.
@@ -43,16 +54,21 @@ def resolve_reopen_target(phase: str, target: str | None = None) -> str:
       ``ValueError`` (forward movement is ``specflo advance``).
     """
     _require_known(phase)
-    current = PHASES.index(phase)
+    phases = phases_for(level)
+    current = phases.index(phase)
     if target is None:
         if current == 0:
             raise ValueError(
                 f"Already at the first phase {phase!r}; there is nothing earlier "
                 "to reopen."
             )
-        return PHASES[current - 1]
+        return phases[current - 1]
     _require_known(target)
-    dest = PHASES.index(target)
+    if target not in phases:
+        raise ValueError(
+            f"A {level}-level project has no {target!r} phase to reopen."
+        )
+    dest = phases.index(target)
     if dest == current:
         raise ValueError(
             f"{target!r} is already the current phase; reopen moves to an earlier "

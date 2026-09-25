@@ -511,13 +511,17 @@ def new(
     # Scaffold the first artifact so a new project is immediately ready to work
     # (no separate `brainstorm start`). create_project stays container-only;
     # the scaffold is CLI orchestration over the idempotent helper.
-    brainstorm_path, _ = svc.start_brainstorm(project.slug)
+    # A quick project is worked from its brief and has no brainstorm.
+    if project.level == projects.QUICK_LEVEL:
+        first_path, _ = svc.start_brief(project.slug)
+    else:
+        first_path, _ = svc.start_brainstorm(project.slug)
     _refresh_checkpoint(svc, project.slug)
     _refresh_index(root, cfg)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
-    typer.echo(f"Scaffolded {_locator(project.slug, brainstorm_path)} (ready to work).")
+    typer.echo(f"Scaffolded {_locator(project.slug, first_path)} (ready to work).")
     if summary is None:
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'

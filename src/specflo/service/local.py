@@ -12,7 +12,7 @@ import hashlib
 import shutil
 from pathlib import Path
 
-from .. import brainstorm, checkpoint, doc, index, plan, projects, review, spec, status
+from .. import brainstorm, brief, checkpoint, doc, index, plan, projects, review, spec, status
 from ..brainstorm import Decision
 from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
@@ -255,6 +255,9 @@ class LocalProjectService:
         return hashes
 
     # --- brainstorm: decisions --------------------------------------------
+
+    def start_brief(self, slug: str) -> tuple[Path, bool]:
+        return brief.start_brief(self.root, self.cfg, slug)
 
     def start_brainstorm(self, slug: str) -> tuple[Path, bool]:
         return brainstorm.start_brainstorm(self.root, self.cfg, slug)
