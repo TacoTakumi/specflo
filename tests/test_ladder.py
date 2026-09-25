@@ -216,3 +216,52 @@ def test_a_fast_ladder_level_over_its_cap_is_told_to_cut_down(repo):
 
     assert result["stop"] is False
     assert "7" in result["payload"] and "Out of scope / Deferred" in result["payload"]
+
+
+# --- the ladder.md rows ---------------------------------------------------------------
+
+
+def _row(repo, level):
+    text = (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
+    line = next(l for l in text.splitlines() if l.startswith(f"| {level} |"))
+    cells = [c.strip() for c in line.strip("|").split("|")]
+    keys = ["level", "branch", "commits", "files", "added", "removed", "tasks",
+            "tests", "review", "deferred", "time"]
+    return dict(zip(keys, cells))
+
+
+def _quick_level_with_history(repo):
+    _ladder_at_quick(repo)
+    base = _state(repo)["ladder"]["base_commit"]
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Grow the file.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- the file has ten lines\n")
+    _ok(["section", "set", "brief", "Deferred", "--stdin"], "- one more\n- and another\n")
+    _work(repo, "app.txt", "".join(f"line {n}\n" for n in range(5)))
+    _work(repo, "app.txt", "".join(f"line {n}\n" for n in range(10)))
+    _ok(["section", "set", "brief", "Proof", "--stdin"], "wc -l app.txt -> 10\n")
+    _ok(["advance"])
+    _ok(["auto", "--json"])
+    return base
+
+
+def test_the_quick_row_matches_git_and_the_brief(repo):
+    base = _quick_level_with_history(repo)
+    row = _row(repo, "quick")
+
+    assert row["commits"] == git(repo, "rev-list", "--count", f"{base}..specflo/thing/quick") == "2"
+    numstat = git(repo, "diff", "--numstat", base, "specflo/thing/quick").splitlines()
+    assert row["files"] == str(len(numstat)) == "1"
+    plus, minus, _ = numstat[0].split("\t")
+    assert (row["added"], row["removed"]) == (plus, minus) == ("10", "1")
+    assert (row["tasks"], row["review"], row["tests"]) == ("n/a", "none", "not run")
+    assert row["deferred"] == "2"
+    assert row["time"].isdigit()
+
+
+@pytest.mark.parametrize("command, expected", [("true", "pass"), ("false", "fail")])
+def test_the_row_records_the_test_command_result(repo, command, expected):
+    _ok(["config", "set", "test_command", command])
+    _quick_level_with_history(repo)
+
+    assert _row(repo, "quick")["tests"] == expected
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/fast"

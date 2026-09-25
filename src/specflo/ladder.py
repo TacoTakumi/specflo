@@ -13,10 +13,11 @@ deletes, renames or resets a branch.
 from __future__ import annotations
 
 import datetime
+import re
 import subprocess
 from pathlib import Path
 
-from . import projects
+from . import brainstorm, brief, markdown, plan, projects, review
 from .config import CONFIG_DIRNAME, SpecfloConfig
 from .errors import SpecfloError
 
@@ -117,14 +118,73 @@ def next_level(level: str) -> str | None:
     return projects.LEVELS[index + 1] if index + 1 < len(projects.LEVELS) else None
 
 
+def _diff_numbers(root: Path, start: str, end: str) -> tuple[int, int, int, int]:
+    """Commits, files changed, lines added and lines removed from start to end."""
+    commits = int(_git(root, "rev-list", "--count", f"{start}..{end}"))
+    files = added = removed = 0
+    for line in _git(root, "diff", "--numstat", start, end).splitlines():
+        plus, minus, _ = line.split("\t", 2)
+        files += 1
+        # A binary file shows '-' for both counts: it changed, but has no lines.
+        added += int(plus) if plus.isdigit() else 0
+        removed += int(minus) if minus.isdigit() else 0
+    return commits, files, added, removed
+
+
+def _list_count(doc: str, header: str) -> int:
+    body = markdown.strip_comments(markdown.section_body(doc, header) or "")
+    return sum(1 for line in body.splitlines() if re.match(r"^(?:[-*]|\d+[.)])\s+\S", line))
+
+
+def _deferred_count(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> int:
+    """The deferred list's length: the brief's at quick, the brainstorm's above."""
+    base = projects.project_dir(root, cfg, slug)
+    if level == projects.QUICK_LEVEL:
+        path, header = base / brief.BRIEF_FILENAME, "## Deferred"
+    else:
+        path, header = base / brainstorm.BRAINSTORM_FILENAME, "## Out of scope / Deferred"
+    return _list_count(path.read_text(), header) if path.is_file() else 0
+
+
+def _tasks_cell(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> str:
+    path = plan.plan_path(root, cfg, slug)
+    if level == projects.QUICK_LEVEL or not path.is_file():
+        return "n/a"
+    progress = plan.progress_from_doc(path.read_text())
+    return f"{progress['done']}/{progress['total']}"
+
+
+def _test_result(root: Path, cfg: SpecfloConfig) -> str:
+    """The test_command's result on the checked-out branch, or 'not run'."""
+    command = getattr(cfg, "test_command", None)
+    if not command:
+        return "not run"
+    result = subprocess.run(command, shell=True, cwd=root, capture_output=True)
+    return "pass" if result.returncode == 0 else "fail"
+
+
+def _seconds(started: str, ended: str) -> int:
+    delta = datetime.datetime.fromisoformat(ended) - datetime.datetime.fromisoformat(started)
+    return max(0, int(delta.total_seconds()))
+
+
 def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
-    """Append ``level``'s row to ladder.md, once."""
+    """Append ``level``'s row to ladder.md, once, from git and the documents."""
     entry = record["levels"][level]
     if entry.get("row_written"):
         return
-    path = ladder_path(root, cfg, slug)
-    cells = [level, f"`{entry['branch']}`"]
-    with path.open("a") as handle:
+    commits, files, added, removed = _diff_numbers(
+        root, entry["start_commit"], entry["end_commit"]
+    )
+    state = review.review_state(root, cfg, slug)
+    verdict = "none" if level == projects.QUICK_LEVEL or state is None else (state["verdict"] or "open")
+    cells = [
+        level, f"`{entry['branch']}`", str(commits), str(files), str(added), str(removed),
+        _tasks_cell(root, cfg, slug, level), _test_result(root, cfg), verdict,
+        str(_deferred_count(root, cfg, slug, level)),
+        str(_seconds(entry["started"], entry["ended"])),
+    ]
+    with ladder_path(root, cfg, slug).open("a") as handle:
         handle.write("| " + " | ".join(cells) + " |\n")
     entry["row_written"] = True
 
