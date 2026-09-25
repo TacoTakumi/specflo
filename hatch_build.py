@@ -22,6 +22,7 @@ EXPECTED_SKILLS = frozenset(
         "specflo-brainstorm",
         "specflo-execute",
         "specflo-plan",
+        "specflo-quick",
         "specflo-research",
         "specflo-shelve",
         "specflo-spec",
