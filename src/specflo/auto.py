@@ -14,11 +14,13 @@ per-project auto-on default is introduced (REQ-01).
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
 from . import (
     brainstorm as brainstorm_module,
+    brief as brief_module,
     checkpoint as checkpoint_module,
     config,
     continuation,
@@ -245,7 +247,8 @@ def progress_signal(root: Path, cfg: config.SpecfloConfig, project) -> str:
 
     Phase-aware so that *within-phase* work moves the signal, not just a phase
     advance: brainstorm counts recorded decisions, spec counts requirements, and
-    plan/execute use the plan's done/total task counts. Advancing the phase always
+    plan/execute use the plan's done/total task counts; a quick project, worked
+    from its brief, uses the brief's content. Advancing the phase always
     changes it too. Two consecutive passes yielding the *same* signal made no
     forward progress; :data:`STALL_THRESHOLD` such passes in a row escalate.
     Best-effort: any read failure degrades to a phase-only signal rather than
@@ -254,7 +257,14 @@ def progress_signal(root: Path, cfg: config.SpecfloConfig, project) -> str:
     phase = project.phase
     detail = "0"
     try:
-        if phase in ("plan", "execute"):
+        if project.level == projects.QUICK_LEVEL:
+            # A quick project is worked from its brief: any write to it is
+            # forward progress, so the signal follows the brief's content.
+            brief_file = brief_module.brief_path(root, cfg, project.slug)
+            if brief_file.is_file():
+                digest = hashlib.sha256(brief_file.read_bytes()).hexdigest()[:12]
+                detail = f"brief:{digest}"
+        elif phase in ("plan", "execute"):
             plan_file = project.path / plan_module.PLAN_FILENAME
             if plan_file.is_file():
                 prog = plan_module.progress_from_doc(plan_file.read_text())

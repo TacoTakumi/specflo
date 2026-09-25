@@ -1056,3 +1056,33 @@ def test_cli_auto_directory_option_reports_dirs_project(tmp_path, monkeypatch):
     assert auto.BOOTSTRAP_MARKER in data["payload"]
     assert "dir-thing" in data["payload"]
     assert os.getcwd() == before
+
+
+# --- quick level: the stall signal reads the brief -------------------------------
+
+
+def _quick_project(tmp_path):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Quick Thing", level="quick")
+    projects.switch_project(tmp_path, cfg, "Quick Thing")
+    from specflo import brief
+    brief.start_brief(tmp_path, cfg, "quick-thing")
+    return cfg, "quick-thing"
+
+
+def test_a_quick_project_does_not_stall_while_its_brief_fills(tmp_path):
+    from specflo import doc
+    cfg, slug = _quick_project(tmp_path)
+    bodies = [("Goal", "Fix it."), ("Done when", "- it works"), ("Proof", "ran: ok"),
+              ("Deferred", "- more later"), ("Goal", "Fix it well.")]
+    for title, body in bodies:
+        doc.set_section(tmp_path, cfg, slug, "brief", title, body)
+        result = auto.auto_pass_result(tmp_path, max_passes=1000)
+        assert result["reason"] != auto.STOP_STALL, result["payload"]
+
+
+def test_a_quick_project_stalls_when_its_brief_does_not_change(tmp_path):
+    _quick_project(tmp_path)
+    for _ in range(auto.STALL_THRESHOLD + 1):
+        result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["reason"] == auto.STOP_STALL
