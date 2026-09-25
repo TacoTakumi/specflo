@@ -44,6 +44,17 @@ QUICK_LEVEL = "quick"
 FAST_LEVEL = "fast"
 FULL_LEVEL = "full"
 LEVELS = (QUICK_LEVEL, FAST_LEVEL, FULL_LEVEL)
+# Fast level's caps: more than this is work for full level.
+FAST_MAX_DECISIONS = 3
+FAST_MAX_TASKS = 7
+
+
+def over_cap(level: str, what: str, count: int, cap: int) -> str:
+    """The issue a light level reports when ``count`` ``what`` exceed its ``cap``."""
+    return (
+        f"{count} active {what}; {level} level allows at most {cap}. Cut them down,"
+        " or move up with `specflo level full`."
+    )
 
 
 @dataclass

@@ -147,3 +147,68 @@ def test_execute_review_gate_reports_only_after_the_plan_reconciles(tmp_path):
     plan.reopen_task(tmp_path, cfg, "thing", "T-01", today="2026-08-01")
     issues = validators.execute_issues(tmp_path, cfg, "thing")
     assert any("T-01" in issue for issue in issues)
+
+
+# --- the fast-level caps ---------------------------------------------------------
+
+
+def _project_at(tmp_path, level):
+    from specflo import config, projects
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", level=level)
+    brainstorm.start_brainstorm(tmp_path, cfg, "thing")
+    spec.start_spec(tmp_path, cfg, "thing")
+    plan.start_plan(tmp_path, cfg, "thing")
+    spec.add_requirement(tmp_path, cfg, "thing", text="it works", acceptance="it runs")
+    return cfg
+
+
+def _decisions(tmp_path, cfg, count):
+    for n in range(count):
+        brainstorm.add_decision(tmp_path, cfg, "thing", text=f"choice {n}", rationale="r")
+
+
+def _tasks(tmp_path, cfg, count):
+    for n in range(count):
+        plan.add_task(tmp_path, cfg, "thing", text=f"task {n}", acceptance="a",
+                      verify="true", implements=["REQ-01"])
+
+
+def _cap_issues(issues, count, cap):
+    return [i for i in issues if str(count) in i and str(cap) in i and "specflo level full" in i]
+
+
+def test_fast_level_fails_four_active_decisions(tmp_path):
+    cfg = _project_at(tmp_path, "fast")
+    _decisions(tmp_path, cfg, 4)
+    assert _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+
+
+def test_fast_level_does_not_count_a_superseded_decision(tmp_path):
+    cfg = _project_at(tmp_path, "fast")
+    _decisions(tmp_path, cfg, 3)
+    brainstorm.add_decision(tmp_path, cfg, "thing", text="better", rationale="r",
+                            supersedes="D-01")
+    assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+
+
+def test_fast_level_fails_eight_active_tasks(tmp_path):
+    cfg = _project_at(tmp_path, "fast")
+    _tasks(tmp_path, cfg, 8)
+    assert _cap_issues(plan.validate_plan(tmp_path, cfg, "thing"), 8, 7)
+
+
+def test_fast_level_does_not_count_a_superseded_task(tmp_path):
+    cfg = _project_at(tmp_path, "fast")
+    _tasks(tmp_path, cfg, 7)
+    plan.add_task(tmp_path, cfg, "thing", text="task again", acceptance="a",
+                  verify="true", implements=["REQ-01"], supersedes="T-01")
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []
+
+
+def test_full_level_has_no_caps(tmp_path):
+    cfg = _project_at(tmp_path, "full")
+    _decisions(tmp_path, cfg, 4)
+    _tasks(tmp_path, cfg, 8)
+    assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []

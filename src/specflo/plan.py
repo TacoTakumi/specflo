@@ -20,7 +20,9 @@ from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
-from .projects import FAN_OUT_EXECUTION, load_project, project_dir
+from .projects import (
+    FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, over_cap, project_dir,
+)
 
 PLAN_FILENAME = "plan.md"
 
@@ -411,6 +413,9 @@ def validate_plan(
     if not active:
         issues.append("no tasks captured (need at least one).")
         return issues
+
+    if load_project(root, cfg, slug).level == FAST_LEVEL and len(active) > FAST_MAX_TASKS:
+        issues.append(over_cap(FAST_LEVEL, "tasks", len(active), FAST_MAX_TASKS))
 
     for t in active:
         if not t.acceptance:
