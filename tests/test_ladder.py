@@ -552,3 +552,35 @@ def test_after_a_guardrail_stop_at_a_climb_the_texts_still_point_to_auto(repo):
 
     assert "specflo auto" in status["next_step"]
     assert status["auto_run"]["under_way"] is False
+
+
+def test_full_level_texts_name_the_full_work_at_brainstorm_spec_and_plan(repo):
+    _ladder_at_full(repo)
+    checkpoint_md = repo / "docs" / "projects" / "thing" / "checkpoint.md"
+
+    for phase in ("brainstorm", "spec", "plan"):
+        status = json.loads(_ok(["status", "--json"]).output)
+        assert status["phase"] == phase
+        assert status["next_step"].startswith("Ladder at full level"), phase
+        assert "Ladder at full level" in checkpoint_md.read_text(), phase
+        _ok(["advance"])
+
+
+def test_the_climb_refreshes_the_checkpoint(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+
+    _ok(["auto", "--json"])
+
+    checkpoint_md = (repo / "docs" / "projects" / "thing" / "checkpoint.md").read_text()
+    assert "_phase: brainstorm" in checkpoint_md
+    assert "This ladder level is complete" not in checkpoint_md
+
+
+def test_guide_at_a_ladder_pause_points_to_auto(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+
+    out = _ok(["guide", "--json"]).output
+
+    assert "specflo auto" in json.loads(out)["next_step"]

@@ -141,6 +141,8 @@ def build_checkpoint(
         do_next = workflow.next_step(
             project.phase, validates=validates, level=project.level, unattended=unattended
         )
+        if cfg is not None:
+            do_next = auto.ladder_full_step(root, cfg, project) or do_next
         # A plan that doesn't yet validate still names its next task; once it
         # validates the offer-advance hint stands alone.
         if project.phase == "plan" and not validates and prog is not None:

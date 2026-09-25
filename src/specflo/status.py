@@ -59,7 +59,9 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         validates=validates, review=review_info, level=project.level,
         unattended=auto.run_under_way(root, cfg, project),
     )
-    ladder_next = auto.ladder_step(root, cfg, project)
+    ladder_next = auto.ladder_step(root, cfg, project) or auto.ladder_full_step(
+        root, cfg, project
+    )
     if ladder_next is not None:
         next_step = ladder_next
     # In the stuck execute state (nothing actionable, a pending task blocked by a

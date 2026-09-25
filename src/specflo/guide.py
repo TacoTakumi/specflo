@@ -303,6 +303,14 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
 
     payload["active_project"] = project.slug
     payload["phase"] = project.phase
-    payload["next_step"] = workflow.next_step(project.phase, level=project.level)
+    # auto imports much of the package, so it is read here, at call time.
+    from . import auto
+
+    complete = project.status == projects.COMPLETE_STATUS
+    payload["next_step"] = (
+        auto.ladder_step(root, cfg, project)
+        or auto.ladder_full_step(root, cfg, project)
+        or workflow.next_step(project.phase, level=project.level, complete=complete)
+    )
     payload["next_action"] = project.phase
     return payload

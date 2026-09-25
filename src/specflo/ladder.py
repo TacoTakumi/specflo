@@ -244,7 +244,8 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
     # and the finished level's branch stays at the same commit either way.
     _git(root, "checkout", "-q", "-b", branch)
     end_level(root, cfg, slug, record, level)
-    _, review_ids = local_service(root, cfg).set_level(slug, target)
+    service = local_service(root, cfg)
+    _, review_ids = service.set_level(slug, target)
     record["levels"][target] = {
         "branch": branch,
         "start_commit": record["levels"][level]["end_commit"],
@@ -255,6 +256,11 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
         # Full level has its own review: an open round keeps the level from
         # completing on fast's verdict.
         review.start_round(root, cfg, slug)
+    # The level and phase changed outside any command, so refresh what the
+    # commands would have: the checkpoint, and the index where there is one.
+    service.write_checkpoint(slug)
+    if service.index_exists():
+        service.write_index()
     return target
 
 

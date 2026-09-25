@@ -215,8 +215,6 @@ def _mark_run_ended(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
     save_run_state(root, cfg, slug, state)
 
 
-# The next step for a ladder level that has completed: the run is not over,
-# the next auto pass climbs.
 # The next step once a ladder level has completed: the run is not over, the
 # next auto pass climbs, or at full level closes the ladder.
 LADDER_CLIMB_STEP = (
@@ -246,6 +244,43 @@ def ladder_step(root: Path, cfg: config.SpecfloConfig, project) -> str | None:
             return LADDER_CLIMB_STEP
         entry = ladder.get("levels", {}).get(project.level, {})
         return None if entry.get("row_written") else LADDER_FINISH_STEP
+    except Exception:
+        return None
+
+
+def ladder_full_step(root: Path, cfg: config.SpecfloConfig, project) -> str | None:
+    """The full-level work a ladder asks for, at brainstorm, spec and plan.
+
+    Right after the climb every document already validates, so the plain
+    "validates - advance" step would skip the work full level exists for.
+    None off a ladder, below full, at execute or once complete.
+    """
+    try:
+        if project.level != projects.FULL_LEVEL or project.status == COMPLETE_STATUS:
+            return None
+        ladder = load_run_state(root, cfg, project.slug).get("ladder")
+        if not ladder:
+            return None
+        if project.phase == "brainstorm":
+            review = ladder.get("levels", {}).get(project.level, {}).get("review") or []
+            decisions = f" ({', '.join(review)})" if review else ""
+            return (
+                "Ladder at full level, with no user to interview: review each decision"
+                f" made at fast level{decisions} and confirm it or supersede it with"
+                " `specflo decision add --supersedes`, and take up every item in Out of"
+                " scope / Deferred as new decisions; then run `specflo advance`."
+            )
+        if project.phase == "spec":
+            return (
+                "Ladder at full level: add requirements for the new decisions and the"
+                " deferred work you took up, then run `specflo advance`."
+            )
+        if project.phase == "plan":
+            return (
+                "Ladder at full level: add tasks for the new requirements, then run"
+                " `specflo advance`."
+            )
+        return None
     except Exception:
         return None
 
@@ -569,8 +604,14 @@ def _ladder_clause(project, record: dict) -> str:
         f"- {LADDER_MARKER} this run climbs quick, then fast, then full; you are at"
         f" {project.level} level on branch `{ladder_module.branch_name(project.slug, project.level)}`."
         " Commit this level's work on that branch and do not switch branches:"
-        " when the level completes, the next `specflo auto` pass cuts the next"
-        " level's branch and moves the project up. This supersedes the Terminal"
+        + (
+            " when the level completes, the next `specflo auto` pass closes the"
+            " ladder and hands the branches over."
+            if project.level == projects.FULL_LEVEL else
+            " when the level completes, the next `specflo auto` pass cuts the next"
+            " level's branch and moves the project up."
+        )
+        + " This supersedes the Terminal"
         f' stop clause: at every level, `specflo advance` printing "{COMPLETION_SIGNAL}"'
         " ends only that level, not the run; do not stop, run `specflo auto` again."
         " The run ends when a pass says the ladder is complete. Never push, and"
