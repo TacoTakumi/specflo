@@ -15,6 +15,7 @@ from pathlib import Path
 
 from . import markdown
 from .brainstorm import BRAINSTORM_FILENAME
+from .brief import BRIEF_FILENAME
 from .checkpoint import CHECKPOINT_FILENAME
 from .config import SpecfloConfig
 from .errors import SpecfloError
@@ -29,6 +30,7 @@ ARTIFACTS: dict[str, str] = {
     "brainstorm": BRAINSTORM_FILENAME,
     "spec": SPEC_FILENAME,
     "plan": PLAN_FILENAME,
+    "brief": BRIEF_FILENAME,
     "checkpoint": CHECKPOINT_FILENAME,
     "project": PROJECT_FILENAME,
 }
@@ -41,7 +43,7 @@ ROUND_PATTERN = "review-<N>"
 
 # The artifacts that carry authored prose sections. checkpoint.md is derived
 # and regenerated; project.md is front matter with no sections.
-PROSE_ARTIFACTS: tuple[str, ...] = ("brainstorm", "spec", "plan")
+PROSE_ARTIFACTS: tuple[str, ...] = ("brainstorm", "spec", "plan", "brief")
 
 # Section title -> the verb that owns its entries. A prose write never touches
 # these: the entries carry stable IDs that only their own verb may mint.
@@ -55,7 +57,7 @@ MANAGED_SECTIONS: dict[str, str] = {
 
 
 def artifact_names() -> str:
-    """The artifact names as a help line: the five documents, or a round by number."""
+    """The artifact names as a help line: the six documents, or a round by number."""
     return ", ".join(ARTIFACTS) + f", or {ROUND_PATTERN}"
 
 

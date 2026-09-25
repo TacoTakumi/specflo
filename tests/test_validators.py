@@ -10,7 +10,7 @@ reach for ``cli``.
 import ast
 from pathlib import Path
 
-from specflo import brainstorm, checkpoint, cli, plan, spec, status, validators
+from specflo import brainstorm, brief, checkpoint, cli, plan, spec, status, validators
 
 
 def test_validators_maps_each_phase_to_its_real_validator():
@@ -19,6 +19,7 @@ def test_validators_maps_each_phase_to_its_real_validator():
         "spec": spec.validate_spec,
         "plan": plan.validate_plan,
         "execute": validators.execute_issues,
+        "brief": brief.validate_brief,
     }
 
 

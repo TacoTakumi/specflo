@@ -27,8 +27,8 @@ def _project(tmp_path, monkeypatch):
 # --- the module ----------------------------------------------------------
 
 
-def test_artifact_names_are_the_five_project_documents():
-    assert list(doc.ARTIFACTS) == ["brainstorm", "spec", "plan", "checkpoint", "project"]
+def test_artifact_names_are_the_six_project_documents():
+    assert list(doc.ARTIFACTS) == ["brainstorm", "spec", "plan", "brief", "checkpoint", "project"]
     assert doc.ARTIFACTS["project"] == "project.md"
     assert doc.ARTIFACTS["checkpoint"] == "checkpoint.md"
 

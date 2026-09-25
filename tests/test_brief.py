@@ -66,3 +66,98 @@ def test_the_phase_lists_per_level():
     assert workflow.phases_for("quick") == ["execute"]
     assert workflow.phases_for("fast") == workflow.PHASES
     assert workflow.phases_for("full") == workflow.PHASES
+
+
+# --- writing and validating the brief ------------------------------------------
+
+
+def _brief_text(tmp_path):
+    return (_project_dir(tmp_path) / "brief.md").read_text()
+
+
+def _section_of(text, title):
+    lines = text.splitlines()
+    start = lines.index(f"## {title}") + 1
+    end = next((i for i in range(start, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def test_section_set_writes_each_brief_section_alone(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    bodies = {
+        "Goal": "Fix the typo in the help text.\n",
+        "Done when": "- `specflo --help` shows 'workflow'.\n",
+        "Proof": "specflo --help | grep workflow -> match\n",
+        "Deferred": "- Reword the epilog.\n",
+    }
+    for title, body in bodies.items():
+        before = _brief_text(tmp_path)
+        _ok(["section", "set", "brief", title, "--stdin"], body)
+        after = _brief_text(tmp_path)
+        assert body.strip() in _section_of(after, title)
+        for other in bodies:
+            if other != title:
+                assert _section_of(after, other) == _section_of(before, other)
+
+
+def _fill(tmp_path, goal="Fix it.\n", done="- it works\n", proof="ran it: ok\n"):
+    for title, body in (("Goal", goal), ("Done when", done), ("Proof", proof)):
+        if body is not None:
+            _ok(["section", "set", "brief", title, "--stdin"], body)
+
+
+def test_validate_brief_passes_with_goal_one_check_and_proof(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path)
+
+    result = runner.invoke(app, ["validate", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "ok - brief is ready." in result.output
+
+
+def _issues(tmp_path):
+    result = runner.invoke(app, ["validate", "brief", "--json"])
+    assert result.exit_code == 1, result.output
+    import json
+    return json.loads(result.output)["issues"]
+
+
+def test_validate_brief_names_an_empty_goal(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path, goal=None)
+    assert any("Goal" in issue for issue in _issues(tmp_path))
+
+
+def test_validate_brief_names_a_missing_check(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path, done="Nothing listed here.\n")
+    assert any("Done when" in issue for issue in _issues(tmp_path))
+
+
+def test_validate_brief_names_two_checks_and_the_move_up(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path, done="- it works\n- it is fast\n")
+    issues = _issues(tmp_path)
+    assert any("Done when" in issue and "2" in issue and "specflo level fast" in issue
+               for issue in issues)
+
+
+def test_validate_brief_names_an_empty_proof(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path, proof=None)
+    assert any("Proof" in issue for issue in _issues(tmp_path))
+
+
+def test_validate_brief_ignores_an_empty_deferred_section(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path)
+    assert "## Deferred" in _brief_text(tmp_path)
+    assert runner.invoke(app, ["validate", "brief"]).exit_code == 0

@@ -13,7 +13,7 @@ the phase's outstanding issues (empty when the artifact is ready).
 
 from __future__ import annotations
 
-from . import brainstorm, plan, review, spec
+from . import brainstorm, brief, plan, review, spec
 
 # Phase -> its real validator. Defined once; ``cli``'s validate/advance and the
 # read-path doneness derivation both reference this same object.
@@ -40,4 +40,5 @@ VALIDATORS = {
     "spec": spec.validate_spec,
     "plan": plan.validate_plan,
     "execute": execute_issues,
+    "brief": brief.validate_brief,
 }

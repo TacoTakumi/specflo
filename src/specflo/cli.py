@@ -1381,7 +1381,7 @@ def gate_take(
 def validate(
     artifact: str = typer.Argument(
         ..., metavar="<artifact>",
-        help="Artifact/phase to validate: brainstorm, spec, plan, or execute."
+        help="Artifact/phase to validate: brainstorm, spec, plan, execute, or brief."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:

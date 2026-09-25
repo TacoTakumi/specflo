@@ -344,7 +344,7 @@ def test_local_service_refuses_a_gate_for_a_role_it_does_not_know(local):
 def test_local_service_raises_the_module_errors_unchanged(local):
     with pytest.raises(SpecfloError, match="No project 'nope'"):
         local.load_project("nope")
-    with pytest.raises(SpecfloError, match="brainstorm, execute, plan, spec"):
+    with pytest.raises(SpecfloError, match="brainstorm, brief, execute, plan, spec"):
         local.validate_artifact("nope", "notes")
     with pytest.raises(SpecfloError, match="brainstorm, spec, plan"):
         local.complete_artifact("nope", "execute")
@@ -613,7 +613,7 @@ def test_remote_service_takes_a_gate_as_the_tokens_identity(remote):
 def test_remote_service_raises_the_daemons_refusals_as_specflo_errors(remote):
     with pytest.raises(SpecfloError, match="No project 'nope'"):
         remote.load_project("nope")
-    with pytest.raises(SpecfloError, match="brainstorm, execute, plan, spec"):
+    with pytest.raises(SpecfloError, match="brainstorm, brief, execute, plan, spec"):
         remote.validate_artifact("nope", "notes")
     with pytest.raises(TypeError):
         remote.add_decision("nope")
