@@ -239,3 +239,18 @@ def cut_down_clause(level: str, outgrew: str) -> str:
         f" not move up yourself: {how}. The ladder moves up when this level"
         " completes, and the next level picks up the deferred work."
     )
+
+
+def finish(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
+    """Write the full level's row and return the hand-off for the finished ladder."""
+    from .config import display_path
+
+    end_level(root, cfg, slug, record, projects.FULL_LEVEL)
+    branches = ", ".join(f"`{record['levels'][level]['branch']}`" for level in projects.LEVELS)
+    where = display_path(ladder_path(root, cfg, slug), root)
+    return (
+        f"The ladder run for {slug!r} is complete. Its branches, smallest change"
+        f" first: {branches}. The comparison is in {where}. Stop the auto run and"
+        " hand off to the human: they review the branches and merge the one they"
+        " like best. The ladder merges, pushes and deletes nothing."
+    )

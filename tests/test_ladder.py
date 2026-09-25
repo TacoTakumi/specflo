@@ -265,3 +265,53 @@ def test_the_row_records_the_test_command_result(repo, command, expected):
 
     assert _row(repo, "quick")["tests"] == expected
     assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/fast"
+
+
+# --- the end of the ladder, and the guardrails across it --------------------------------
+
+
+def _ladder_at_full(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    _finish_fast(repo)
+    _ok(["auto", "--json"])
+
+
+def test_the_ladder_ends_when_full_completes(repo):
+    _ladder_at_full(repo)
+    _ok(["advance"])
+    _ok(["advance"])
+    _ok(["advance"])
+    _work(repo, "full.txt")
+    _ok(["advance"])
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_PROJECT_COMPLETE
+    for level in ("quick", "fast", "full"):
+        assert f"specflo/thing/{level}" in result["payload"]
+    assert "ladder.md" in result["payload"]
+    assert "| full |" in (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
+
+
+def test_guard_auto_off_stops_the_ladder_and_cuts_no_branch(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--off"])
+    before = _branches(repo)
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (result["stop"], result["reason"]) == (True, auto.STOP_KILL_SWITCH)
+    assert _branches(repo) == before
+
+
+def test_guard_the_pass_cap_counts_the_whole_ladder(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+
+    result = json.loads(_ok(["auto", "--json", "--max-passes", "2"]).output)
+
+    assert (result["stop"], result["reason"]) == (True, auto.STOP_PASS_CAP)

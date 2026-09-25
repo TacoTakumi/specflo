@@ -680,8 +680,14 @@ def auto_pass_result(
             and ladder_module.next_level(project.level) is not None
         )
         if project.status == COMPLETE_STATUS and not climbing:
+            directive = AUTO_COMPLETE_DIRECTIVE
+            if ladder is not None:
+                # The ladder's top level finished: its row closes ladder.md.
+                directive = ladder_module.finish(root, cfg, project.slug, ladder)
+                state["ladder"] = ladder
+                save_run_state(root, cfg, project.slug, state)
             _mark_run_ended(root, cfg, project.slug)
-            return _pass_result(AUTO_COMPLETE_DIRECTIVE, STOP_PROJECT_COMPLETE)
+            return _pass_result(directive, STOP_PROJECT_COMPLETE)
         cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
         # Kill switch (REQ-16): a set auto-off flag halts before this counts as a
         # pass - a killed pass is a brake, not forward progress, so it neither
