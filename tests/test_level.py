@@ -172,3 +172,23 @@ def test_level_fast_leaves_t01_pending_without_proof(tmp_path, monkeypatch):
 
     t01 = (_project_dir(tmp_path) / "plan.md").read_text().split("### T-01", 1)[1]
     assert "Progress: pending" in t01
+
+
+def test_level_quick_to_full_equals_fast_then_full(tmp_path, monkeypatch):
+    one, two = tmp_path / "one", tmp_path / "two"
+    one.mkdir()
+    two.mkdir()
+    monkeypatch.chdir(one)
+    _quick_project_with_brief(one)
+    _ok(["level", "fast"])
+    _ok(["level", "full"])
+    monkeypatch.chdir(two)
+    _quick_project_with_brief(two)
+
+    _ok(["level", "full"])
+
+    project = _load(two)
+    assert (project.level, project.phase, project.status) == ("full", "brainstorm", "active")
+    for name in ("brainstorm.md", "spec.md", "plan.md", "brief.md", "project.md"):
+        assert (_project_dir(two) / name).read_bytes() == (_project_dir(one) / name).read_bytes(), name
+    monkeypatch.chdir(tmp_path)
