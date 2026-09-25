@@ -685,3 +685,23 @@ def test_rule_text_returns_the_pinned_lines():
         "Prior projects' decisions remain binding on new work unless"
         " explicitly superseded."
     )
+
+
+# --- test_command: what a ladder run tests each branch with ---------------------------
+
+
+def test_test_command_is_unset_by_default_and_round_trips(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert config.load_config(tmp_path).test_command is None
+
+    assert runner.invoke(app, ["config", "set", "test_command", "uv run pytest -q"]).exit_code == 0
+    assert runner.invoke(app, ["config", "get", "test_command"]).output.strip() == "uv run pytest -q"
+    listed = runner.invoke(app, ["config", "list"]).output
+    assert "test_command" in listed and "uv run pytest -q" in listed
+
+    assert runner.invoke(app, ["config", "unset", "test_command"]).exit_code == 0
+    assert config.load_config(tmp_path).test_command is None

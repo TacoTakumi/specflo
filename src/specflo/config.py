@@ -214,6 +214,13 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         "Transport a daemon starts a project's agent with: tui (pi in a herdr pane) or rpc.",
         Choice(AGENT_TRANSPORTS),
     ),
+    ConfigField(
+        "test_command",
+        str,
+        None,
+        "Shell command a ladder run tests each level's branch with; unset means not run.",
+        Text(optional=True),
+    ),
 )
 
 FIELDS_BY_NAME = {f.name: f for f in CONFIG_FIELDS}

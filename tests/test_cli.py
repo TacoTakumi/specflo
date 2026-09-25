@@ -3004,6 +3004,7 @@ def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
         "context_threshold_percent: 25 (default)",
         "agent_space: agents (default)",
         "agent_transport: tui (default)",
+        "test_command: (default)",
     ]
 
 
