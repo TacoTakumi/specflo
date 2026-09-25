@@ -276,30 +276,15 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
     return target
 
 
-def cut_down_clause(level: str, outgrew: str) -> str:
-    """The instruction a ladder level over its cap gets in place of a stop.
-
-    Quick can cut down, since a check moves to the brief's Deferred section.
-    Fast cannot: no verb lowers the count of active decisions or tasks, so
-    inside a ladder its caps only warn and ladder.md shows the real counts.
-    """
-    if level == projects.QUICK_LEVEL:
-        how = (
-            "keep one check in Done when and move the rest to the brief's Deferred"
-            " section"
-        )
-    else:
-        how = (
-            f"add no more work: the cap is {projects.FAST_MAX_TASKS} tasks and"
-            f" {projects.FAST_MAX_DECISIONS} decisions, and new work goes to the"
-            " brainstorm's Out of scope / Deferred section. Inside a ladder this"
-            " cap only warns, so finish the work already recorded"
-        )
-    return (
-        f"- Ladder run: this level is over its cap ({outgrew}). Do not stop and do"
-        f" not move up yourself: {how}. The ladder moves up when this level"
-        " completes, and the next level picks up the deferred work."
+def over_cap_clause(outgrew: str, ladder: bool) -> str:
+    """What an auto pass over its level's cap adds to the payload, in place of a stop."""
+    tail = (
+        " The ladder moves up when this level completes, and the next level picks"
+        " up the deferred work."
+        if ladder else
+        " The run finishes at this level; the deferred work stays listed for the user."
     )
+    return f"- {outgrew} Do not stop and do not move up a level yourself.{tail}"
 
 
 def finish(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:

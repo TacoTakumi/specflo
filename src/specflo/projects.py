@@ -49,14 +49,6 @@ FAST_MAX_DECISIONS = 3
 FAST_MAX_TASKS = 7
 
 
-def over_cap(level: str, what: str, count: int, cap: int) -> str:
-    """The issue a light level reports when ``count`` ``what`` exceed its ``cap``."""
-    return (
-        f"{count} active {what}; {level} level allows at most {cap}. Cut them down,"
-        " or move up with `specflo level full`."
-    )
-
-
 @dataclass
 class Gate:
     """A recorded handoff on a project: the role it waits on, until taken.

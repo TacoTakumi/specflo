@@ -103,8 +103,7 @@ def validate_brief(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     elif len(checks) > 1:
         issues.append(
             f"Done when has {len(checks)} checks; a quick brief has exactly one."
-            " Keep one and move the rest to Deferred, or move up with"
-            " `specflo level fast`."
+            " Keep one and move the rest to Deferred."
         )
     if "Proof" in bodies and not bodies["Proof"]:
         issues.append("Proof is empty: record the test or command output that shows the check passes.")

@@ -1101,24 +1101,24 @@ def test_a_quick_project_stalls_when_its_brief_does_not_change(tmp_path):
 # --- a plain auto run stops when the project outgrows its level -----------------------
 
 
-def test_auto_stops_a_quick_project_with_two_checks_as_outgrown(tmp_path):
+def test_a_quick_project_over_its_cap_is_told_to_cut_down_and_the_run_goes_on(tmp_path):
     from specflo import doc
     cfg, slug = _quick_project(tmp_path)
     doc.set_section(tmp_path, cfg, slug, "brief", "Done when", "- it works\n- it is fast")
 
     result = auto.auto_pass_result(tmp_path, max_passes=1000)
 
-    assert result["stop"] is True
-    assert result["reason"] == auto.STOP_OUTGREW_LEVEL
-    assert "outgrew quick" in result["payload"]
+    assert result["stop"] is False
+    assert "Over quick level's cap" in result["payload"] and "one check" in result["payload"]
+    assert "specflo level" not in result["payload"]
     checkpoint_text = checkpoint.write_checkpoint(
         tmp_path, projects.load_project(tmp_path, cfg, slug), cfg
     ).read_text()
-    assert "outgrew quick" in checkpoint_text
+    assert "Over quick level's cap" in checkpoint_text
     assert projects.load_project(tmp_path, cfg, slug).level == "quick"
 
 
-def test_auto_stops_a_fast_project_with_eight_tasks_as_outgrown(tmp_path):
+def test_a_fast_project_over_its_cap_only_warns_and_the_run_goes_on(tmp_path):
     from specflo import plan
     cfg = config.init_config(tmp_path)
     projects.create_project(tmp_path, cfg, "Fast Thing", level="fast")
@@ -1133,9 +1133,10 @@ def test_auto_stops_a_fast_project_with_eight_tasks_as_outgrown(tmp_path):
 
     result = auto.auto_pass_result(tmp_path, max_passes=1000)
 
-    assert result["reason"] == auto.STOP_OUTGREW_LEVEL
-    assert "outgrew fast" in result["payload"]
+    assert result["stop"] is False
+    assert "Over fast level's cap" in result["payload"] and "only warns" in result["payload"]
     assert "8" in result["payload"] and "7" in result["payload"]
+    assert "specflo level" not in result["payload"]
     assert projects.load_project(tmp_path, cfg, slug).level == "fast"
 
 
@@ -1145,7 +1146,7 @@ def test_auto_does_not_stop_a_project_within_its_level(tmp_path):
     assert result["reason"] != auto.STOP_OUTGREW_LEVEL
 
 
-def test_an_outgrown_quick_project_leaves_the_line_in_checkpoint_md(tmp_path, monkeypatch):
+def test_a_quick_project_over_its_cap_leaves_the_line_in_checkpoint_md(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runner = CliRunner()
     assert runner.invoke(app, ["init"]).exit_code == 0
@@ -1156,6 +1157,8 @@ def test_an_outgrown_quick_project_leaves_the_line_in_checkpoint_md(tmp_path, mo
 
     result = runner.invoke(app, ["auto", "--json"])
 
-    assert '"outgrew-level"' in result.output
+    assert '"outgrew-level"' not in result.output
     checkpoint_md = tmp_path / "docs" / "projects" / "thing" / "checkpoint.md"
-    assert "outgrew quick" in checkpoint_md.read_text()
+    assert "Over quick level's cap" in checkpoint_md.read_text()
+
+

@@ -614,7 +614,7 @@ def test_inside_a_ladder_the_outgrew_text_never_says_to_move_up(repo):
     checkpoint = _ok(["checkpoint"]).output
     payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
 
-    assert "outgrew fast" in checkpoint and "only warns" in checkpoint
+    assert "Over fast level's cap" in checkpoint and "only warns" in checkpoint
     assert "specflo level" not in checkpoint and "specflo level" not in payload
 
 
@@ -625,13 +625,6 @@ def test_specflo_level_is_refused_while_a_ladder_is_live(repo):
 
     assert refused.exit_code != 0 and "ladder run is live" in refused.output
     assert projects.load_project(repo, config.load_config(repo), "thing").level == "quick"
-
-
-def test_a_stopped_ladder_gives_the_fast_caps_back(repo):
-    _fast_ladder_over_the_task_cap(repo)
-    _ok(["auto", "--off"])
-
-    assert "at most 7" in runner.invoke(app, ["validate", "plan"]).output
 
 
 def test_no_ladder_starts_while_the_kill_switch_is_set(repo):

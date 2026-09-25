@@ -139,13 +139,13 @@ def test_validate_brief_names_a_missing_check(tmp_path, monkeypatch):
     assert any("Done when" in issue for issue in _issues(tmp_path))
 
 
-def test_validate_brief_names_two_checks_and_the_move_up(tmp_path, monkeypatch):
+def test_validate_brief_names_two_checks_and_never_the_move_up(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _quick_project(tmp_path)
     _fill(tmp_path, done="- it works\n- it is fast\n")
     issues = _issues(tmp_path)
-    assert any("Done when" in issue and "2" in issue and "specflo level fast" in issue
-               for issue in issues)
+    assert any("Done when" in issue and "2" in issue and "Deferred" in issue for issue in issues)
+    assert not any("specflo level" in issue for issue in issues)
 
 
 def test_validate_brief_names_an_empty_proof(tmp_path, monkeypatch):

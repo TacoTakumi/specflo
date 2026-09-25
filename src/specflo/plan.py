@@ -21,7 +21,7 @@ from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
 from .projects import (
-    FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, over_cap, project_dir,
+    FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, project_dir,
 )
 
 PLAN_FILENAME = "plan.md"
@@ -414,16 +414,6 @@ def validate_plan(
         issues.append("no tasks captured (need at least one).")
         return issues
 
-    # Inside a ladder the cap only warns (through the auto payload): no verb
-    # lowers the count of active tasks, so a hard cap would stall the run.
-    from . import auto
-
-    if (
-        load_project(root, cfg, slug).level == FAST_LEVEL and len(active) > FAST_MAX_TASKS
-        and not auto.in_ladder(root, cfg, slug)
-    ):
-        issues.append(over_cap(FAST_LEVEL, "tasks", len(active), FAST_MAX_TASKS))
-
     for t in active:
         if not t.acceptance:
             issues.append(f"{t.id} has no acceptance criterion.")
@@ -585,6 +575,12 @@ def plan_warnings(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
                     f'{t.id} may reduce scope ("{term}") — deliver what the requirement needs, or split.'
                 )
     warnings.extend(_shared_file_warnings(active))
+    # Fast level's task cap only warns: no verb lowers the count of tasks.
+    if len(active) > FAST_MAX_TASKS and load_project(root, cfg, slug).level == FAST_LEVEL:
+        warnings.append(
+            f"{len(active)} active tasks; fast level's cap is {FAST_MAX_TASKS}. Add no more,"
+            " and put new work in the brainstorm's Out of scope / Deferred section."
+        )
     return warnings
 
 

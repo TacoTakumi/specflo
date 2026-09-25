@@ -110,9 +110,8 @@ STOP_KILL_SWITCH = "kill-switch"
 STOP_PASS_CAP = "pass-cap"
 STOP_STALL = "stall"
 STOP_PROJECT_COMPLETE = "project-complete"
-# The project has more work than its level allows (a quick brief with two
-# checks, a fast plan past its caps). A plain run stops and leaves the move up
-# to the user; it never changes the level itself.
+# No longer sent: a cap never stops a run (a quick level cuts down, a fast
+# level only warns). Kept so a consumer that lists the reasons still parses.
 STOP_OUTGREW_LEVEL = "outgrew-level"
 # A ladder level completed but the ladder cannot climb (its next branch
 # exists, or the level was changed by hand); the payload says why.
@@ -837,17 +836,12 @@ def auto_pass_result(
             state["ladder"] = ladder
             save_run_state(root, cfg, project.slug, state)
             project = projects.load_project(root, cfg, project.slug)
-        # Outgrown (a fact of the documents, so checked before this counts as
-        # a pass): a plain run stops and hands the move up to the user; a
-        # ladder tells the agent to cut down, or at fast to add no more, and
-        # carries on.
+        # Over the level's cap (a fact of the documents): the run never stops
+        # or moves up for it. Quick cuts down to one check; fast only warns.
         extra = None
-        outgrew = validators.outgrown(root, cfg, project)
+        outgrew = validators.outgrown(root, cfg, project, unattended=True)
         if outgrew is not None:
-            if ladder is None:
-                _mark_run_ended(root, cfg, project.slug)
-                return _pass_result(escalation_message(outgrew), STOP_OUTGREW_LEVEL)
-            extra = ladder_module.cut_down_clause(project.level, outgrew)
+            extra = ladder_module.over_cap_clause(outgrew, ladder is not None)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # This pass continues the run, so any end marker left by an earlier stop

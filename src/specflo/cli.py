@@ -1106,7 +1106,7 @@ def auto_(
         False,
         "--json",
         help="Emit the pass as JSON: its payload text, a boolean stop, and the "
-        "stop reason (kill-switch, pass-cap, stall, project-complete, outgrew-level, "
+        "stop reason (kill-switch, pass-cap, stall, project-complete, "
         "ladder-blocked, or "
         "unavailable; null while the run continues).",
     ),

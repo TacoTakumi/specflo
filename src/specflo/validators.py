@@ -48,26 +48,24 @@ VALIDATORS = {
 }
 
 
-def outgrown(root, cfg, project) -> str | None:
-    """Why ``project`` has outgrown its level, or None while it fits.
+def outgrown(root, cfg, project, unattended: bool | None = None) -> str | None:
+    """Why ``project`` is over its level's cap, or None while it fits.
 
     Derived from the documents each time, so it clears as soon as the work is
-    cut back under the cap or the project moves up. Full level has no cap.
-    Inside a live ladder the text never says to move up: the ladder does that.
+    cut back under the cap or the project moves up. Full level has no cap. A
+    cap never pushes the project up a level: quick cuts down to one check, and
+    fast, where no verb lowers the count of decisions or tasks, only warns.
+    Only an attended project is reminded that `specflo level full` exists;
+    ``unattended`` defaults to whether an auto run is live.
     """
-    from . import auto
-
-    ladder = auto.in_ladder(root, cfg, project.slug)
     if project.level == projects.QUICK_LEVEL:
         path = brief.brief_path(root, cfg, project.slug)
         checks = brief.check_count(path.read_text()) if path.is_file() else 0
         if checks > 1:
             return (
-                f"outgrew quick: {checks} checks in Done when; quick level allows 1."
-                + (
-                    " Cut it to one check; the ladder moves up when this level completes."
-                    if ladder else " Cut it to one check, or move up with `specflo level fast`."
-                )
+                f"Over quick level's cap: {checks} checks in Done when; quick level"
+                " allows 1. Keep one check and move the rest to the brief's Deferred"
+                " section."
             )
     elif project.level == projects.FAST_LEVEL:
         base = projects.project_dir(root, cfg, project.slug)
@@ -81,13 +79,18 @@ def outgrown(root, cfg, project) -> str | None:
         )
         over = []
         if decisions > projects.FAST_MAX_DECISIONS:
-            over.append(f"{decisions} active decisions (at most {projects.FAST_MAX_DECISIONS})")
+            over.append(f"{decisions} active decisions (cap {projects.FAST_MAX_DECISIONS})")
         if tasks > projects.FAST_MAX_TASKS:
-            over.append(f"{tasks} active tasks (at most {projects.FAST_MAX_TASKS})")
+            over.append(f"{tasks} active tasks (cap {projects.FAST_MAX_TASKS})")
         if over:
-            return f"outgrew fast: {' and '.join(over)}." + (
-                " Inside the ladder this cap only warns; the ladder moves up when this"
-                " level completes."
-                if ladder else " Cut the work down, or move up with `specflo level full`."
+            if unattended is None:
+                from . import auto
+
+                unattended = auto.run_under_way(root, cfg, project)
+            return (
+                f"Over fast level's cap: {' and '.join(over)}. The cap only warns:"
+                " finish the work already recorded, add no more, and put new work in"
+                " the brainstorm's Out of scope / Deferred section."
+                + ("" if unattended else " `specflo level full` is there if you want full level.")
             )
     return None

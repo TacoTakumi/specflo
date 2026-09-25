@@ -17,8 +17,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   A quick project has one phase, `execute`, and one `brief.md` (Goal, Done
   when, Proof, Deferred); `validate brief` asks for a goal, exactly one check
   and proof, and `advance` completes it with no review round. A fast project
-  uses the three documents written short: validate fails past 3 active
-  decisions or 7 active tasks, and the next-step text keeps going from
+  uses the three documents written short: more than 3 active decisions or 7
+  active tasks only warns, and the next-step text keeps going from
   brainstorm to plan and stops once for approval before execute.
 - **`specflo level fast|full`** - move the active project up a level, back to
   the brainstorm with every document kept; never down. From quick the brief
@@ -37,9 +37,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   kill switch is set.
 - **`test_command` config key** - the command a ladder run tests each level's
   branch with; unset means `not run`.
-- **`outgrew-level` auto stop reason** - a plain auto run stops when a quick
-  brief has two checks or a fast project passes its caps, and the checkpoint
-  says so. A ladder that cannot climb (its next branch exists, or
+- **Level caps in auto runs** - a cap never stops a run or moves the project
+  up: a quick brief with two checks is told to keep one, and a fast project
+  past its caps only warns. The checkpoint says so. The `outgrew-level` stop
+  reason is listed but no longer sent. A ladder that cannot climb (its next branch exists, or
   the level was changed by hand) stops with `ladder-blocked` and says why.
 - **`specflo-quick` skill**, and level sections in the brainstorm, spec, plan
   and execute skills and in `specflo guide`.

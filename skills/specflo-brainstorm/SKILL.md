@@ -191,8 +191,9 @@ When `specflo status` shows `Level: fast`, this skill runs short:
   once the phase validates, run `specflo advance` and go on, from brainstorm to
   spec to plan.
 - **Deferred work** goes in the brainstorm's Out of scope / Deferred section.
-- **Caps:** 3 decisions and 7 tasks. Past a cap, validate fails: cut the work
-  down, or offer the user `specflo level full`.
+- **Caps:** 3 decisions and 7 tasks. A cap only warns: finish the work already
+  recorded, add no more, and put new work in the brainstorm's Out of scope /
+  Deferred section. Do not move the project up; the user chose fast.
 - **One approval, before execute.** When the plan validates, stop. Show the
   user `specflo doc show brief` and list every choice you made that they have
   not seen: each decision, and any requirement or task beyond what they asked

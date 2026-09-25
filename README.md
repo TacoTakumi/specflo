@@ -141,8 +141,9 @@ chosen with `specflo new <name> --level quick|fast|full`:
 - **fast** - 3 to 7 tasks. The usual brainstorm, spec and plan, written short by
   the agent: it makes at most 3 decisions itself, keeps going from brainstorm
   to plan without stopping, and stops once, when the plan validates, for the
-  user's approval before execute. Validate fails past 3 active decisions or 7
-  active tasks. Execute finishes as at full level, after a passing review round.
+  user's approval before execute. More than 3 active decisions or 7 active
+  tasks only warns: the agent adds no more work and defers new work, and the
+  project stays at fast. Execute finishes as at full level, after a passing review round.
 - **full** - the default: every phase, with an approval at each.
 
 `specflo doc show brief` prints one page at either light level: the brief file
@@ -156,8 +157,10 @@ brainstorm, the check becomes `REQ-01`, and `T-01` implements it (done when the
 brief has proof). From fast, the command lists the decisions to review with the
 user, since the agent made them without an interview.
 
-A plain `specflo auto` run on a project past its level's cap stops with the
-reason `outgrew-level` and leaves the move up to you.
+A cap never stops a `specflo auto` run and never moves the project up. A quick
+brief with two checks is told to keep one and defer the rest. A fast project
+past its caps only warns, since no command removes a decision or task. Moving
+up is your choice, with `specflo level`.
 
 ### The ladder run
 
@@ -177,10 +180,8 @@ At every level `specflo advance` ends only that level; the texts it and
 `status` print say to run `specflo auto` again, and `status --json` keeps
 reporting the run as under way until the closing pass.
 
-Inside a ladder a cap never stops the run. A quick level cuts its work down to
-one check and defers the rest to the next level. At a fast level the caps only
-warn: the agent adds no more work and defers new work, but no command removes
-a decision or task, so a fast branch can be larger than fast allows. While a
+Inside a ladder, caps work as in any auto run, and the next level picks up the
+deferred work. A fast branch can be larger than fast allows. While a
 ladder runs, `specflo level` is refused: the ladder moves the level up itself.
 A level's row counts commits up to its branch tip. `ladder.md` in the project
 directory records the base branch and commit and one row per level: commits, files and
@@ -271,7 +272,7 @@ See **[The config file](#the-config-file)** for the file itself.
   - `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing. Overrides the config default.
   - `--off` sets the durable kill switch (the next pass halts); `--on` clears it.
   - `--ladder` starts a [ladder run](#the-ladder-run) on a quick project; later passes continue it without the flag.
-  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `outgrew-level`, `ladder-blocked`, or `unavailable`; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
+  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `ladder-blocked`, or `unavailable`; `outgrew-level` is listed but no longer sent; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
 
 ### Harness integration
 

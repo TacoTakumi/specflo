@@ -175,13 +175,25 @@ def _tasks(tmp_path, cfg, count):
 
 
 def _cap_issues(issues, count, cap):
-    return [i for i in issues if str(count) in i and str(cap) in i and "specflo level full" in i]
+    return [i for i in issues if str(count) in i and str(cap) in i]
 
 
-def test_fast_level_fails_four_active_decisions(tmp_path):
+def test_fast_level_does_not_fail_four_active_decisions(tmp_path):
     cfg = _project_at(tmp_path, "fast")
     _decisions(tmp_path, cfg, 4)
-    assert _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+    assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+
+
+def test_fast_level_warns_about_four_active_decisions_and_never_pushes_up(tmp_path):
+    from specflo import projects, validators
+    cfg = _project_at(tmp_path, "fast")
+    _decisions(tmp_path, cfg, 4)
+    project = projects.load_project(tmp_path, cfg, "thing")
+    attended = validators.outgrown(tmp_path, cfg, project, unattended=False)
+    unattended = validators.outgrown(tmp_path, cfg, project, unattended=True)
+    assert "4 active decisions (cap 3)" in attended and "only warns" in attended
+    assert "is there if you want" in attended
+    assert "specflo level" not in unattended
 
 
 def test_fast_level_does_not_count_a_superseded_decision(tmp_path):
@@ -192,10 +204,11 @@ def test_fast_level_does_not_count_a_superseded_decision(tmp_path):
     assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
 
 
-def test_fast_level_fails_eight_active_tasks(tmp_path):
+def test_fast_level_warns_but_does_not_fail_eight_active_tasks(tmp_path):
     cfg = _project_at(tmp_path, "fast")
     _tasks(tmp_path, cfg, 8)
-    assert _cap_issues(plan.validate_plan(tmp_path, cfg, "thing"), 8, 7)
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []
+    assert _cap_issues(plan.plan_warnings(tmp_path, cfg, "thing"), 8, 7)
 
 
 def test_fast_level_does_not_count_a_superseded_task(tmp_path):
@@ -203,16 +216,6 @@ def test_fast_level_does_not_count_a_superseded_task(tmp_path):
     _tasks(tmp_path, cfg, 7)
     plan.add_task(tmp_path, cfg, "thing", text="task again", acceptance="a",
                   verify="true", implements=["REQ-01"], supersedes="T-01")
-    assert plan.validate_plan(tmp_path, cfg, "thing") == []
-
-
-def test_fast_level_caps_do_not_fail_validate_inside_a_ladder(tmp_path):
-    from specflo import auto
-    cfg = _project_at(tmp_path, "fast")
-    auto.save_run_state(tmp_path, cfg, "thing", {"ladder": {"levels": {}}})
-    _decisions(tmp_path, cfg, 4)
-    _tasks(tmp_path, cfg, 8)
-    assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
     assert plan.validate_plan(tmp_path, cfg, "thing") == []
 
 
