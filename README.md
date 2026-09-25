@@ -128,6 +128,59 @@ Clearing context is free at any point: `checkpoint.md` is rewritten after every
 state change, and `specflo checkpoint` prints the resume prompt that puts a
 fresh session back to work.
 
+## Levels
+
+Not every change needs the whole pipeline. A project has one of three levels,
+chosen with `specflo new <name> --level quick|fast|full`:
+
+- **quick** - one goal and one check. The project has one phase, `execute`, and
+  one document, `brief.md`, with the sections Goal, Done when, Proof and
+  Deferred. `specflo validate brief` asks for a goal, exactly one check and
+  proof, and `specflo advance` completes the project once it passes. There is no
+  review round: the check and its proof are the gate.
+- **fast** - 3 to 7 tasks. The usual brainstorm, spec and plan, written short by
+  the agent: it makes at most 3 decisions itself, keeps going from brainstorm
+  to plan without stopping, and stops once, when the plan validates, for the
+  user's approval before execute. Validate fails past 3 active decisions or 7
+  active tasks. Execute finishes as at full level, after a passing review round.
+- **full** - the default: every phase, with an approval at each.
+
+`specflo doc show brief` prints one page at either light level: the brief file
+at quick, and at fast the goal, decisions, checks and tasks drawn from the three
+documents. Nothing is stored for the fast view.
+
+A project moves up with `specflo level fast|full`, never down, and goes back to
+the brainstorm with every document and every done task kept. From quick, the
+brief seeds the three documents: the goal and the deferred items go into the
+brainstorm, the check becomes `REQ-01`, and `T-01` implements it (done when the
+brief has proof). From fast, the command lists the decisions to review with the
+user, since the agent made them without an interview.
+
+A plain `specflo auto` run on a project past its level's cap stops with the
+reason `outgrew-level` and leaves the move up to you.
+
+### The ladder run
+
+`specflo auto --ladder` on a quick project runs all three levels in one
+unattended run, each on its own local branch:
+
+1. The quick level runs on `specflo/<slug>/quick`, cut from where you started.
+2. When it completes, the next pass cuts `specflo/<slug>/fast` from there and
+   moves the project up; the fast level builds on the quick result.
+3. Then `specflo/<slug>/full` the same way, and the run stops when full
+   completes.
+
+Inside a ladder a cap never stops the run: the level cuts its work down to the
+cap and defers the rest to the next level. `ladder.md` in the project directory
+records the base branch and commit and one row per level: commits, files and
+lines changed against the level's start, tasks, test result, review verdict,
+deferred items and time. The test result comes from the optional `test_command`
+config key (`specflo config set test_command "uv run pytest -q"`), run on each
+level's branch; unset, the row says `not run`. Review the three branches and
+merge the one you like best. The ladder needs a clean tree (specflo's own
+documents excepted), never pushes, and never deletes, renames or resets a
+branch.
+
 ## Command reference
 
 ### Global option: run in another directory
@@ -155,7 +208,8 @@ See **[The config file](#the-config-file)** for the file itself.
 
 ### Projects
 
-- `specflo new <name> [--execution linear|fan-out]` - create a project and make it active. `--execution` records the execution mode in `project.md` (default `linear`; see "Execution modes and fan-out" below).
+- `specflo new <name> [--execution linear|fan-out] [--level quick|fast|full]` - create a project and make it active. `--execution` records the execution mode in `project.md` (default `linear`; see "Execution modes and fan-out" below). `--level` records how much ceremony the project gets (default `full`; see [Levels](#levels)); a quick project starts at `execute` with a `brief.md`. A level other than full is refused with `--remote`.
+- `specflo level fast|full` - move the active project up a level, back to the brainstorm phase, keeping every document. Refuses the same or a lower level.
 - `specflo execution linear|fan-out [--json]` - switch the active project's execution mode, in either direction, at any phase. Reports `unchanged` when the mode already matches; `--json` emits `{execution, changed}`.
 - `specflo list [--json]` - list all projects, marking the active one and its phase.
 - `specflo switch <name>` - make another project active (by slug or name).
@@ -175,9 +229,9 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo pool add <name> --size N [--json]` / `pool list [--json]` - declare a pool of `N` slots (`N >= 1`) in the CLI-owned `## Pools` section of `plan.md`, updating the size in place on a repeated add; `pool list` shows every declared pool plus every pool an active task needs. A pool nobody declared has one slot. `user` is a reserved pool name meaning the task runs in the main session with the user; it needs no declaration.
 - `specflo plan graph [--json]` - render the plan's execution graph from its real data: waves by longest dependency path (wave 0 has no dependencies), one line per active task (id, title, progress, files, needs) and a mermaid `graph LR` block with one node per task, a subgraph per milestone and one edge per `Depends on` entry. `--json` emits `{waves, tasks, edges}`. Read-only: `plan.md` is byte-identical afterwards.
 - `specflo milestone add --text ... --exit ... [--exit ...]` - append a milestone (`M-NN`) with its Exit checklist to the plan; `milestone list` and `milestone show` report rollup and the current milestone.
-- `specflo doc show brainstorm|spec|plan|checkpoint|project|review-<N>` - print one artifact of the active project verbatim; `review-<N>` is a review round by its number. Agents read artifacts through this verb rather than opening files, so the same command serves a project in the checkout and one held by a daemon. An unknown name is refused with the valid names listed.
-- `specflo section set brainstorm|spec|plan <section> --file <path>|--stdin` - replace one prose section's body (named with or without its `##`), keeping the header, every other section and every managed entry byte-identical and bumping `updated`. The managed sections (Decisions, Requirements, Tasks, Milestones, Pools) are refused with the verb that owns them.
-- `specflo validate brainstorm|spec|plan [--json]` - lint the phase's artifact and report readiness. The plan lint checks bidirectional REQ<->task coverage, that every task has acceptance + verification, and that dependencies resolve and are acyclic. It also warns (non-blocking) when two active tasks share a file with no direct or transitive `Depends on` edge between them, naming the pair and the path.
+- `specflo doc show brainstorm|spec|plan|brief|checkpoint|project|review-<N>` - print one artifact of the active project verbatim; `review-<N>` is a review round by its number. Agents read artifacts through this verb rather than opening files, so the same command serves a project in the checkout and one held by a daemon. An unknown name is refused with the valid names listed. `brief` is the quick project's brief, or at fast level a one-page view of the three documents; it is refused at full level.
+- `specflo section set brainstorm|spec|plan|brief <section> --file <path>|--stdin` - replace one prose section's body (named with or without its `##`), keeping the header, every other section and every managed entry byte-identical and bumping `updated`. The managed sections (Decisions, Requirements, Tasks, Milestones, Pools) are refused with the verb that owns them.
+- `specflo validate brainstorm|spec|plan|brief [--json]` - lint the phase's artifact and report readiness. `brief` checks a quick project's goal, its single check and its proof. The plan lint checks bidirectional REQ<->task coverage, that every task has acceptance + verification, and that dependencies resolve and are acyclic. It also warns (non-blocking) when two active tasks share a file with no direct or transitive `Depends on` edge between them, naming the pair and the path.
 
 ### Working the plan
 
@@ -201,11 +255,12 @@ See **[The config file](#the-config-file)** for the file itself.
   - `--continue` swaps the confirmation gate for a direct *carry out the next step now* directive, and inlines the current task's brief - for a caller that cleared context on purpose and has already answered "keep going".
 - `specflo hook install` - idempotently merge the `SessionStart` wiring into Claude Code's `.claude/settings.json`, preserving all existing content; a previously-installed (older) reseed entry is rewired in place rather than duplicated. The wiring calls `specflo hook reseed --format claude` on the `startup`, `clear`, and `resume` sources (`compact` excluded - its digest is retained).
 - `specflo hook print` - print that same wiring as a JSON fragment on stdout (pipeable), either to merge into Claude Code's settings yourself or as a starting point to adapt for another harness (opencode, OpenAI Codex, ...); a stderr note marks it as a fragment and points at `specflo hook install` as the safe merge. pi needs no wiring - the bundled pi extension reseeds on its own (see **[The pi extension](#the-pi-extension)**). (`hook print --install` remains as a deprecated alias of `hook install`.)
-- `specflo auto [--autonomy safe|autonomous|yolo] [--max-passes N] [--off|--on] [--json]` - emit the **auto-mode handoff payload**: an explicit, per-invocation opt-in that starts or continues an *unattended* run from the current phase toward project completion, emitting a bootstrap directive (autonomy policy + guardrail stop-conditions) instead of the ask-first pause. specflo only prints the payload - it drives no loop, spawns no nested agent, and never clears context; the clear-and-reseed trigger is the outer harness's job. Strictly additive - the default `hook reseed` / checkpoint behavior is unchanged.
+- `specflo auto [--autonomy safe|autonomous|yolo] [--max-passes N] [--off|--on] [--ladder] [--json]` - emit the **auto-mode handoff payload**: an explicit, per-invocation opt-in that starts or continues an *unattended* run from the current phase toward project completion, emitting a bootstrap directive (autonomy policy + guardrail stop-conditions) instead of the ask-first pause. specflo only prints the payload - it drives no loop, spawns no nested agent, and never clears context; the clear-and-reseed trigger is the outer harness's job. Strictly additive - the default `hook reseed` / checkpoint behavior is unchanged.
   - `--autonomy` sets how far it runs unattended: `safe` (the default) and `autonomous` stop and hand off on any irreversible or outbound step; `yolo` permits them. Overrides the `.specflo` config default.
   - `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing. Overrides the config default.
   - `--off` sets the durable kill switch (the next pass halts); `--on` clears it.
-  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, or `unavailable`; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
+  - `--ladder` starts a [ladder run](#the-ladder-run) on a quick project; later passes continue it without the flag.
+  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `outgrew-level`, or `unavailable`; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
 
 ### Harness integration
 
@@ -729,7 +784,7 @@ In an auto run:
 
 ## Skills
 
-specflo ships its seven workflow skills inside the package and installs them into
+specflo ships its eight workflow skills inside the package and installs them into
 whatever agent harness it finds on your machine (Claude Code, pi, Hermes,
 opencode). Let the CLI do it - no copying or symlinking by hand:
 
@@ -755,12 +810,13 @@ line on stderr pointing at `specflo skills update`. It is notice-only: it never
 prompts, never updates anything, and never changes the exit code. Silence it by
 setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
-The seven skills:
+The eight skills:
 
 - **`specflo-brainstorm`** (`skills/specflo-brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
 - **`specflo-spec`** (`skills/specflo-spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
 - **`specflo-plan`** (`skills/specflo-plan/SKILL.md`) - drives the plan phase (decompose the validated spec into dependency-ordered, testable `T-NN` tasks, validate, hand off to the execute phase).
 - **`specflo-execute`** (`skills/specflo-execute/SKILL.md`) - drives the execute phase (work tasks one at a time with `task show`/`task start`/`task done`, run the final whole-branch review in fresh context and record it with `review start`/`review done`, validate with `validate execute`, complete the project with `advance`).
+- **`specflo-quick`** (`skills/specflo-quick/SKILL.md`) - works a quick-level project: fills the brief through the CLI, does the work, records proof, makes one commit, completes the project with no review round, and offers `specflo level fast` when the work outgrows one check.
 - **`specflo-research`** (`skills/specflo-research/SKILL.md`) - a research subagent the `specflo-brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
 - **`specflo-shelve`** (`skills/specflo-shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
 - **`specflo-auto`** (`skills/specflo-auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.

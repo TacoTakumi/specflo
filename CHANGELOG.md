@@ -11,6 +11,33 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.15.0]
 
 ### Added
+- **Levels: `specflo new <name> --level quick|fast|full`** - how much
+  ceremony a project gets, recorded in `project.md` and shown by `status`
+  (`Level:` line, `level` in `--json`). A project without the key is full.
+  A quick project has one phase, `execute`, and one `brief.md` (Goal, Done
+  when, Proof, Deferred); `validate brief` asks for a goal, exactly one check
+  and proof, and `advance` completes it with no review round. A fast project
+  uses the three documents written short: validate fails past 3 active
+  decisions or 7 active tasks, and the next-step text keeps going from
+  brainstorm to plan and stops once for approval before execute.
+- **`specflo level fast|full`** - move the active project up a level, back to
+  the brainstorm with every document kept; never down. From quick the brief
+  seeds the brainstorm, `REQ-01` and `T-01`; from fast it lists the decisions
+  to review with the user.
+- **`specflo doc show brief`** - the quick brief, or at fast level a one-page
+  view of the goal, decisions, checks and tasks. `section set` and `validate`
+  accept `brief` too.
+- **`specflo auto --ladder`** - one unattended run that climbs quick, fast
+  and full on stacked local branches (`specflo/<slug>/<level>`), cutting each
+  level down to its cap instead of stopping, and records a row per level in
+  `ladder.md`. It never pushes or deletes a branch.
+- **`test_command` config key** - the command a ladder run tests each level's
+  branch with; unset means `not run`.
+- **`outgrew-level` auto stop reason** - a plain auto run stops when a quick
+  brief has two checks or a fast project passes its caps, and the checkpoint
+  says so.
+- **`specflo-quick` skill**, and level sections in the brainstorm, spec, plan
+  and execute skills and in `specflo guide`.
 - **`specflo doc show <artifact>`** - print one artifact of the active
   project verbatim: `brainstorm`, `spec`, `plan`, `checkpoint`, `project`,
   or a review round by number, `review-<N>`. An unknown name is refused
