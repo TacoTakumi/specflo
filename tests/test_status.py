@@ -405,3 +405,40 @@ def test_status_reports_linear_for_a_project_md_without_the_key(tmp_path, monkey
     result = CliRunner().invoke(app, ["status", "--json"])
     assert result.exit_code == 0
     assert json.loads(result.output)["execution"] == "linear"
+
+
+# --- levels -------------------------------------------------------------------
+
+
+def _project_at_level(tmp_path, level):
+    runner = CliRunner()
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert runner.invoke(app, ["new", "Thing", "--level", level]).exit_code == 0
+
+
+@pytest.mark.parametrize("level", ["quick", "fast", "full"])
+def test_status_prints_the_level(tmp_path, monkeypatch, level):
+    monkeypatch.chdir(tmp_path)
+    _project_at_level(tmp_path, level)
+    result = CliRunner().invoke(app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert f"Level: {level}" in result.output.splitlines()
+
+
+@pytest.mark.parametrize("level", ["quick", "fast", "full"])
+def test_status_json_reports_the_level(tmp_path, monkeypatch, level):
+    monkeypatch.chdir(tmp_path)
+    _project_at_level(tmp_path, level)
+    result = CliRunner().invoke(app, ["status", "--json"])
+    assert result.exit_code == 0
+    assert json.loads(result.output)["level"] == level
+
+
+def test_render_status_reads_a_view_without_a_level_as_full(tmp_path):
+    info = {
+        "initialized": True, "active_project": "thing", "name": "Thing",
+        "dir": str(tmp_path), "remote": None, "phase": "brainstorm",
+        "status": "active", "execution": "linear", "next_step": "x",
+        "checkpoint_locator": "thing/checkpoint",
+    }
+    assert "Level: full" in status.render_status(tmp_path, info).splitlines()

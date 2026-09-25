@@ -77,6 +77,9 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         # The recorded execution mode (fan-out-plans REQ-03); a project.md
         # without the key already reads as linear from load_project.
         "execution": project.execution,
+        # How much ceremony the project gets; a project.md without the key
+        # already reads as full from load_project.
+        "level": project.level,
         "next_phase": workflow.next_phase(project.phase),
         "next_step": next_step,
         "checkpoint": display_path(checkpoint.checkpoint_path(root, cfg, project.slug), root),
@@ -167,6 +170,8 @@ def render_status(root: Path, info: dict) -> str:
         phase_line += f"  (shelved: {reason})" if reason else "  (shelved)"
     lines.append(phase_line)
     lines.append(f"Execution: {info['execution']}")
+    # A view from a daemon older than levels carries no level: it is full.
+    lines.append(f"Level: {info.get('level', projects.FULL_LEVEL)}")
     if "progress" in info:
         p = info["progress"]
         nxt = " | next: " + ", ".join(p["next_actionable"]) if p["next_actionable"] else ""
