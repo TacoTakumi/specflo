@@ -159,10 +159,10 @@ def _root(
 
 
 def _record_checkout() -> None:
-    """Record the checkout the command runs in when it holds tokens, so the
-    pool can hide them from a member that lists a directory above it."""
+    """Record the checkout the command runs in, so the pool can hide its
+    tokens from a member that lists a directory above it."""
     with contextlib.suppress(OSError):
-        checkouts.record_if_held(Path.cwd())
+        checkouts.record_found(Path.cwd())
 
 
 def _restore_cwd(previous: str) -> None:

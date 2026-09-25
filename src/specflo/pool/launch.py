@@ -471,12 +471,13 @@ def listed_checkout_secrets(listed: Iterable[str], environ: Mapping[str, str]) -
 
     *listed* are the real paths a member's definition gets bound read-only,
     and a bind brings back the token directories of each checkout below it.
-    A checkout at a listed path or its direct child is refused by
-    validation; one deeper is found in the operator's register of checkouts
-    (see ``checkouts``), read from the home in *environ*, rather than by
-    walking the listed path. Its token directories are made if need be, as
-    for ``checkout_secrets``. A checkout the register does not know stays
-    where the bind puts it.
+    Validation refuses only a listed path that is in or directly holds a
+    ``.specflo`` folder; every checkout below it is found in the operator's
+    register of checkouts (see ``checkouts``), read from the home in
+    *environ*, rather than by walking the listed path. Its token directories
+    are made if need be, as for ``checkout_secrets``, so a token written
+    there during the lease stays hidden too. A checkout the register does
+    not know stays where the bind puts it.
     """
     tops = [os.path.abspath(path) for path in listed]
     found: list[str] = []

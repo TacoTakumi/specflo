@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from specflo import checkouts
-from specflo.pool import launch
+from specflo import checkouts, config
+from specflo.pool import cli_lease, launch
 from specflo.pool.config import Member
 
 from .test_runner import DEFINITION
@@ -269,3 +269,55 @@ def test_a_listed_path_that_leads_where_it_did_at_load_starts(tmp_path, environ,
     launch.member_argv(
         definition, member, environ, cwd=tmp_path / "work", state_dir=tmp_path / "state"
     )
+
+
+LATE_PROBE = '''import json, os, sys, time
+
+go, out, folder = sys.argv[1], sys.argv[2], sys.argv[3]
+for _ in range(600):
+    if os.path.exists(go):
+        break
+    time.sleep(0.05)
+found = {}
+for name in ("leases", "remotes"):
+    try:
+        found[name] = sorted(os.listdir(os.path.join(folder, name)))
+    except OSError as exc:
+        found[name] = exc.strerror
+with open(out, "w", encoding="utf-8") as f:
+    json.dump(found, f)
+'''
+
+
+def test_a_token_a_recorded_checkout_gets_while_a_member_runs_stays_hidden(
+    tmp_path, environ, home
+):
+    skip_without_a_sandbox()
+    checkout = home / "src" / "group" / "proj"
+    folder = checkout / ".specflo"
+    folder.mkdir(parents=True)
+    (folder / "config.yaml").write_text("projects_dir: docs\n", encoding="utf-8")
+    checkouts.record(checkout, home=home)
+    work = tmp_path / "work"
+    work.mkdir()
+    script, out, go = work / "late.py", work / "found.json", home / "src" / "go"
+    script.write_text(LATE_PROBE, encoding="utf-8")
+    member = Member(
+        name="hosted-1", backing="hosted", labels=(), capacity=1, egress="no-train",
+        model="some-vendor/some-model", account="team-a",
+        command=f"{sys.executable} {script} {go} {out} {folder}",
+    )
+    command = launch.member_argv(
+        replace(DEFINITION, paths=("~/src",)), member, environ, cwd=work,
+        state_dir=tmp_path / "state",
+    )
+    running = subprocess.Popen(command, env=environ, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        cli_lease.store_token(checkout, "coder", "LEASE-TOKEN")
+        config.add_remote(checkout, "rig", "http://127.0.0.1:9", "DAEMON-TOKEN")
+        go.write_text("", encoding="utf-8")
+        _, stderr = running.communicate(timeout=60)
+    finally:
+        running.kill()
+    assert running.returncode == 0, stderr
+    assert json.loads(out.read_text(encoding="utf-8")) == {"leases": [], "remotes": []}

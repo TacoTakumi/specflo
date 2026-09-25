@@ -20,8 +20,9 @@ FIXTURE = "_no_operator_register"
 
 
 def _checkout(path: Path) -> Path:
-    path.mkdir(parents=True)
-    config.init_config(path)
+    """A checkout made by hand, so that nothing records it."""
+    (path / ".specflo").mkdir(parents=True)
+    (path / ".specflo" / "config.yaml").write_text("projects_dir: docs\n", encoding="utf-8")
     return path
 
 
@@ -64,9 +65,30 @@ def test_a_command_run_with_the_directory_option_records_that_checkout(tmp_path)
     assert checkouts.recorded() == (str(root.resolve()),)
 
 
-def test_a_checkout_with_no_token_directory_is_not_recorded(tmp_path, monkeypatch):
+def test_a_command_run_in_a_checkout_with_no_token_directory_records_it(
+    tmp_path, monkeypatch
+):
     root = _checkout(tmp_path / "proj")
     monkeypatch.chdir(root)
+
+    CliRunner().invoke(app, ["status"])
+
+    assert checkouts.recorded() == (str(root.resolve()),)
+
+
+def test_init_records_the_checkout_it_makes(tmp_path, monkeypatch):
+    root = tmp_path / "proj"
+    root.mkdir()
+    monkeypatch.chdir(root)
+
+    done = CliRunner().invoke(app, ["init"])
+
+    assert done.exit_code == 0, done.output
+    assert checkouts.recorded() == (str(root.resolve()),)
+
+
+def test_a_command_run_outside_any_checkout_records_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
 
     CliRunner().invoke(app, ["status"])
 

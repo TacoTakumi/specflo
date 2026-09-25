@@ -722,6 +722,11 @@ def init_config(
     )
     save_config(root, cfg)
     (root / projects_dir).mkdir(parents=True, exist_ok=True)
+    # The pool hides this checkout's tokens from a member that lists a
+    # directory above it, and finds the checkout through the register.
+    from .checkouts import record
+
+    record(root)
     return cfg
 
 

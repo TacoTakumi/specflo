@@ -512,10 +512,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   directly holding a `.specflo` directory, in the fresh `/tmp` or `/run`
   and not in the home (so no host socket such as the container engine's
   comes back), or a link to any of those is refused by `pool validate` and
-  at the member's start. A checkout deeper below a listed directory keeps
-  its token directories hidden when it is in the new register
-  `~/.specflo/checkouts`, which storing a lease token, adding a remote, or
-  running any specflo command inside a checkout that holds tokens fills.
+  at the member's start. A checkout below a listed directory keeps its
+  token directories hidden when it is in the new register
+  `~/.specflo/checkouts` before the member starts; `init`, storing a lease
+  token, adding a remote, and running any specflo command inside a
+  checkout fill it. A token written in a recorded checkout during the
+  lease stays hidden too.
   Where each listed path leads, link by link to its real path, is recorded
   when the daemon reads the pool directory, and a member start whose path
   leads elsewhere by then is refused until `serve pool reload` accepts the

@@ -8,10 +8,12 @@ pool hides the token directories of every checkout below a listed path, and
 it learns where those checkouts are from this register rather than by walking
 the listed path, which on a data directory takes seconds at every start.
 
-A checkout is recorded by the command that makes one of its token
-directories, and by any command run inside a checkout that already has one.
-A checkout whose tokens were written by nothing that records, and in which no
-command has run since, is not known to the pool.
+A checkout is recorded when ``init`` makes it, by the command that makes one
+of its token directories, and by any command run inside it. At each start the
+pool makes the token directories of every recorded checkout below a listed
+path and hides them, so a token written there during the lease stays hidden
+too. A checkout that nothing has recorded before a member starts is not known
+to that member's sandbox.
 
 The register lives in the home's ``.specflo`` directory, which the sandbox
 hides from every member, and holds one real path per line. Recording is a
@@ -24,24 +26,14 @@ import contextlib
 import os
 from pathlib import Path
 
-from .config import CONFIG_DIRNAME, REMOTES_DIRNAME, find_root
+from .config import CONFIG_DIRNAME, find_root
 
 REGISTER_FILENAME = "checkouts"
-
-# The directory a checkout keeps its lease tokens in, under its .specflo. The
-# agent subsystem's lease module and the pool's launch module hold copies.
-_LEASES_DIRNAME = "leases"
 
 
 def register_file(home: Path | str | None = None) -> Path:
     """Where the register is, under *home* or this user's home."""
     return Path(home or Path.home()) / CONFIG_DIRNAME / REGISTER_FILENAME
-
-
-def token_dirs(root: Path | str) -> tuple[Path, Path]:
-    """The two directories of tokens a checkout at *root* keeps."""
-    folder = Path(root) / CONFIG_DIRNAME
-    return folder / _LEASES_DIRNAME, folder / REMOTES_DIRNAME
 
 
 def recorded(home: Path | str | None = None) -> tuple[str, ...]:
@@ -66,9 +58,9 @@ def record(root: Path | str, home: Path | str | None = None) -> None:
             handle.write(path + "\n")
 
 
-def record_if_held(start: Path | str) -> None:
-    """Record the checkout *start* is in when it has a token directory."""
+def record_found(start: Path | str) -> None:
+    """Record the checkout *start* is in, if it is in one."""
     with contextlib.suppress(OSError):
         root = find_root(Path(start))
-        if root is not None and any(held.is_dir() for held in token_dirs(root)):
+        if root is not None:
             record(root)
