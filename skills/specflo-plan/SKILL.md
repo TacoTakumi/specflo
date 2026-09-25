@@ -132,6 +132,26 @@ Once a task is done its entry is history: annotate it with `task note`, or
 replace the work with `specflo task add --supersedes T-NN`. A superseded entry
 is frozen.
 
+## Fast level
+
+When `specflo status` shows `Level: fast`, this skill runs short:
+
+- **You make the decisions.** At most 3, recorded with `specflo decision add`.
+  For each, weigh 2 or 3 approaches, pick one, and put the approaches weighed
+  and why you chose that one in the `--rationale`.
+- **Do not interview the user,** and **do not pause** at the phase boundary:
+  once the phase validates, run `specflo advance` and go on, from brainstorm to
+  spec to plan.
+- **Deferred work** goes in the brainstorm's Out of scope / Deferred section.
+- **Caps:** 3 decisions and 7 tasks. Past a cap, validate fails: cut the work
+  down, or offer the user `specflo level full`.
+- **One approval, before execute.** When the plan validates, stop. Show the
+  user `specflo doc show brief` and list every choice you made that they have
+  not seen: each decision, and any requirement or task beyond what they asked
+  for. Run `specflo advance` into execute only after they approve.
+
+Keep to 3 to 7 tasks; skip milestones.
+
 ## Anti-sycophancy
 
 Do not open with "Great plan!", "You're absolutely right", or similar. State the

@@ -180,6 +180,26 @@ runs, with these changes, until a developer takes over:
   identity may pass `--by`, and it records the developer as the taker. Never
   take a gate on your own account.
 
+## Fast level
+
+When `specflo status` shows `Level: fast`, this skill runs short:
+
+- **You make the decisions.** At most 3, recorded with `specflo decision add`.
+  For each, weigh 2 or 3 approaches, pick one, and put the approaches weighed
+  and why you chose that one in the `--rationale`.
+- **Do not interview the user,** and **do not pause** at the phase boundary:
+  once the phase validates, run `specflo advance` and go on, from brainstorm to
+  spec to plan.
+- **Deferred work** goes in the brainstorm's Out of scope / Deferred section.
+- **Caps:** 3 decisions and 7 tasks. Past a cap, validate fails: cut the work
+  down, or offer the user `specflo level full`.
+- **One approval, before execute.** When the plan validates, stop. Show the
+  user `specflo doc show brief` and list every choice you made that they have
+  not seen: each decision, and any requirement or task beyond what they asked
+  for. Run `specflo advance` into execute only after they approve.
+
+Write a short Current understanding and skip the research scan unless a decision rests on a fact you cannot check in the code.
+
 ## Anti-sycophancy
 
 Take a position on every answer and state what evidence would change it. Avoid

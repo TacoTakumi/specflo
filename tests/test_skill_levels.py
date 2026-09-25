@@ -42,3 +42,25 @@ def test_the_brainstorm_skill_carries_the_rule_of_thumb_and_the_full_review():
     assert "have the user confirm" in text
     assert "specflo level full" in text
     assert "decision add --supersedes" in text
+
+
+def _fast_section(name):
+    text = _skill(name)
+    assert "## Fast level" in text, name
+    section = text.split("## Fast level", 1)[1].split("\n## ", 1)[0]
+    return " ".join(section.split())
+
+
+def test_the_phase_skills_carry_a_fast_level_section():
+    for name in ("specflo-brainstorm", "specflo-spec", "specflo-plan"):
+        section = _fast_section(name)
+        for phrase in (
+            "You make the decisions",
+            "approaches weighed",
+            "Do not interview",
+            "do not pause",
+            "Out of scope / Deferred",
+            "One approval, before execute",
+            "have not seen",
+        ):
+            assert phrase in section, (name, phrase)
