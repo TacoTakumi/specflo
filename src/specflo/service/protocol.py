@@ -88,6 +88,11 @@ class ProjectService(Protocol):
         """Set the execution mode; ``(mode, changed)``."""
         ...
 
+    def set_level(self, slug: str, level: str) -> tuple[Project, list[str]]:
+        """Move the project up to ``level``; the project and, on a move from
+        fast to full, the active decisions to review with the user."""
+        ...
+
     def set_egress(self, slug: str, egress_class: str) -> tuple[str, bool]:
         """Pin the project's egress class; ``(egress_class, changed)``."""
         ...

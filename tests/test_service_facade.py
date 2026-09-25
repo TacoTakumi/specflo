@@ -266,6 +266,14 @@ def _drive_every_operation(service, projects_root, reported=None):
     }
     assert svc.show_document("copy", "spec") == copied["spec.md"]
 
+    # a light project moves up a level, never down
+    lite = svc.create_project("Lite", level="fast")
+    assert lite.level == "fast"
+    moved, review = svc.set_level(lite.slug, "full")
+    assert (moved.level, moved.phase, review) == ("full", "brainstorm", [])
+    with pytest.raises(SpecfloError, match="only moves up"):
+        svc.set_level(lite.slug, "fast")
+
     assert svc.called == set(operations())
 
 

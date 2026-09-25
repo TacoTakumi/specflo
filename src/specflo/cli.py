@@ -633,6 +633,34 @@ def egress(
         typer.echo(f"Egress class for '{slug}' unchanged: {egress_class}")
 
 
+@app.command(epilog="Example: specflo level full")
+def level(
+    target: str = typer.Argument(
+        ...,
+        metavar="fast|full",
+        help="The level to move the active project up to.",
+    ),
+) -> None:
+    """Move the active project up to more ceremony; it goes back to brainstorm."""
+    root = _require_root()
+    cfg = config.load_config(root)
+    svc = _service(root, cfg)
+    slug = _require_active(cfg)
+    try:
+        project, review = svc.set_level(slug, target)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    _refresh_index(root, cfg)
+    typer.echo(f"Level for '{slug}': {project.level}. Phase: {project.phase}.")
+    if review:
+        typer.echo(
+            "These decisions were made without an interview. Review each with the"
+            " user and confirm or supersede it (`specflo decision add --supersedes"
+            f" D-NN`): {', '.join(review)}."
+        )
+
+
 @app.command(epilog="Example: specflo index")
 def index() -> None:
     """(Re)generate specflo-index.md, the ledger of every project."""

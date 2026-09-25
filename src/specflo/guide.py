@@ -68,6 +68,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Switch the active project's execution mode (any phase)."},
     {"name": "egress", "group": "setup", "args": "local|no-train|open",
      "summary": "Pin the active project's egress class (any phase)."},
+    {"name": "level", "group": "setup", "args": "fast|full",
+     "summary": "Move the active project up a level; it goes back to brainstorm."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "leave", "group": "setup", "args": "",

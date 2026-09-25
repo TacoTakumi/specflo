@@ -461,6 +461,30 @@ def set_execution(
     return mode, True
 
 
+def set_level(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> tuple[Project, str]:
+    """Move the project up to ``level``; returns it and the level it left.
+
+    A move up goes back to the brainstorm phase and makes a complete project
+    active again; every document stays as it is. A move to the same or a
+    lighter level is refused, leaving ``project.md`` unchanged.
+    """
+    level = validate_level(level)
+    path = project_dir(root, cfg, slug) / PROJECT_FILENAME
+    with locked(lock_path_for(root, slug, path)):
+        project = load_project(root, cfg, slug)
+        previous = project.level
+        if LEVELS.index(level) <= LEVELS.index(previous):
+            raise SpecfloError(
+                f"Project {slug!r} is at level {previous!r}; a project only moves up."
+            )
+        project.level = level
+        project.phase = INITIAL_PHASE
+        if project.status == COMPLETE_STATUS:
+            project.status = INITIAL_STATUS
+        path.write_text(_render(project))
+    return project, previous
+
+
 def set_egress(
     root: Path, cfg: SpecfloConfig, slug: str, egress_class: str
 ) -> tuple[str, bool]:

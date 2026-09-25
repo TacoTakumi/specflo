@@ -185,3 +185,25 @@ def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
         issues.append("missing 'Open questions' section.")
 
     return issues
+
+
+def active_decision_ids(doc: str) -> list[str]:
+    """The ids of the decisions no later decision supersedes, in document order."""
+    lines = doc.splitlines(keepends=True)
+    heads = [
+        (i, m.group(1))
+        for i, line, in_fence in markdown.iter_lines_with_fence(doc)
+        if not in_fence and (m := _DECISION_ID_RE.match(line))
+    ]
+    active = []
+    for n, (start, decision_id) in enumerate(heads):
+        end = heads[n + 1][0] if n + 1 < len(heads) else len(lines)
+        block = []
+        for line in lines[start + 1:end]:
+            if line.startswith("## "):
+                break
+            block.append(line)
+        status = next((ln for ln in block if ln.startswith("- Status:")), "")
+        if "superseded by" not in status:
+            active.append(decision_id)
+    return active

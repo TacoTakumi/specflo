@@ -114,6 +114,14 @@ class LocalProjectService:
     def set_execution(self, slug: str, mode: str) -> tuple[str, bool]:
         return projects.set_execution(self.root, self.cfg, slug, mode)
 
+    def set_level(self, slug: str, level: str) -> tuple[Project, list[str]]:
+        project, previous = projects.set_level(self.root, self.cfg, slug, level)
+        review: list[str] = []
+        path = brainstorm.brainstorm_path(self.root, self.cfg, slug)
+        if previous == projects.FAST_LEVEL and path.is_file():
+            review = brainstorm.active_decision_ids(path.read_text())
+        return project, review
+
     def set_egress(self, slug: str, egress_class: str) -> tuple[str, bool]:
         return projects.set_egress(self.root, self.cfg, slug, egress_class)
 
