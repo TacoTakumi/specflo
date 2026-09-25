@@ -7,7 +7,8 @@ directories under it, the runtime directory, the daemon's root and every
 checkout's token directories, and a bind brings back whatever it covers. So a
 listed path is refused when it is at or above any hidden path, when it lies in
 a hidden path other than the home, when it lies in the fresh /tmp or /run and
-not in the home, when it is a link whose real path is any of those, and when
+not in the home, when it lies in the sandbox's own /proc or /dev, when it is a
+link whose real path is any of those, and when
 it does not exist. Each refusal names the path.
 """
 
@@ -99,6 +100,9 @@ REFUSED = {
     "a relative path": "tools/bin",
     "the fresh /run": "/run",
     "in the fresh /tmp, outside the home": "{tmp}/outside",
+    "the sandbox's own /proc": "/proc",
+    "the sandbox's own /dev": "/dev",
+    "the host's shared memory": "/dev/shm",
 }
 
 
@@ -115,7 +119,7 @@ def test_a_path_that_would_bring_back_what_is_hidden_is_refused_naming_it(rig, c
 
 
 @pytest.mark.parametrize(
-    "target", ["~/.pi/agent", "~/specflo-daemon", "~/proj/.specflo/leases", "/run"]
+    "target", ["~/.pi/agent", "~/specflo-daemon", "~/proj/.specflo/leases", "/run", "/dev/shm"]
 )
 def test_a_link_whose_real_path_is_hidden_is_refused_naming_it(rig, target):
     link = rig["home"] / "tools" / "innocent"

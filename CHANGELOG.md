@@ -511,7 +511,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   above a hidden path, inside a hidden path other than the home, in or
   directly holding a `.specflo` directory, in the fresh `/tmp` or `/run`
   and not in the home (so no host socket such as the container engine's
-  comes back), or a link to any of those is refused by `pool validate` and
+  comes back), in the sandbox's own `/dev` or `/proc` (so neither the
+  host's shared memory nor its process list comes back), or a link to any
+  of those is refused by `pool validate` and
   at the member's start. A checkout below a listed directory keeps its
   token directories hidden when it is in the new register
   `~/.specflo/checkouts` before the member starts; `init`, storing a lease

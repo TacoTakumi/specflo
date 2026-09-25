@@ -85,6 +85,11 @@ _UNDER_HOME = (".pi", ".agents", ".specflo")
 # /run the sockets the host's daemons listen on.
 FRESH_DIRS = ("/tmp", "/run")
 
+# The directories every sandbox mounts anew as its own: a /dev with the basic
+# devices alone, and a /proc of its own process namespace. The host's /dev
+# holds its shared memory, and its /proc every process on the host.
+OWN_DIRS = ("/dev", "/proc")
+
 # The variable naming the pi configuration directory. The daemon's own value
 # is the operator's directory; a member's is the one generated for its lease,
 # which is bound back over the hidden set and is not read here.
