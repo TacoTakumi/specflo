@@ -103,3 +103,57 @@ def validate_brief(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if "Proof" in bodies and not bodies["Proof"]:
         issues.append("Proof is empty: record the test or command output that shows the check passes.")
     return issues
+
+
+def _entries(doc: str, prefix: str) -> dict[str, tuple[str, dict[str, str]]]:
+    """Each ``### <prefix>NN — title`` entry: its title and its ``- Field:`` lines."""
+    entries: dict[str, tuple[str, dict[str, str]]] = {}
+    current = None
+    for line in doc.splitlines():
+        match = re.match(rf"^### ({re.escape(prefix)}\d+) — (.*)$", line)
+        if match:
+            current = match.group(1)
+            entries[current] = (match.group(2).strip(), {})
+        elif line.startswith("## "):
+            current = None
+        elif current and (field := re.match(r"^- ([A-Za-z ]+): (.*)$", line)):
+            entries[current][1].setdefault(field.group(1), field.group(2).strip())
+    return entries
+
+
+def render_view(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """One read-only page for a fast project: goal, decisions, checks and tasks.
+
+    Built from brainstorm.md, spec.md and plan.md each time; nothing is stored.
+    Superseded entries are left out.
+    """
+    from . import brainstorm, plan, spec
+
+    project = load_project(root, cfg, slug)
+    base = project_dir(root, cfg, slug)
+
+    def read(filename: str) -> str:
+        path = base / filename
+        return path.read_text() if path.is_file() else ""
+
+    brainstorm_doc = read(brainstorm.BRAINSTORM_FILENAME)
+    spec_doc = read(spec.SPEC_FILENAME)
+    plan_doc = read(plan.PLAN_FILENAME)
+    goal = markdown.strip_comments(markdown.section_body(spec_doc, "## Objective") or "").strip()
+
+    lines = [f"# Brief: {project.name} ({project.level} level)", "", "## Goal", goal or "(none yet)", ""]
+    lines.append("## Decisions")
+    decisions = _entries(brainstorm_doc, "D-")
+    for decision_id in brainstorm.active_decision_ids(brainstorm_doc):
+        lines.append(f"- {decision_id} - {decisions[decision_id][0]}")
+    lines += ["", "## Checks"]
+    requirements = _entries(spec_doc, "REQ-")
+    for req_id in spec.active_requirement_ids(spec_doc):
+        title, fields = requirements[req_id]
+        lines.append(f"- {req_id} - {title}")
+        lines.append(f"  Acceptance: {fields.get('Acceptance', '')}")
+    lines += ["", "## Tasks"]
+    if plan_doc:
+        for task in plan.list_tasks(root, cfg, slug):
+            lines.append(f"- {task.id} - {task.text} [{task.progress}]")
+    return "\n".join(lines) + "\n"

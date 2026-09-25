@@ -380,3 +380,58 @@ def test_section_set_refuses_a_missing_or_unreadable_body_file(tmp_path, monkeyp
     assert f"Cannot read {binary} as text" in unreadable.stderr
     assert "Traceback" not in unreadable.stderr and unreadable.stdout == ""
     assert path.read_text() == before
+
+
+# --- the brief view ----------------------------------------------------------------
+
+
+def _cli_ok(args, stdin=None):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    result = CliRunner().invoke(app, args, input=stdin)
+    assert result.exit_code == 0, (args, result.output)
+    return result
+
+
+def test_doc_show_brief_at_quick_prints_the_file(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _cli_ok(["init"])
+    _cli_ok(["new", "Thing", "--level", "quick"])
+    _cli_ok(["section", "set", "brief", "Goal", "--stdin"], "Fix it.\n")
+    text = (tmp_path / "docs" / "projects" / "thing" / "brief.md").read_text()
+
+    assert _cli_ok(["doc", "show", "brief"]).output == text
+
+
+def test_doc_show_brief_at_fast_renders_one_page_and_writes_nothing(tmp_path, monkeypatch):
+    from test_level import _fast_project_at_execute
+    monkeypatch.chdir(tmp_path)
+    _fast_project_at_execute(tmp_path)
+    project_dir = tmp_path / "docs" / "projects" / "thing"
+    spec_md = project_dir / "spec.md"
+    spec_md.write_text(spec_md.read_text().replace(
+        "## Objective\n", "## Objective\nMake the thing work.\n", 1))
+    before = {p.name: p.read_bytes() for p in project_dir.iterdir()}
+
+    out = _cli_ok(["doc", "show", "brief"]).output
+
+    for heading in ("## Goal", "## Decisions", "## Checks", "## Tasks"):
+        assert heading in out
+    assert "Make the thing work." in out
+    assert "D-01" in out and "choice 1" in out
+    assert "REQ-01" in out and "it runs" in out
+    assert "T-01" in out and "build it" in out and "done" in out
+    assert {p.name: p.read_bytes() for p in project_dir.iterdir()} == before
+
+
+def test_doc_show_brief_at_full_is_refused(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    monkeypatch.chdir(tmp_path)
+    _cli_ok(["init"])
+    _cli_ok(["new", "Thing"])
+
+    result = CliRunner().invoke(app, ["doc", "show", "brief"])
+
+    assert result.exit_code != 0
+    assert "quick" in result.output and "fast" in result.output
