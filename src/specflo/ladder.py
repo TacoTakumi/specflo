@@ -159,7 +159,8 @@ def _test_result(root: Path, cfg: SpecfloConfig) -> str:
     command = getattr(cfg, "test_command", None)
     if not command:
         return "not run"
-    result = subprocess.run(command, shell=True, cwd=root, capture_output=True)
+    # The command is the user's shell line, so the shell is the program.
+    result = subprocess.run(["sh", "-c", command], cwd=root, capture_output=True)
     return "pass" if result.returncode == 0 else "fail"
 
 
