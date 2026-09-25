@@ -508,19 +508,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   each is bound at its real path, and when the path itself is a link, that
   link and each link it leads through in a swept directory are made again,
   so a uv tool on `PATH` runs by its name when its environment is listed
-  too. A link in a directory part of the path is not made again. A path that is missing, at or
-  above a hidden path, inside a hidden path other than the home, in or
-  directly holding a `.specflo` directory, in the fresh `/tmp` or `/run`
-  and not in the home (so no host socket such as the container engine's
-  comes back), in the sandbox's own `/dev` or `/proc` (so neither the
-  host's shared memory nor its process list comes back), or a link to any
-  of those is refused by `pool validate` and
-  at the member's start. A checkout below a listed directory keeps its
-  token directories hidden when it is in the new register
-  `~/.specflo/checkouts` before the member starts; `init`, storing a lease
-  token, adding a remote, and running any specflo command inside a
-  checkout fill it. A token written in a recorded checkout during the
-  lease stays hidden too.
+  too. A link in a directory part of the path is not made again. A path
+  that is missing, at or above a hidden path, inside a hidden path other
+  than the home, in or directly holding a `.specflo` directory, in the
+  fresh `/tmp` or `/run` and not in the home (so no host socket such as
+  the container engine's comes back), in the sandbox's own `/dev` or
+  `/proc` (so neither the host's shared memory nor its process list comes
+  back), or a link to any of those is refused by `pool validate` and at
+  the member's start. A checkout below a listed directory keeps its token
+  directories hidden when it is in the new register `~/.specflo/checkouts`
+  before the member starts; `init`, storing a lease token, adding a
+  remote, and running any specflo command inside a checkout fill it. A
+  token written in a recorded checkout during the lease stays hidden too.
   Where each listed path leads, link by link to its real path, is recorded
   when the daemon reads the pool directory, and a member start whose path
   leads elsewhere by then is refused until `serve pool reload` accepts the

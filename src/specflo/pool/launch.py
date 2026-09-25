@@ -480,15 +480,16 @@ def listed_checkout_secrets(listed: Iterable[str], environ: Mapping[str, str]) -
     and a bind brings back the token directories of each checkout below it.
     Validation refuses only a listed path that is in or directly holds a
     ``.specflo`` folder; every checkout below it is found in the operator's
-    register of checkouts (see ``checkouts``), read from the home in
-    *environ*, rather than by walking the listed path. Its token directories
+    register of checkouts (see ``checkouts``), found through *environ* as
+    the commands that write it find it, rather than by walking the listed
+    path. Its token directories
     are made if need be, as for ``checkout_secrets``, so a token written
     there during the lease stays hidden too. A checkout the register does
     not know stays where the bind puts it.
     """
     tops = [os.path.abspath(path) for path in listed]
     found: list[str] = []
-    for root in checkouts.recorded(environ.get("HOME") or None):
+    for root in checkouts.recorded(environ=environ):
         real = os.path.realpath(root)
         if any(real != top and os.path.commonpath([real, top]) == top for top in tops):
             found.extend(_token_dirs(Path(real)))

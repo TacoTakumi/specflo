@@ -16,7 +16,7 @@ from typer.testing import CliRunner
 
 from specflo import checkouts, config
 from specflo.cli import app
-from specflo.pool import cli_lease
+from specflo.pool import cli_lease, launch
 
 REPO = Path(__file__).resolve().parents[1]
 FIXTURE = "_no_operator_register"
@@ -165,3 +165,19 @@ def test_the_isolating_fixture_is_autouse_in_the_top_level_conftest():
         if keyword.arg == "autouse"
     ]
     assert autouse == [True]
+
+
+def test_the_pool_reads_the_register_the_environment_names(tmp_path):
+    home = tmp_path / "home"
+    listed = home / "src"
+    root = _checkout(listed / "group" / "proj")
+    register = tmp_path / "elsewhere" / "checkouts"
+    environ = {"HOME": str(home), checkouts.REGISTER_ENV: str(register)}
+    checkouts.record(root, environ=environ)
+
+    found = launch.listed_checkout_secrets([str(listed)], environ)
+
+    assert found == tuple(
+        str(root.resolve() / ".specflo" / name) for name in ("leases", "remotes")
+    )
+    assert not (home / ".specflo" / "checkouts").exists()

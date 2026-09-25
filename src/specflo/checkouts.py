@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+from collections.abc import Mapping
 from pathlib import Path
 
 from .config import CONFIG_DIRNAME, find_root
@@ -32,33 +33,45 @@ REGISTER_FILENAME = "checkouts"
 
 # The variable that puts the register somewhere else than the home. The test
 # suite sets it, so the specflo commands its tests start as subprocesses keep
-# off the operator's register too.
+# off the operator's register too. The commands and the pool both honour it.
+# A register outside the home's .specflo is not hidden from members; it holds
+# checkout paths, never a token.
 REGISTER_ENV = "SPECFLO_CHECKOUT_REGISTER"
 
 
-def register_file(home: Path | str | None = None) -> Path:
-    """Where the register is: under *home* when one is given, else where the
-    environment says, else under this user's home."""
-    if home is None and os.environ.get(REGISTER_ENV):
-        return Path(os.environ[REGISTER_ENV])
-    return Path(home or Path.home()) / CONFIG_DIRNAME / REGISTER_FILENAME
+def register_file(
+    home: Path | str | None = None, environ: Mapping[str, str] | None = None
+) -> Path:
+    """Where the register is: under *home* when one is given, else the file
+    *environ* (this process's environment by default) names, else under the
+    home it names."""
+    if home is None:
+        environ = os.environ if environ is None else environ
+        if environ.get(REGISTER_ENV):
+            return Path(environ[REGISTER_ENV])
+        home = environ.get("HOME") or Path.home()
+    return Path(home) / CONFIG_DIRNAME / REGISTER_FILENAME
 
 
-def recorded(home: Path | str | None = None) -> tuple[str, ...]:
+def recorded(
+    home: Path | str | None = None, environ: Mapping[str, str] | None = None
+) -> tuple[str, ...]:
     """Every checkout in the register, by real path, each once."""
     try:
-        text = register_file(home).read_text(encoding="utf-8")
+        text = register_file(home, environ).read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return ()
     return tuple(dict.fromkeys(line for line in text.splitlines() if os.path.isabs(line)))
 
 
-def record(root: Path | str, home: Path | str | None = None) -> None:
+def record(
+    root: Path | str, home: Path | str | None = None, environ: Mapping[str, str] | None = None
+) -> None:
     """Add the checkout at *root* to the register, by its real path."""
     path = os.path.realpath(root)
-    if "\n" in path or path in recorded(home):
+    if "\n" in path or path in recorded(home, environ):
         return
-    file = register_file(home)
+    file = register_file(home, environ)
     with contextlib.suppress(OSError):
         file.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         descriptor = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
