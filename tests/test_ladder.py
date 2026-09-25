@@ -315,3 +315,23 @@ def test_guard_the_pass_cap_counts_the_whole_ladder(repo):
     result = json.loads(_ok(["auto", "--json", "--max-passes", "2"]).output)
 
     assert (result["stop"], result["reason"]) == (True, auto.STOP_PASS_CAP)
+
+
+# --- a completed ladder level is a live run, not a finished project ------------------------
+
+
+def test_a_completed_ladder_level_reads_as_a_run_under_way_that_continues(repo):
+    _ladder_at_quick(repo)
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
+    _work(repo, "app.txt", "hi\n")
+    _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+
+    advanced = _ok(["advance"]).output
+
+    status = json.loads(_ok(["status", "--json"]).output)
+    assert status["auto_run"]["under_way"] is True
+    checkpoint_md = (repo / "docs" / "projects" / "thing" / "checkpoint.md").read_text()
+    for text in (advanced, status["next_step"], checkpoint_md):
+        assert "specflo auto" in text
+        assert "Start the next piece of work" not in text

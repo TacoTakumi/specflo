@@ -110,6 +110,12 @@ def build_checkpoint(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
             review=review_info, level=project.level,
         )
+        if cfg is not None:
+            # auto imports this module, so it is read here, at call time.
+            from . import auto
+
+            if auto.ladder_climb_pending(root, cfg, project):
+                do_next = auto.LADDER_CLIMB_STEP
         # Stuck on a superseded dependency: surface the same targeted rewire
         # remediation as `task show`/`status`, replacing the generic hint.
         if project.status != COMPLETE_STATUS and plan_doc is not None:

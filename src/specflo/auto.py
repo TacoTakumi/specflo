@@ -211,6 +211,30 @@ def _mark_run_ended(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
     save_run_state(root, cfg, slug, state)
 
 
+# The next step for a ladder level that has completed: the run is not over,
+# the next auto pass climbs.
+LADDER_CLIMB_STEP = (
+    "This ladder level is complete. Run `specflo auto` to cut the next level's"
+    " branch and move the project up."
+)
+
+
+def ladder_climb_pending(root: Path, cfg: config.SpecfloConfig, project) -> bool:
+    """Whether ``project`` is a ladder level that completed and waits to climb.
+
+    Never raises: an unreadable state reads as no ladder.
+    """
+    try:
+        if project.status != COMPLETE_STATUS:
+            return False
+        if ladder_module.next_level(project.level) is None:
+            return False
+        state = load_run_state(root, cfg, project.slug)
+        return bool(state.get("ladder")) and not state.get("killed")
+    except Exception:
+        return False
+
+
 def run_under_way(root: Path, cfg: config.SpecfloConfig, project) -> bool:
     """Whether an auto run is currently live for ``project`` (pi-extension REQ-12).
 
@@ -221,7 +245,8 @@ def run_under_way(root: Path, cfg: config.SpecfloConfig, project) -> bool:
     """
     try:
         if project.status == COMPLETE_STATUS:
-            return False
+            # A ladder level that completed is a pause between levels, not the end.
+            return ladder_climb_pending(root, cfg, project)
         if not run_state_path(root, cfg, project.slug).is_file():
             return False
         state = load_run_state(root, cfg, project.slug)

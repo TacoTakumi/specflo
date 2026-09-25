@@ -1489,11 +1489,10 @@ def advance(
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
         # and the prose carry the identical text (REQ-12).
-        cont = continuation.build_continuation(
-            from_phase,
-            workflow.next_step(from_phase, complete=True),
-            complete=True,
-        )
+        finished = workflow.next_step(from_phase, complete=True)
+        if auto_module.ladder_climb_pending(root, cfg, updated):
+            finished = auto_module.LADDER_CLIMB_STEP
+        cont = continuation.build_continuation(from_phase, finished, complete=True)
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
