@@ -1032,6 +1032,8 @@ def guide_(
         "",
         f"Pipeline:  {_render_pipeline(data)}",
         "",
+        data["levels"],
+        "",
         "You are here:",
         *(f"  {line}" for line in _render_you_are_here(data)),
         *(["", data["rule"]] if data.get("rule") else []),

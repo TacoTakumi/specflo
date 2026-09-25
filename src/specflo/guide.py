@@ -56,7 +56,7 @@ NO_ACTIVE_PROJECT_MESSAGE = " ".join(NO_ACTIVE_PROJECT_LINES)
 COMMANDS: list[dict[str, str]] = [
     {"name": "init", "group": "setup", "args": "",
      "summary": "Scaffold .specflo/ and the projects dir."},
-    {"name": "new", "group": "setup", "args": "<name>",
+    {"name": "new", "group": "setup", "args": "<name> [--level quick|fast|full]",
      "summary": "Create a project and make it active."},
     {"name": "list", "group": "setup", "args": "",
      "summary": "List all projects, marking the active one."},
@@ -206,7 +206,7 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Take the active project's open gate; --by only when the agent relays a human."},
     {"name": "doc show", "group": "workflow", "args": "<artifact>",
      "summary": "Print an artifact of the active project verbatim "
-                "(brainstorm|spec|plan|checkpoint|project)."},
+                "(brainstorm|spec|plan|brief|checkpoint|project)."},
     {"name": "section set", "group": "workflow", "args": "<artifact> <section>",
      "summary": "Replace one prose section's body from --file or --stdin "
                 "(managed sections refused)."},
@@ -252,6 +252,18 @@ COMMANDS: list[dict[str, str]] = [
 ]
 
 
+# How much ceremony to pick, before `specflo new`: the agent proposes a level
+# from the request and the user confirms it.
+LEVELS_TEXT = (
+    "Levels:   propose one from the request, and have the user confirm it before"
+    " `specflo new`:\n"
+    "  quick   one goal and one check (`new <name> --level quick`): one brief, proof, no review\n"
+    "  fast    3 to 7 tasks (`--level fast`): short brainstorm, spec and plan, one approval\n"
+    "  full    more than that (the default): every phase, an approval at each\n"
+    "  A project moves up with `specflo level fast|full`, never down."
+)
+
+
 def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
     """Assemble the guide payload for the current repo state.
 
@@ -262,6 +274,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
         "pipeline": list(workflow.PHASES),
         "commands": [dict(entry) for entry in COMMANDS],
         "memory_snippet": MEMORY_SNIPPET,
+        "levels": LEVELS_TEXT,
     }
 
     if root is None or cfg is None:

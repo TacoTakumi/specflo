@@ -30,6 +30,26 @@ Do NOT write code, scaffold anything, or take any implementation action until th
 brainstorm is validated (`specflo validate brainstorm` passes) and the user has
 explicitly approved. This applies regardless of how simple the work looks.
 
+## Levels
+
+specflo has three levels of ceremony. Before `specflo new`, propose one from
+the request and have the user confirm it:
+
+- **quick** - one goal and one check (`specflo new <name> --level quick`): one
+  brief, proof, no review. Worked with the `specflo-quick` skill, not this one.
+- **fast** - 3 to 7 tasks (`--level fast`): a short brainstorm, spec and plan
+  that you write yourself, with one approval before execute.
+- **full** - more than that (the default): this skill's interview, and an
+  approval at every phase.
+
+A project moves up with `specflo level fast|full`, never down.
+
+**After a move up to full.** `specflo level full` on a fast project goes back
+to the brainstorm and lists the decisions made at fast level. You made those
+without an interview, so review each one with the user, one at a time: confirm
+it, or record the replacement with `specflo decision add --supersedes D-NN`.
+Then continue the interview from there; do not start the brainstorm again.
+
 ## Process
 
 1. **Preflight.** Confirm an active project (`specflo status`). A new project's
