@@ -56,7 +56,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     review_info = review.review_state(root, cfg, project.slug)
     next_step = workflow.next_step(
         project.phase, progress=progress, complete=complete, shelved=shelved,
-        validates=validates, review=review_info,
+        validates=validates, review=review_info, level=project.level,
     )
     # In the stuck execute state (nothing actionable, a pending task blocked by a
     # superseded dependency), replace the generic hint with targeted rewire

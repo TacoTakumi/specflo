@@ -290,6 +290,6 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
 
     payload["active_project"] = project.slug
     payload["phase"] = project.phase
-    payload["next_step"] = workflow.next_step(project.phase)
+    payload["next_step"] = workflow.next_step(project.phase, level=project.level)
     payload["next_action"] = project.phase
     return payload

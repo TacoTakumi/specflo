@@ -1524,7 +1524,7 @@ def advance(
     progress = None
     if updated.phase in ("plan", "execute") and svc.has_artifact(slug, "plan"):
         progress = svc.plan_progress(slug)
-    next_step = workflow.next_step(updated.phase, progress=progress)
+    next_step = workflow.next_step(updated.phase, progress=progress, level=updated.level)
     # The shared continuation: the entered phase's next action, the phase skill
     # carrying it, and the clear-point naming both resume paths. Rendered once so
     # the JSON field and the prose carry the identical text (REQ-12).

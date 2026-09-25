@@ -108,7 +108,7 @@ def build_checkpoint(
     elif project.phase == "execute":
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
-            review=review_info,
+            review=review_info, level=project.level,
         )
         # Stuck on a superseded dependency: surface the same targeted rewire
         # remediation as `task show`/`status`, replacing the generic hint.
@@ -126,7 +126,9 @@ def build_checkpoint(
             validator = validators.VALIDATORS.get(project.phase)
             if validator is not None:
                 validates = not validator(root, cfg, project.slug)
-        do_next = workflow.next_step(project.phase, validates=validates)
+        do_next = workflow.next_step(
+            project.phase, validates=validates, level=project.level
+        )
         # A plan that doesn't yet validate still names its next task; once it
         # validates the offer-advance hint stands alone.
         if project.phase == "plan" and not validates and prog is not None:

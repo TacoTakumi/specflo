@@ -113,6 +113,37 @@ def _review_hint(review: dict | None) -> str:
     )
 
 
+def _light_level_step(phase: str, validates: bool, level: str) -> str | None:
+    """The hint a quick or fast project gets in place of the full-level one.
+
+    Quick works its brief in execute. Fast goes from brainstorm to the plan
+    without stopping and stops once, when the plan validates, for the user's
+    one approval before execute. None where the full-level hint applies.
+    """
+    if level == "quick" and phase == "execute":
+        return (
+            "Work the brief: set Goal and one Done when check, do the work, record"
+            " Proof, then run `specflo advance`."
+        )
+    if level != "fast" or phase == "execute":
+        return None
+    if phase == "plan" and validates:
+        return (
+            "The plan validates. Fast level stops here once: show the user the brief"
+            " (`specflo doc show brief`) and every choice they have not seen, and run"
+            " `specflo advance` only after they approve."
+        )
+    if validates:
+        return (
+            f"The {phase} validates - run `specflo advance` and go on to the"
+            f" {next_phase(phase)} phase without waiting for approval."
+        )
+    return (
+        f"Fast level: write the {phase} yourself and keep going without waiting for"
+        " approval; the one approval comes before execute."
+    )
+
+
 def next_step(
     phase: str,
     progress: dict | None = None,
@@ -120,6 +151,7 @@ def next_step(
     shelved: bool = False,
     validates: bool = False,
     review: dict | None = None,
+    level: str = "full",
 ) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
@@ -139,6 +171,10 @@ def next_step(
     its default the single-argument form is unchanged.
     """
     _require_known(phase)
+    if not shelved and not complete:
+        light = _light_level_step(phase, validates, level)
+        if light is not None:
+            return light
     if shelved:
         return (
             "Project shelved. Resume it with `specflo resume`, or start a new "

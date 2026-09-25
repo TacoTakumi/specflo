@@ -244,3 +244,66 @@ def test_the_gate_and_the_hint_never_disagree_on_a_passing_verdicts_set():
 
     assert review.PASSING == ("ready-to-merge", "waived")
     assert set(review.PASSING) < set(review.VERDICTS)
+
+
+# --- level-aware next steps ------------------------------------------------------
+
+from typer.testing import CliRunner  # noqa: E402
+
+from specflo.cli import app  # noqa: E402
+
+_runner = CliRunner()
+
+
+def test_fast_next_steps_keep_going_until_the_plan_validates():
+    for phase, nxt in (("brainstorm", "spec"), ("spec", "plan")):
+        hint = workflow.next_step(phase, validates=True, level="fast")
+        assert "without waiting" in hint and nxt in hint
+    for phase in ("spec", "plan"):
+        hint = workflow.next_step(phase, level="fast")
+        assert "without waiting" in hint and phase in hint
+
+
+def test_fast_next_step_stops_once_for_approval_when_the_plan_validates():
+    hint = workflow.next_step("plan", validates=True, level="fast")
+    assert "approv" in hint and "specflo doc show brief" in hint
+    assert "without waiting" not in hint
+
+
+def test_full_next_steps_are_unchanged_by_the_level_argument():
+    for phase in ("brainstorm", "spec", "plan", "execute"):
+        for validates in (False, True):
+            assert workflow.next_step(phase, validates=validates, level="full") == \
+                workflow.next_step(phase, validates=validates)
+
+
+def test_quick_next_step_names_the_brief():
+    hint = workflow.next_step("execute", level="quick")
+    assert "brief" in hint and "Proof" in hint
+
+
+def _ok(args, stdin=None):
+    result = _runner.invoke(app, args, input=stdin)
+    assert result.exit_code == 0, (args, result.output)
+    return result
+
+
+def test_fast_advance_out_of_brainstorm_and_spec_says_keep_going(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _ok(["init"])
+    _ok(["new", "Thing", "--level", "fast"])
+    _ok(["decision", "add", "--text", "one", "--rationale", "r"])
+    _ok(["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "none\n")
+    out = _ok(["advance"]).output
+    assert "without waiting" in out and "spec" in out
+    _ok(["spec", "start"])
+    _ok(["requirement", "add", "--text", "it works", "--acceptance", "it runs"])
+    _ok(["section", "set", "spec", "In scope", "--stdin"], "- it.\n")
+    _ok(["section", "set", "spec", "Out of scope", "--stdin"], "- rest.\n")
+    out = _ok(["advance"]).output
+    assert "without waiting" in out and "plan" in out
+    _ok(["plan", "start"])
+    _ok(["task", "add", "--text", "build", "--acceptance", "a", "--verify", "true",
+         "--from", "REQ-01"])
+    status = _ok(["status"]).output
+    assert "approv" in status and "without waiting" not in status
