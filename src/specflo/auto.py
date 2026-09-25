@@ -27,6 +27,7 @@ from . import (
     plan as plan_module,
     projects,
     spec as spec_module,
+    validators,
 )
 from .locking import lock_path_for, locked
 from .projects import COMPLETE_STATUS
@@ -107,6 +108,10 @@ STOP_KILL_SWITCH = "kill-switch"
 STOP_PASS_CAP = "pass-cap"
 STOP_STALL = "stall"
 STOP_PROJECT_COMPLETE = "project-complete"
+# The project has more work than its level allows (a quick brief with two
+# checks, a fast plan past its caps). A plain run stops and leaves the move up
+# to the user; it never changes the level itself.
+STOP_OUTGREW_LEVEL = "outgrew-level"
 # Not a run condition but a caller-side one: no specflo root, no active project,
 # or an unreadable project. The payload is empty, so there is nothing to continue.
 STOP_UNAVAILABLE = "unavailable"
@@ -115,6 +120,7 @@ STOP_REASONS = (
     STOP_PASS_CAP,
     STOP_STALL,
     STOP_PROJECT_COMPLETE,
+    STOP_OUTGREW_LEVEL,
     STOP_UNAVAILABLE,
 )
 
@@ -634,6 +640,12 @@ def auto_pass_result(
         if state.get("killed"):
             _mark_run_ended(root, cfg, project.slug)
             return _pass_result(KILL_DIRECTIVE, STOP_KILL_SWITCH)
+        # Outgrown (a fact of the documents, so checked before this counts as
+        # a pass): the run stops and hands the move up to the user.
+        outgrew = validators.outgrown(root, cfg, project)
+        if outgrew is not None:
+            _mark_run_ended(root, cfg, project.slug)
+            return _pass_result(escalation_message(outgrew), STOP_OUTGREW_LEVEL)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # This pass continues the run, so any end marker left by an earlier stop

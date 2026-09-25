@@ -46,3 +46,40 @@ VALIDATORS = {
     "execute": execute_issues,
     "brief": brief.validate_brief,
 }
+
+
+def outgrown(root, cfg, project) -> str | None:
+    """Why ``project`` has outgrown its level, or None while it fits.
+
+    Derived from the documents each time, so it clears as soon as the work is
+    cut back under the cap or the project moves up. Full level has no cap.
+    """
+    if project.level == projects.QUICK_LEVEL:
+        path = brief.brief_path(root, cfg, project.slug)
+        checks = brief.check_count(path.read_text()) if path.is_file() else 0
+        if checks > 1:
+            return (
+                f"outgrew quick: {checks} checks in Done when; quick level allows 1."
+                " Cut it to one check, or move up with `specflo level fast`."
+            )
+    elif project.level == projects.FAST_LEVEL:
+        base = projects.project_dir(root, cfg, project.slug)
+        bs_path = base / brainstorm.BRAINSTORM_FILENAME
+        decisions = (
+            len(brainstorm.active_decision_ids(bs_path.read_text())) if bs_path.is_file() else 0
+        )
+        tasks = (
+            len(plan.list_tasks(root, cfg, project.slug))
+            if (base / plan.PLAN_FILENAME).is_file() else 0
+        )
+        over = []
+        if decisions > projects.FAST_MAX_DECISIONS:
+            over.append(f"{decisions} active decisions (at most {projects.FAST_MAX_DECISIONS})")
+        if tasks > projects.FAST_MAX_TASKS:
+            over.append(f"{tasks} active tasks (at most {projects.FAST_MAX_TASKS})")
+        if over:
+            return (
+                f"outgrew fast: {' and '.join(over)}. Cut the work down, or move up"
+                " with `specflo level full`."
+            )
+    return None

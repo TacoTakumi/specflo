@@ -860,7 +860,7 @@ def test_no_module_duplicates_the_continuation_wording():
 
 def test_stop_reasons_are_distinct_named_constants():
     reasons = (auto.STOP_KILL_SWITCH, auto.STOP_PASS_CAP, auto.STOP_STALL,
-               auto.STOP_PROJECT_COMPLETE, auto.STOP_UNAVAILABLE)
+               auto.STOP_PROJECT_COMPLETE, auto.STOP_OUTGREW_LEVEL, auto.STOP_UNAVAILABLE)
     assert all(isinstance(r, str) and r for r in reasons)
     assert len(set(reasons)) == len(reasons)
     assert set(auto.STOP_REASONS) == set(reasons)
@@ -1086,3 +1086,50 @@ def test_a_quick_project_stalls_when_its_brief_does_not_change(tmp_path):
     for _ in range(auto.STALL_THRESHOLD + 1):
         result = auto.auto_pass_result(tmp_path, max_passes=1000)
     assert result["reason"] == auto.STOP_STALL
+
+
+# --- a plain auto run stops when the project outgrows its level -----------------------
+
+
+def test_auto_stops_a_quick_project_with_two_checks_as_outgrown(tmp_path):
+    from specflo import doc
+    cfg, slug = _quick_project(tmp_path)
+    doc.set_section(tmp_path, cfg, slug, "brief", "Done when", "- it works\n- it is fast")
+
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+
+    assert result["stop"] is True
+    assert result["reason"] == auto.STOP_OUTGREW_LEVEL
+    assert "outgrew quick" in result["payload"]
+    checkpoint_text = checkpoint.write_checkpoint(
+        tmp_path, projects.load_project(tmp_path, cfg, slug), cfg
+    ).read_text()
+    assert "outgrew quick" in checkpoint_text
+    assert projects.load_project(tmp_path, cfg, slug).level == "quick"
+
+
+def test_auto_stops_a_fast_project_with_eight_tasks_as_outgrown(tmp_path):
+    from specflo import plan
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Fast Thing", level="fast")
+    projects.switch_project(tmp_path, cfg, "Fast Thing")
+    slug = "fast-thing"
+    spec.start_spec(tmp_path, cfg, slug)
+    spec.add_requirement(tmp_path, cfg, slug, text="it works", acceptance="it runs")
+    plan.start_plan(tmp_path, cfg, slug)
+    for n in range(8):
+        plan.add_task(tmp_path, cfg, slug, text=f"task {n}", acceptance="a",
+                      verify="true", implements=["REQ-01"])
+
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+
+    assert result["reason"] == auto.STOP_OUTGREW_LEVEL
+    assert "outgrew fast" in result["payload"]
+    assert "8" in result["payload"] and "7" in result["payload"]
+    assert projects.load_project(tmp_path, cfg, slug).level == "fast"
+
+
+def test_auto_does_not_stop_a_project_within_its_level(tmp_path):
+    _quick_project(tmp_path)
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+    assert result["reason"] != auto.STOP_OUTGREW_LEVEL

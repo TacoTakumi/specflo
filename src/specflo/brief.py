@@ -73,6 +73,12 @@ def _list_items(body: str) -> list[str]:
     ]
 
 
+def check_count(doc: str) -> int:
+    """How many checks a brief's Done when section lists."""
+    body = markdown.strip_comments(markdown.section_body(doc, "## Done when") or "")
+    return len(_list_items(body))
+
+
 def validate_brief(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """The brief's gaps; empty when it has a goal, exactly one check and proof.
 

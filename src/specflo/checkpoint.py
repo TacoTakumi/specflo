@@ -151,6 +151,12 @@ def build_checkpoint(
         "do_next": do_next,
         "milestone": milestone,
         "boundary": boundary,
+        # Why the project has outgrown its level, while it has; derived from
+        # the documents, so it needs cfg like the validators do.
+        "outgrew": (
+            validators.outgrown(root, cfg, project)
+            if cfg is not None and project.status != COMPLETE_STATUS else None
+        ),
         "path": display_path(directory / CHECKPOINT_FILENAME, root, posix=True),
         # The checkpoint named the way every artifact is named on a command's
         # human line: the same wherever its bytes live.
@@ -193,6 +199,8 @@ def render_checkpoint(payload: dict) -> str:
         "## Do next",
         payload["do_next"],
     ]
+    if payload.get("outgrew"):
+        lines.append(f"Level: {payload['outgrew']}")
     # Name the current milestone in the resume block so a resumed agent knows
     # which slice the plan is on (REQ-15); absent on a milestone-free plan.
     milestone = payload.get("milestone")
