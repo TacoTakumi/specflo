@@ -30,9 +30,17 @@ from .config import CONFIG_DIRNAME, find_root
 
 REGISTER_FILENAME = "checkouts"
 
+# The variable that puts the register somewhere else than the home. The test
+# suite sets it, so the specflo commands its tests start as subprocesses keep
+# off the operator's register too.
+REGISTER_ENV = "SPECFLO_CHECKOUT_REGISTER"
+
 
 def register_file(home: Path | str | None = None) -> Path:
-    """Where the register is, under *home* or this user's home."""
+    """Where the register is: under *home* when one is given, else where the
+    environment says, else under this user's home."""
+    if home is None and os.environ.get(REGISTER_ENV):
+        return Path(os.environ[REGISTER_ENV])
     return Path(home or Path.home()) / CONFIG_DIRNAME / REGISTER_FILENAME
 
 

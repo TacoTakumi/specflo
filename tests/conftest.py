@@ -104,20 +104,17 @@ def _no_checkout_remotes(monkeypatch, tmp_path_factory):
 def _no_operator_register(monkeypatch, tmp_path_factory):
     """Keep every test off the operator's register of checkouts.
 
-    The commands that store a token record the checkout in a file under the
-    home, and a test that runs one would add its throwaway root to the real
-    register. With no home given the register is one of this test's own; a
-    test that names a home keeps the register under it.
+    Every specflo command records the checkout it runs in, in a file under
+    the home, and a test that runs one would add its throwaway root to the
+    real register. With no home given the register is one of this test's
+    own, through the environment, so a specflo command a test starts as a
+    subprocess writes there too; a test that names a home keeps the register
+    under it.
     """
     from specflo import checkouts
 
     own = tmp_path_factory.mktemp("register") / checkouts.REGISTER_FILENAME
-    real = checkouts.register_file
-
-    def register_file(home=None):
-        return own if home is None else real(home)
-
-    monkeypatch.setattr(checkouts, "register_file", register_file)
+    monkeypatch.setenv(checkouts.REGISTER_ENV, str(own))
 
 
 @pytest.fixture(autouse=True)

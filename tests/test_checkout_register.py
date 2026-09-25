@@ -7,6 +7,9 @@ this register instead of walking the listed directory at every start.
 """
 
 import ast
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -128,6 +131,24 @@ def test_a_register_that_cannot_be_written_does_not_fail_the_token_store(tmp_pat
 
 def test_the_real_register_is_not_the_one_the_suite_writes():
     assert checkouts.register_file() != Path.home() / ".specflo" / "checkouts"
+
+
+def test_a_specflo_subprocess_under_the_suite_records_into_the_tests_register(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    home.mkdir()
+    root = _checkout(tmp_path / "proj")
+    monkeypatch.setenv("HOME", str(home))
+
+    done = subprocess.run(
+        [sys.executable, "-c", "from specflo.cli import app; app()", "status"], cwd=root, env=dict(os.environ),
+        capture_output=True, text=True, timeout=60,
+    )
+
+    assert done.returncode in (0, 1), done.stderr
+    assert not (home / ".specflo" / "checkouts").exists()
+    assert checkouts.recorded() == (str(root.resolve()),)
 
 
 def test_the_isolating_fixture_is_autouse_in_the_top_level_conftest():
