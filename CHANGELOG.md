@@ -505,9 +505,10 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **A definition may list paths to bind back read-only.** The new `paths`
   field of an agent definition names files and directories (a leading `~`
   is the home) that its members get back, read-only, inside the sandbox;
-  each is bound at its real path, and each link on the way to it that lies
-  in a swept directory is made again, so a uv tool on `PATH` runs by its
-  name when its environment is listed too. A path that is missing, at or
+  each is bound at its real path, and when the path itself is a link, that
+  link and each link it leads through in a swept directory are made again,
+  so a uv tool on `PATH` runs by its name when its environment is listed
+  too. A link in a directory part of the path is not made again. A path that is missing, at or
   above a hidden path, inside a hidden path other than the home, in or
   directly holding a `.specflo` directory, in the fresh `/tmp` or `/run`
   and not in the home (so no host socket such as the container engine's
