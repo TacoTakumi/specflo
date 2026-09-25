@@ -1037,6 +1037,15 @@ def test_auto_skill_says_the_run_records_the_review_but_not_the_completion():
     assert "user's call" in low or "user to call" in low
 
 
+def test_auto_skill_says_a_ladder_run_advances_each_level_itself():
+    from pathlib import Path
+
+    skill = Path(__file__).resolve().parents[1] / "skills" / "specflo-auto" / "SKILL.md"
+    text = skill.read_text()
+    assert "--ladder" in text
+    assert "advances each" in text and "ends only that level" in text
+
+
 def test_cli_auto_directory_option_reports_dirs_project(tmp_path, monkeypatch):
     """`-C DIR auto --json` reports DIR's active project (REQ-08)."""
     import json

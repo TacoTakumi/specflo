@@ -55,6 +55,13 @@ the emitted bootstrap is the source of truth, not this file.
    `specflo review done --verdict …`. Completing the project is not part of that:
    the run halts on the completion directive and `specflo advance` stays the
    user's call, which is where auto already stopped.
+   **Ladder run exception** (`specflo auto --ladder`): the run advances each
+   level itself. At quick, fast and full, run `specflo advance` once the level's
+   work and review are done: it ends only that level, not the run. Then run
+   `specflo auto` again; that pass cuts the next level's branch, or at full
+   closes the ladder. The payload's ladder clause says this on every pass. The
+   ladder never merges, pushes or deletes a branch: picking a branch stays the
+   user's call.
 6. **Stop when the payload says stop.** When `specflo auto` emits an escalation,
    the kill-switch halt, or the completion directive (rather than a bootstrap),
    the run is over — hand off to the human; do not start another pass.
@@ -71,6 +78,9 @@ restate them:
   human instead of continuing.
 - `--off` / `--on` — set or clear the durable auto-off kill switch for the active
   project.
+- `--ladder` — on a quick project, start one run that climbs quick, fast and
+  full on stacked local branches and writes `ladder.md` (see the ladder run
+  exception in step 5). Later passes are plain `specflo auto`.
 
 ## Notes
 
