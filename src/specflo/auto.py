@@ -190,6 +190,11 @@ def load_run_state(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
     return {}
 
 
+def in_ladder(root: Path, cfg: config.SpecfloConfig, slug: str) -> bool:
+    """Whether the project's auto run is a ladder."""
+    return bool(load_run_state(root, cfg, slug).get("ladder"))
+
+
 def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict) -> None:
     path = run_state_path(root, cfg, slug)
     with locked(lock_path_for(root, slug, path)):
@@ -824,7 +829,8 @@ def auto_pass_result(
             project = projects.load_project(root, cfg, project.slug)
         # Outgrown (a fact of the documents, so checked before this counts as
         # a pass): a plain run stops and hands the move up to the user; a
-        # ladder cuts the level down and carries on.
+        # ladder tells the agent to cut down, or at fast to add no more, and
+        # carries on.
         extra = None
         outgrew = validators.outgrown(root, cfg, project)
         if outgrew is not None:

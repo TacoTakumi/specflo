@@ -28,8 +28,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   view of the goal, decisions, checks and tasks. `section set` and `validate`
   accept `brief` too.
 - **`specflo auto --ladder`** - one unattended run that climbs quick, fast
-  and full on stacked local branches (`specflo/<slug>/<level>`), cutting each
-  level down to its cap instead of stopping, and records a row per level in
+  and full on stacked local branches (`specflo/<slug>/<level>`), never
+  stopping at a cap (quick cuts down to one check, fast's caps only warn),
+  and records a row per level in
   `ladder.md`. At full level the agent reviews the fast decisions and the
   deferred list itself and closes a review round of its own. It never pushes
   or deletes a branch.

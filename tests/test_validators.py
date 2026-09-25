@@ -206,6 +206,16 @@ def test_fast_level_does_not_count_a_superseded_task(tmp_path):
     assert plan.validate_plan(tmp_path, cfg, "thing") == []
 
 
+def test_fast_level_caps_do_not_fail_validate_inside_a_ladder(tmp_path):
+    from specflo import auto
+    cfg = _project_at(tmp_path, "fast")
+    auto.save_run_state(tmp_path, cfg, "thing", {"ladder": {"levels": {}}})
+    _decisions(tmp_path, cfg, 4)
+    _tasks(tmp_path, cfg, 8)
+    assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
+    assert plan.validate_plan(tmp_path, cfg, "thing") == []
+
+
 def test_full_level_has_no_caps(tmp_path):
     cfg = _project_at(tmp_path, "full")
     _decisions(tmp_path, cfg, 4)

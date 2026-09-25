@@ -177,8 +177,10 @@ At every level `specflo advance` ends only that level; the texts it and
 `status` print say to run `specflo auto` again, and `status --json` keeps
 reporting the run as under way until the closing pass.
 
-Inside a ladder a cap never stops the run: the level cuts its work down to the
-cap and defers the rest to the next level. `ladder.md` in the project directory
+Inside a ladder a cap never stops the run. A quick level cuts its work down to
+one check and defers the rest to the next level. At a fast level the caps only
+warn: the agent adds no more work and defers new work, but no command removes
+a decision or task, so a fast branch can be larger than fast allows. `ladder.md` in the project directory
 records the base branch and commit and one row per level: commits, files and
 lines changed against the level's start, tasks, test result, review verdict,
 deferred items and time. The test result comes from the optional `test_command`

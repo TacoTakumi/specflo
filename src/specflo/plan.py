@@ -414,7 +414,14 @@ def validate_plan(
         issues.append("no tasks captured (need at least one).")
         return issues
 
-    if load_project(root, cfg, slug).level == FAST_LEVEL and len(active) > FAST_MAX_TASKS:
+    # Inside a ladder the cap only warns (through the auto payload): no verb
+    # lowers the count of active tasks, so a hard cap would stall the run.
+    from . import auto
+
+    if (
+        load_project(root, cfg, slug).level == FAST_LEVEL and len(active) > FAST_MAX_TASKS
+        and not auto.in_ladder(root, cfg, slug)
+    ):
         issues.append(over_cap(FAST_LEVEL, "tasks", len(active), FAST_MAX_TASKS))
 
     for t in active:

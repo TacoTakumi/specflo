@@ -216,6 +216,9 @@ def test_a_fast_ladder_level_over_its_cap_is_told_to_cut_down(repo):
 
     assert result["stop"] is False
     assert "7" in result["payload"] and "Out of scope / Deferred" in result["payload"]
+    assert "only warns" in result["payload"]
+    # No verb lowers the task count, so the cap cannot block the level.
+    assert "at most 7" not in runner.invoke(app, ["validate", "plan"]).output
 
 
 # --- the ladder.md rows ---------------------------------------------------------------

@@ -186,7 +186,11 @@ def validate_brainstorm(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     if markdown.section_body(doc, "## Open questions") is None:
         issues.append("missing 'Open questions' section.")
 
-    if load_project(root, cfg, slug).level == FAST_LEVEL:
+    # Inside a ladder the cap only warns (through the auto payload): no verb
+    # lowers the count of active decisions, so a hard cap would stall the run.
+    from . import auto
+
+    if load_project(root, cfg, slug).level == FAST_LEVEL and not auto.in_ladder(root, cfg, slug):
         count = len(active_decision_ids(doc))
         if count > FAST_MAX_DECISIONS:
             issues.append(over_cap(FAST_LEVEL, "decisions", count, FAST_MAX_DECISIONS))
