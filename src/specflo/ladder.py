@@ -134,9 +134,16 @@ def _diff_numbers(root: Path, start: str, end: str) -> tuple[int, int, int, int]
     return commits, files, added, removed
 
 
+# A list item that says the list is empty, such as "- none", is not an item.
+_EMPTY_ITEM_RE = re.compile(r"^(?:[-*]|\d+[.)])\s+(?:none|nothing|n/a)\W*$", re.IGNORECASE)
+
+
 def _list_count(doc: str, header: str) -> int:
     body = markdown.strip_comments(markdown.section_body(doc, header) or "")
-    return sum(1 for line in body.splitlines() if re.match(r"^(?:[-*]|\d+[.)])\s+\S", line))
+    return sum(
+        1 for line in body.splitlines()
+        if re.match(r"^(?:[-*]|\d+[.)])\s+\S", line) and not _EMPTY_ITEM_RE.match(line)
+    )
 
 
 def _deferred_count(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> int:
@@ -201,15 +208,20 @@ def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: st
 
 
 def mark_end(root: Path, record: dict, level: str) -> None:
-    """Record where and when ``level`` ended; a recorded end is kept."""
-    entry = record["levels"][level]
-    entry.setdefault("end_commit", _git(root, "rev-parse", "HEAD"))
-    entry.setdefault("ended", _now())
+    """Record when ``level`` ended; a recorded end is kept."""
+    record["levels"][level].setdefault("ended", _now())
 
 
 def end_level(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
-    """Record where and when ``level`` ended, and write its row."""
+    """Record where and when ``level`` ended, and write its row.
+
+    The end commit is the branch tip now, not HEAD at the advance: a commit
+    made after the advance is on the level's branch, so its row counts it.
+    """
     mark_end(root, record, level)
+    entry = record["levels"][level]
+    if not entry.get("row_written"):
+        entry["end_commit"] = _git(root, "rev-parse", "HEAD")
     write_row(root, cfg, slug, record, level)
 
 

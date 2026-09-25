@@ -304,13 +304,22 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
     payload["active_project"] = project.slug
     payload["phase"] = project.phase
     # auto imports much of the package, so it is read here, at call time.
-    from . import auto
+    from . import auto, validators
 
     complete = project.status == projects.COMPLETE_STATUS
+    # The same inputs status reads, so fast level's one approval reads alike.
+    validates = False
+    if project.phase in ("brainstorm", "spec", "plan") and not complete:
+        validator = validators.VALIDATORS.get(project.phase)
+        if validator is not None:
+            validates = not validator(root, cfg, project.slug)
     payload["next_step"] = (
         auto.ladder_step(root, cfg, project)
         or auto.ladder_full_step(root, cfg, project)
-        or workflow.next_step(project.phase, level=project.level, complete=complete)
+        or workflow.next_step(
+            project.phase, level=project.level, complete=complete, validates=validates,
+            unattended=auto.run_under_way(root, cfg, project),
+        )
     )
     payload["next_action"] = project.phase
     return payload

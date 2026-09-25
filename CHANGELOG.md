@@ -33,7 +33,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   and records a row per level in
   `ladder.md`. At full level the agent reviews the fast decisions and the
   deferred list itself and closes a review round of its own. It never pushes
-  or deletes a branch.
+  or deletes a branch. While it runs, `specflo level` is refused; it does not start while the
+  kill switch is set.
 - **`test_command` config key** - the command a ladder run tests each level's
   branch with; unset means `not run`.
 - **`outgrew-level` auto stop reason** - a plain auto run stops when a quick

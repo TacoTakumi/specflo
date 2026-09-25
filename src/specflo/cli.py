@@ -650,6 +650,12 @@ def level(
     cfg = config.load_config(root)
     svc = _service(root, cfg)
     slug = _require_active(cfg)
+    if auto_module.in_ladder(root, cfg, slug):
+        raise _die(
+            f"A ladder run is live on {slug!r}: it moves the level up itself when a"
+            " level completes. Continue it with `specflo auto`, or stop it with"
+            " `specflo auto --off` first."
+        )
     try:
         project, review = svc.set_level(slug, target)
     except SpecfloError as exc:

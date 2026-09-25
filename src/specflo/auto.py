@@ -191,8 +191,13 @@ def load_run_state(root: Path, cfg: config.SpecfloConfig, slug: str) -> dict:
 
 
 def in_ladder(root: Path, cfg: config.SpecfloConfig, slug: str) -> bool:
-    """Whether the project's auto run is a ladder."""
-    return bool(load_run_state(root, cfg, slug).get("ladder"))
+    """Whether a ladder run is live on the project.
+
+    False once a guardrail stopped it or the kill switch is set: a user who
+    takes the project over by hand works under the attended rules.
+    """
+    state = load_run_state(root, cfg, slug)
+    return bool(state.get("ladder")) and not (state.get("killed") or state.get("ended"))
 
 
 def save_run_state(root: Path, cfg: config.SpecfloConfig, slug: str, state: dict) -> None:
@@ -654,6 +659,11 @@ def start_ladder(cwd: Path | None = None) -> None:
         raise SpecfloError(
             f"Project {slug!r} already has a ladder; continue it with `specflo auto`"
             " (after `specflo auto --on` if the kill switch is set)."
+        )
+    if state.get("killed"):
+        raise SpecfloError(
+            f"The kill switch is set for {slug!r}, so no ladder starts. Clear it with"
+            " `specflo auto --on` first."
         )
     record = ladder_module.start(root, cfg, slug)
     state["ladder"] = record

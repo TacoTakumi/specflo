@@ -180,8 +180,10 @@ reporting the run as under way until the closing pass.
 Inside a ladder a cap never stops the run. A quick level cuts its work down to
 one check and defers the rest to the next level. At a fast level the caps only
 warn: the agent adds no more work and defers new work, but no command removes
-a decision or task, so a fast branch can be larger than fast allows. `ladder.md` in the project directory
-records the base branch and commit and one row per level: commits, files and
+a decision or task, so a fast branch can be larger than fast allows. While a
+ladder runs, `specflo level` is refused: the ladder moves the level up itself.
+A level's row counts commits up to its branch tip. `ladder.md` in the project
+directory records the base branch and commit and one row per level: commits, files and
 lines changed against the level's start, tasks, test result, review verdict,
 deferred items and time. The test result comes from the optional `test_command`
 config key (`specflo config set test_command "uv run pytest -q"`), run on each

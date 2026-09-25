@@ -53,14 +53,21 @@ def outgrown(root, cfg, project) -> str | None:
 
     Derived from the documents each time, so it clears as soon as the work is
     cut back under the cap or the project moves up. Full level has no cap.
+    Inside a live ladder the text never says to move up: the ladder does that.
     """
+    from . import auto
+
+    ladder = auto.in_ladder(root, cfg, project.slug)
     if project.level == projects.QUICK_LEVEL:
         path = brief.brief_path(root, cfg, project.slug)
         checks = brief.check_count(path.read_text()) if path.is_file() else 0
         if checks > 1:
             return (
                 f"outgrew quick: {checks} checks in Done when; quick level allows 1."
-                " Cut it to one check, or move up with `specflo level fast`."
+                + (
+                    " Cut it to one check; the ladder moves up when this level completes."
+                    if ladder else " Cut it to one check, or move up with `specflo level fast`."
+                )
             )
     elif project.level == projects.FAST_LEVEL:
         base = projects.project_dir(root, cfg, project.slug)
@@ -78,8 +85,9 @@ def outgrown(root, cfg, project) -> str | None:
         if tasks > projects.FAST_MAX_TASKS:
             over.append(f"{tasks} active tasks (at most {projects.FAST_MAX_TASKS})")
         if over:
-            return (
-                f"outgrew fast: {' and '.join(over)}. Cut the work down, or move up"
-                " with `specflo level full`."
+            return f"outgrew fast: {' and '.join(over)}." + (
+                " Inside the ladder this cap only warns; the ladder moves up when this"
+                " level completes."
+                if ladder else " Cut the work down, or move up with `specflo level full`."
             )
     return None

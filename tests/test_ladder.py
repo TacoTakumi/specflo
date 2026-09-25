@@ -365,7 +365,9 @@ def test_a_level_changed_by_hand_blocks_the_climb_with_a_reason(repo):
     _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
     _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
     _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+    _ok(["auto", "--off"])
     _ok(["level", "fast"])
+    _ok(["auto", "--on"])
     _finish_fast(repo)
 
     result = json.loads(_ok(["auto", "--json"]).output)
@@ -444,7 +446,9 @@ def test_a_full_level_reached_by_hand_blocks_the_ladder_end_with_a_reason(repo):
     _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
     _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
     _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+    _ok(["auto", "--off"])
     _ok(["level", "full"])
+    _ok(["auto", "--on"])
     _finish_fast(repo)
 
     result = json.loads(_ok(["auto", "--json"]).output)
@@ -532,17 +536,20 @@ def test_a_fast_auto_payload_no_longer_says_to_wait_for_approval(repo):
     assert "covers fast level's one approval" in payload
 
 
-def test_a_level_row_measures_to_the_advance_not_the_next_pass(repo):
+def test_a_level_row_times_to_the_advance_and_counts_commits_to_the_branch_tip(repo):
     _ladder_at_quick(repo)
     _finish_quick(repo)
     ended = _state(repo)["ladder"]["levels"]["quick"]["ended"]
-    end_commit = _state(repo)["ladder"]["levels"]["quick"]["end_commit"]
     _work(repo, "late.txt")
 
     _ok(["auto", "--json"])
 
     quick = _state(repo)["ladder"]["levels"]["quick"]
-    assert (quick["ended"], quick["end_commit"]) == (ended, end_commit)
+    assert quick["ended"] == ended
+    assert quick["end_commit"] == git(repo, "rev-parse", "specflo/thing/quick")
+    commits = git(repo, "rev-list", "--count",
+                  f"{quick['start_commit']}..specflo/thing/quick")
+    assert _row(repo, "quick")["commits"] == commits
 
 
 def test_after_a_guardrail_stop_at_a_climb_the_texts_still_point_to_auto(repo):
@@ -587,3 +594,76 @@ def test_guide_at_a_ladder_pause_points_to_auto(repo):
     out = _ok(["guide", "--json"]).output
 
     assert "specflo auto" in json.loads(out)["next_step"]
+
+
+# --- review round 5 -----------------------------------------------------------------
+
+
+def _fast_ladder_over_the_task_cap(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    for n in range(7):
+        _ok(["task", "add", "--text", f"more {n}", "--acceptance", "a", "--verify", "true",
+             "--from", "REQ-01"])
+
+
+def test_inside_a_ladder_the_outgrew_text_never_says_to_move_up(repo):
+    _fast_ladder_over_the_task_cap(repo)
+
+    checkpoint = _ok(["checkpoint"]).output
+    payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
+
+    assert "outgrew fast" in checkpoint and "only warns" in checkpoint
+    assert "specflo level" not in checkpoint and "specflo level" not in payload
+
+
+def test_specflo_level_is_refused_while_a_ladder_is_live(repo):
+    _ladder_at_quick(repo)
+
+    refused = runner.invoke(app, ["level", "fast"])
+
+    assert refused.exit_code != 0 and "ladder run is live" in refused.output
+    assert projects.load_project(repo, config.load_config(repo), "thing").level == "quick"
+
+
+def test_a_stopped_ladder_gives_the_fast_caps_back(repo):
+    _fast_ladder_over_the_task_cap(repo)
+    _ok(["auto", "--off"])
+
+    assert "at most 7" in runner.invoke(app, ["validate", "plan"]).output
+
+
+def test_no_ladder_starts_while_the_kill_switch_is_set(repo):
+    _ok(["new", "Thing", "--level", "quick"])
+    _ok(["auto", "--off"])
+
+    refused = runner.invoke(app, ["auto", "--ladder", "--json"])
+
+    assert refused.exit_code != 0 and "kill switch" in refused.output
+    assert git(repo, "branch", "--list", "specflo/thing/quick") == ""
+    assert not (repo / "docs" / "projects" / "thing" / "ladder.md").exists()
+
+
+def test_guide_asks_an_attended_fast_project_to_stop_for_approval(repo):
+    _ok(["new", "Thing", "--level", "quick"])
+    _finish_quick(repo)
+    _ok(["level", "fast"])
+    _ok(["decision", "add", "--text", "keep it small", "--rationale", "weighed a, b"])
+    _ok(["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "none\n")
+    _ok(["advance"])
+    _ok(["section", "set", "spec", "In scope", "--stdin"], "- the greeting.\n")
+    _ok(["section", "set", "spec", "Out of scope", "--stdin"], "- the rest.\n")
+    _ok(["advance"])
+
+    guide_next = json.loads(_ok(["guide", "--json"]).output)["next_step"]
+
+    assert "only after they approve" in guide_next
+
+
+def test_a_deferred_list_that_says_none_counts_no_items():
+    from specflo import ladder
+
+    doc = "## Deferred\n- none\n\n## Next\n"
+    assert ladder._list_count(doc, "## Deferred") == 0
+    assert ladder._list_count("## Deferred\n- later: colours\n- None.\n", "## Deferred") == 1
