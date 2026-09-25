@@ -30,7 +30,9 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **`specflo auto --ladder`** - one unattended run that climbs quick, fast
   and full on stacked local branches (`specflo/<slug>/<level>`), cutting each
   level down to its cap instead of stopping, and records a row per level in
-  `ladder.md`. It never pushes or deletes a branch.
+  `ladder.md`. At full level the agent reviews the fast decisions and the
+  deferred list itself and closes a review round of its own. It never pushes
+  or deletes a branch.
 - **`test_command` config key** - the command a ladder run tests each level's
   branch with; unset means `not run`.
 - **`outgrew-level` auto stop reason** - a plain auto run stops when a quick

@@ -219,6 +219,11 @@ task. Small, separate work can instead go to the deferred list (the brief's
 Deferred section, or the brainstorm's Out of scope / Deferred section) with
 the user's agreement.
 
+**In a ladder run** (the auto payload carries a "Ladder run:" line) there is no
+user to offer the move to: put the uncovered work on the deferred list and
+carry on. The ladder moves up when the level completes, and the next level
+picks the deferred work up.
+
 ## Anti-sycophancy
 
 Do not open with "All done!", "Looks perfect", or similar. State what's

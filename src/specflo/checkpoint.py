@@ -114,8 +114,9 @@ def build_checkpoint(
             # auto imports this module, so it is read here, at call time.
             from . import auto
 
-            if auto.ladder_climb_pending(root, cfg, project):
-                do_next = auto.LADDER_CLIMB_STEP
+            ladder_next = auto.ladder_step(root, cfg, project)
+            if ladder_next is not None:
+                do_next = ladder_next
         # Stuck on a superseded dependency: surface the same targeted rewire
         # remediation as `task show`/`status`, replacing the generic hint.
         if project.status != COMPLETE_STATUS and plan_doc is not None:
@@ -132,8 +133,13 @@ def build_checkpoint(
             validator = validators.VALIDATORS.get(project.phase)
             if validator is not None:
                 validates = not validator(root, cfg, project.slug)
+        unattended = False
+        if cfg is not None:
+            from . import auto
+
+            unattended = auto.run_under_way(root, cfg, project)
         do_next = workflow.next_step(
-            project.phase, validates=validates, level=project.level
+            project.phase, validates=validates, level=project.level, unattended=unattended
         )
         # A plan that doesn't yet validate still names its next task; once it
         # validates the offer-advance hint stands alone.

@@ -77,3 +77,11 @@ def test_the_execute_skill_stops_on_uncovered_work_at_light_levels():
         "Do not add tasks",
     ):
         assert phrase in section, phrase
+
+
+
+def test_the_execute_and_quick_skills_defer_uncovered_work_in_a_ladder():
+    for name in ("specflo-execute", "specflo-quick"):
+        text = " ".join(_skill(name).split())
+        assert "In a ladder run" in text or "in a ladder run" in text, name
+        assert "Deferred" in text, name

@@ -57,9 +57,11 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
     next_step = workflow.next_step(
         project.phase, progress=progress, complete=complete, shelved=shelved,
         validates=validates, review=review_info, level=project.level,
+        unattended=auto.run_under_way(root, cfg, project),
     )
-    if auto.ladder_climb_pending(root, cfg, project):
-        next_step = auto.LADDER_CLIMB_STEP
+    ladder_next = auto.ladder_step(root, cfg, project)
+    if ladder_next is not None:
+        next_step = ladder_next
     # In the stuck execute state (nothing actionable, a pending task blocked by a
     # superseded dependency), replace the generic hint with targeted rewire
     # remediation from the shared detector.

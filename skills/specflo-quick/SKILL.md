@@ -57,6 +57,9 @@ If you find work the brief does not cover, **stop**. Do not add it yourself.
   (`specflo section set brief "Deferred" --stdin`) and finish the one check.
 - Needs more than one check: offer the user `specflo level fast`. The move
   keeps the brief and seeds a short brainstorm, spec and plan from it.
+- In a ladder run (the auto payload carries a "Ladder run:" line) there is no
+  user to ask: put the work in Deferred, finish the one check, and let the
+  ladder move up.
 
 ## Red flags
 

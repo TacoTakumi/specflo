@@ -284,6 +284,7 @@ def test_the_ladder_ends_when_full_completes(repo):
     _ok(["advance"])
     _ok(["advance"])
     _work(repo, "full.txt")
+    _ok(["review", "done", "--verdict", "ready-to-merge"])
     _ok(["advance"])
 
     result = json.loads(_ok(["auto", "--json"]).output)
@@ -376,7 +377,7 @@ def test_a_second_ladder_start_says_a_ladder_is_running(repo):
     result = runner.invoke(app, ["auto", "--ladder"])
 
     assert result.exit_code != 0
-    assert "already running" in result.output
+    assert "already has a ladder" in result.output
 
 
 def test_a_ladder_starts_with_the_projects_dir_outside_the_repo(repo, tmp_path_factory):
@@ -461,3 +462,93 @@ def test_guard_auto_off_at_fast_level_stops_the_ladder(repo):
 
     assert (result["stop"], result["reason"]) == (True, auto.STOP_KILL_SWITCH)
     assert _branches(repo) == before
+
+
+
+# --- the full level in a ladder, as an agent reads it --------------------------------------
+
+
+def _full_level_done(repo):
+    _ladder_at_full(repo)
+    _ok(["advance"])
+    _ok(["advance"])
+    _ok(["advance"])
+    _work(repo, "full.txt")
+    _ok(["review", "done", "--verdict", "ready-to-merge"])
+    return _ok(["advance"]).output
+
+
+def test_full_level_in_a_ladder_has_its_own_review_and_work(repo):
+    _ladder_at_full(repo)
+
+    payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
+
+    assert "no user to interview" in payload and "D-01" in payload
+    assert "Out of scope / Deferred" in payload
+    assert (repo / "docs" / "projects" / "thing" / "review-2.md").is_file()
+    _ok(["advance"])
+    _ok(["advance"])
+    _ok(["advance"])
+    blocked = runner.invoke(app, ["advance"])
+    assert blocked.exit_code != 0 and "still open" in blocked.output
+
+
+def test_the_end_of_the_full_level_points_to_the_closing_pass(repo):
+    from specflo import hook
+    advanced = _full_level_done(repo)
+
+    assert "this project is complete" not in advanced
+    assert "close the ladder" in advanced
+    status = json.loads(_ok(["status", "--json"]).output)
+    assert status["auto_run"]["under_way"] is True
+    assert "close the ladder" in status["next_step"]
+    assert "close the ladder" in hook.reseed_text(repo)
+    assert "| full |" not in (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert result["reason"] == auto.STOP_PROJECT_COMPLETE
+    assert "| full |" in (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
+    assert json.loads(_ok(["status", "--json"]).output)["auto_run"]["under_way"] is False
+
+
+def test_a_fast_auto_payload_no_longer_says_to_wait_for_approval(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    _ok(["decision", "add", "--text", "keep it small", "--rationale", "weighed a, b"])
+    _ok(["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "none\n")
+    _ok(["advance"])
+    _ok(["section", "set", "spec", "In scope", "--stdin"], "- the greeting.\n")
+    _ok(["section", "set", "spec", "Out of scope", "--stdin"], "- the rest.\n")
+    _ok(["advance"])
+
+    payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
+
+    assert "only after they approve" not in payload
+    assert "covers fast level's one approval" in payload
+
+
+def test_a_level_row_measures_to_the_advance_not_the_next_pass(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    ended = _state(repo)["ladder"]["levels"]["quick"]["ended"]
+    end_commit = _state(repo)["ladder"]["levels"]["quick"]["end_commit"]
+    _work(repo, "late.txt")
+
+    _ok(["auto", "--json"])
+
+    quick = _state(repo)["ladder"]["levels"]["quick"]
+    assert (quick["ended"], quick["end_commit"]) == (ended, end_commit)
+
+
+def test_after_a_guardrail_stop_at_a_climb_the_texts_still_point_to_auto(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--off"])
+    _ok(["auto", "--json"])
+
+    status = json.loads(_ok(["status", "--json"]).output)
+
+    assert "specflo auto" in status["next_step"]
+    assert status["auto_run"]["under_way"] is False

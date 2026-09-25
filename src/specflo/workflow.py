@@ -113,7 +113,9 @@ def _review_hint(review: dict | None) -> str:
     )
 
 
-def _light_level_step(phase: str, validates: bool, level: str) -> str | None:
+def _light_level_step(
+    phase: str, validates: bool, level: str, unattended: bool = False
+) -> str | None:
     """The hint a quick or fast project gets in place of the full-level one.
 
     Quick works its brief in execute. Fast goes from brainstorm to the plan
@@ -127,6 +129,12 @@ def _light_level_step(phase: str, validates: bool, level: str) -> str | None:
         )
     if level != "fast" or phase == "execute":
         return None
+    if phase == "plan" and validates and unattended:
+        # An auto run has no one to approve: it covers the one approval.
+        return (
+            "The plan validates. This auto run covers fast level's one approval:"
+            " run `specflo advance` and go on to execute."
+        )
     if phase == "plan" and validates:
         return (
             "The plan validates. Fast level stops here once: show the user the brief"
@@ -152,6 +160,7 @@ def next_step(
     validates: bool = False,
     review: dict | None = None,
     level: str = "full",
+    unattended: bool = False,
 ) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
@@ -172,7 +181,7 @@ def next_step(
     """
     _require_known(phase)
     if not shelved and not complete:
-        light = _light_level_step(phase, validates, level)
+        light = _light_level_step(phase, validates, level, unattended)
         if light is not None:
             return light
     if shelved:

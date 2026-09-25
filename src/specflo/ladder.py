@@ -200,11 +200,16 @@ def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: st
     entry["row_written"] = True
 
 
-def end_level(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
-    """Record where and when ``level`` ended, and write its row."""
+def mark_end(root: Path, record: dict, level: str) -> None:
+    """Record where and when ``level`` ended; a recorded end is kept."""
     entry = record["levels"][level]
     entry.setdefault("end_commit", _git(root, "rev-parse", "HEAD"))
     entry.setdefault("ended", _now())
+
+
+def end_level(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
+    """Record where and when ``level`` ended, and write its row."""
+    mark_end(root, record, level)
     write_row(root, cfg, slug, record, level)
 
 
@@ -225,6 +230,10 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
             f"The ladder has no record of the {level} level: the level was changed"
             " outside the ladder. Finish the project by hand, or start a new ladder."
         )
+    if level == projects.QUICK_LEVEL and not brief.brief_path(root, cfg, slug).is_file():
+        raise SpecfloError(
+            f"Project {slug!r} has no brief.md to carry up, so the ladder cannot climb."
+        )
     branch = branch_name(slug, target)
     if _git(root, "branch", "--list", branch):
         raise SpecfloError(
@@ -235,12 +244,17 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
     # and the finished level's branch stays at the same commit either way.
     _git(root, "checkout", "-q", "-b", branch)
     end_level(root, cfg, slug, record, level)
-    local_service(root, cfg).set_level(slug, target)
+    _, review_ids = local_service(root, cfg).set_level(slug, target)
     record["levels"][target] = {
         "branch": branch,
         "start_commit": record["levels"][level]["end_commit"],
         "started": _now(),
+        "review": review_ids,
     }
+    if target == projects.FULL_LEVEL:
+        # Full level has its own review: an open round keeps the level from
+        # completing on fast's verdict.
+        review.start_round(root, cfg, slug)
     return target
 
 

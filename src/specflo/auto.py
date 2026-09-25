@@ -217,26 +217,37 @@ def _mark_run_ended(root: Path, cfg: config.SpecfloConfig, slug: str) -> None:
 
 # The next step for a ladder level that has completed: the run is not over,
 # the next auto pass climbs.
+# The next step once a ladder level has completed: the run is not over, the
+# next auto pass climbs, or at full level closes the ladder.
 LADDER_CLIMB_STEP = (
     "This ladder level is complete. Run `specflo auto` to cut the next level's"
     " branch and move the project up."
 )
+LADDER_FINISH_STEP = (
+    "The ladder's last level is complete. Run `specflo auto` to close the ladder:"
+    " that pass writes the last row of ladder.md and hands the branches over."
+)
 
 
-def ladder_climb_pending(root: Path, cfg: config.SpecfloConfig, project) -> bool:
-    """Whether ``project`` is a ladder level that completed and waits to climb.
+def ladder_step(root: Path, cfg: config.SpecfloConfig, project) -> str | None:
+    """The step a completed ladder level waits on, or None when there is none.
 
-    Never raises: an unreadable state reads as no ladder.
+    A completed quick or fast level waits to climb; a completed full level
+    waits for the pass that closes ladder.md. Never raises: an unreadable
+    state reads as no ladder.
     """
     try:
         if project.status != COMPLETE_STATUS:
-            return False
-        if ladder_module.next_level(project.level) is None:
-            return False
-        state = load_run_state(root, cfg, project.slug)
-        return bool(state.get("ladder")) and not (state.get("killed") or state.get("ended"))
+            return None
+        ladder = load_run_state(root, cfg, project.slug).get("ladder")
+        if not ladder:
+            return None
+        if ladder_module.next_level(project.level) is not None:
+            return LADDER_CLIMB_STEP
+        entry = ladder.get("levels", {}).get(project.level, {})
+        return None if entry.get("row_written") else LADDER_FINISH_STEP
     except Exception:
-        return False
+        return None
 
 
 def run_under_way(root: Path, cfg: config.SpecfloConfig, project) -> bool:
@@ -249,8 +260,12 @@ def run_under_way(root: Path, cfg: config.SpecfloConfig, project) -> bool:
     """
     try:
         if project.status == COMPLETE_STATUS:
-            # A ladder level that completed is a pause between levels, not the end.
-            return ladder_climb_pending(root, cfg, project)
+            # A ladder level that completed is a pause in the run, not its end,
+            # while no guardrail has stopped it.
+            if ladder_step(root, cfg, project) is None:
+                return False
+            state = load_run_state(root, cfg, project.slug)
+            return not (state.get("killed") or state.get("ended"))
         if not run_state_path(root, cfg, project.slug).is_file():
             return False
         state = load_run_state(root, cfg, project.slug)
@@ -548,19 +563,31 @@ def next_step_block(phase: str, do_next: str) -> str:
 LADDER_MARKER = "Ladder run:"
 
 
-def _ladder_clause(project) -> str:
+def _ladder_clause(project, record: dict) -> str:
     """What the agent needs to know on every pass of a ladder run."""
-    return (
+    clause = (
         f"- {LADDER_MARKER} this run climbs quick, then fast, then full; you are at"
         f" {project.level} level on branch `{ladder_module.branch_name(project.slug, project.level)}`."
         " Commit this level's work on that branch and do not switch branches:"
         " when the level completes, the next `specflo auto` pass cuts the next"
-        " level's branch and moves the project up. At quick and fast level,"
-        f' `specflo advance` printing "{COMPLETION_SIGNAL}" ends only that level, not'
-        " the run: do not stop, run `specflo auto` again. The run ends when a pass"
-        " says the ladder is complete. Never push, and never delete, rename or reset"
-        " a branch."
+        " level's branch and moves the project up. This supersedes the Terminal"
+        f' stop clause: at every level, `specflo advance` printing "{COMPLETION_SIGNAL}"'
+        " ends only that level, not the run; do not stop, run `specflo auto` again."
+        " The run ends when a pass says the ladder is complete. Never push, and"
+        " never delete, rename or reset a branch."
     )
+    if project.level == projects.FULL_LEVEL:
+        review = record.get("levels", {}).get(project.level, {}).get("review") or []
+        decisions = f" ({', '.join(review)})" if review else ""
+        clause += (
+            " At full level there is no user to interview, so do the full-level work"
+            f" yourself: review each decision made at fast level{decisions} and confirm"
+            " it or supersede it with `specflo decision add --supersedes`, take up every"
+            " item in the brainstorm's Out of scope / Deferred section, extend the"
+            " spec and plan to match, and close the open review round with a"
+            " fresh-context review before you complete the level."
+        )
+    return clause
 
 
 def start_ladder(cwd: Path | None = None) -> None:
@@ -577,9 +604,10 @@ def start_ladder(cwd: Path | None = None) -> None:
         raise SpecfloError("No active project. Run `specflo new <name> --level quick`.")
     slug = cfg.active_project
     state = load_run_state(root, cfg, slug)
-    if state.get("ladder") and not state.get("ended"):
+    if state.get("ladder"):
         raise SpecfloError(
-            f"A ladder is already running on {slug!r}; continue it with `specflo auto`."
+            f"Project {slug!r} already has a ladder; continue it with `specflo auto`"
+            " (after `specflo auto --on` if the kill switch is set)."
         )
     record = ladder_module.start(root, cfg, slug)
     state["ladder"] = record
@@ -603,8 +631,9 @@ def _reseed_payload(
     it never touches the ask-first reseed or the advance gate (REQ-02).
     """
     bootstrap = auto_bootstrap(project.phase, autonomy=autonomy)
-    if load_run_state(root, cfg, project.slug).get("ladder"):
-        bootstrap += "\n" + _ladder_clause(project)
+    state = load_run_state(root, cfg, project.slug)
+    if state.get("ladder"):
+        bootstrap += "\n" + _ladder_clause(project, state["ladder"])
     if extra:
         bootstrap += "\n" + extra
     payload = checkpoint_module.build_checkpoint(root, project, cfg=cfg)
@@ -810,3 +839,17 @@ def auto_pass(
     ``""`` when there is nothing to emit.
     """
     return auto_pass_result(cwd, autonomy=autonomy, max_passes=max_passes)["payload"]
+
+
+def mark_level_end(root: Path, cfg: config.SpecfloConfig, project) -> None:
+    """Record where and when a ladder level completed, as it completes.
+
+    Called by `specflo advance`, so a level's row measures the level itself
+    rather than the time until the next auto pass. Does nothing off a ladder.
+    """
+    state = load_run_state(root, cfg, project.slug)
+    ladder = state.get("ladder")
+    if not ladder or project.level not in ladder.get("levels", {}):
+        return
+    ladder_module.mark_end(root, ladder, project.level)
+    save_run_state(root, cfg, project.slug, state)

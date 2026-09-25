@@ -167,8 +167,15 @@ unattended run, each on its own local branch:
 1. The quick level runs on `specflo/<slug>/quick`, cut from where you started.
 2. When it completes, the next pass cuts `specflo/<slug>/fast` from there and
    moves the project up; the fast level builds on the quick result.
-3. Then `specflo/<slug>/full` the same way, and the run stops when full
-   completes.
+3. Then `specflo/<slug>/full` the same way. With no user to interview, the
+   agent reviews each fast decision itself, takes up the deferred list, and
+   must close a review round of its own, which the climb opens.
+4. After full completes, one more `specflo auto` pass writes the last row and
+   stops, naming the three branches.
+
+At every level `specflo advance` ends only that level; the texts it and
+`status` print say to run `specflo auto` again, and `status --json` keeps
+reporting the run as under way until the closing pass.
 
 Inside a ladder a cap never stops the run: the level cuts its work down to the
 cap and defers the rest to the next level. `ladder.md` in the project directory

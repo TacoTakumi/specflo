@@ -157,7 +157,7 @@ def _resume(cwd: Path, *, direct: bool, directory_source: str | None) -> tuple:
     # A ladder level that completed is a pause between levels: it reseeds.
     if project.status == SHELVED_STATUS or (
         project.status == COMPLETE_STATUS
-        and not auto.ladder_climb_pending(root, _cfg, project)
+        and auto.ladder_step(root, _cfg, project) is None
     ):
         return "", None
     payload = service.build_checkpoint(project.slug)
