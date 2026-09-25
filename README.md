@@ -260,7 +260,7 @@ See **[The config file](#the-config-file)** for the file itself.
   - `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing. Overrides the config default.
   - `--off` sets the durable kill switch (the next pass halts); `--on` clears it.
   - `--ladder` starts a [ladder run](#the-ladder-run) on a quick project; later passes continue it without the flag.
-  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `outgrew-level`, or `unavailable`; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
+  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `outgrew-level`, `ladder-blocked`, or `unavailable`; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
 
 ### Harness integration
 

@@ -860,7 +860,8 @@ def test_no_module_duplicates_the_continuation_wording():
 
 def test_stop_reasons_are_distinct_named_constants():
     reasons = (auto.STOP_KILL_SWITCH, auto.STOP_PASS_CAP, auto.STOP_STALL,
-               auto.STOP_PROJECT_COMPLETE, auto.STOP_OUTGREW_LEVEL, auto.STOP_UNAVAILABLE)
+               auto.STOP_PROJECT_COMPLETE, auto.STOP_OUTGREW_LEVEL,
+               auto.STOP_LADDER_BLOCKED, auto.STOP_UNAVAILABLE)
     assert all(isinstance(r, str) and r for r in reasons)
     assert len(set(reasons)) == len(reasons)
     assert set(auto.STOP_REASONS) == set(reasons)
@@ -1133,3 +1134,19 @@ def test_auto_does_not_stop_a_project_within_its_level(tmp_path):
     _quick_project(tmp_path)
     result = auto.auto_pass_result(tmp_path, max_passes=1000)
     assert result["reason"] != auto.STOP_OUTGREW_LEVEL
+
+
+def test_an_outgrown_quick_project_leaves_the_line_in_checkpoint_md(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = CliRunner()
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert runner.invoke(app, ["new", "Thing", "--level", "quick"]).exit_code == 0
+    assert runner.invoke(
+        app, ["section", "set", "brief", "Done when", "--stdin"], input="- one\n- two\n"
+    ).exit_code == 0
+
+    result = runner.invoke(app, ["auto", "--json"])
+
+    assert '"outgrew-level"' in result.output
+    checkpoint_md = tmp_path / "docs" / "projects" / "thing" / "checkpoint.md"
+    assert "outgrew quick" in checkpoint_md.read_text()

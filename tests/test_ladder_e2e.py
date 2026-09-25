@@ -61,3 +61,26 @@ def test_a_ladder_driven_by_auto_json_climbs_to_full_and_stops(repo):  # noqa: F
     ladder_md = (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
     for level in ("quick", "fast", "full"):
         assert f"| {level} |" in ladder_md
+
+
+def test_a_ladder_leaves_the_remote_and_every_old_branch_alone(repo, tmp_path_factory):  # noqa: F811
+    remote = tmp_path_factory.mktemp("remote") / "origin.git"
+    git(remote.parent, "init", "-q", "--bare", str(remote))
+    git(repo, "remote", "add", "origin", str(remote))
+    git(repo, "branch", "keep")
+    git(repo, "push", "-q", "origin", "main", "keep")
+    remote_before = git(remote, "for-each-ref")
+    local_before = {b: git(repo, "rev-parse", b) for b in ("main", "keep")}
+
+    _ok(["new", "Thing", "--level", "quick"])
+    result = json.loads(_ok(["auto", "--ladder", "--json"]).output)
+    done = set()
+    for _ in range(40):
+        if result["stop"]:
+            break
+        _act(repo, done)
+        result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert result["reason"] == auto.STOP_PROJECT_COMPLETE
+    assert git(remote, "for-each-ref") == remote_before
+    assert {b: git(repo, "rev-parse", b) for b in ("main", "keep")} == local_before

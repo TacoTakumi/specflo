@@ -35,7 +35,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   branch with; unset means `not run`.
 - **`outgrew-level` auto stop reason** - a plain auto run stops when a quick
   brief has two checks or a fast project passes its caps, and the checkpoint
-  says so.
+  says so. A ladder that cannot climb (its next branch exists, or
+  the level was changed by hand) stops with `ladder-blocked` and says why.
 - **`specflo-quick` skill**, and level sections in the brainstorm, spec, plan
   and execute skills and in `specflo guide`.
 - **`specflo doc show <artifact>`** - print one artifact of the active

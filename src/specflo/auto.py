@@ -114,6 +114,9 @@ STOP_PROJECT_COMPLETE = "project-complete"
 # checks, a fast plan past its caps). A plain run stops and leaves the move up
 # to the user; it never changes the level itself.
 STOP_OUTGREW_LEVEL = "outgrew-level"
+# A ladder level completed but the ladder cannot climb (its next branch
+# exists, or the level was changed by hand); the payload says why.
+STOP_LADDER_BLOCKED = "ladder-blocked"
 # Not a run condition but a caller-side one: no specflo root, no active project,
 # or an unreadable project. The payload is empty, so there is nothing to continue.
 STOP_UNAVAILABLE = "unavailable"
@@ -123,6 +126,7 @@ STOP_REASONS = (
     STOP_STALL,
     STOP_PROJECT_COMPLETE,
     STOP_OUTGREW_LEVEL,
+    STOP_LADDER_BLOCKED,
     STOP_UNAVAILABLE,
 )
 
@@ -567,8 +571,12 @@ def start_ladder(cwd: Path | None = None) -> None:
     if cfg.active_project is None:
         raise SpecfloError("No active project. Run `specflo new <name> --level quick`.")
     slug = cfg.active_project
-    record = ladder_module.start(root, cfg, slug)
     state = load_run_state(root, cfg, slug)
+    if state.get("ladder") and not state.get("ended"):
+        raise SpecfloError(
+            f"A ladder is already running on {slug!r}; continue it with `specflo auto`."
+        )
+    record = ladder_module.start(root, cfg, slug)
     state["ladder"] = record
     state.pop("ended", None)
     save_run_state(root, cfg, slug, state)
@@ -723,7 +731,13 @@ def auto_pass_result(
         # A ladder level that completed: cut the next branch and move up, then
         # carry on with this pass at the new level.
         if climbing:
-            ladder_module.climb(root, cfg, project.slug, ladder)
+            try:
+                ladder_module.climb(root, cfg, project.slug, ladder)
+            except SpecfloError as exc:
+                state["ladder"] = ladder
+                save_run_state(root, cfg, project.slug, state)
+                _mark_run_ended(root, cfg, project.slug)
+                return _pass_result(escalation_message(str(exc)), STOP_LADDER_BLOCKED)
             state["ladder"] = ladder
             save_run_state(root, cfg, project.slug, state)
             project = projects.load_project(root, cfg, project.slug)

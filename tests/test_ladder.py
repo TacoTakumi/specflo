@@ -335,3 +335,56 @@ def test_a_completed_ladder_level_reads_as_a_run_under_way_that_continues(repo):
     for text in (advanced, status["next_step"], checkpoint_md):
         assert "specflo auto" in text
         assert "Start the next piece of work" not in text
+
+
+# --- a climb that cannot happen stops with a reason, once ---------------------------------
+
+
+def test_an_existing_next_branch_blocks_the_climb_with_a_reason_and_one_row(repo):
+    _ladder_at_quick(repo)
+    git(repo, "branch", "specflo/thing/fast")
+    _finish_quick(repo)
+
+    first = json.loads(_ok(["auto", "--json"]).output)
+    second = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (first["stop"], first["reason"]) == (True, auto.STOP_LADDER_BLOCKED)
+    assert "specflo/thing/fast" in first["payload"]
+    assert second["reason"] == auto.STOP_LADDER_BLOCKED
+    ladder_md = (repo / "docs" / "projects" / "thing" / "ladder.md").read_text()
+    assert ladder_md.count("| quick |") == 0
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/quick"
+
+
+def test_a_level_changed_by_hand_blocks_the_climb_with_a_reason(repo):
+    _ladder_at_quick(repo)
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
+    _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+    _ok(["level", "fast"])
+    _finish_fast(repo)
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (result["stop"], result["reason"]) == (True, auto.STOP_LADDER_BLOCKED)
+    assert "changed outside the ladder" in result["payload"]
+
+
+def test_a_second_ladder_start_says_a_ladder_is_running(repo):
+    _ladder_at_quick(repo)
+
+    result = runner.invoke(app, ["auto", "--ladder"])
+
+    assert result.exit_code != 0
+    assert "already running" in result.output
+
+
+def test_a_ladder_starts_with_the_projects_dir_outside_the_repo(repo, tmp_path_factory):
+    outside = tmp_path_factory.mktemp("elsewhere") / "projects"
+    _ok(["config", "set", "projects_dir", str(outside), "--force"])
+    _ok(["new", "Thing", "--level", "quick"])
+
+    result = runner.invoke(app, ["auto", "--ladder", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/quick"

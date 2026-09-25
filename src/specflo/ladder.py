@@ -22,6 +22,8 @@ from .config import CONFIG_DIRNAME, SpecfloConfig
 from .errors import SpecfloError
 
 LADDER_FILENAME = "ladder.md"
+# How long one test_command run may take before it counts as failed.
+TEST_TIMEOUT_SECONDS = 3600
 BRANCH_PREFIX = "specflo"
 
 _ROW_HEADER = (
@@ -68,10 +70,11 @@ def _check_start(root: Path, cfg: SpecfloConfig, project) -> None:
     # specflo's own documents change as the project is made and worked, so they
     # do not count; any other uncommitted change to a tracked file would ride
     # onto the ladder's first branch.
-    dirty = _git(
-        root, "status", "--porcelain", "--untracked-files=no", "--", ".",
-        f":(exclude){cfg.projects_dir}", f":(exclude){CONFIG_DIRNAME}",
-    )
+    excludes = [f":(exclude){CONFIG_DIRNAME}"]
+    projects_root = (root / cfg.projects_dir).resolve()
+    if projects_root.is_relative_to(root.resolve()):
+        excludes.append(f":(exclude){projects_root.relative_to(root.resolve()).as_posix()}")
+    dirty = _git(root, "status", "--porcelain", "--untracked-files=no", "--", ".", *excludes)
     if dirty:
         raise SpecfloError(
             "A ladder needs a clean tree: commit or stash these tracked changes"
@@ -159,8 +162,15 @@ def _test_result(root: Path, cfg: SpecfloConfig) -> str:
     command = getattr(cfg, "test_command", None)
     if not command:
         return "not run"
-    # The command is the user's shell line, so the shell is the program.
-    result = subprocess.run(["sh", "-c", command], cwd=root, capture_output=True)
+    # The command is the user's shell line, so the shell is the program. A
+    # command that hangs must not hold the auto pass for ever: past the limit
+    # it counts as a failure.
+    try:
+        result = subprocess.run(
+            ["sh", "-c", command], cwd=root, capture_output=True, timeout=TEST_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired:
+        return "fail"
     return "pass" if result.returncode == 0 else "fail"
 
 
@@ -210,9 +220,21 @@ def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
     target = next_level(level)
     if target is None:
         raise SpecfloError("A ladder at full level has nowhere to climb.")
-    end_level(root, cfg, slug, record, level)
+    if level not in record["levels"]:
+        raise SpecfloError(
+            f"The ladder has no record of the {level} level: the level was changed"
+            " outside the ladder. Finish the project by hand, or start a new ladder."
+        )
     branch = branch_name(slug, target)
+    if _git(root, "branch", "--list", branch):
+        raise SpecfloError(
+            f"Branch {branch!r} already exists, so the ladder cannot cut it. Rename or"
+            " delete it yourself, then run `specflo auto` again."
+        )
+    # Cut the branch first: the row is written only once the climb can happen,
+    # and the finished level's branch stays at the same commit either way.
     _git(root, "checkout", "-q", "-b", branch)
+    end_level(root, cfg, slug, record, level)
     local_service(root, cfg).set_level(slug, target)
     record["levels"][target] = {
         "branch": branch,
