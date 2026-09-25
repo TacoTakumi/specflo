@@ -37,6 +37,13 @@ EXECUTION_MODES = (LINEAR_EXECUTION, FAN_OUT_EXECUTION)
 # defines the same names; they are repeated here so that reading a project
 # record loads no pool code.
 EGRESS_CLASSES = ("local", "no-train", "open")
+# Levels: how much ceremony a project gets, lightest first. A project.md
+# without the key reads as full so files written before levels existed keep
+# their behaviour.
+QUICK_LEVEL = "quick"
+FAST_LEVEL = "fast"
+FULL_LEVEL = "full"
+LEVELS = (QUICK_LEVEL, FAST_LEVEL, FULL_LEVEL)
 
 
 @dataclass
@@ -80,6 +87,7 @@ class Project:
     summary: str = ""
     completed: str = ""
     execution: str = LINEAR_EXECUTION
+    level: str = FULL_LEVEL
     # Set on a project spawned from a work item: the item, and the product
     # piece it targets. A project made with `new` has neither.
     work_item: int | None = None
@@ -130,6 +138,16 @@ def validate_execution(mode: str) -> str:
     return mode
 
 
+def validate_level(level: str) -> str:
+    """Return ``level`` if it is a known level, else raise naming all three."""
+    if level not in LEVELS:
+        raise SpecfloError(
+            f"Unknown level {level!r}: expected one of "
+            + ", ".join(repr(name) for name in LEVELS) + "."
+        )
+    return level
+
+
 def validate_egress(egress_class: str) -> str:
     """Return ``egress_class`` if it is a known egress class, else raise naming them."""
     if egress_class not in EGRESS_CLASSES:
@@ -149,8 +167,10 @@ def create_project(
     execution: str = LINEAR_EXECUTION,
     work_item: int | None = None,
     piece: str | None = None,
+    level: str = FULL_LEVEL,
 ) -> Project:
     execution = validate_execution(execution)
+    level = validate_level(level)
     slug = slugify(name)
     directory = project_dir(root, cfg, slug)
     if directory.exists():
@@ -165,6 +185,7 @@ def create_project(
         path=directory,
         summary=summary or NEEDS_SUMMARY,
         execution=execution,
+        level=level,
         work_item=work_item,
         piece=piece or "",
     )
@@ -197,6 +218,7 @@ def load_project(root: Path, cfg: SpecfloConfig, slug: str) -> Project:
         summary=str(fields.get("summary", "") or ""),
         completed=str(fields.get("completed", "") or ""),
         execution=str(fields.get("execution") or LINEAR_EXECUTION),
+        level=str(fields.get("level") or FULL_LEVEL),
         work_item=int(fields["work_item"]) if fields.get("work_item") is not None else None,
         piece=str(fields.get("piece", "") or ""),
         egress=egress,
@@ -492,6 +514,7 @@ def _render(project: Project) -> str:
         "phase": project.phase,
         "status": project.status,
         "execution": project.execution,
+        "level": project.level,
     }
     # Optional fields appear only once they hold something, so a project file
     # written before they existed does not sprout empty keys on rewrite.

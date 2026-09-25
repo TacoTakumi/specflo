@@ -479,14 +479,29 @@ def new(
         metavar="<name>",
         help="Create the project on this registered daemon instead of in the checkout.",
     ),
+    level: str = typer.Option(
+        projects.FULL_LEVEL,
+        "--level",
+        metavar="|".join(projects.LEVELS),
+        help="How much ceremony the project gets (default: full).",
+    ),
 ) -> None:
     """Create project <name> and make it active."""
     root = _require_root()
     cfg = config.load_config(root)
     try:
+        projects.validate_level(level)
+        if remote is not None and level != projects.FULL_LEVEL:
+            raise SpecfloError(
+                f"Level {level!r} is local only; a project on a remote is full."
+            )
         slug = projects.slugify(name)
         svc = _service_for_new_project(root, cfg, slug, remote)
-        project = svc.create_project(name, summary=summary, execution=execution)
+        # Only a light level is passed on, so a remote never sees the key.
+        extra = {} if level == projects.FULL_LEVEL else {"level": level}
+        project = svc.create_project(
+            name, summary=summary, execution=execution, **extra
+        )
         if remote is not None:
             config.record_hosted_project(root, project.slug, remote)
         cfg.active_project = project.slug

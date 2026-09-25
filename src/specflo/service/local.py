@@ -17,7 +17,7 @@ from ..brainstorm import Decision
 from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
-from ..projects import LINEAR_EXECUTION, Project
+from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
 from ..spec import Requirement
 from ..validators import VALIDATORS
 from .protocol import ExecutionGraph
@@ -80,10 +80,11 @@ class LocalProjectService:
         execution: str = LINEAR_EXECUTION,
         work_item: int | None = None,
         piece: str | None = None,
+        level: str = FULL_LEVEL,
     ) -> Project:
         return projects.create_project(
             self.root, self.cfg, name, summary=summary, execution=execution,
-            work_item=work_item, piece=piece,
+            work_item=work_item, piece=piece, level=level,
         )
 
     def load_project(self, slug: str) -> Project:

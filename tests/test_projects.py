@@ -699,3 +699,39 @@ def test_the_project_record_names_the_same_classes_as_the_pool():
     from specflo.pool.definitions import EGRESS_CLASSES
 
     assert projects.EGRESS_CLASSES == EGRESS_CLASSES
+
+
+# --- levels: how much ceremony a project gets --------------------------------
+
+
+@pytest.mark.parametrize("level", ["quick", "fast", "full"])
+def test_create_project_records_the_level(root, cfg, level):
+    project = projects.create_project(root, cfg, "Thing", level=level)
+    assert project.level == level
+    text = (root / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert f"level: {level}" in text.split("---")[1]
+    assert projects.load_project(root, cfg, "thing").level == level
+
+
+def test_create_project_defaults_the_level_to_full(root, cfg):
+    assert projects.create_project(root, cfg, "Thing").level == "full"
+
+
+def test_create_project_rejects_an_unknown_level_naming_all_three(root, cfg):
+    with pytest.raises(SpecfloError) as exc:
+        projects.create_project(root, cfg, "Thing", level="huge")
+    for level in ("quick", "fast", "full"):
+        assert level in str(exc.value)
+    assert not (root / "docs" / "projects" / "thing").exists()
+
+
+def test_a_project_without_a_level_key_reads_as_full(root, cfg):
+    projects.create_project(root, cfg, "Thing")
+    path = root / "docs" / "projects" / "thing" / "project.md"
+    path.write_text("\n".join(
+        line for line in path.read_text().splitlines()
+        if not line.startswith("level:")
+    ) + "\n")
+
+    assert "level:" not in path.read_text()
+    assert projects.load_project(root, cfg, "thing").level == "full"

@@ -18,7 +18,7 @@ from typing import Protocol, TypedDict, runtime_checkable
 
 from ..brainstorm import Decision
 from ..plan import Milestone, Task
-from ..projects import LINEAR_EXECUTION, Project
+from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
 from ..spec import Requirement
 
 
@@ -43,10 +43,12 @@ class ProjectService(Protocol):
         execution: str = LINEAR_EXECUTION,
         work_item: int | None = None,
         piece: str | None = None,
+        level: str = FULL_LEVEL,
     ) -> Project:
         """Create the project container; the caller moves the active pointer.
 
-        ``work_item`` and ``piece`` record what a spawned project came from.
+        ``work_item`` and ``piece`` record what a spawned project came from;
+        ``level`` is how much ceremony it gets.
         """
         ...
 

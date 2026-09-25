@@ -4807,3 +4807,38 @@ def test_the_gate_survives_shelve_resume_summary_and_advance_through_the_cli(cwd
     front = yaml.safe_load(project_file.read_text().split("---")[1])
     assert front["phase"] == "spec" and front["gate"] == taken
     assert "developer" in runner.invoke(app, ["doc", "show", "project"]).stdout
+
+
+# --- levels: new --level ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "args, level",
+    [(["--level", "quick"], "quick"), (["--level", "fast"], "fast"), ([], "full")],
+)
+def test_new_records_the_level(tmp_path, monkeypatch, args, level):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing", *args])
+    assert result.exit_code == 0, result.output
+    text = (tmp_path / "docs" / "projects" / "thing" / "project.md").read_text()
+    assert f"level: {level}" in text
+
+
+def test_new_with_an_unknown_level_names_the_three_and_creates_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing", "--level", "huge"])
+    assert result.exit_code != 0
+    for level in ("quick", "fast", "full"):
+        assert level in result.output
+    assert not (tmp_path / "docs" / "projects" / "thing").exists()
+
+
+def test_new_refuses_a_light_level_on_a_remote(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    result = runner.invoke(app, ["new", "Thing", "--level", "quick", "--remote", "x"])
+    assert result.exit_code != 0
+    assert "local only" in result.output
+    assert not (tmp_path / "docs" / "projects" / "thing").exists()

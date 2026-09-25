@@ -374,7 +374,10 @@ _ARTIFACT_MODULES = {
     "specflo.checkpoint", "specflo.status", "specflo.doc", "specflo.index",
 }
 _ARTIFACT_MODULE_ALLOWLIST = {
-    "specflo.projects": {"slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS"},
+    "specflo.projects": {
+        "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
+        "LEVELS", "FULL_LEVEL", "validate_level",
+    },
     "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
     "specflo.spec": {"SPEC_FILENAME"},
     "specflo.plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
