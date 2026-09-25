@@ -115,6 +115,14 @@ class LocalProjectService:
         return projects.set_execution(self.root, self.cfg, slug, mode)
 
     def set_level(self, slug: str, level: str) -> tuple[Project, list[str]]:
+        current = projects.load_project(self.root, self.cfg, slug)
+        if (
+            current.level == projects.QUICK_LEVEL
+            and not brief.brief_path(self.root, self.cfg, slug).is_file()
+        ):
+            raise SpecfloError(
+                f"Project {slug!r} is at quick level but has no brief.md to carry up."
+            )
         project, previous = projects.set_level(self.root, self.cfg, slug, level)
         if previous == projects.QUICK_LEVEL:
             brief.seed_fast_documents(self.root, self.cfg, slug)

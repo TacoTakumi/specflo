@@ -158,6 +158,15 @@ def _complete_line() -> str:
     return f"{CLEAR_POINT_MARKER} - this project is complete."
 
 
+def build_level_end(do_next: str) -> str:
+    """The continuation after a ladder level completes: the run goes on.
+
+    The level's project reads as complete, but the ladder climbs on the next
+    auto pass, so the clear-point names the resume paths as for any live run.
+    """
+    return "\n".join([do_next, _continue_line()])
+
+
 def build_continuation(phase: str, do_next: str, complete: bool = False) -> str:
     """Render the continuation for ``phase`` with its derived ``do_next`` hint.
 

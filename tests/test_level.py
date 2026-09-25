@@ -221,3 +221,17 @@ def test_level_fast_on_an_empty_brief_seeds_no_requirement_or_task(tmp_path, mon
     assert "### REQ-" not in (_project_dir(tmp_path) / "spec.md").read_text()
     assert "### T-" not in (_project_dir(tmp_path) / "plan.md").read_text()
     assert _load(tmp_path).level == "fast"
+
+
+def test_level_on_a_quick_project_without_its_brief_changes_nothing(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _ok(["init"])
+    _ok(["new", "Thing", "--level", "quick"])
+    (_project_dir(tmp_path) / "brief.md").unlink()
+    before = (_project_dir(tmp_path) / "project.md").read_bytes()
+
+    result = runner.invoke(app, ["level", "fast"])
+
+    assert result.exit_code != 0
+    assert "brief.md" in result.output
+    assert (_project_dir(tmp_path) / "project.md").read_bytes() == before

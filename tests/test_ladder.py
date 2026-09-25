@@ -388,3 +388,76 @@ def test_a_ladder_starts_with_the_projects_dir_outside_the_repo(repo, tmp_path_f
 
     assert result.exit_code == 0, result.output
     assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/quick"
+
+
+# --- what an agent reads at a level boundary -------------------------------------------
+
+
+def test_the_end_of_a_ladder_level_does_not_read_as_the_end_of_the_run(repo):
+    from specflo import hook
+    _ladder_at_quick(repo)
+    payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
+    assert "ends only that level" in payload
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
+    _work(repo, "app.txt", "hi\n")
+    _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+
+    advanced = _ok(["advance"]).output
+
+    assert "this project is complete" not in advanced
+    assert "specflo auto" in advanced
+    assert "specflo auto" in hook.reseed_text(repo)
+
+
+def test_a_fast_ladder_level_is_told_to_advance_past_the_approval(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    _ok(["decision", "add", "--text", "keep it small", "--rationale", "weighed a, b"])
+    _ok(["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "none\n")
+    _ok(["advance"])
+    _ok(["section", "set", "spec", "In scope", "--stdin"], "- the greeting.\n")
+    _ok(["section", "set", "spec", "Out of scope", "--stdin"], "- the rest.\n")
+    _ok(["advance"])
+
+    payload = json.loads(_ok(["auto", "--json"]).output)["payload"]
+
+    assert "one approval before execute too: advance when the plan validates" in payload
+
+
+def test_a_blocked_ladder_is_not_a_run_under_way(repo):
+    _ladder_at_quick(repo)
+    git(repo, "branch", "specflo/thing/fast")
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+
+    assert json.loads(_ok(["status", "--json"]).output)["auto_run"]["under_way"] is False
+
+
+def test_a_full_level_reached_by_hand_blocks_the_ladder_end_with_a_reason(repo):
+    _ladder_at_quick(repo)
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the greeting.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- app.txt says hi\n")
+    _ok(["section", "set", "brief", "Proof", "--stdin"], "cat app.txt -> hi\n")
+    _ok(["level", "full"])
+    _finish_fast(repo)
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (result["stop"], result["reason"]) == (True, auto.STOP_LADDER_BLOCKED)
+    assert "changed outside the ladder" in result["payload"]
+    assert json.loads(_ok(["status", "--json"]).output)["auto_run"]["under_way"] is False
+
+
+def test_guard_auto_off_at_fast_level_stops_the_ladder(repo):
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    _ok(["auto", "--off"])
+    before = _branches(repo)
+
+    result = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (result["stop"], result["reason"]) == (True, auto.STOP_KILL_SWITCH)
+    assert _branches(repo) == before

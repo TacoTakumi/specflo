@@ -1490,10 +1490,13 @@ def advance(
         # Terminal continuation: a clear-point with no continue-instruction and
         # neither resume command named (REQ-07). Rendered once so the JSON field
         # and the prose carry the identical text (REQ-12).
-        finished = workflow.next_step(from_phase, complete=True)
-        if auto_module.ladder_climb_pending(root, cfg, updated):
-            finished = auto_module.LADDER_CLIMB_STEP
-        cont = continuation.build_continuation(from_phase, finished, complete=True)
+        climbing = auto_module.ladder_climb_pending(root, cfg, updated)
+        if climbing:
+            cont = continuation.build_level_end(auto_module.LADDER_CLIMB_STEP)
+        else:
+            cont = continuation.build_continuation(
+                from_phase, workflow.next_step(from_phase, complete=True), complete=True
+            )
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
@@ -1501,10 +1504,11 @@ def advance(
                  "checkpoint_locator": cp_locator, "continuation": cont}))
         else:
             typer.echo(f"Completed project '{slug}'.")
-            typer.echo(
-                'Revise the summary to describe what shipped:'
-                ' `specflo summary "<one line>"`.'
-            )
+            if not climbing:
+                typer.echo(
+                    'Revise the summary to describe what shipped:'
+                    ' `specflo summary "<one line>"`.'
+                )
             if cp_locator is not None:
                 typer.echo(f"Checkpoint saved: {cp_locator}")
             typer.echo(cont)

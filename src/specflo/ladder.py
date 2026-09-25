@@ -74,7 +74,7 @@ def _check_start(root: Path, cfg: SpecfloConfig, project) -> None:
     projects_root = (root / cfg.projects_dir).resolve()
     if projects_root.is_relative_to(root.resolve()):
         excludes.append(f":(exclude){projects_root.relative_to(root.resolve()).as_posix()}")
-    dirty = _git(root, "status", "--porcelain", "--untracked-files=no", "--", ".", *excludes)
+    dirty = _git(root, "status", "--porcelain", "--untracked-files=no", "--", ":/", *excludes)
     if dirty:
         raise SpecfloError(
             "A ladder needs a clean tree: commit or stash these tracked changes"
@@ -268,6 +268,12 @@ def finish(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
     """Write the full level's row and return the hand-off for the finished ladder."""
     from .config import display_path
 
+    missing = [level for level in projects.LEVELS if level not in record["levels"]]
+    if missing:
+        raise SpecfloError(
+            f"The ladder has no record of the {', '.join(missing)} level: the level was"
+            " changed outside the ladder, so it has no branch of its own to compare."
+        )
     end_level(root, cfg, slug, record, projects.FULL_LEVEL)
     branches = ", ".join(f"`{record['levels'][level]['branch']}`" for level in projects.LEVELS)
     where = display_path(ladder_path(root, cfg, slug), root)

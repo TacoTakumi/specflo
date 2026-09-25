@@ -17,7 +17,7 @@ import json
 import os
 from pathlib import Path
 
-from . import checkpoint, config, continuation, plan, status
+from . import auto, checkpoint, config, continuation, plan, status
 from .continuation import CONFIRMATION_DIRECTIVE, DIRECT_DIRECTIVE
 from .projects import COMPLETE_STATUS, SHELVED_STATUS
 from .errors import SpecfloError
@@ -154,7 +154,11 @@ def _resume(cwd: Path, *, direct: bool, directory_source: str | None) -> tuple:
     if found is None:
         return "", None
     root, _cfg, service, project = found
-    if project.status in (COMPLETE_STATUS, SHELVED_STATUS):
+    # A ladder level that completed is a pause between levels: it reseeds.
+    if project.status == SHELVED_STATUS or (
+        project.status == COMPLETE_STATUS
+        and not auto.ladder_climb_pending(root, _cfg, project)
+    ):
         return "", None
     payload = service.build_checkpoint(project.slug)
     if config.hosting_remote(root, project.slug) is not None:

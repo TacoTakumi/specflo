@@ -234,7 +234,7 @@ def ladder_climb_pending(root: Path, cfg: config.SpecfloConfig, project) -> bool
         if ladder_module.next_level(project.level) is None:
             return False
         state = load_run_state(root, cfg, project.slug)
-        return bool(state.get("ladder")) and not state.get("killed")
+        return bool(state.get("ladder")) and not (state.get("killed") or state.get("ended"))
     except Exception:
         return False
 
@@ -367,7 +367,9 @@ def _boundary_override_clause() -> str:
         "the wait-for-ready HARD-GATE of the specflo-brainstorm/spec/plan/execute "
         "skills are SUPERSEDED. Do not stop to ask at a phase boundary; once a phase "
         "validates, advance and keep going across "
-        "brainstorm -> spec -> plan -> execute on your own. This override applies "
+        "brainstorm -> spec -> plan -> execute on your own. It covers a fast-level "
+        "project's one approval before execute too: advance when the plan validates. "
+        "This override applies "
         "only under this auto bootstrap - the manual pipeline's pause is unchanged."
     )
 
@@ -553,8 +555,11 @@ def _ladder_clause(project) -> str:
         f" {project.level} level on branch `{ladder_module.branch_name(project.slug, project.level)}`."
         " Commit this level's work on that branch and do not switch branches:"
         " when the level completes, the next `specflo auto` pass cuts the next"
-        " level's branch and moves the project up. Never push, and never delete,"
-        " rename or reset a branch."
+        " level's branch and moves the project up. At quick and fast level,"
+        f' `specflo advance` printing "{COMPLETION_SIGNAL}" ends only that level, not'
+        " the run: do not stop, run `specflo auto` again. The run ends when a pass"
+        " says the ladder is complete. Never push, and never delete, rename or reset"
+        " a branch."
     )
 
 
@@ -716,7 +721,11 @@ def auto_pass_result(
             directive = AUTO_COMPLETE_DIRECTIVE
             if ladder is not None:
                 # The ladder's top level finished: its row closes ladder.md.
-                directive = ladder_module.finish(root, cfg, project.slug, ladder)
+                try:
+                    directive = ladder_module.finish(root, cfg, project.slug, ladder)
+                except SpecfloError as exc:
+                    _mark_run_ended(root, cfg, project.slug)
+                    return _pass_result(escalation_message(str(exc)), STOP_LADDER_BLOCKED)
                 state["ladder"] = ladder
                 save_run_state(root, cfg, project.slug, state)
             _mark_run_ended(root, cfg, project.slug)
@@ -730,6 +739,8 @@ def auto_pass_result(
             return _pass_result(KILL_DIRECTIVE, STOP_KILL_SWITCH)
         # A ladder level that completed: cut the next branch and move up, then
         # carry on with this pass at the new level.
+        # A pass that reaches the cap stops without cutting a branch first.
+        climbing = climbing and int(state.get("passes", 0)) + 1 < cap
         if climbing:
             try:
                 ladder_module.climb(root, cfg, project.slug, ladder)
