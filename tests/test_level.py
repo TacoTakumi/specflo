@@ -192,3 +192,32 @@ def test_level_quick_to_full_equals_fast_then_full(tmp_path, monkeypatch):
     for name in ("brainstorm.md", "spec.md", "plan.md", "brief.md", "project.md"):
         assert (_project_dir(two) / name).read_bytes() == (_project_dir(one) / name).read_bytes(), name
     monkeypatch.chdir(tmp_path)
+
+
+def test_level_fast_keeps_every_check_of_the_brief(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _ok(["init"])
+    _ok(["new", "Thing", "--level", "quick"])
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Do two things.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- check A\n- check B\n")
+
+    _ok(["level", "fast"])
+
+    spec = (_project_dir(tmp_path) / "spec.md").read_text()
+    assert "### REQ-01 — check A" in spec and "### REQ-02 — check B" in spec
+    brainstorm = (_project_dir(tmp_path) / "brainstorm.md").read_text()
+    assert "check B" in brainstorm
+    plan_text = (_project_dir(tmp_path) / "plan.md").read_text()
+    assert "Implements: REQ-01" in plan_text and "### T-02" not in plan_text
+
+
+def test_level_fast_on_an_empty_brief_seeds_no_requirement_or_task(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _ok(["init"])
+    _ok(["new", "Thing", "--level", "quick"])
+
+    _ok(["level", "fast"])
+
+    assert "### REQ-" not in (_project_dir(tmp_path) / "spec.md").read_text()
+    assert "### T-" not in (_project_dir(tmp_path) / "plan.md").read_text()
+    assert _load(tmp_path).level == "fast"

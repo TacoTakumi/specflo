@@ -169,9 +169,11 @@ def seed_fast_documents(root: Path, cfg: SpecfloConfig, slug: str) -> None:
     """Seed the three fast-level documents from a quick project's brief.
 
     The goal and every Deferred item go into the brainstorm's Current
-    understanding, the Done when check becomes the spec's first requirement,
-    and one task implements it, done when the brief has proof. The brief
-    itself is left as it is. A document that already exists is not seeded.
+    understanding. Each Done when check becomes a requirement, in order, and
+    one task implements the first, done when the brief has proof; any later
+    check is named in the understanding as work still to plan. A brief with no
+    check seeds no requirement and no task. The brief itself is left as it is,
+    and a document that already exists is not seeded.
     """
     from . import brainstorm, plan, spec
 
@@ -180,29 +182,34 @@ def seed_fast_documents(root: Path, cfg: SpecfloConfig, slug: str) -> None:
     def body(title: str) -> str:
         return markdown.strip_comments(markdown.section_body(doc, f"## {title}") or "").strip()
 
-    goal = body("Goal")
-    checks = [re.sub(r"^(?:[-*]|\d+[.)])\s+", "", item) for item in _list_items(body("Done when"))]
-    check = checks[0] if checks else goal
+    goal = " ".join(body("Goal").split())
+    items = _list_items(body("Done when"))
+    checks = [" ".join(re.sub(r"^(?:[-*]|\d+[.)])\s+", "", item).split()) for item in items]
     deferred = _list_items(body("Deferred"))
     proof = body("Proof")
 
     bs_path, created = brainstorm.start_brainstorm(root, cfg, slug)
     if created:
-        understanding = [f"Carried from the quick brief. Goal: {goal}", ""]
+        understanding = ["Carried from the quick brief." + (f" Goal: {goal}" if goal else "")]
+        if checks[1:]:
+            understanding += ["", "Checks beyond the first, now requirements with no task yet:"]
+            understanding += [f"- {check}" for check in checks[1:]]
         if deferred:
-            understanding.append("Deferred work to pick up at this level:")
-            understanding.extend(deferred)
+            understanding += ["", "Deferred work to pick up at this level:", *deferred]
         text = bs_path.read_text()
         bs_path.write_text(markdown.replace_section_body(
             text, "## Current understanding", "\n".join(understanding) + "\n"
         ))
+    requirement_ids = []
     if spec.start_spec(root, cfg, slug)[1]:
-        spec.add_requirement(root, cfg, slug, text=" ".join(check.split()), acceptance=check)
-    if plan.start_plan(root, cfg, slug)[1]:
-        plan.add_task(
-            root, cfg, slug, text=" ".join((goal or check).split()), acceptance=check,
-            verify="The brief's Proof section", implements=["REQ-01"],
+        for check in checks:
+            requirement = spec.add_requirement(root, cfg, slug, text=check, acceptance=check)
+            requirement_ids.append(requirement.id)
+    if plan.start_plan(root, cfg, slug)[1] and requirement_ids:
+        task = plan.add_task(
+            root, cfg, slug, text=goal or checks[0], acceptance=checks[0],
+            verify="The brief's Proof section", implements=[requirement_ids[0]],
         )
         if proof:
-            plan.start_task(root, cfg, slug, "T-01")
-            plan.done_task(root, cfg, slug, "T-01", note="Proof carried from the quick brief.")
+            plan.start_task(root, cfg, slug, task.id)
+            plan.done_task(root, cfg, slug, task.id, note="Proof carried from the quick brief.")
