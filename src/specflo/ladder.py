@@ -109,3 +109,73 @@ def start(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
             },
         },
     }
+
+
+def next_level(level: str) -> str | None:
+    """The level a ladder climbs to after ``level``; None after full."""
+    index = projects.LEVELS.index(level)
+    return projects.LEVELS[index + 1] if index + 1 < len(projects.LEVELS) else None
+
+
+def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
+    """Append ``level``'s row to ladder.md, once."""
+    entry = record["levels"][level]
+    if entry.get("row_written"):
+        return
+    path = ladder_path(root, cfg, slug)
+    cells = [level, f"`{entry['branch']}`"]
+    with path.open("a") as handle:
+        handle.write("| " + " | ".join(cells) + " |\n")
+    entry["row_written"] = True
+
+
+def end_level(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
+    """Record where and when ``level`` ended, and write its row."""
+    entry = record["levels"][level]
+    entry.setdefault("end_commit", _git(root, "rev-parse", "HEAD"))
+    entry.setdefault("ended", _now())
+    write_row(root, cfg, slug, record, level)
+
+
+def climb(root: Path, cfg: SpecfloConfig, slug: str, record: dict) -> str:
+    """End the completed level, cut the next level's branch, and move up.
+
+    The finished level's branch stays at its last commit. Returns the level
+    the project is now at.
+    """
+    from .service.resolve import local_service
+
+    level = projects.load_project(root, cfg, slug).level
+    target = next_level(level)
+    if target is None:
+        raise SpecfloError("A ladder at full level has nowhere to climb.")
+    end_level(root, cfg, slug, record, level)
+    branch = branch_name(slug, target)
+    _git(root, "checkout", "-q", "-b", branch)
+    local_service(root, cfg).set_level(slug, target)
+    record["levels"][target] = {
+        "branch": branch,
+        "start_commit": record["levels"][level]["end_commit"],
+        "started": _now(),
+    }
+    return target
+
+
+def cut_down_clause(level: str, outgrew: str) -> str:
+    """The instruction a ladder level over its cap gets in place of a stop."""
+    if level == projects.QUICK_LEVEL:
+        how = (
+            "keep one check in Done when and move the rest to the brief's Deferred"
+            " section"
+        )
+    else:
+        how = (
+            f"keep at most {projects.FAST_MAX_TASKS} tasks and"
+            f" {projects.FAST_MAX_DECISIONS} decisions; supersede the rest and list"
+            " them in the brainstorm's Out of scope / Deferred section"
+        )
+    return (
+        f"- Ladder run: this level is over its cap ({outgrew}). Do not stop and do"
+        f" not move up yourself: {how}. The ladder moves up when this level"
+        " completes, and the next level picks up the deferred work."
+    )

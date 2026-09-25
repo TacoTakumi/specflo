@@ -549,7 +549,9 @@ def start_ladder(cwd: Path | None = None) -> None:
     save_run_state(root, cfg, slug, state)
 
 
-def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: str) -> str:
+def _reseed_payload(
+    root: Path, cfg: config.SpecfloConfig, project, autonomy: str, extra: str | None = None
+) -> str:
     """Assemble the self-contained three-part reseed payload for a continuing pass.
 
     In order (REQ-03): (1) the auto-mode bootstrap for the current phase/autonomy;
@@ -565,6 +567,8 @@ def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: st
     bootstrap = auto_bootstrap(project.phase, autonomy=autonomy)
     if load_run_state(root, cfg, project.slug).get("ladder"):
         bootstrap += "\n" + _ladder_clause(project)
+    if extra:
+        bootstrap += "\n" + extra
     payload = checkpoint_module.build_checkpoint(root, project, cfg=cfg)
     checkpoint_text = checkpoint_module.render_checkpoint(payload)
     step = next_step_block(payload["phase"], payload["do_next"])
@@ -669,23 +673,39 @@ def auto_pass_result(
         if found is None:
             return _pass_result("", STOP_UNAVAILABLE)
         root, cfg, project = found
-        if project.status == COMPLETE_STATUS:
+        state = load_run_state(root, cfg, project.slug)
+        ladder = state.get("ladder")
+        climbing = (
+            ladder is not None and project.status == COMPLETE_STATUS
+            and ladder_module.next_level(project.level) is not None
+        )
+        if project.status == COMPLETE_STATUS and not climbing:
             _mark_run_ended(root, cfg, project.slug)
             return _pass_result(AUTO_COMPLETE_DIRECTIVE, STOP_PROJECT_COMPLETE)
         cap = resolve_max_passes(max_passes, getattr(cfg, "auto_max_passes", None))
-        state = load_run_state(root, cfg, project.slug)
         # Kill switch (REQ-16): a set auto-off flag halts before this counts as a
         # pass - a killed pass is a brake, not forward progress, so it neither
         # advances the counter nor emits a continue directive.
         if state.get("killed"):
             _mark_run_ended(root, cfg, project.slug)
             return _pass_result(KILL_DIRECTIVE, STOP_KILL_SWITCH)
+        # A ladder level that completed: cut the next branch and move up, then
+        # carry on with this pass at the new level.
+        if climbing:
+            ladder_module.climb(root, cfg, project.slug, ladder)
+            state["ladder"] = ladder
+            save_run_state(root, cfg, project.slug, state)
+            project = projects.load_project(root, cfg, project.slug)
         # Outgrown (a fact of the documents, so checked before this counts as
-        # a pass): the run stops and hands the move up to the user.
+        # a pass): a plain run stops and hands the move up to the user; a
+        # ladder cuts the level down and carries on.
+        extra = None
         outgrew = validators.outgrown(root, cfg, project)
         if outgrew is not None:
-            _mark_run_ended(root, cfg, project.slug)
-            return _pass_result(escalation_message(outgrew), STOP_OUTGREW_LEVEL)
+            if ladder is None:
+                _mark_run_ended(root, cfg, project.slug)
+                return _pass_result(escalation_message(outgrew), STOP_OUTGREW_LEVEL)
+            extra = ladder_module.cut_down_clause(project.level, outgrew)
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # This pass continues the run, so any end marker left by an earlier stop
@@ -718,7 +738,7 @@ def auto_pass_result(
                 STOP_PASS_CAP,
             )
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
-        return _pass_result(_reseed_payload(root, cfg, project, level), None)
+        return _pass_result(_reseed_payload(root, cfg, project, level, extra=extra), None)
     except Exception:
         return _pass_result("", STOP_UNAVAILABLE)
 
