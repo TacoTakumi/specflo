@@ -206,6 +206,19 @@ before done, annotate after.**
   `specflo task reopen T-NN --note "…"` record the note in the same write as the
   state change.
 
+## Levels
+
+At quick level the project is worked with the `specflo-quick` skill, not this
+one. At fast level this loop runs as written, with one addition.
+
+**Uncovered work stops the loop.** At quick or fast level, when you find work
+the brief or the plan does not cover, stop. Do not add tasks for it, and do not
+do it on the side. Offer the user the move up: `specflo level fast` from quick,
+`specflo level full` from fast. The move keeps every document and every done
+task. Small, separate work can instead go to the deferred list (the brief's
+Deferred section, or the brainstorm's Out of scope / Deferred section) with
+the user's agreement.
+
 ## Anti-sycophancy
 
 Do not open with "All done!", "Looks perfect", or similar. State what's

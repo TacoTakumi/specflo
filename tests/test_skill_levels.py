@@ -64,3 +64,16 @@ def test_the_phase_skills_carry_a_fast_level_section():
             "have not seen",
         ):
             assert phrase in section, (name, phrase)
+
+
+def test_the_execute_skill_stops_on_uncovered_work_at_light_levels():
+    text = _skill("specflo-execute")
+    assert "## Levels" in text
+    section = " ".join(text.split("## Levels", 1)[1].split("\n## ", 1)[0].split())
+    for phrase in (
+        "Uncovered work stops the loop",
+        "specflo level fast",
+        "specflo level full",
+        "Do not add tasks",
+    ):
+        assert phrase in section, phrase
