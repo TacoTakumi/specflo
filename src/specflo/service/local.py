@@ -116,9 +116,11 @@ class LocalProjectService:
 
     def set_level(self, slug: str, level: str) -> tuple[Project, list[str]]:
         project, previous = projects.set_level(self.root, self.cfg, slug, level)
+        if previous == projects.QUICK_LEVEL:
+            brief.seed_fast_documents(self.root, self.cfg, slug)
         review: list[str] = []
         path = brainstorm.brainstorm_path(self.root, self.cfg, slug)
-        if previous == projects.FAST_LEVEL and path.is_file():
+        if project.level == projects.FULL_LEVEL and path.is_file():
             review = brainstorm.active_decision_ids(path.read_text())
         return project, review
 

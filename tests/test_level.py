@@ -126,3 +126,49 @@ def test_level_on_a_full_project_refuses(tmp_path, monkeypatch):
 
     assert result.exit_code != 0
     assert "only moves up" in result.output
+
+
+# --- quick to fast: the brief seeds the three documents ------------------------------
+
+
+def _quick_project_with_brief(tmp_path, proof="ran it: ok\n", complete=True):
+    _ok(["init"])
+    _ok(["new", "Thing", "--level", "quick"])
+    _ok(["section", "set", "brief", "Goal", "--stdin"], "Fix the help typo.\n")
+    _ok(["section", "set", "brief", "Done when", "--stdin"], "- help shows 'workflow'\n")
+    _ok(["section", "set", "brief", "Deferred", "--stdin"], "- reword the epilog\n- add an example\n")
+    if proof is not None:
+        _ok(["section", "set", "brief", "Proof", "--stdin"], proof)
+        if complete:
+            _ok(["advance"])
+
+
+def test_level_fast_seeds_the_documents_from_the_brief(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project_with_brief(tmp_path)
+    brief_before = (_project_dir(tmp_path) / "brief.md").read_bytes()
+
+    _ok(["level", "fast"])
+
+    project = _load(tmp_path)
+    assert (project.level, project.phase, project.status) == ("fast", "brainstorm", "active")
+    brainstorm = (_project_dir(tmp_path) / "brainstorm.md").read_text()
+    understanding = brainstorm.split("## Current understanding", 1)[1].split("\n## ", 1)[0]
+    for text in ("Fix the help typo.", "reword the epilog", "add an example"):
+        assert text in understanding
+    spec = (_project_dir(tmp_path) / "spec.md").read_text()
+    assert "### REQ-01" in spec and "help shows 'workflow'" in spec.split("### REQ-01", 1)[1]
+    plan_text = (_project_dir(tmp_path) / "plan.md").read_text()
+    t01 = plan_text.split("### T-01", 1)[1]
+    assert "Implements: REQ-01" in t01 and "Progress: done" in t01
+    assert (_project_dir(tmp_path) / "brief.md").read_bytes() == brief_before
+
+
+def test_level_fast_leaves_t01_pending_without_proof(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project_with_brief(tmp_path, proof=None)
+
+    _ok(["level", "fast"])
+
+    t01 = (_project_dir(tmp_path) / "plan.md").read_text().split("### T-01", 1)[1]
+    assert "Progress: pending" in t01

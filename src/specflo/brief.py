@@ -157,3 +157,46 @@ def render_view(root: Path, cfg: SpecfloConfig, slug: str) -> str:
         for task in plan.list_tasks(root, cfg, slug):
             lines.append(f"- {task.id} - {task.text} [{task.progress}]")
     return "\n".join(lines) + "\n"
+
+
+def seed_fast_documents(root: Path, cfg: SpecfloConfig, slug: str) -> None:
+    """Seed the three fast-level documents from a quick project's brief.
+
+    The goal and every Deferred item go into the brainstorm's Current
+    understanding, the Done when check becomes the spec's first requirement,
+    and one task implements it, done when the brief has proof. The brief
+    itself is left as it is. A document that already exists is not seeded.
+    """
+    from . import brainstorm, plan, spec
+
+    doc = brief_path(root, cfg, slug).read_text()
+
+    def body(title: str) -> str:
+        return markdown.strip_comments(markdown.section_body(doc, f"## {title}") or "").strip()
+
+    goal = body("Goal")
+    checks = [re.sub(r"^(?:[-*]|\d+[.)])\s+", "", item) for item in _list_items(body("Done when"))]
+    check = checks[0] if checks else goal
+    deferred = _list_items(body("Deferred"))
+    proof = body("Proof")
+
+    bs_path, created = brainstorm.start_brainstorm(root, cfg, slug)
+    if created:
+        understanding = [f"Carried from the quick brief. Goal: {goal}", ""]
+        if deferred:
+            understanding.append("Deferred work to pick up at this level:")
+            understanding.extend(deferred)
+        text = bs_path.read_text()
+        bs_path.write_text(markdown.replace_section_body(
+            text, "## Current understanding", "\n".join(understanding) + "\n"
+        ))
+    if spec.start_spec(root, cfg, slug)[1]:
+        spec.add_requirement(root, cfg, slug, text=" ".join(check.split()), acceptance=check)
+    if plan.start_plan(root, cfg, slug)[1]:
+        plan.add_task(
+            root, cfg, slug, text=" ".join((goal or check).split()), acceptance=check,
+            verify="The brief's Proof section", implements=["REQ-01"],
+        )
+        if proof:
+            plan.start_task(root, cfg, slug, "T-01")
+            plan.done_task(root, cfg, slug, "T-01", note="Proof carried from the quick brief.")
