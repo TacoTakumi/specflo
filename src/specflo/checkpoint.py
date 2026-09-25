@@ -32,7 +32,7 @@ CHECKPOINT_FILENAME = "checkpoint.md"
 # Phase artifacts in pipeline order. ``checkpoint.md`` lists only the ones that
 # actually exist, so there are no dangling references and the list grows on its
 # own as later artifacts (plan.md, ...) land.
-_ARTIFACT_ORDER: list[str] = [BRAINSTORM_FILENAME, SPEC_FILENAME, "plan.md"]
+_ARTIFACT_ORDER: list[str] = [BRAINSTORM_FILENAME, SPEC_FILENAME, "plan.md", "brief.md"]
 
 
 def checkpoint_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:

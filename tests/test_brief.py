@@ -194,3 +194,12 @@ def test_advance_completes_a_quick_project_on_proof_without_a_review_round(
         tmp_path, config.load_config(tmp_path), "thing"
     ).status == "complete"
     assert not list(_project_dir(tmp_path).glob("review-*.md"))
+
+
+def test_the_checkpoint_of_a_quick_project_names_its_brief(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+
+    checkpoint_md = (_project_dir(tmp_path) / "checkpoint.md").read_text()
+    read_first = checkpoint_md.split("## Read first", 1)[1].split("## ", 1)[0]
+    assert "brief.md" in read_first
