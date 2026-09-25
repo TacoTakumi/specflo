@@ -161,3 +161,36 @@ def test_validate_brief_ignores_an_empty_deferred_section(tmp_path, monkeypatch)
     _fill(tmp_path)
     assert "## Deferred" in _brief_text(tmp_path)
     assert runner.invoke(app, ["validate", "brief"]).exit_code == 0
+
+
+# --- completing a quick project --------------------------------------------------
+
+
+def test_advance_refuses_a_quick_project_without_proof(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path, proof=None)
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code != 0
+    assert "Proof" in result.output
+    assert projects.load_project(
+        tmp_path, config.load_config(tmp_path), "thing"
+    ).status == "active"
+
+
+def test_advance_completes_a_quick_project_on_proof_without_a_review_round(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+    _fill(tmp_path)
+
+    result = _ok(["advance"])
+
+    assert "Completed project 'thing'." in result.output
+    assert projects.load_project(
+        tmp_path, config.load_config(tmp_path), "thing"
+    ).status == "complete"
+    assert not list(_project_dir(tmp_path).glob("review-*.md"))

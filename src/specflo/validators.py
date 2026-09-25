@@ -13,7 +13,7 @@ the phase's outstanding issues (empty when the artifact is ready).
 
 from __future__ import annotations
 
-from . import brainstorm, brief, plan, review, spec
+from . import brainstorm, brief, plan, projects, review, spec
 
 # Phase -> its real validator. Defined once; ``cli``'s validate/advance and the
 # read-path doneness derivation both reference this same object.
@@ -29,6 +29,10 @@ def execute_issues(root, cfg, slug) -> list[str]:
     earlier phases keep their own validators, so advancing brainstorm -> spec,
     spec -> plan and plan -> execute never asks about rounds (REQ-17).
     """
+    # A quick project is worked from its brief: the brief's own gate is the
+    # whole of it, with no plan to reconcile and no review round.
+    if projects.load_project(root, cfg, slug).level == projects.QUICK_LEVEL:
+        return brief.validate_brief(root, cfg, slug)
     issues = plan.reconcile_issues(root, cfg, slug)
     if issues:
         return issues
