@@ -24,11 +24,13 @@ from . import (
     checkpoint as checkpoint_module,
     config,
     continuation,
+    ladder as ladder_module,
     plan as plan_module,
     projects,
     spec as spec_module,
     validators,
 )
+from .errors import SpecfloError
 from .locking import lock_path_for, locked
 from .projects import COMPLETE_STATUS
 
@@ -511,6 +513,42 @@ def next_step_block(phase: str, do_next: str) -> str:
     return f"{NEXT_STEP_MARKER}\n{continuation.build_continuation(phase, do_next)}"
 
 
+# Opens the clause a ladder run adds to every pass's payload. Tests key on it.
+LADDER_MARKER = "Ladder run:"
+
+
+def _ladder_clause(project) -> str:
+    """What the agent needs to know on every pass of a ladder run."""
+    return (
+        f"- {LADDER_MARKER} this run climbs quick, then fast, then full; you are at"
+        f" {project.level} level on branch `{ladder_module.branch_name(project.slug, project.level)}`."
+        " Commit this level's work on that branch and do not switch branches:"
+        " when the level completes, the next `specflo auto` pass cuts the next"
+        " level's branch and moves the project up. Never push, and never delete,"
+        " rename or reset a branch."
+    )
+
+
+def start_ladder(cwd: Path | None = None) -> None:
+    """Start a ladder run on the active project, or raise naming why not.
+
+    Cuts the quick branch, writes ladder.md, and marks the run state as a
+    ladder, so every later pass of `specflo auto` continues it.
+    """
+    root = config.find_root(cwd or Path.cwd())
+    if root is None:
+        raise SpecfloError("Not a specflo project. Run `specflo init` first.")
+    cfg = config.load_config(root)
+    if cfg.active_project is None:
+        raise SpecfloError("No active project. Run `specflo new <name> --level quick`.")
+    slug = cfg.active_project
+    record = ladder_module.start(root, cfg, slug)
+    state = load_run_state(root, cfg, slug)
+    state["ladder"] = record
+    state.pop("ended", None)
+    save_run_state(root, cfg, slug, state)
+
+
 def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: str) -> str:
     """Assemble the self-contained three-part reseed payload for a continuing pass.
 
@@ -525,6 +563,8 @@ def _reseed_payload(root: Path, cfg: config.SpecfloConfig, project, autonomy: st
     it never touches the ask-first reseed or the advance gate (REQ-02).
     """
     bootstrap = auto_bootstrap(project.phase, autonomy=autonomy)
+    if load_run_state(root, cfg, project.slug).get("ladder"):
+        bootstrap += "\n" + _ladder_clause(project)
     payload = checkpoint_module.build_checkpoint(root, project, cfg=cfg)
     checkpoint_text = checkpoint_module.render_checkpoint(payload)
     step = next_step_block(payload["phase"], payload["do_next"])

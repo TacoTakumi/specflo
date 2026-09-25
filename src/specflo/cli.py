@@ -1103,6 +1103,13 @@ def auto_(
         "stop reason (kill-switch, pass-cap, stall, project-complete, outgrew-level, or "
         "unavailable; null while the run continues).",
     ),
+    ladder: bool = typer.Option(
+        False,
+        "--ladder",
+        help="Start a ladder run on a quick project: it climbs quick, fast and full "
+        "on stacked local branches (specflo/<slug>/<level>) and records each in "
+        "ladder.md. Later passes continue it without the flag.",
+    ),
 ) -> None:
     """Emit the auto-mode handoff payload for the active project (opt-in unattended run).
 
@@ -1119,6 +1126,8 @@ def auto_(
     """
     if off and on:
         raise _die("--off and --on are mutually exclusive.")
+    if ladder and (off or on):
+        raise _die("--ladder starts a run; it cannot be combined with --off/--on.")
     if json_output and (off or on):
         # The toggles run no pass, so there is no pass result to report.
         raise _die("--json reports a pass; it cannot be combined with --off/--on.")
@@ -1134,6 +1143,11 @@ def auto_(
         )
     if max_passes is not None and max_passes < 1:
         raise _die("--max-passes must be a positive integer.")
+    if ladder:
+        try:
+            auto_module.start_ladder()
+        except SpecfloError as exc:
+            raise _die(str(exc))
     result = auto_module.auto_pass_result(autonomy=autonomy, max_passes=max_passes)
     if json_output:
         typer.echo(json.dumps(result))
