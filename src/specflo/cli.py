@@ -2094,15 +2094,38 @@ def task_done(
     note: str = typer.Option(
         None, "--note", help="Record a note on the task in the same write."
     ),
+    closes: list[str] = typer.Option(
+        None, "--closes", metavar="<FU-NN>",
+        help="A follow-up this task settles; closed with the task as its Closed by"
+             " (repeatable).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mark a task done."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    closes = list(dict.fromkeys(closes or []))
+    if closes:
+        _require_checkout_project(root, slug)
+        try:
+            # Every follow-up is checked before the task changes, so a refusal
+            # leaves both the plan and the followup documents as they were.
+            followup_module.require_open(root, cfg, closes)
+        except SpecfloError as exc:
+            raise _die(str(exc))
     svc = _service(root, cfg)
     try:
         task = svc.done_task(slug, task_id, note=note)
     except SpecfloError as exc:
         raise _die(str(exc))
+    closed = []
+    for followup_id in closes:
+        try:
+            holder = followup_module.close_followup(
+                root, cfg, followup_id, note or task.text, by=f"{slug}/{task.id}"
+            )
+        except SpecfloError as exc:
+            raise _die(f"{task.id} is done, but {followup_id} was not closed: {exc}")
+        closed.append((followup_id, holder))
     written = _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
@@ -2111,8 +2134,12 @@ def task_done(
         # The continuation derives from the project's state, not from the file,
         # so it stands; the checkpoint location does not.
         cont = {**cont, "checkpoint": None, "checkpoint_locator": None}
+    if closes:
+        cont = {**cont, "closed_followups": [followup_id for followup_id, _ in closed]}
     _report_transition(task, json_output, extra=cont)
     if not json_output:
+        for followup_id, holder in closed:
+            typer.echo(f"Closed {followup_id} in {holder}/followup.")
         if cont["continuation"] is None:
             # Same fallback reopen takes: a seam that is a clear-point stays one
             # even when the next step is underivable, so a harness grepping the

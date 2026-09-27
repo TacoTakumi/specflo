@@ -323,6 +323,16 @@ def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False)
     return sorted(entries, key=lambda entry: int(entry.id.removeprefix("FU-")))
 
 
+def require_open(root: Path, cfg: SpecfloConfig, followup_ids: list[str]) -> None:
+    """Refuse, naming the first one, when any of ``followup_ids`` has no open entry."""
+    for followup_id in followup_ids:
+        entry = show_followup(root, cfg, followup_id)
+        if entry.status != "open":
+            raise SpecfloError(
+                f"{followup_id} in {entry.project}/followup is {entry.status}, not open."
+            )
+
+
 def show_followup(root: Path, cfg: SpecfloConfig, followup_id: str) -> FollowUp:
     """The entry ``followup_id``, open or closed, in whichever project holds it.
 

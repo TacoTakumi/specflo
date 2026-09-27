@@ -381,6 +381,69 @@ def test_close_without_by_writes_no_closed_by_line(tmp_path, monkeypatch):
     assert "- Closed by:" not in _doc(root, "alpha")
 
 
+# --- task done --closes -----------------------------------------------------------
+
+
+def _task_in_progress(tmp_path, monkeypatch):
+    """Alpha active with T-01 in progress, Beta beside it."""
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    _with_task(root, cfg, "alpha")
+    plan.start_task(root, cfg, "alpha", "T-01", today="2026-09-27")
+    return root, cfg
+
+
+def _progress(root, cfg):
+    return plan.list_tasks(root, cfg, "alpha")[0].progress
+
+
+def test_task_done_closes_each_named_followup_with_the_task_and_its_note(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+    followup.add_followup(root, cfg, "alpha", "Two", "Y")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--note", "Built it",
+                                 "--closes", "FU-01", "--closes", "FU-02"])
+
+    assert result.exit_code == 0, result.output
+    assert _progress(root, cfg) == "done"
+    today = datetime.date.today().isoformat()
+    closed = f"- Status: closed\n- Closed: {today}: Built it\n- Closed by: alpha/T-01\n"
+    assert f"### FU-01 - One\n- Do: X\n{closed}" in _doc(root, "beta")
+    assert f"### FU-02 - Two\n- Do: Y\n{closed}" in _doc(root, "alpha")
+
+
+def test_task_done_without_a_note_closes_with_the_task_title(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])
+
+    assert result.exit_code == 0, result.output
+    today = datetime.date.today().isoformat()
+    assert f"- Closed: {today}: build it\n- Closed by: alpha/T-01\n" in _doc(root, "beta")
+
+
+def test_task_done_refuses_a_followup_that_is_not_open_before_the_task_changes(
+    tmp_path, monkeypatch
+):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "Open", "X")
+    followup.add_followup(root, cfg, "beta", "Closed", "Y")
+    followup.close_followup(root, cfg, "FU-02", "Done")
+    before = _all_docs(root)
+    plan_before = plan.plan_path(root, cfg, "alpha").read_bytes()
+
+    for closes in (["FU-01", "FU-02"], ["FU-01", "FU-99"]):
+        args = [arg for fu in closes for arg in ("--closes", fu)]
+        result = runner.invoke(app, ["task", "done", "T-01", *args])
+        assert result.exit_code != 0, closes
+        assert closes[1] in result.output, closes
+        assert _progress(root, cfg) == "in_progress", closes
+        assert _all_docs(root) == before, closes
+        assert plan.plan_path(root, cfg, "alpha").read_bytes() == plan_before, closes
+
+
 # --- list ---------------------------------------------------------------------
 
 
