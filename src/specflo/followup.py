@@ -241,6 +241,8 @@ def resolve_closed_by(root: Path, cfg: SpecfloConfig, ref: str) -> str:
             tasks = plan.list_tasks(root, cfg, slug, include_superseded=True)
         except SpecfloError:
             tasks = []
+        except (OSError, UnicodeDecodeError) as exc:
+            raise SpecfloError(f"--by {ref}: cannot read the plan of {slug!r}: {exc}.") from exc
         if task_id not in {task.id for task in tasks}:
             raise SpecfloError(f"--by {ref}: project {slug!r} has no task {task_id} in its plan.")
         return ref

@@ -2121,19 +2121,29 @@ def task_done(
     # The task records its note on one line; the close gets that same line.
     # A task title can be blank, and a close needs a note, so it never gets "".
     close_note = plan.note_text(note) if note else (task.text or "Task done.")
+    failed = []
     for followup_id in closes:
         try:
             holder = followup_module.close_followup(
                 root, cfg, followup_id, close_note, by=f"{slug}/{task.id}"
             )
         except (SpecfloError, OSError) as exc:
-            # The task is saved already: say what did not close, never a traceback.
-            _refresh_checkpoint(svc, slug)
-            message = f"{task.id} is done, but {followup_id} was not closed: {exc}"
-            if closed:
-                message += f" Closed before it: {', '.join(i for i, _ in closed)}."
-            raise _die(message)
+            # The task is saved already: try the rest, then say what did not
+            # close and what did, never a traceback.
+            failed.append((followup_id, exc))
+            continue
         closed.append((followup_id, holder))
+    if failed:
+        _refresh_checkpoint(svc, slug)
+        names = ", ".join(i for i, _ in failed)
+        if len(failed) == 1:
+            message = f"{task.id} is done, but {names} was not closed: {failed[0][1]}"
+        else:
+            reasons = "; ".join(f"{i}: {exc}" for i, exc in failed)
+            message = f"{task.id} is done, but {names} were not closed: {reasons}"
+        if closed:
+            message += f" Closed: {', '.join(i for i, _ in closed)}."
+        raise _die(message)
     written = _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.

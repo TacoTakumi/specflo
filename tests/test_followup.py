@@ -395,6 +395,21 @@ def test_close_by_a_word_that_names_a_project_and_a_commit_names_the_project(
     assert "- Closed by: alpha\n" in _doc(root, "alpha")
 
 
+def test_close_by_a_task_of_a_plan_that_cannot_be_read_is_refused(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    _with_task(root, cfg, "alpha")
+    plan.plan_path(root, cfg, "alpha").write_bytes(b"\xff\xfe broken")
+    followup.add_followup(root, cfg, "beta", "T", "X")
+    before = _all_docs(root)
+
+    result = _close("FU-01", "--note", "Done", "--by", "alpha/T-01")
+
+    assert result.exit_code != 0
+    assert "alpha/T-01" in result.output
+    assert _all_docs(root) == before
+
+
 def test_close_without_by_writes_no_closed_by_line(tmp_path, monkeypatch):
     root = _checkout(tmp_path, monkeypatch, "Alpha")
     cfg = config.load_config(root)
@@ -508,6 +523,30 @@ def test_task_done_that_fails_a_later_close_names_the_ones_it_closed(tmp_path, m
     assert result.exit_code != 0
     message = result.output.split("FU-02 was not closed", 1)[1]
     assert "FU-01" in message
+
+
+def test_task_done_tries_every_close_and_names_each_that_failed(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    for title in ("One", "Two", "Three"):
+        followup.add_followup(root, cfg, "beta", title, "X")
+    close = followup.close_followup
+
+    def fail_the_middle_one(root, cfg, followup_id, *args, **kwargs):
+        if followup_id == "FU-02":
+            raise PermissionError(13, "Permission denied")
+        return close(root, cfg, followup_id, *args, **kwargs)
+
+    monkeypatch.setattr(followup, "close_followup", fail_the_middle_one)
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01",
+                                 "--closes", "FU-02", "--closes", "FU-03"])
+
+    assert result.exit_code != 0
+    assert "T-01 is done, but FU-02 was not closed" in result.output
+    assert {e.id: e.status for e in followup.list_followups(root, cfg, include_closed=True)} == {
+        "FU-01": "closed", "FU-02": "open", "FU-03": "closed",
+    }
+    closed_part = result.output.split("was not closed", 1)[1]
+    assert "FU-01" in closed_part and "FU-03" in closed_part
 
 
 def test_task_done_closes_with_the_one_line_note_the_task_records(tmp_path, monkeypatch):
