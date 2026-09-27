@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import SpecfloConfig
-from .errors import SpecfloError
+from .errors import SpecfloError, require_one_line
 from . import markdown
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
@@ -104,6 +104,8 @@ def add_decision(
     ``actor`` names the identity adding it, written as an ``Actor`` line; a
     local add passes none and writes none.
     """
+    require_one_line("A decision's text", text)
+    require_one_line("A decision's rationale", rationale)
     path = brainstorm_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")

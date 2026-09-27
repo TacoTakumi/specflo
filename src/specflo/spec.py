@@ -17,7 +17,7 @@ from pathlib import Path
 from . import markdown
 from .brainstorm import brainstorm_path
 from .config import SpecfloConfig
-from .errors import SpecfloError
+from .errors import SpecfloError, require_one_line
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
@@ -110,6 +110,8 @@ def add_requirement(
     names the identity adding it, written as an ``Actor`` line; a local add
     passes none and writes none.
     """
+    require_one_line("A requirement's text", text)
+    require_one_line("A requirement's acceptance", acceptance)
     path = spec_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No spec yet. Run `specflo spec start` first.")

@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
-from .errors import SpecfloError
+from .errors import SpecfloError, require_one_line
 from .locking import lock_path_for, locked
 from .projects import (
     FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, project_dir,
@@ -722,6 +722,11 @@ def add_task(
     single ``- Milestone:`` field. ``actor`` names the identity adding it,
     written as an ``Actor`` line; a local add passes none and writes none.
     """
+    for label, value in (
+        ("text", text), ("acceptance", acceptance), ("verify", verify),
+        ("files", files), ("scope", scope),
+    ):
+        require_one_line(f"A task's {label}", value)
     needs = [validate_pool_name(n) for n in (needs or [])]
     path = plan_path(root, cfg, slug)
     if not path.is_file():
