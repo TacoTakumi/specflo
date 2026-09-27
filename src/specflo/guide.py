@@ -150,6 +150,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Create the brainstorm.md artifact."},
     {"name": "decision add", "group": "workflow", "args": "",
      "summary": "Record a brainstorm decision (D-NN)."},
+    {"name": "followup add", "group": "workflow", "args": "<title> --do <text> [--from <text>]",
+     "summary": "Record work the project leaves for a later one (FU-NN)."},
     {"name": "spec start", "group": "workflow", "args": "",
      "summary": "Create the spec.md artifact."},
     {"name": "requirement add", "group": "workflow", "args": "",

@@ -20,6 +20,7 @@ from .brief import BRIEF_FILENAME
 from .checkpoint import CHECKPOINT_FILENAME
 from .config import SpecfloConfig
 from .errors import SpecfloError
+from .followup import FOLLOWUP_FILENAME
 from .locking import lock_path_for, locked
 from .plan import PLAN_FILENAME
 from .projects import FAST_LEVEL, PROJECT_FILENAME, QUICK_LEVEL, load_project
@@ -34,6 +35,7 @@ ARTIFACTS: dict[str, str] = {
     "brief": BRIEF_FILENAME,
     "checkpoint": CHECKPOINT_FILENAME,
     "project": PROJECT_FILENAME,
+    "followup": FOLLOWUP_FILENAME,
 }
 
 
@@ -43,7 +45,8 @@ _ROUND_NAME = re.compile(r"^review-\d+$")
 ROUND_PATTERN = "review-<N>"
 
 # The artifacts that carry authored prose sections. checkpoint.md is derived
-# and regenerated; project.md is front matter with no sections.
+# and regenerated; project.md is front matter with no sections; followup.md
+# holds only the followup verbs' entries.
 PROSE_ARTIFACTS: tuple[str, ...] = ("brainstorm", "spec", "plan", "brief")
 
 # Section title -> the verb that owns its entries. A prose write never touches
@@ -54,11 +57,12 @@ MANAGED_SECTIONS: dict[str, str] = {
     "Tasks": "specflo task add",
     "Milestones": "specflo milestone add",
     "Pools": "specflo pool add",
+    "Follow-ups": "specflo followup add",
 }
 
 
 def artifact_names() -> str:
-    """The artifact names as a help line: the six documents, or a round by number."""
+    """The artifact names as a help line: the seven documents, or a round by number."""
     return ", ".join(ARTIFACTS) + f", or {ROUND_PATTERN}"
 
 

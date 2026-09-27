@@ -22,6 +22,7 @@ from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, checkouts, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import doc as doc_module
+from . import followup as followup_module
 from . import graph as graph_module
 from . import extension_install as extension_module
 from . import status as status_view
@@ -205,6 +206,9 @@ app.add_typer(doc_app, name="doc")
 
 section_app = typer.Typer(help="Write one prose section of an artifact.")
 app.add_typer(section_app, name="section")
+
+followup_app = typer.Typer(help="Record the work a project leaves for a later one (FU-NN).")
+app.add_typer(followup_app, name="followup")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
@@ -2453,6 +2457,46 @@ def section_set(
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     typer.echo(f"Set '{title}' in {slug}/{artifact}.")
+
+
+def _require_checkout_project(root: Path, slug: str) -> None:
+    """Refuse a daemon-hosted project before any request goes out.
+
+    Follow-up numbers span every project's followup document, which a daemon's
+    slug-scoped protocol cannot reach, so the followup verbs work only on
+    projects held in this checkout.
+    """
+    remote = config.hosting_remote(root, slug)
+    if remote is not None:
+        raise _die(
+            f"Project {slug!r} is hosted on remote {remote!r}; follow-ups work only"
+            " for projects in this checkout."
+        )
+
+
+@followup_app.command(
+    "add",
+    epilog='Example: specflo followup add "Flaky lease test" --do "Make it wait for idle"',
+)
+def followup_add(
+    title: str = typer.Argument(..., metavar="<title>", help="What is left (one line)."),
+    do: str = typer.Option(..., "--do", help="What a later project should do (one line)."),
+    source: str = typer.Option(
+        None, "--from", help="Where it came from: a task, a finding, a test (one line)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Add a follow-up (FU-NN) to the active project's followup document."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    _require_checkout_project(root, slug)
+    try:
+        entry = followup_module.add_followup(root, cfg, slug, title, do, source=source)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps({"id": entry.id, "project": entry.project}))
+    else:
+        typer.echo(f"Recorded {entry.id} in {slug}/followup.")
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")
