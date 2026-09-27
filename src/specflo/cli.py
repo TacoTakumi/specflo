@@ -429,6 +429,18 @@ def _refresh_index(root: Path, cfg: config.SpecfloConfig) -> None:
         pass
 
 
+def _open_followups(root: Path, cfg: config.SpecfloConfig) -> list[followup_module.FollowUp]:
+    """Best-effort: the open follow-ups, reported after a state change.
+
+    The command's own change already succeeded, so a followup document that
+    cannot be read drops the report rather than failing the command.
+    """
+    try:
+        return followup_module.list_followups(root, cfg)
+    except Exception:
+        return []
+
+
 # Phase/artifact registries. The phase->validator map is shared (`validators`)
 # so `validate`, `advance`, and the read-path doneness derivation all agree;
 # the service runs it, and `validate` consults it only to name the known
@@ -530,7 +542,7 @@ def new(
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
         )
-    open_count = len(followup_module.list_followups(root, cfg))
+    open_count = len(_open_followups(root, cfg))
     if open_count:
         noun = "follow-up" if open_count == 1 else "follow-ups"
         typer.echo(
@@ -1516,9 +1528,7 @@ def advance(
             cont = continuation.build_continuation(
                 from_phase, workflow.next_step(from_phase, complete=True), complete=True
             )
-        left = [
-            entry for entry in followup_module.list_followups(root, cfg) if entry.project == slug
-        ]
+        left = [entry for entry in _open_followups(root, cfg) if entry.project == slug]
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
@@ -2545,7 +2555,7 @@ def followup_list(
             {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
              "from": e.source, "status": e.status}
             for e in entries
-        ], indent=2))
+        ]))
         return
     if not entries:
         typer.echo("No follow-ups." if include_closed else "No open follow-ups.")

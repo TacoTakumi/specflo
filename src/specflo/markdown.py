@@ -118,6 +118,9 @@ def append_to_section(doc: str, header: str, entry: str) -> str:
         if i > start and not in_fence and line.startswith("## "):
             end = i
             break
+    # A last line with no newline would otherwise run into the entry.
+    if not lines[end - 1].endswith("\n"):
+        lines[end - 1] += "\n"
     lines.insert(end, entry + "\n")  # trailing blank line separates entries
     return "".join(lines)
 

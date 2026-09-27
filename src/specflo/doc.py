@@ -57,7 +57,6 @@ MANAGED_SECTIONS: dict[str, str] = {
     "Tasks": "specflo task add",
     "Milestones": "specflo milestone add",
     "Pools": "specflo pool add",
-    "Follow-ups": "specflo followup add",
 }
 
 

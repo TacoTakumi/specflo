@@ -212,7 +212,7 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Take the active project's open gate; --by only when the agent relays a human."},
     {"name": "doc show", "group": "workflow", "args": "<artifact>",
      "summary": "Print an artifact of the active project verbatim "
-                "(brainstorm|spec|plan|brief|checkpoint|project)."},
+                "(brainstorm|spec|plan|brief|checkpoint|project|followup)."},
     {"name": "section set", "group": "workflow", "args": "<artifact> <section>",
      "summary": "Replace one prose section's body from --file or --stdin "
                 "(managed sections refused)."},

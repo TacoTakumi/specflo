@@ -22,7 +22,7 @@ from . import markdown
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
-from .projects import load_project
+from .projects import PROJECT_FILENAME, load_project
 
 FOLLOWUP_FILENAME = "followup.md"
 SECTION_HEADER = "## Follow-ups"
@@ -32,7 +32,7 @@ SECTION_HEADER = "## Follow-ups"
 _LOCK_SCOPE = ".followups"
 
 # Any FU-NN mention counts for numbering: the hand-written documents name their
-# entries as "### FU-85." headings and "**FU-03 (O2).**" bullets.
+# entries as "### FU-85." headings and bold "**FU-03 ...**" bullets.
 _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 
 # The heading and field lines of an entry the followup verbs wrote.
@@ -56,8 +56,16 @@ def followup_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
 
 
 def _documents(root: Path, cfg: SpecfloConfig) -> list[Path]:
-    """Every followup document under the projects directory."""
-    return sorted((root / cfg.projects_dir).glob(f"*/{FOLLOWUP_FILENAME}"))
+    """Every project's followup document.
+
+    Like the project listing, a dot-directory or a directory with no
+    ``project.md`` is not a project, so its document is not read.
+    """
+    return sorted(
+        path
+        for path in (root / cfg.projects_dir).glob(f"*/{FOLLOWUP_FILENAME}")
+        if not path.parent.name.startswith(".") and (path.parent / PROJECT_FILENAME).is_file()
+    )
 
 
 def _next_id(root: Path, cfg: SpecfloConfig) -> str:
@@ -112,7 +120,8 @@ def _one_line(label: str, value: str | None, required: bool) -> str | None:
         if required:
             raise SpecfloError(f"A follow-up needs a non-empty {label}.")
         return None
-    if "\n" in value or "\r" in value:
+    # Any line break the document is later split on, not only \n and \r.
+    if value.splitlines() != [value]:
         raise SpecfloError(f"A follow-up's {label} must be one line.")
     return value.strip()
 
@@ -170,28 +179,36 @@ def close_followup(
 ) -> str:
     """Close the open entry ``followup_id`` in whichever project holds it.
 
-    Sets its Status to closed and adds a dated Closed line below it. Refuses an
-    empty or multi-line note, an ID no entry carries, and an entry that is not
-    open, before anything is written. Returns the slug of the project it closed
-    the entry in.
+    Sets its Status to closed and adds a dated Closed line below it. When two
+    projects hold the ID, as a merge of two branches can leave them, the open
+    one is closed. Refuses an empty or multi-line note, an ID no entry carries,
+    and an ID with no open entry, before anything is written. Returns the slug
+    of the project it closed the entry in.
     """
     note = _one_line("note", note, required=True)
     today = today or datetime.date.today().isoformat()
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
+        found = []
         for path in _documents(root, cfg):
             doc = path.read_text()
-            for entry, index in _entries(doc, path.parent.name):
-                if entry.id != followup_id:
-                    continue
-                if entry.status != "open":
-                    raise SpecfloError(
-                        f"{followup_id} in {entry.project}/followup is {entry.status}, not open."
-                    )
-                lines = doc.splitlines(keepends=True)
-                lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
-                path.write_text(markdown.bump_updated("".join(lines), today))
-                return entry.project
-    raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
+            found += [
+                (path, doc, entry, index)
+                for entry, index in _entries(doc, path.parent.name)
+                if entry.id == followup_id
+            ]
+        if not found:
+            raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
+        open_one = next((match for match in found if match[2].status == "open"), None)
+        if open_one is None:
+            entry = found[0][2]
+            raise SpecfloError(
+                f"{followup_id} in {entry.project}/followup is {entry.status}, not open."
+            )
+        path, doc, entry, index = open_one
+        lines = doc.splitlines(keepends=True)
+        lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
+        path.write_text(markdown.bump_updated("".join(lines), today))
+        return entry.project
 
 
 def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False) -> list[FollowUp]:

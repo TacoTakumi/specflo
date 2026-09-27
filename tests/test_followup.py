@@ -80,7 +80,7 @@ def test_ids_run_on_from_the_highest_fu_number_in_any_followup_document(tmp_path
     root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
     # A hand-written document names its entries in its own shapes.
     (root / "docs" / "projects" / "beta" / "followup.md").write_text(
-        "# beta\n\n### FU-85. A flaky test\n\n- **FU-89 (O2).** Another one\n"
+        "# beta\n\n### FU-85. A flaky test\n\n- **FU-89.** Another one\n"
     )
 
     result = _add("Next", "--do", "X")
@@ -144,7 +144,35 @@ def test_a_title_or_do_over_more_than_one_line_is_refused(tmp_path, monkeypatch)
     assert _add("T\nmore", "--do", "X").exit_code != 0
     assert _add("T", "--do", "X\n### FU-50 - forged").exit_code != 0
     assert _add("T", "--do", "X", "--from", "Y\nZ").exit_code != 0
+    # Every line break the document parser splits on, not only \n and \r.
+    for brk in ("\x0b", "\x0c", "\x1c", "\x85", " ", " "):
+        assert _add("T", "--do", f"X{brk}- Status: closed").exit_code != 0, repr(brk)
     assert not (root / "docs" / "projects" / "alpha" / "followup.md").exists()
+
+
+def test_an_add_to_a_document_without_a_final_newline_starts_a_new_line(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    assert _add("One", "--do", "X").exit_code == 0
+    path = root / "docs" / "projects" / "alpha" / "followup.md"
+    path.write_text(path.read_text().rstrip("\n"))
+
+    assert _add("Two", "--do", "Y").exit_code == 0
+
+    listed = json.loads(_list("--json").output)
+    assert [(e["id"], e["status"]) for e in listed] == [("FU-01", "open"), ("FU-02", "open")]
+
+
+def test_only_project_directories_count(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    for stray in (".staging", "not-a-project"):
+        (root / "docs" / "projects" / stray).mkdir()
+        (root / "docs" / "projects" / stray / "followup.md").write_text(
+            "## Follow-ups\n\n### FU-40 - Stray\n- Do: X\n- Status: open\n"
+        )
+
+    assert "FU-01" in _add("T", "--do", "X").output
+    assert re.findall(r"FU-\d+", _list().output) == ["FU-01"]
+    assert _close("FU-40", "--note", "Done").exit_code != 0
 
 
 def test_add_prints_the_id_as_json(tmp_path, monkeypatch):
@@ -211,6 +239,21 @@ def test_close_refusals_change_no_followup_document(tmp_path, monkeypatch):
         result = _close(*args)
         assert result.exit_code != 0, args
         assert _all_docs(root) == before, args
+
+
+def test_close_takes_the_open_entry_when_two_projects_hold_the_id(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    assert _add("T", "--do", "X").exit_code == 0
+    # A merge of two branches can leave the same ID in two projects.
+    alpha, beta = (root / "docs" / "projects" / slug / "followup.md" for slug in ("alpha", "beta"))
+    beta.write_text(alpha.read_text())
+
+    assert _close("FU-01", "--note", "First").exit_code == 0
+    assert _close("FU-01", "--note", "Second").exit_code == 0
+
+    for path in (alpha, beta):
+        assert "- Status: closed\n" in path.read_text()
+    assert _close("FU-01", "--note", "Third").exit_code != 0
 
 
 # --- list ---------------------------------------------------------------------
@@ -353,6 +396,16 @@ def test_advance_with_no_open_followups_prints_no_followup_line(tmp_path, monkey
     assert not re.search(r"FU-\d+", result.output)
 
 
+def test_an_unreadable_followup_document_does_not_fail_advance(tmp_path, monkeypatch):
+    root = _quick_project_ready_to_complete(tmp_path, monkeypatch, "First left")
+    (root / "docs" / "projects" / "other" / "followup.md").write_bytes(b"\xff\xfe broken")
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    assert "Completed project 'thing'." in result.output
+
+
 def test_advance_json_with_no_open_followups_has_an_empty_list(tmp_path, monkeypatch):
     _quick_project_ready_to_complete(tmp_path, monkeypatch)
 
@@ -380,6 +433,16 @@ def test_new_counts_the_open_followups_of_the_other_projects(tmp_path, monkeypat
     assert result.exit_code == 0, result.output
     line = next(line for line in result.output.splitlines() if "specflo followup list" in line)
     assert re.findall(r"\d+", line) == ["3"]
+
+
+def test_an_unreadable_followup_document_does_not_fail_new(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    (root / "docs" / "projects" / "alpha" / "followup.md").write_bytes(b"\xff\xfe broken")
+
+    result = runner.invoke(app, ["new", "X"])
+
+    assert result.exit_code == 0, result.output
+    assert "Created project 'x'" in result.output
 
 
 def test_new_with_no_open_followups_prints_no_followup_line(tmp_path, monkeypatch):
