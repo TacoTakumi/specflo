@@ -2118,12 +2118,15 @@ def task_done(
     except SpecfloError as exc:
         raise _die(str(exc))
     closed = []
+    # The task records its note on one line; the close gets that same line.
+    close_note = plan.note_text(note) if note else task.text
     for followup_id in closes:
         try:
             holder = followup_module.close_followup(
-                root, cfg, followup_id, note or task.text, by=f"{slug}/{task.id}"
+                root, cfg, followup_id, close_note, by=f"{slug}/{task.id}"
             )
         except SpecfloError as exc:
+            _refresh_checkpoint(svc, slug)
             raise _die(f"{task.id} is done, but {followup_id} was not closed: {exc}")
         closed.append((followup_id, holder))
     written = _refresh_checkpoint(svc, slug)

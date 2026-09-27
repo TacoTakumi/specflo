@@ -13,9 +13,11 @@ import os
 import re
 import subprocess
 
+import pytest
 from typer.testing import CliRunner
 
 from specflo import config, followup, plan, projects, spec
+from specflo.errors import SpecfloError
 from specflo.cli import app
 
 runner = CliRunner()
@@ -356,7 +358,14 @@ def test_close_by_a_commit_stores_its_short_sha(tmp_path, monkeypatch):
     assert full not in _doc(root, "alpha")
 
 
-def test_close_by_refuses_a_ref_that_names_no_work_and_writes_nothing(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "ref",
+    ["gamma/T-01", "alpha/T-02", "nosuchthing"],
+    ids=["unknown project", "unknown task", "neither project nor commit"],
+)
+def test_close_by_refuses_a_ref_that_names_no_work_and_writes_nothing(
+    tmp_path, monkeypatch, ref
+):
     root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
     cfg = config.load_config(root)
     _with_task(root, cfg, "alpha")
@@ -364,11 +373,11 @@ def test_close_by_refuses_a_ref_that_names_no_work_and_writes_nothing(tmp_path, 
     _git_commit(root)
     before = _all_docs(root)
 
-    for ref in ("gamma/T-01", "alpha/T-02", "nosuchthing"):
-        result = _close("FU-01", "--note", "Done", "--by", ref)
-        assert result.exit_code != 0, ref
-        assert ref in result.output, ref
-        assert _all_docs(root) == before, ref
+    result = _close("FU-01", "--note", "Done", "--by", ref)
+
+    assert result.exit_code != 0
+    assert ref in result.output
+    assert _all_docs(root) == before
 
 
 def test_close_without_by_writes_no_closed_by_line(tmp_path, monkeypatch):
@@ -442,6 +451,96 @@ def test_task_done_refuses_a_followup_that_is_not_open_before_the_task_changes(
         assert _progress(root, cfg) == "in_progress", closes
         assert _all_docs(root) == before, closes
         assert plan.plan_path(root, cfg, "alpha").read_bytes() == plan_before, closes
+
+
+def test_task_done_closes_with_the_one_line_note_the_task_records(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--note", "line one\nline two",
+                                 "--closes", "FU-01"])
+
+    assert result.exit_code == 0, result.output
+    assert _progress(root, cfg) == "done"
+    today = datetime.date.today().isoformat()
+    assert f"- Closed: {today}: line one line two\n" in _doc(root, "beta")
+
+
+def test_task_done_refuses_an_unreadable_followup_document_before_the_task_changes(
+    tmp_path, monkeypatch
+):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+    projects.create_project(root, cfg, "Gamma", created="2026-09-27")
+    _break_document(root, "gamma")
+    before = _all_docs(root)
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])
+
+    assert result.exit_code != 0
+    assert "gamma/followup" in result.output
+    assert _progress(root, cfg) == "in_progress"
+    assert _all_docs(root) == before
+
+
+def test_task_done_closes_a_repeated_followup_once(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01",
+                                 "--closes", "FU-01"])
+
+    assert result.exit_code == 0, result.output
+    assert _doc(root, "beta").count("- Closed by: alpha/T-01\n") == 1
+
+
+def test_task_done_json_names_the_followups_it_closed(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["closed_followups"] == ["FU-01"]
+
+
+def test_task_done_that_fails_to_close_still_refreshes_the_checkpoint(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+    checkpoint = root / "docs" / "projects" / "alpha" / "checkpoint.md"
+    checkpoint.unlink(missing_ok=True)
+
+    def refuse(*args, **kwargs):
+        # Another command closed it between the check and the close.
+        raise SpecfloError("FU-01 in beta/followup is closed, not open.")
+
+    monkeypatch.setattr(followup, "close_followup", refuse)
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])
+
+    assert result.exit_code != 0
+    assert "T-01 is done, but FU-01 was not closed" in result.output
+    assert _progress(root, cfg) == "done"
+    assert checkpoint.is_file()
+
+
+def test_task_done_closes_refuses_a_daemon_hosted_project_without_asking_the_daemon(
+    tmp_path, monkeypatch
+):
+    root = tmp_path
+    cfg = config.init_config(root)
+    # A remote nothing listens on: a request to it would fail with a
+    # connection error, not the checkout-only refusal.
+    config.add_remote(root, "home", "http://127.0.0.1:9", "s3cret")
+    config.record_hosted_project(root, "demo", "home")
+    cfg.active_project = "demo"
+    config.save_config(root, cfg)
+    monkeypatch.chdir(root)
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])
+
+    assert result.exit_code != 0
+    assert "checkout" in result.output
+    assert "127.0.0.1:9" not in result.output
 
 
 # --- list ---------------------------------------------------------------------

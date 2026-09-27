@@ -324,7 +324,13 @@ def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False)
 
 
 def require_open(root: Path, cfg: SpecfloConfig, followup_ids: list[str]) -> None:
-    """Refuse, naming the first one, when any of ``followup_ids`` has no open entry."""
+    """Refuse, naming the first one, when any of ``followup_ids`` has no open entry.
+
+    A followup document that cannot be read is refused as well, since
+    ``close_followup`` reads every document and would refuse it later.
+    """
+    for path in _documents(root, cfg):
+        _read(path)
     for followup_id in followup_ids:
         entry = show_followup(root, cfg, followup_id)
         if entry.status != "open":
