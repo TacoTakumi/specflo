@@ -530,6 +530,13 @@ def new(
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'
         )
+    open_count = len(followup_module.list_followups(root, cfg))
+    if open_count:
+        noun = "follow-up" if open_count == 1 else "follow-ups"
+        typer.echo(
+            f"{open_count} open {noun} in this checkout's projects:"
+            " see them with `specflo followup list`."
+        )
 
 
 def _service_for_new_project(

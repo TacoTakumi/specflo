@@ -362,6 +362,37 @@ def test_advance_json_with_no_open_followups_has_an_empty_list(tmp_path, monkeyp
     assert json.loads(result.output)["followups"] == []
 
 
+# --- new ----------------------------------------------------------------------
+
+
+def test_new_counts_the_open_followups_of_the_other_projects(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta", "Gamma")
+    cfg = config.load_config(root)
+    (root / "docs" / "projects" / "gamma" / "followup.md").write_text(
+        "# gamma\n\n### FU-85. A hand-written entry\n\nText.\n"
+    )
+    for slug, title in (("alpha", "One"), ("alpha", "Two"), ("beta", "Three"), ("beta", "Shut")):
+        followup.add_followup(root, cfg, slug, title, "X")
+    followup.close_followup(root, cfg, "FU-89", "Done")
+
+    result = runner.invoke(app, ["new", "X"])
+
+    assert result.exit_code == 0, result.output
+    line = next(line for line in result.output.splitlines() if "specflo followup list" in line)
+    assert re.findall(r"\d+", line) == ["3"]
+
+
+def test_new_with_no_open_followups_prints_no_followup_line(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    followup.add_followup(root, config.load_config(root), "alpha", "Shut", "X")
+    followup.close_followup(root, config.load_config(root), "FU-01", "Done")
+
+    result = runner.invoke(app, ["new", "X"])
+
+    assert result.exit_code == 0, result.output
+    assert "follow" not in result.output.lower()
+
+
 # --- the document is the verbs' own ---------------------------------------------
 
 
