@@ -492,6 +492,7 @@ def test_show_prints_every_field_of_an_open_entry_in_another_project(tmp_path, m
         "from": "review-1 F2",
         "status": "open",
         "closed": None,
+        "closed_by": None,
     }
 
 
@@ -516,7 +517,30 @@ def test_show_prints_the_closed_line_of_a_closed_entry(tmp_path, monkeypatch):
         "from": None,
         "status": "closed",
         "closed": f"{today}: Done",
+        "closed_by": None,
     }
+
+
+def test_show_prints_the_closed_by_line_of_an_entry_closed_by_a_project(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "beta", "Closed one", "Do it")
+    followup.close_followup(root, cfg, "FU-01", "Done", by="alpha")
+    today = datetime.date.today().isoformat()
+
+    result = _show("FU-01")
+
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "FU-01  beta  Closed one\n"
+        "    Do: Do it\n"
+        "    Status: closed\n"
+        f"    Closed: {today}: Done\n"
+        "    Closed by: alpha\n"
+    )
+    shown = json.loads(_show("FU-01", "--json").output)
+    assert shown["closed"] == f"{today}: Done"
+    assert shown["closed_by"] == "alpha"
 
 
 def test_show_refuses_an_unknown_or_hand_written_id(tmp_path, monkeypatch):

@@ -2,7 +2,8 @@
 
 Each project keeps its follow-ups in its own ``followup.md``, created on the
 first add. An entry is an ``FU-NN`` heading with a Do line, an optional From
-line and a Status line, and a dated Closed line once it is closed. The numbers
+line and a Status line, and a dated Closed line once it is closed, with a
+Closed by line when the close named what did the work. The numbers
 run across the whole projects directory: the next one is one above the highest
 ``FU-NN`` found in any project's followup document, hand-written documents
 included, so any project can cite an entry with no project prefix.
@@ -38,7 +39,7 @@ _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 
 # The heading and field lines of an entry the followup verbs wrote.
 _HEADING = re.compile(r"### (FU-\d+) - (.*)")
-_FIELD = re.compile(r"- (Do|From|Status|Closed): (.*)")
+_FIELD = re.compile(r"- (Do|From|Status|Closed|Closed by): (.*)")
 _ANY_HEADING = re.compile(r"#{1,6} ")
 _TASK_ID = re.compile(r"T-\d+")
 
@@ -52,6 +53,7 @@ class FollowUp:
     source: str | None
     status: str
     closed: str | None = None
+    closed_by: str | None = None
 
 
 def followup_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
@@ -132,6 +134,7 @@ def _entries(doc: str, slug: str) -> list[tuple[FollowUp, int]]:
             source=values.get("From"),
             status=values["Status"],
             closed=values.get("Closed"),
+            closed_by=values.get("Closed by"),
         )
         found.append((entry, status_at))
     return found

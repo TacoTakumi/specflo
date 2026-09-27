@@ -2589,7 +2589,8 @@ def followup_show(
     if json_output:
         typer.echo(json.dumps(
             {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
-             "from": e.source, "status": e.status, "closed": e.closed}
+             "from": e.source, "status": e.status, "closed": e.closed,
+             "closed_by": e.closed_by}
         ))
         return
     typer.echo(f"{e.id}  {e.project}  {e.title}")
@@ -2599,6 +2600,8 @@ def followup_show(
     typer.echo(f"    Status: {e.status}")
     if e.closed is not None:
         typer.echo(f"    Closed: {e.closed}")
+    if e.closed_by is not None:
+        typer.echo(f"    Closed by: {e.closed_by}")
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")
