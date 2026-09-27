@@ -2532,11 +2532,15 @@ def followup_add(
 def followup_close(
     followup_id: str = typer.Argument(..., metavar="<FU-NN>", help="The follow-up to close."),
     note: str = typer.Option(..., "--note", help="What became of it (one line)."),
+    by: str = typer.Option(
+        None, "--by", metavar="<ref>",
+        help="What did the work: <project>/<T-NN>, <project>, or a git commit.",
+    ),
 ) -> None:
     """Close an open follow-up in any project of this checkout."""
     root = _require_root(); cfg = config.load_config(root)
     try:
-        slug = followup_module.close_followup(root, cfg, followup_id, note)
+        slug = followup_module.close_followup(root, cfg, followup_id, note, by=by)
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Closed {followup_id} in {slug}/followup.")

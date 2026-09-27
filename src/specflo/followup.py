@@ -15,14 +15,15 @@ from __future__ import annotations
 
 import datetime
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import markdown
+from . import markdown, plan
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
-from .projects import PROJECT_FILENAME, load_project
+from .projects import PROJECT_FILENAME, load_project, project_dir
 
 FOLLOWUP_FILENAME = "followup.md"
 SECTION_HEADER = "## Follow-ups"
@@ -39,6 +40,7 @@ _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 _HEADING = re.compile(r"### (FU-\d+) - (.*)")
 _FIELD = re.compile(r"- (Do|From|Status|Closed): (.*)")
 _ANY_HEADING = re.compile(r"#{1,6} ")
+_TASK_ID = re.compile(r"T-\d+")
 
 
 @dataclass(frozen=True)
@@ -191,22 +193,84 @@ def add_followup(
     return FollowUp(id=new_id, project=slug, title=title, do=do, source=source, status="open")
 
 
+def _is_checkout_project(root: Path, cfg: SpecfloConfig, slug: str) -> bool:
+    return (
+        bool(slug)
+        and not slug.startswith(".")
+        and (project_dir(root, cfg, slug) / PROJECT_FILENAME).is_file()
+    )
+
+
+def _short_commit(root: Path, ref: str) -> str | None:
+    """The short SHA of the commit ``ref`` names in the checkout's git repository, or None."""
+    if ref.startswith("-"):
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", "--short", f"{ref}^{{commit}}"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    sha = result.stdout.strip()
+    return sha if result.returncode == 0 and sha else None
+
+
+def resolve_closed_by(root: Path, cfg: SpecfloConfig, ref: str) -> str:
+    """The Closed by value for ``ref``, or a refusal that names the ref.
+
+    ``<project>/<T-NN>`` names a task in a project's plan; ``<project>`` names a
+    project of this checkout; anything else must name a commit in the
+    checkout's git repository and is stored as its short SHA. A project name
+    wins over a commit that the same word would name.
+    """
+    ref = _one_line("--by ref", ref, required=True)
+    if "/" in ref:
+        slug, _, task_id = ref.partition("/")
+        if not _is_checkout_project(root, cfg, slug):
+            raise SpecfloError(f"--by {ref}: no project {slug!r} in this checkout.")
+        if not _TASK_ID.fullmatch(task_id):
+            raise SpecfloError(f"--by {ref}: expected <project>/<T-NN>.")
+        try:
+            tasks = plan.list_tasks(root, cfg, slug, include_superseded=True)
+        except SpecfloError:
+            tasks = []
+        if task_id not in {task.id for task in tasks}:
+            raise SpecfloError(f"--by {ref}: project {slug!r} has no task {task_id} in its plan.")
+        return ref
+    if _is_checkout_project(root, cfg, ref):
+        return ref
+    sha = _short_commit(root, ref)
+    if sha is None:
+        raise SpecfloError(
+            f"--by {ref}: names no project in this checkout and no commit in its git repository."
+        )
+    return sha
+
+
 def close_followup(
     root: Path,
     cfg: SpecfloConfig,
     followup_id: str,
     note: str,
+    by: str | None = None,
     today: str | None = None,
 ) -> str:
     """Close the open entry ``followup_id`` in whichever project holds it.
 
-    Sets its Status to closed and adds a dated Closed line below it. When two
-    projects hold the ID, as a merge of two branches can leave them, the open
-    one is closed. Refuses an empty or multi-line note, an ID no entry carries,
-    and an ID with no open entry, before anything is written. Returns the slug
-    of the project it closed the entry in.
+    Sets its Status to closed and adds a dated Closed line below it, and a
+    Closed by line below that when ``by`` names what did the work (see
+    ``resolve_closed_by``). When two projects hold the ID, as a merge of two
+    branches can leave them, the open one is closed. Refuses an empty or
+    multi-line note, a ``by`` that names no work, an ID no entry carries, and
+    an ID with no open entry, before anything is written. Returns the slug of
+    the project it closed the entry in.
     """
     note = _one_line("note", note, required=True)
+    closed_by = resolve_closed_by(root, cfg, by) if by is not None else None
     today = today or datetime.date.today().isoformat()
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
         found = []
@@ -227,7 +291,10 @@ def close_followup(
             )
         path, doc, entry, index = open_one
         lines = doc.splitlines(keepends=True)
-        lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
+        closed = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
+        if closed_by is not None:
+            closed.append(f"- Closed by: {closed_by}\n")
+        lines[index : index + 1] = closed
         path.write_text(markdown.bump_updated("".join(lines), today))
         return entry.project
 

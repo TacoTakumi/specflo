@@ -9,11 +9,13 @@ with no project prefix.
 import datetime
 import json
 import multiprocessing
+import os
 import re
+import subprocess
 
 from typer.testing import CliRunner
 
-from specflo import config, followup, projects
+from specflo import config, followup, plan, projects, spec
 from specflo.cli import app
 
 runner = CliRunner()
@@ -287,6 +289,96 @@ def test_close_takes_the_open_entry_when_two_projects_hold_the_id(tmp_path, monk
     for path in (alpha, beta):
         assert "- Status: closed\n" in path.read_text()
     assert _close("FU-01", "--note", "Third").exit_code != 0
+
+
+# --- close --by -----------------------------------------------------------------
+
+
+def _with_task(root, cfg, slug):
+    """Give ``slug`` a plan holding one task, T-01."""
+    spec.start_spec(root, cfg, slug, today="2026-09-27")
+    spec.add_requirement(root, cfg, slug, "r", acceptance="a", today="2026-09-27")
+    plan.start_plan(root, cfg, slug, today="2026-09-27")
+    plan.add_task(root, cfg, slug, "build it", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-09-27")
+
+
+def _git_commit(root):
+    """Make ``root`` a git repository with one commit and return its full SHA."""
+    env = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@t", "PATH": os.environ["PATH"]}
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True, env=env)
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True, env=env)
+    subprocess.run(["git", "commit", "-q", "-m", "work"], cwd=root, check=True, env=env)
+    return subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, check=True, env=env,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def test_close_by_a_task_adds_a_closed_by_line_below_the_closed_line(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    _with_task(root, cfg, "alpha")
+    followup.add_followup(root, cfg, "beta", "T", "X")
+
+    result = _close("FU-01", "--note", "Done", "--by", "alpha/T-01")
+
+    assert result.exit_code == 0, result.output
+    today = datetime.date.today().isoformat()
+    assert (
+        f"### FU-01 - T\n- Do: X\n- Status: closed\n- Closed: {today}: Done\n"
+        "- Closed by: alpha/T-01\n"
+    ) in _doc(root, "beta")
+
+
+def test_close_by_a_project_names_the_project(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "beta", "T", "X")
+
+    result = _close("FU-01", "--note", "Done", "--by", "alpha")
+
+    assert result.exit_code == 0, result.output
+    assert "- Closed by: alpha\n" in _doc(root, "beta")
+
+
+def test_close_by_a_commit_stores_its_short_sha(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "alpha", "T", "X")
+    full = _git_commit(root)
+    short = subprocess.run(["git", "rev-parse", "--short", full], cwd=root, check=True,
+                           capture_output=True, text=True).stdout.strip()
+
+    result = _close("FU-01", "--note", "Done", "--by", full)
+
+    assert result.exit_code == 0, result.output
+    assert f"- Closed by: {short}\n" in _doc(root, "alpha")
+    assert full not in _doc(root, "alpha")
+
+
+def test_close_by_refuses_a_ref_that_names_no_work_and_writes_nothing(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    _with_task(root, cfg, "alpha")
+    followup.add_followup(root, cfg, "beta", "T", "X")
+    _git_commit(root)
+    before = _all_docs(root)
+
+    for ref in ("gamma/T-01", "alpha/T-02", "nosuchthing"):
+        result = _close("FU-01", "--note", "Done", "--by", ref)
+        assert result.exit_code != 0, ref
+        assert ref in result.output, ref
+        assert _all_docs(root) == before, ref
+
+
+def test_close_without_by_writes_no_closed_by_line(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "alpha", "T", "X")
+
+    assert _close("FU-01", "--note", "Done").exit_code == 0
+
+    assert "- Closed by:" not in _doc(root, "alpha")
 
 
 # --- list ---------------------------------------------------------------------
