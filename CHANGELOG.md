@@ -16,6 +16,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   bundled skill, installed or linked to the same content. A missing, stale
   or locally modified skill and a broken or mismatched link each fail with
   the command that fixes it. Exits 1 when a check fails.
+- **A by-hand quickstart in the README.** "Your first project by hand" takes a
+  person with no agent through one quick project, from `specflo init` to a
+  completed project. A test runs that README block in a fresh git repo, so
+  it stays in step with the CLI.
 - **Follow-ups: `specflo followup add|close|list`** - record the work a
   project leaves for a later one. `add` writes an open `FU-NN` entry (title,
   Do line, optional From line) to the active project's `followup.md`,

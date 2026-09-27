@@ -69,6 +69,34 @@ disk - and hands off through spec and plan to task-by-task execution. Every
 step also works without an agent; see the
 [command reference](#command-reference).
 
+### Your first project by hand
+
+specflo also works with no agent. This is one small change at quick level: a
+goal, one check, the work, and the proof that the check passes. Run it in a git
+repo; it takes about five minutes.
+
+```bash
+specflo init
+specflo new "ignore env files" --level quick
+echo "Git ignores .env files." | specflo section set brief "Goal" --stdin
+echo '- `git check-ignore .env` prints .env' | specflo section set brief "Done when" --stdin
+echo ".env" >> .gitignore
+git check-ignore .env | specflo section set brief "Proof" --stdin
+specflo validate brief
+git add .gitignore && git commit -m "Ignore .env files"
+specflo advance
+```
+
+`new` creates the project and its brief. The two `section set` lines write the
+goal and the one check, and the `.gitignore` line is the work itself. The Proof
+is what the check printed. `validate brief` confirms that the brief has a goal,
+one check and proof, and `advance` completes the project. `specflo doc show
+brief` prints the brief at any point.
+
+A change that needs more than one check is a bigger project: use `--level fast`
+or leave the level out. `specflo status` then says what to do next at each
+step, and `specflo guide` lists every command.
+
 ## Using specflo with your agent
 
 The installed skills make your agent *able* to drive specflo; a note in the
