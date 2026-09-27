@@ -2516,6 +2516,29 @@ def followup_close(
     typer.echo(f"Closed {followup_id} in {slug}/followup.")
 
 
+@followup_app.command("list", epilog="Example: specflo followup list --all")
+def followup_list(
+    include_closed: bool = typer.Option(False, "--all", help="Also list the closed entries."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List the open follow-ups of every project in this checkout."""
+    root = _require_root(); cfg = config.load_config(root)
+    entries = followup_module.list_followups(root, cfg, include_closed=include_closed)
+    if json_output:
+        typer.echo(json.dumps([
+            {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
+             "from": e.source, "status": e.status}
+            for e in entries
+        ], indent=2))
+        return
+    if not entries:
+        typer.echo("No follow-ups." if include_closed else "No open follow-ups.")
+    for e in entries:
+        status = "" if e.status == "open" else f" ({e.status})"
+        typer.echo(f"{e.id}  {e.project}  {e.title}{status}")
+        typer.echo(f"    Do: {e.do}")
+
+
 @config_app.command("get", epilog="Example: specflo config get autonomy")
 def config_get(
     key: str = typer.Argument(

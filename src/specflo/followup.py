@@ -35,8 +35,9 @@ _LOCK_SCOPE = ".followups"
 # entries as "### FU-85." headings and "**FU-03 (O2).**" bullets.
 _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 
-# The heading of an entry the followup verbs wrote.
-_HEADING = re.compile(r"### (FU-\d+) - ")
+# The heading and field lines of an entry the followup verbs wrote.
+_HEADING = re.compile(r"### (FU-\d+) - (.*)")
+_FIELD = re.compile(r"- (Do|From|Status): (.*)")
 _ANY_HEADING = re.compile(r"#{1,6} ")
 
 
@@ -68,29 +69,41 @@ def _next_id(root: Path, cfg: SpecfloConfig) -> str:
     return f"FU-{(max(numbers) + 1 if numbers else 1):02d}"
 
 
-def _status_line(doc: str, followup_id: str) -> int | None:
-    """Line index of the Status line of entry ``followup_id`` in ``doc``, or None.
+def _entries(doc: str, slug: str) -> list[tuple[FollowUp, int]]:
+    """Each entry the followup verbs wrote in ``doc``, with its Status line's index.
 
     An entry runs from its ``### FU-NN - <title>`` heading to the next heading.
-    A hand-written entry has no Status line, so it is never found here.
+    A hand-written entry has no Status line, so it is left out.
     """
     lines = doc.splitlines(keepends=True)
-    start = next(
-        (
-            i
-            for i, line, in_fence in markdown.iter_lines_with_fence(doc)
-            if not in_fence and (m := _HEADING.match(line)) and m.group(1) == followup_id
-        ),
-        None,
-    )
-    if start is None:
-        return None
-    for i in range(start + 1, len(lines)):
-        if _ANY_HEADING.match(lines[i]):
-            break
-        if lines[i].startswith("- Status: "):
-            return i
-    return None
+    headings = [
+        (i, m)
+        for i, line, in_fence in markdown.iter_lines_with_fence(doc)
+        if not in_fence and (m := _HEADING.match(line))
+    ]
+    found = []
+    for start, heading in headings:
+        values: dict[str, str] = {}
+        status_at = None
+        for i in range(start + 1, len(lines)):
+            if _ANY_HEADING.match(lines[i]):
+                break
+            if (field := _FIELD.match(lines[i])) and field.group(1) not in values:
+                values[field.group(1)] = field.group(2).strip()
+                if field.group(1) == "Status":
+                    status_at = i
+        if status_at is None:
+            continue
+        entry = FollowUp(
+            id=heading.group(1),
+            project=slug,
+            title=heading.group(2).strip(),
+            do=values.get("Do", ""),
+            source=values.get("From"),
+            status=values["Status"],
+        )
+        found.append((entry, status_at))
+    return found
 
 
 def _one_line(label: str, value: str | None, required: bool) -> str | None:
@@ -167,15 +180,29 @@ def close_followup(
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
         for path in _documents(root, cfg):
             doc = path.read_text()
-            index = _status_line(doc, followup_id)
-            if index is None:
-                continue
-            lines = doc.splitlines(keepends=True)
-            slug = path.parent.name
-            status = lines[index].removeprefix("- Status: ").strip()
-            if status != "open":
-                raise SpecfloError(f"{followup_id} in {slug}/followup is {status}, not open.")
-            lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
-            path.write_text(markdown.bump_updated("".join(lines), today))
-            return slug
+            for entry, index in _entries(doc, path.parent.name):
+                if entry.id != followup_id:
+                    continue
+                if entry.status != "open":
+                    raise SpecfloError(
+                        f"{followup_id} in {entry.project}/followup is {entry.status}, not open."
+                    )
+                lines = doc.splitlines(keepends=True)
+                lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
+                path.write_text(markdown.bump_updated("".join(lines), today))
+                return entry.project
     raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
+
+
+def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False) -> list[FollowUp]:
+    """The open entries of every project, in ID order; ``include_closed`` adds the rest.
+
+    Hand-written entries have no Status line and are never listed.
+    """
+    entries = [
+        entry
+        for path in _documents(root, cfg)
+        for entry, _ in _entries(path.read_text(), path.parent.name)
+        if include_closed or entry.status == "open"
+    ]
+    return sorted(entries, key=lambda entry: int(entry.id.removeprefix("FU-")))

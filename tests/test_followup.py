@@ -7,6 +7,7 @@ with no project prefix.
 """
 
 import datetime
+import json
 import multiprocessing
 import re
 
@@ -210,6 +211,88 @@ def test_close_refusals_change_no_followup_document(tmp_path, monkeypatch):
         result = _close(*args)
         assert result.exit_code != 0, args
         assert _all_docs(root) == before, args
+
+
+# --- list ---------------------------------------------------------------------
+
+
+def _list(*args):
+    return runner.invoke(app, ["followup", "list", *args])
+
+
+def _open_closed_and_hand_written(tmp_path, monkeypatch):
+    """FU-86 open in alpha, FU-87 closed in beta, FU-85 hand-written in gamma."""
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta", "Gamma")
+    cfg = config.load_config(root)
+    (root / "docs" / "projects" / "gamma" / "followup.md").write_text(
+        "# gamma\n\n### FU-85. A hand-written entry\n\nText.\n"
+    )
+    followup.add_followup(root, cfg, "alpha", "Open one", "Do the open one")
+    followup.add_followup(root, cfg, "beta", "Closed one", "Do the closed one")
+    followup.close_followup(root, cfg, "FU-87", "Done")
+    return root
+
+
+def test_list_shows_only_the_open_entries_with_project_id_title_and_do(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+
+    result = _list()
+
+    assert result.exit_code == 0, result.output
+    assert re.findall(r"FU-\d+", result.output) == ["FU-86"]
+    heading = next(line for line in result.output.splitlines() if "FU-86" in line)
+    assert "alpha" in heading and "Open one" in heading
+    assert "Do the open one" in result.output
+    assert "Closed one" not in result.output
+    assert "hand-written" not in result.output
+
+
+def test_list_all_adds_the_closed_entries(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+
+    result = _list("--all")
+
+    assert result.exit_code == 0, result.output
+    assert re.findall(r"FU-\d+", result.output) == ["FU-86", "FU-87"]
+    heading = next(line for line in result.output.splitlines() if "FU-87" in line)
+    assert "beta" in heading and "Closed one" in heading and "closed" in heading
+    assert "Do the closed one" in result.output
+
+
+def test_list_json_holds_the_same_entries_as_the_text(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+
+    for args in ([], ["--all"]):
+        text = _list(*args)
+        result = _list(*args, "--json")
+        assert result.exit_code == 0, result.output
+        entries = json.loads(result.output)
+        assert [e["id"] for e in entries] == re.findall(r"FU-\d+", text.output), args
+        for entry in entries:
+            heading = next(line for line in text.output.splitlines() if entry["id"] in line)
+            assert entry["project"] in heading and entry["title"] in heading, args
+            assert entry["do"] in text.output, args
+
+    assert json.loads(_list("--json").output) == [
+        {
+            "id": "FU-86",
+            "project": "alpha",
+            "title": "Open one",
+            "do": "Do the open one",
+            "from": None,
+            "status": "open",
+        }
+    ]
+
+
+def test_list_with_no_open_entries_says_so(tmp_path, monkeypatch):
+    _checkout(tmp_path, monkeypatch, "Alpha")
+
+    result = _list()
+
+    assert result.exit_code == 0, result.output
+    assert "No open follow-ups" in result.output
+    assert json.loads(_list("--json").output) == []
 
 
 # --- the document is the verbs' own ---------------------------------------------
