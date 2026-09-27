@@ -68,11 +68,30 @@ def _documents(root: Path, cfg: SpecfloConfig) -> list[Path]:
     )
 
 
+def _read(path: Path) -> str:
+    """The document's text, or a refusal that names the document."""
+    try:
+        return path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SpecfloError(f"Cannot read {path.parent.name}/followup: {exc}.") from exc
+
+
+def unreadable_documents(root: Path, cfg: SpecfloConfig) -> list[str]:
+    """Why each followup document that cannot be read was refused."""
+    problems = []
+    for path in _documents(root, cfg):
+        try:
+            _read(path)
+        except SpecfloError as exc:
+            problems.append(str(exc))
+    return problems
+
+
 def _next_id(root: Path, cfg: SpecfloConfig) -> str:
     numbers = [
         int(match.group(1))
         for path in _documents(root, cfg)
-        for match in _ANY_ID.finditer(path.read_text())
+        for match in _ANY_ID.finditer(_read(path))
     ]
     return f"FU-{(max(numbers) + 1 if numbers else 1):02d}"
 
@@ -157,7 +176,7 @@ def add_followup(
     path = followup_path(root, cfg, slug)
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
         new_id = _next_id(root, cfg)
-        doc = path.read_text() if path.is_file() else _new_document(slug, today)
+        doc = _read(path) if path.is_file() else _new_document(slug, today)
         if SECTION_HEADER not in markdown.section_headers(doc):
             raise SpecfloError(f"Malformed {slug}/followup: no '{SECTION_HEADER}' section.")
         lines = [f"### {new_id} - {title}", f"- Do: {do}"]
@@ -190,7 +209,7 @@ def close_followup(
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
         found = []
         for path in _documents(root, cfg):
-            doc = path.read_text()
+            doc = _read(path)
             found += [
                 (path, doc, entry, index)
                 for entry, index in _entries(doc, path.parent.name)
@@ -214,12 +233,19 @@ def close_followup(
 def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False) -> list[FollowUp]:
     """The open entries of every project, in ID order; ``include_closed`` adds the rest.
 
-    Hand-written entries have no Status line and are never listed.
+    Hand-written entries have no Status line and are never listed. Like the
+    project listing, one document that cannot be read does not take the rest
+    down: it is skipped, and ``unreadable_documents`` names it.
     """
-    entries = [
-        entry
-        for path in _documents(root, cfg)
-        for entry, _ in _entries(path.read_text(), path.parent.name)
-        if include_closed or entry.status == "open"
-    ]
+    entries = []
+    for path in _documents(root, cfg):
+        try:
+            doc = _read(path)
+        except SpecfloError:
+            continue
+        entries += [
+            entry
+            for entry, _ in _entries(doc, path.parent.name)
+            if include_closed or entry.status == "open"
+        ]
     return sorted(entries, key=lambda entry: int(entry.id.removeprefix("FU-")))

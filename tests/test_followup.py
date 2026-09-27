@@ -162,6 +162,39 @@ def test_an_add_to_a_document_without_a_final_newline_starts_a_new_line(tmp_path
     assert [(e["id"], e["status"]) for e in listed] == [("FU-01", "open"), ("FU-02", "open")]
 
 
+def _break_document(root, slug):
+    """Make ``slug``'s followup document unreadable text."""
+    (root / "docs" / "projects" / slug / "followup.md").write_bytes(b"\xff\xfe broken")
+
+
+def test_add_and_close_refuse_by_name_when_a_document_cannot_be_read(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    followup.add_followup(root, config.load_config(root), "alpha", "T", "X")
+    _break_document(root, "beta")
+    before = _all_docs(root)
+
+    for result in (_add("U", "--do", "Y"), _close("FU-01", "--note", "Done")):
+        assert result.exit_code == 1
+        assert "error: " in result.stderr and "beta/followup" in result.stderr
+        assert _all_docs(root) == before
+
+
+def test_list_warns_about_a_document_it_cannot_read_and_lists_the_rest(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    followup.add_followup(root, config.load_config(root), "alpha", "T", "X")
+    _break_document(root, "beta")
+
+    text = _list()
+    result = _list("--json")
+
+    assert text.exit_code == 0, text.output
+    assert "FU-01" in text.stdout
+    assert "beta/followup" in text.stderr
+    assert result.exit_code == 0, result.output
+    assert [e["id"] for e in json.loads(result.stdout)] == ["FU-01"]
+    assert "beta/followup" in result.stderr
+
+
 def test_only_project_directories_count(tmp_path, monkeypatch):
     root = _checkout(tmp_path, monkeypatch, "Alpha")
     for stray in (".staging", "not-a-project"):

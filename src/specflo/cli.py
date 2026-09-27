@@ -2550,6 +2550,9 @@ def followup_list(
     """List the open follow-ups of every project in this checkout."""
     root = _require_root(); cfg = config.load_config(root)
     entries = followup_module.list_followups(root, cfg, include_closed=include_closed)
+    for problem in followup_module.unreadable_documents(root, cfg):
+        typer.secho(f"warning: {problem} Its entries are not listed.",
+                    fg=typer.colors.YELLOW, err=True)
     if json_output:
         typer.echo(json.dumps([
             {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
