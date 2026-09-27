@@ -37,7 +37,7 @@ _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 
 # The heading and field lines of an entry the followup verbs wrote.
 _HEADING = re.compile(r"### (FU-\d+) - (.*)")
-_FIELD = re.compile(r"- (Do|From|Status): (.*)")
+_FIELD = re.compile(r"- (Do|From|Status|Closed): (.*)")
 _ANY_HEADING = re.compile(r"#{1,6} ")
 
 
@@ -49,6 +49,7 @@ class FollowUp:
     do: str
     source: str | None
     status: str
+    closed: str | None = None
 
 
 def followup_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
@@ -128,6 +129,7 @@ def _entries(doc: str, slug: str) -> list[tuple[FollowUp, int]]:
             do=values.get("Do", ""),
             source=values.get("From"),
             status=values["Status"],
+            closed=values.get("Closed"),
         )
         found.append((entry, status_at))
     return found
@@ -249,3 +251,21 @@ def list_followups(root: Path, cfg: SpecfloConfig, include_closed: bool = False)
             if include_closed or entry.status == "open"
         ]
     return sorted(entries, key=lambda entry: int(entry.id.removeprefix("FU-")))
+
+
+def show_followup(root: Path, cfg: SpecfloConfig, followup_id: str) -> FollowUp:
+    """The entry ``followup_id``, open or closed, in whichever project holds it.
+
+    When two projects hold the ID, the open one is returned, the one close
+    would act on. A document that cannot be read is skipped, as in
+    ``list_followups``. Refuses an ID no entry carries, a hand-written one
+    included.
+    """
+    found = [
+        entry
+        for entry in list_followups(root, cfg, include_closed=True)
+        if entry.id == followup_id
+    ]
+    if not found:
+        raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
+    return next((entry for entry in found if entry.status == "open"), found[0])

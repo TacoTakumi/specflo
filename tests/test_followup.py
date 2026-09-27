@@ -371,6 +371,98 @@ def test_list_with_no_open_entries_says_so(tmp_path, monkeypatch):
     assert json.loads(_list("--json").output) == []
 
 
+# --- show ---------------------------------------------------------------------
+
+
+def _show(*args):
+    return runner.invoke(app, ["followup", "show", *args])
+
+
+def test_show_prints_every_field_of_an_open_entry_in_another_project(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "beta", "Open one", "Do it", source="review-1 F2")
+
+    result = _show("FU-01")
+
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "FU-01  beta  Open one\n"
+        "    Do: Do it\n"
+        "    From: review-1 F2\n"
+        "    Status: open\n"
+    )
+    assert json.loads(_show("FU-01", "--json").output) == {
+        "id": "FU-01",
+        "project": "beta",
+        "title": "Open one",
+        "do": "Do it",
+        "from": "review-1 F2",
+        "status": "open",
+        "closed": None,
+    }
+
+
+def test_show_prints_the_closed_line_of_a_closed_entry(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+    today = datetime.date.today().isoformat()
+
+    result = _show("FU-87")
+
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "FU-87  beta  Closed one\n"
+        "    Do: Do the closed one\n"
+        "    Status: closed\n"
+        f"    Closed: {today}: Done\n"
+    )
+    assert json.loads(_show("FU-87", "--json").output) == {
+        "id": "FU-87",
+        "project": "beta",
+        "title": "Closed one",
+        "do": "Do the closed one",
+        "from": None,
+        "status": "closed",
+        "closed": f"{today}: Done",
+    }
+
+
+def test_show_refuses_an_unknown_or_hand_written_id(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+
+    for followup_id in ("FU-999", "FU-85"):
+        result = _show(followup_id)
+        assert result.exit_code != 0, followup_id
+        assert f"No follow-up {followup_id}" in result.output
+
+
+def test_show_warns_about_a_document_it_cannot_read_and_shows_the_entry(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "alpha", "Readable", "X")
+    followup.add_followup(root, cfg, "beta", "Broken", "Y")
+    _break_document(root, "beta")
+
+    result = _show("FU-01")
+
+    assert result.exit_code == 0, result.output
+    assert "Readable" in result.output
+    assert "beta" in result.output and "not searched" in result.output
+
+
+def test_show_takes_the_open_entry_when_two_projects_hold_the_id(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    assert _add("T", "--do", "X").exit_code == 0
+    alpha, beta = (root / "docs" / "projects" / slug / "followup.md" for slug in ("alpha", "beta"))
+    beta.write_text(alpha.read_text())
+    assert _close("FU-01", "--note", "First").exit_code == 0
+
+    shown = json.loads(_show("FU-01", "--json").output)
+
+    assert shown["status"] == "open"
+    assert shown["project"] in ("alpha", "beta")
+
+
 # --- advance ------------------------------------------------------------------
 
 

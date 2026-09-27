@@ -122,6 +122,16 @@ def test_guide_json_no_active_project_next_action_is_none(cwd):
     assert data["next_action"] == "none"
 
 
+def test_guide_tells_the_agent_to_show_a_follow_up_the_user_names(cwd):
+    # A user who opens with "do FU-92" gets the entry read through the CLI,
+    # before a level is proposed, not found with a text search.
+    result = runner.invoke(app, ["guide"])
+    assert result.exit_code == 0
+    line = next(line for line in result.output.splitlines() if "(FU-NN)" in line)
+    assert "specflo followup show FU-NN" in line
+    assert "before you propose a level" in line
+
+
 def test_guide_offers_paste_ready_memory_snippet(cwd):
     # The paste-into-CLAUDE.md snippet shows in the text output, points at the
     # live commands rather than embedding them, and carries no version string

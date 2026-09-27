@@ -267,6 +267,7 @@ The work a project leaves for a later one. Each project keeps its entries in its
 - `specflo followup add <title> --do <text> [--from <text>] [--json]` - add an open entry to the active project: a `### FU-NN - <title>` heading, a `- Do:` line, a `- From:` line when given, and `- Status: open`. Each value is one line, and an empty title or Do is refused. Two adds at the same time never get the same ID. Refused for a project hosted on a daemon.
 - `specflo followup close <FU-NN> --note <text>` - close an open entry in any project of the checkout: its Status becomes `closed` and a `- Closed: <date>: <note>` line is added. An unknown ID, an entry already closed, a hand-written entry, and a missing or empty note are refused with nothing written.
 - `specflo followup list [--all] [--json]` - the open entries of every project in ID order, with project, ID, title and Do line. `--all` adds the closed ones. Hand-written entries have no Status line and are not listed.
+- `specflo followup show <FU-NN> [--json]` - one entry, open or closed, from any project of the checkout: project, ID, title and its Do, From, Status and Closed lines. When two projects hold the ID, the open one is shown. An unknown ID or a hand-written entry is refused. `specflo guide` tells an agent to run it when the user names a follow-up to do.
 
 `specflo advance` lists the open follow-ups of the project it completes (`followups` in `--json`), and `specflo new` prints how many open follow-ups the checkout holds.
 

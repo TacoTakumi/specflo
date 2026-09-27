@@ -2568,6 +2568,35 @@ def followup_list(
         typer.echo(f"    Do: {e.do}")
 
 
+@followup_app.command("show", epilog="Example: specflo followup show FU-03")
+def followup_show(
+    followup_id: str = typer.Argument(..., metavar="<FU-NN>", help="The follow-up to show."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Show one follow-up, open or closed, from any project of this checkout."""
+    root = _require_root(); cfg = config.load_config(root)
+    for problem in followup_module.unreadable_documents(root, cfg):
+        typer.secho(f"warning: {problem} Its entries are not searched.",
+                    fg=typer.colors.YELLOW, err=True)
+    try:
+        e = followup_module.show_followup(root, cfg, followup_id)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(
+            {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
+             "from": e.source, "status": e.status, "closed": e.closed}
+        ))
+        return
+    typer.echo(f"{e.id}  {e.project}  {e.title}")
+    typer.echo(f"    Do: {e.do}")
+    if e.source is not None:
+        typer.echo(f"    From: {e.source}")
+    typer.echo(f"    Status: {e.status}")
+    if e.closed is not None:
+        typer.echo(f"    Closed: {e.closed}")
+
+
 @config_app.command("get", epilog="Example: specflo config get autonomy")
 def config_get(
     key: str = typer.Argument(

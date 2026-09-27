@@ -156,6 +156,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Close an open follow-up in any project, with a note."},
     {"name": "followup list", "group": "workflow", "args": "[--all] [--json]",
      "summary": "List the open follow-ups of every project."},
+    {"name": "followup show", "group": "workflow", "args": "<FU-NN> [--json]",
+     "summary": "Show one follow-up from any project: Do, From, Status and Closed."},
     {"name": "spec start", "group": "workflow", "args": "",
      "summary": "Create the spec.md artifact."},
     {"name": "requirement add", "group": "workflow", "args": "",
@@ -266,7 +268,9 @@ LEVELS_TEXT = (
     "  quick   one goal and one check (`new <name> --level quick`): one brief, proof, no review\n"
     "  fast    3 to 7 tasks (`--level fast`): short brainstorm, spec and plan, one approval\n"
     "  full    more than that (the default): every phase, an approval at each\n"
-    "  A project moves up with `specflo level fast|full`, never down."
+    "  A project moves up with `specflo level fast|full`, never down.\n"
+    "  When the user names a follow-up (FU-NN) to do, read it with"
+    " `specflo followup show FU-NN` before you propose a level."
 )
 
 

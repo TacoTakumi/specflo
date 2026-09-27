@@ -26,6 +26,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   scout, and the execute and quick skills record out-of-scope work with
   `followup add` and turn deferred items still open at completion into
   follow-ups.
+- **`specflo followup show <FU-NN> [--json]`** - print one follow-up, open or
+  closed, from any project in the checkout: its project, title, Do, From,
+  Status and Closed lines. `specflo guide` tells an agent to run it when the
+  user names a follow-up to do, before it proposes a level.
 - **Levels: `specflo new <name> --level quick|fast|full`** - how much
   ceremony a project gets, recorded in `project.md` and shown by `status`
   (`Level:` line, `level` in `--json`). A project without the key is full.
