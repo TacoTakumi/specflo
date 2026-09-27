@@ -18,7 +18,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   checkout, hand-written followup documents included, and two adds at the
   same time never share one. `close FU-NN --note` closes an open entry in any
   project with a dated Closed line, and `list` shows the open entries of
-  every project (`--all` adds the closed ones, `--json`). `doc show followup`
+  every project (`--all` adds the closed ones, `--json`) under a header row
+  that names its columns (ID, PROJECT, TITLE). `doc show followup`
   prints the document, `section set` refuses it, and a project hosted on a
   daemon is refused. `advance` lists the open follow-ups of the project it
   completes (`followups` in `--json`), and `new` prints how many the checkout

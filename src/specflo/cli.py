@@ -2611,9 +2611,13 @@ def followup_list(
         return
     if not entries:
         typer.echo("No follow-ups." if include_closed else "No open follow-ups.")
+        return
+    id_width = max(len("ID"), *(len(e.id) for e in entries))
+    project_width = max(len("PROJECT"), *(len(e.project) for e in entries))
+    typer.echo(f"{'ID'.ljust(id_width)}  {'PROJECT'.ljust(project_width)}  TITLE")
     for e in entries:
         status = "" if e.status == "open" else f" ({e.status})"
-        typer.echo(f"{e.id}  {e.project}  {e.title}{status}")
+        typer.echo(f"{e.id.ljust(id_width)}  {e.project.ljust(project_width)}  {e.title}{status}")
         typer.echo(f"    Do: {e.do}")
 
 

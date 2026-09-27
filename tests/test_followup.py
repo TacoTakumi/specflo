@@ -696,6 +696,21 @@ def test_list_all_adds_the_closed_entries(tmp_path, monkeypatch):
     assert "Do the closed one" in result.output
 
 
+def test_list_names_its_columns_in_a_header_above_aligned_rows(tmp_path, monkeypatch):
+    _open_closed_and_hand_written(tmp_path, monkeypatch)
+
+    result = _list("--all")
+
+    assert result.exit_code == 0, result.output
+    assert result.output == (
+        "ID     PROJECT  TITLE\n"
+        "FU-86  alpha    Open one\n"
+        "    Do: Do the open one\n"
+        "FU-87  beta     Closed one (closed)\n"
+        "    Do: Do the closed one\n"
+    )
+
+
 def test_list_json_holds_the_same_entries_as_the_text(tmp_path, monkeypatch):
     _open_closed_and_hand_written(tmp_path, monkeypatch)
 
