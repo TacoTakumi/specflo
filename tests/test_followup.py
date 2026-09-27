@@ -295,6 +295,73 @@ def test_list_with_no_open_entries_says_so(tmp_path, monkeypatch):
     assert json.loads(_list("--json").output) == []
 
 
+# --- advance ------------------------------------------------------------------
+
+
+def _quick_project_ready_to_complete(tmp_path, monkeypatch, *titles):
+    """An active quick project 'thing' with a filled brief and one open follow-up
+    per title, beside a project 'other' that holds an open follow-up of its own."""
+    root = _checkout(tmp_path, monkeypatch, "Other")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "other", "Elsewhere", "X")
+    assert runner.invoke(app, ["new", "Thing", "--level", "quick"]).exit_code == 0
+    for title, body in (("Goal", "Fix it.\n"), ("Done when", "- it works\n"), ("Proof", "ran: ok\n")):
+        result = runner.invoke(app, ["section", "set", "brief", title, "--stdin"], input=body)
+        assert result.exit_code == 0, result.output
+    for title in titles:
+        assert _add(title, "--do", "X").exit_code == 0
+    assert _add("Already closed", "--do", "X").exit_code == 0
+    closed = followup.list_followups(root, cfg)[-1].id
+    followup.close_followup(root, cfg, closed, "Done")
+    return root
+
+
+def test_advance_lists_the_completing_projects_open_followups(tmp_path, monkeypatch):
+    _quick_project_ready_to_complete(tmp_path, monkeypatch, "First left", "Second left")
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    assert "Completed project 'thing'." in result.output
+    assert "FU-02" in result.output and "First left" in result.output
+    assert "FU-03" in result.output and "Second left" in result.output
+    assert "specflo followup list" in result.output
+    assert "Elsewhere" not in result.output
+    assert "Already closed" not in result.output
+
+
+def test_advance_json_carries_the_open_followups(tmp_path, monkeypatch):
+    _quick_project_ready_to_complete(tmp_path, monkeypatch, "First left", "Second left")
+
+    result = runner.invoke(app, ["advance", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["followups"] == [
+        {"id": "FU-02", "title": "First left"},
+        {"id": "FU-03", "title": "Second left"},
+    ]
+
+
+def test_advance_with_no_open_followups_prints_no_followup_line(tmp_path, monkeypatch):
+    _quick_project_ready_to_complete(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    assert "Completed project 'thing'." in result.output
+    assert "follow" not in result.output.lower()
+    assert not re.search(r"FU-\d+", result.output)
+
+
+def test_advance_json_with_no_open_followups_has_an_empty_list(tmp_path, monkeypatch):
+    _quick_project_ready_to_complete(tmp_path, monkeypatch)
+
+    result = runner.invoke(app, ["advance", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["followups"] == []
+
+
 # --- the document is the verbs' own ---------------------------------------------
 
 

@@ -1509,11 +1509,15 @@ def advance(
             cont = continuation.build_continuation(
                 from_phase, workflow.next_step(from_phase, complete=True), complete=True
             )
+        left = [
+            entry for entry in followup_module.list_followups(root, cfg) if entry.project == slug
+        ]
         if json_output:
             typer.echo(json.dumps(
                 {"advanced": True, "from": from_phase, "to": None,
                  "complete": True, "checkpoint": cp_path,
-                 "checkpoint_locator": cp_locator, "continuation": cont}))
+                 "checkpoint_locator": cp_locator, "continuation": cont,
+                 "followups": [{"id": e.id, "title": e.title} for e in left]}))
         else:
             typer.echo(f"Completed project '{slug}'.")
             if not climbing:
@@ -1521,6 +1525,11 @@ def advance(
                     'Revise the summary to describe what shipped:'
                     ' `specflo summary "<one line>"`.'
                 )
+            if left:
+                typer.echo(f"Open follow-ups this project leaves ({len(left)}):")
+                for e in left:
+                    typer.echo(f"  {e.id}  {e.title}")
+                typer.echo("See every open follow-up with `specflo followup list`.")
             if cp_locator is not None:
                 typer.echo(f"Checkpoint saved: {cp_locator}")
             typer.echo(cont)
