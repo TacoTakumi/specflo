@@ -2499,6 +2499,23 @@ def followup_add(
         typer.echo(f"Recorded {entry.id} in {slug}/followup.")
 
 
+@followup_app.command(
+    "close",
+    epilog='Example: specflo followup close FU-03 --note "Fixed in the leases project"',
+)
+def followup_close(
+    followup_id: str = typer.Argument(..., metavar="<FU-NN>", help="The follow-up to close."),
+    note: str = typer.Option(..., "--note", help="What became of it (one line)."),
+) -> None:
+    """Close an open follow-up in any project of this checkout."""
+    root = _require_root(); cfg = config.load_config(root)
+    try:
+        slug = followup_module.close_followup(root, cfg, followup_id, note)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(f"Closed {followup_id} in {slug}/followup.")
+
+
 @config_app.command("get", epilog="Example: specflo config get autonomy")
 def config_get(
     key: str = typer.Argument(

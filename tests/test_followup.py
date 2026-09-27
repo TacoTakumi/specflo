@@ -6,6 +6,7 @@ directory, hand-written documents included, so any project can cite an entry
 with no project prefix.
 """
 
+import datetime
 import multiprocessing
 import re
 
@@ -153,6 +154,62 @@ def test_add_prints_the_id_as_json(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert '"id": "FU-01"' in result.output
     assert '"project": "alpha"' in result.output
+
+
+# --- close --------------------------------------------------------------------
+
+
+def _close(*args):
+    return runner.invoke(app, ["followup", "close", *args])
+
+
+def _all_docs(root):
+    return {
+        path: path.read_bytes()
+        for path in sorted((root / "docs" / "projects").glob("*/followup.md"))
+    }
+
+
+def test_close_closes_an_open_entry_in_another_project(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "beta", "T", "X")
+
+    result = _close("FU-01", "--note", "Done in alpha")
+
+    assert result.exit_code == 0, result.output
+    assert "FU-01" in result.output
+    today = datetime.date.today().isoformat()
+    assert (
+        f"### FU-01 - T\n- Do: X\n- Status: closed\n- Closed: {today}: Done in alpha\n"
+        in _doc(root, "beta")
+    )
+    assert not (root / "docs" / "projects" / "alpha" / "followup.md").exists()
+
+
+def test_close_refusals_change_no_followup_document(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta", "Gamma")
+    cfg = config.load_config(root)
+    (root / "docs" / "projects" / "gamma" / "followup.md").write_text(
+        "# gamma\n\n### FU-85. A hand-written entry\n\nText.\n"
+    )
+    followup.add_followup(root, cfg, "alpha", "Open one", "X")
+    followup.add_followup(root, cfg, "beta", "Closed one", "Y")
+    assert _close("FU-87", "--note", "Done").exit_code == 0
+    before = _all_docs(root)
+
+    for args in (
+        ["FU-87", "--note", "Again"],
+        ["FU-999", "--note", "Done"],
+        ["FU-85", "--note", "Done"],
+        ["FU-86"],
+        ["FU-86", "--note", ""],
+        ["FU-86", "--note", "  "],
+        ["FU-86", "--note", "one\ntwo"],
+    ):
+        result = _close(*args)
+        assert result.exit_code != 0, args
+        assert _all_docs(root) == before, args
 
 
 # --- the document is the verbs' own ---------------------------------------------

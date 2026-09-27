@@ -2,10 +2,10 @@
 
 Each project keeps its follow-ups in its own ``followup.md``, created on the
 first add. An entry is an ``FU-NN`` heading with a Do line, an optional From
-line and a Status line. The numbers run across the whole projects directory:
-the next one is one above the highest ``FU-NN`` found in any project's
-followup document, hand-written documents included, so any project can cite
-an entry with no project prefix.
+line and a Status line, and a dated Closed line once it is closed. The numbers
+run across the whole projects directory: the next one is one above the highest
+``FU-NN`` found in any project's followup document, hand-written documents
+included, so any project can cite an entry with no project prefix.
 
 Minting reads every followup document, so every write takes one lock for the
 whole projects directory rather than the per-project artifact lock.
@@ -35,6 +35,10 @@ _LOCK_SCOPE = ".followups"
 # entries as "### FU-85." headings and "**FU-03 (O2).**" bullets.
 _ANY_ID = re.compile(r"\bFU-(\d+)\b")
 
+# The heading of an entry the followup verbs wrote.
+_HEADING = re.compile(r"### (FU-\d+) - ")
+_ANY_HEADING = re.compile(r"#{1,6} ")
+
 
 @dataclass(frozen=True)
 class FollowUp:
@@ -62,6 +66,31 @@ def _next_id(root: Path, cfg: SpecfloConfig) -> str:
         for match in _ANY_ID.finditer(path.read_text())
     ]
     return f"FU-{(max(numbers) + 1 if numbers else 1):02d}"
+
+
+def _status_line(doc: str, followup_id: str) -> int | None:
+    """Line index of the Status line of entry ``followup_id`` in ``doc``, or None.
+
+    An entry runs from its ``### FU-NN - <title>`` heading to the next heading.
+    A hand-written entry has no Status line, so it is never found here.
+    """
+    lines = doc.splitlines(keepends=True)
+    start = next(
+        (
+            i
+            for i, line, in_fence in markdown.iter_lines_with_fence(doc)
+            if not in_fence and (m := _HEADING.match(line)) and m.group(1) == followup_id
+        ),
+        None,
+    )
+    if start is None:
+        return None
+    for i in range(start + 1, len(lines)):
+        if _ANY_HEADING.match(lines[i]):
+            break
+        if lines[i].startswith("- Status: "):
+            return i
+    return None
 
 
 def _one_line(label: str, value: str | None, required: bool) -> str | None:
@@ -117,3 +146,36 @@ def add_followup(
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     return FollowUp(id=new_id, project=slug, title=title, do=do, source=source, status="open")
+
+
+def close_followup(
+    root: Path,
+    cfg: SpecfloConfig,
+    followup_id: str,
+    note: str,
+    today: str | None = None,
+) -> str:
+    """Close the open entry ``followup_id`` in whichever project holds it.
+
+    Sets its Status to closed and adds a dated Closed line below it. Refuses an
+    empty or multi-line note, an ID no entry carries, and an entry that is not
+    open, before anything is written. Returns the slug of the project it closed
+    the entry in.
+    """
+    note = _one_line("note", note, required=True)
+    today = today or datetime.date.today().isoformat()
+    with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
+        for path in _documents(root, cfg):
+            doc = path.read_text()
+            index = _status_line(doc, followup_id)
+            if index is None:
+                continue
+            lines = doc.splitlines(keepends=True)
+            slug = path.parent.name
+            status = lines[index].removeprefix("- Status: ").strip()
+            if status != "open":
+                raise SpecfloError(f"{followup_id} in {slug}/followup is {status}, not open.")
+            lines[index : index + 1] = ["- Status: closed\n", f"- Closed: {today}: {note}\n"]
+            path.write_text(markdown.bump_updated("".join(lines), today))
+            return slug
+    raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
