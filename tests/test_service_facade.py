@@ -393,7 +393,9 @@ _ARTIFACT_MODULE_ALLOWLIST = {
     },
     "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
     "specflo.spec": {"SPEC_FILENAME"},
-    "specflo.plan": {"PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines"},
+    "specflo.plan": {
+        "PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines", "note_text",
+    },
     "specflo.checkpoint": {"render_checkpoint", "hosted_view"},
     "specflo.status": {"render_status", "hosted_view"},
     "specflo.doc": {"ARTIFACTS", "PROSE_ARTIFACTS", "artifact_names"},
