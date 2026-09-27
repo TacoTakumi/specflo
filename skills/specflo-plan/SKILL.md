@@ -146,6 +146,10 @@ When `specflo status` shows `Level: fast`, this skill runs short:
 - **Caps:** 3 decisions and 7 tasks. A cap only warns: finish the work already
   recorded, add no more, and put new work in the brainstorm's Out of scope /
   Deferred section. Do not move the project up; the user chose fast.
+- **Targeted Verify.** Each task's `--verify` runs the tests that task adds or
+  changes: a test file, a test ID or a `-k` filter, not the whole suite. A
+  bare `uv run pytest` is the whole suite. The execute skill runs the full
+  suite once, after the last task.
 - **One approval, before execute.** When the plan validates, stop. Show the
   user `specflo doc show brief` and list every choice you made that they have
   not seen: each decision, and any requirement or task beyond what they asked

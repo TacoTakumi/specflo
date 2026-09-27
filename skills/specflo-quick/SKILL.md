@@ -40,15 +40,16 @@ Before `specflo new`, propose a level and let the user confirm it:
 2. **Fill the brief through the CLI.** Never open `brief.md` in an editor.
    - `specflo section set brief "Goal" --stdin` - one or two sentences.
    - `specflo section set brief "Done when" --stdin` - exactly one list item,
-     a check a command or test can prove.
+     a check a command or test can prove. Name the tests the change touches
+     (a test file, a test ID or a `-k` filter), not the whole suite.
 3. **Do the work.** Keep to what the check needs.
 4. **Record proof.** Run the check and record its output:
    `specflo section set brief "Proof" --stdin`. Proof is the command and what
    it printed, not a claim that it passed.
 5. **Validate.** `specflo validate brief` must pass: a goal, exactly one check,
    and proof.
-6. **Commit once.** One commit for the whole change; stage only the files you
-   touched, never `git add -A`.
+6. **Commit once.** Run the full suite once, before the commit. One commit for
+   the whole change; stage only the files you touched, never `git add -A`.
 7. **Complete.** First add a follow-up for each item still in Deferred:
    `specflo followup add "<title>" --do "<what to do>"`. Nothing reads the
    brief after completion. In a ladder run, skip this: the next level picks

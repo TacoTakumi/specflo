@@ -85,3 +85,20 @@ def test_the_execute_and_quick_skills_defer_uncovered_work_in_a_ladder():
         text = " ".join(_skill(name).split())
         assert "In a ladder run" in text or "in a ladder run" in text, name
         assert "Deferred" in text, name
+
+
+def _levels_section(name):
+    text = _skill(name)
+    return " ".join(text.split("## Levels", 1)[1].split("\n## ", 1)[0].split())
+
+
+def test_the_light_levels_run_targeted_tests_and_the_full_suite_once():
+    plan = _fast_section("specflo-plan")
+    execute = _levels_section("specflo-execute")
+    quick = " ".join(_skill("specflo-quick").split())
+    for name, text in (("plan", plan), ("execute", execute), ("quick", quick)):
+        assert "not the whole suite" in text, name
+        assert "full suite once" in text, name
+    assert "Targeted Verify" in plan
+    assert "task edit T-NN --verify" in execute
+    assert "before the commit" in quick

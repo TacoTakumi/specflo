@@ -209,7 +209,14 @@ before done, annotate after.**
 ## Levels
 
 At quick level the project is worked with the `specflo-quick` skill, not this
-one. At fast level this loop runs as written, with one addition.
+one. At fast level this loop runs as written, with two additions.
+
+**Targeted tests per task.** At fast level, run the task's Verify for each
+task, not the whole suite. If a Verify runs the whole suite (a bare
+`uv run pytest`), correct it before you start the task with
+`specflo task edit T-NN --verify "<the tests the task touches>"`. Run the full
+suite once, when `specflo task show` reports no actionable task, before the
+review round.
 
 **Uncovered work stops the loop.** At quick or fast level, when you find work
 the goal needs that the brief or the plan does not cover, stop. Do not add

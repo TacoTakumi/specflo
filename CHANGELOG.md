@@ -593,6 +593,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   change. The shipped definitions list none.
 
 ### Changed
+- **Targeted tests at quick and fast level.** At fast level the plan skill
+  has each task's Verify run the tests that task adds or changes, not the
+  whole suite, and the execute skill runs that Verify per task and the full
+  suite once, after the last task and before the review round. It corrects a
+  whole-suite Verify with `task edit --verify` first. At quick level the
+  check names the tests the change touches, and the full suite runs once,
+  before the commit.
 - **Artifact locators replace paths on the human line.** `new`,
   `brainstorm start`, `spec start`, `plan start`, `review start`, and
   `review done` now print `<project>/<artifact>` (for example
