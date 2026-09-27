@@ -17,7 +17,7 @@ from pathlib import Path
 from . import markdown
 from .brainstorm import brainstorm_path
 from .config import SpecfloConfig
-from .errors import SpecfloError, require_one_line
+from .errors import SpecfloError, refuse_duplicate, require_one_line
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
@@ -127,6 +127,10 @@ def add_requirement(
 
         if derives_from is not None:
             _require_decision_exists(root, cfg, slug, derives_from)
+
+        titles = markdown.entry_titles(doc, "REQ-")
+        active = {r: titles[r] for r in active_requirement_ids(doc) if r in titles}
+        refuse_duplicate("requirement", text, active, supersedes, "spec")
 
         new_id = markdown.next_id(doc, "REQ-")
 

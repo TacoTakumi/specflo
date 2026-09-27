@@ -18,7 +18,7 @@ from pathlib import Path
 
 from . import markdown, spec as spec_mod
 from .config import SpecfloConfig
-from .errors import SpecfloError, require_one_line
+from .errors import SpecfloError, refuse_duplicate, require_one_line
 from .locking import lock_path_for, locked
 from .projects import (
     FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, project_dir,
@@ -755,6 +755,9 @@ def add_task(
             raise SpecfloError(
                 f"No milestone {milestone} in this plan (add it with `specflo milestone add`)."
             )
+
+        active = {t.id: t.text for t in _parse_tasks(doc) if t.status == "active"}
+        refuse_duplicate("task", text, active, supersedes, "plan")
 
         new_id = markdown.next_id(doc, "T-")
         if supersedes is not None:

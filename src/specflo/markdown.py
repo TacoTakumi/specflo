@@ -159,6 +159,16 @@ def next_id(doc: str, prefix: str) -> str:
     return f"{prefix}{nxt:02d}"
 
 
+def entry_titles(doc: str, prefix: str) -> dict[str, str]:
+    """Each ``### <prefix>NN — title`` header outside a code fence, as id -> title."""
+    head_re = re.compile(rf"^### ({re.escape(prefix)}\d+) — (.*)$")
+    return {
+        m.group(1): m.group(2)
+        for _, line, in_fence in iter_lines_with_fence(doc)
+        if not in_fence and (m := head_re.match(line.rstrip("\r\n")))
+    }
+
+
 def set_entry_title(doc: str, item_id: str, title: str) -> str:
     """Rewrite the ``### {item_id} — <title>`` heading of an entry.
 

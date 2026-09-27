@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import SpecfloConfig
-from .errors import SpecfloError, require_one_line
+from .errors import SpecfloError, refuse_duplicate, require_one_line
 from . import markdown
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
@@ -118,6 +118,10 @@ def add_decision(
             rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
         ):
             raise SpecfloError(f"No decision {supersedes} to supersede.")
+
+        titles = markdown.entry_titles(doc, "D-")
+        active = {d: titles[d] for d in active_decision_ids(doc) if d in titles}
+        refuse_duplicate("decision", text, active, supersedes, "brainstorm")
 
         new_id = markdown.next_id(doc, "D-")
         rationale_text = rationale if rationale else "—"

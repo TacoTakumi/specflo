@@ -201,7 +201,12 @@ def seed_fast_documents(root: Path, cfg: SpecfloConfig, slug: str) -> None:
         ))
     requirement_ids = []
     if spec.start_spec(root, cfg, slug)[1]:
+        seen = set()
         for check in checks:
+            # add_requirement refuses a requirement the spec already holds.
+            if check.casefold() in seen:
+                continue
+            seen.add(check.casefold())
             requirement = spec.add_requirement(root, cfg, slug, text=check, acceptance=check)
             requirement_ids.append(requirement.id)
     if plan.start_plan(root, cfg, slug)[1] and requirement_ids:

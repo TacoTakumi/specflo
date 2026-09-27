@@ -600,6 +600,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   whole-suite Verify with `task edit --verify` first. At quick level the
   check names the tests the change touches, and the full suite runs once,
   before the commit.
+- **Loop guard on `decision add`, `requirement add` and `task add`.** Text
+  that an active entry of the same kind already holds is refused, ignoring
+  case and extra whitespace, and nothing is written. The message names the
+  entry, tells a model that it may be in a loop, and points it at
+  `specflo doc show` and `--supersedes`. Superseding the matching entry may
+  keep its text, and the text of a superseded entry may be added again.
+  Moving a quick project up seeds a check that its brief lists twice only
+  once.
 - **Artifact locators replace paths on the human line.** `new`,
   `brainstorm start`, `spec start`, `plan start`, `review start`, and
   `review done` now print `<project>/<artifact>` (for example
