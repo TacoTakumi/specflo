@@ -70,3 +70,14 @@ def test_the_changelog_adds_the_followup_group_in_the_unreleased_section():
     unreleased = _section((REPO / "CHANGELOG.md").read_text(), "## [0.15.0]")
     added = _section(unreleased, "### Added")
     assert "specflo followup" in added
+
+
+def test_the_execute_skill_closes_a_settled_followup_with_task_done():
+    section = _flat(_section(_skill("specflo-execute"), "## Follow-ups"))
+    assert "specflo task done T-NN --closes FU-NN" in section
+
+
+def test_the_quick_skill_closes_a_settled_followup_with_what_did_the_work():
+    scout = _flat(_step(_skill("specflo-quick"), "Scout"))
+    assert "specflo followup close FU-NN --by <project>" in scout
+    assert "commit" in scout

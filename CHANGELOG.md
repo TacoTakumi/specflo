@@ -30,6 +30,19 @@ latter. Release tags are of the form `vX.Y.Z`.
   closed, from any project in the checkout: its project, title, Do, From,
   Status and Closed lines. `specflo guide` tells an agent to run it when the
   user names a follow-up to do, before it proposes a level.
+- **`specflo followup close <FU-NN> --note <text> --by <ref>`** - record
+  what closed a follow-up on a `- Closed by:` line below the Closed line: a
+  task as `<project>/<T-NN>`, a project with no task as `<project>`, or a git
+  commit, stored as its short SHA. The ref is checked before anything is
+  written, and one that names no work is refused. `--by` is optional.
+  `followup show` prints the Closed by line, and its `--json` carries
+  `closed_by`.
+- **`specflo task done <T-NN> --closes <FU-NN>`** - close the follow-ups a
+  task settles in the same command, repeatable. Each one records the task as
+  its Closed by, with the task's `--note`, or else its title, as the note.
+  Every named follow-up is checked open before the task changes. The execute
+  skill closes a settled follow-up this way, and the quick skill with
+  `followup close --by`.
 - **Levels: `specflo new <name> --level quick|fast|full`** - how much
   ceremony a project gets, recorded in `project.md` and shown by `status`
   (`Level:` line, `level` in `--json`). A project without the key is full.

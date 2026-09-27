@@ -35,7 +35,8 @@ Before `specflo new`, propose a level and let the user confirm it:
 1. **Scout.** Run `specflo followup list`: an open follow-up that an earlier
    project left may be this change. If it is, name its ID in the Goal, and
    close it after the commit with
-   `specflo followup close FU-NN --note "<what was done>"`.
+   `specflo followup close FU-NN --by <project> --note "<what was done>"`.
+   `--by` records what closed it: this project, or the commit's SHA.
 2. **Fill the brief through the CLI.** Never open `brief.md` in an editor.
    - `specflo section set brief "Goal" --stdin` - one or two sentences.
    - `specflo section set brief "Done when" --stdin` - exactly one list item,

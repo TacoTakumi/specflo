@@ -246,8 +246,10 @@ not do it on the side.
   the project; below that, the next level picks the deferred work up.
 - **A follow-up this project settles.** When a task settles an open follow-up
   that an earlier project left (the brainstorm names the ones this project
-  takes up), close it after the task's commit:
-  `specflo followup close FU-NN --note "<what was done>"`.
+  takes up), close it when you mark the task done after its commit:
+  `specflo task done T-NN --closes FU-NN --note "<what was done>"`. The
+  follow-up records the task as what closed it. Work outside any task closes
+  with `specflo followup close FU-NN --note "<what was done>" --by <commit>`.
 
 ## Anti-sycophancy
 
