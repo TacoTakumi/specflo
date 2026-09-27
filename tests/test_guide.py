@@ -132,6 +132,13 @@ def test_guide_tells_the_agent_to_show_a_follow_up_the_user_names(cwd):
     assert "before you propose a level" in line
 
 
+def test_guide_table_names_what_closes_a_follow_up():
+    entries = {entry["name"]: entry for entry in guide.COMMANDS}
+    assert "--by <ref>" in entries["followup close"]["args"]
+    assert "Closed by" in entries["followup show"]["summary"]
+    assert "--closes <FU-NN>" in entries["task done"]["args"]
+
+
 def test_guide_offers_paste_ready_memory_snippet(cwd):
     # The paste-into-CLAUDE.md snippet shows in the text output, points at the
     # live commands rather than embedding them, and carries no version string

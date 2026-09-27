@@ -380,6 +380,21 @@ def test_close_by_refuses_a_ref_that_names_no_work_and_writes_nothing(
     assert _all_docs(root) == before
 
 
+def test_close_by_a_word_that_names_a_project_and_a_commit_names_the_project(
+    tmp_path, monkeypatch
+):
+    root = _checkout(tmp_path, monkeypatch, "Alpha")
+    cfg = config.load_config(root)
+    followup.add_followup(root, cfg, "alpha", "T", "X")
+    _git_commit(root)
+    subprocess.run(["git", "tag", "alpha"], cwd=root, check=True)
+
+    result = _close("FU-01", "--note", "Done", "--by", "alpha")
+
+    assert result.exit_code == 0, result.output
+    assert "- Closed by: alpha\n" in _doc(root, "alpha")
+
+
 def test_close_without_by_writes_no_closed_by_line(tmp_path, monkeypatch):
     root = _checkout(tmp_path, monkeypatch, "Alpha")
     cfg = config.load_config(root)
@@ -451,6 +466,48 @@ def test_task_done_refuses_a_followup_that_is_not_open_before_the_task_changes(
         assert _progress(root, cfg) == "in_progress", closes
         assert _all_docs(root) == before, closes
         assert plan.plan_path(root, cfg, "alpha").read_bytes() == plan_before, closes
+
+
+def test_task_done_on_a_task_with_a_blank_title_still_closes_with_a_note(tmp_path, monkeypatch):
+    root = _checkout(tmp_path, monkeypatch, "Alpha", "Beta")
+    cfg = config.load_config(root)
+    spec.start_spec(root, cfg, "alpha", today="2026-09-27")
+    spec.add_requirement(root, cfg, "alpha", "r", acceptance="a", today="2026-09-27")
+    plan.start_plan(root, cfg, "alpha", today="2026-09-27")
+    plan.add_task(root, cfg, "alpha", "   ", acceptance="a", verify="v",
+                  implements=["REQ-01"], today="2026-09-27")
+    plan.start_task(root, cfg, "alpha", "T-01", today="2026-09-27")
+    followup.add_followup(root, cfg, "beta", "One", "X")
+
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])
+
+    assert result.exit_code == 0, result.output
+    assert _progress(root, cfg) == "done"
+    entry = followup.show_followup(root, cfg, "FU-01")
+    assert entry.status == "closed"
+    assert entry.closed.split(": ", 1)[1].strip()
+    assert entry.closed_by == "alpha/T-01"
+
+
+def test_task_done_that_fails_a_later_close_names_the_ones_it_closed(tmp_path, monkeypatch):
+    root, cfg = _task_in_progress(tmp_path, monkeypatch)
+    followup.add_followup(root, cfg, "beta", "One", "X")
+    followup.add_followup(root, cfg, "beta", "Two", "Y")
+    close = followup.close_followup
+
+    def close_the_first_only(root, cfg, followup_id, *args, **kwargs):
+        if followup_id == "FU-02":
+            # Another command closed it between the check and the close.
+            raise SpecfloError("FU-02 in beta/followup is closed, not open.")
+        return close(root, cfg, followup_id, *args, **kwargs)
+
+    monkeypatch.setattr(followup, "close_followup", close_the_first_only)
+    result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01",
+                                 "--closes", "FU-02"])
+
+    assert result.exit_code != 0
+    message = result.output.split("FU-02 was not closed", 1)[1]
+    assert "FU-01" in message
 
 
 def test_task_done_closes_with_the_one_line_note_the_task_records(tmp_path, monkeypatch):

@@ -2119,7 +2119,8 @@ def task_done(
         raise _die(str(exc))
     closed = []
     # The task records its note on one line; the close gets that same line.
-    close_note = plan.note_text(note) if note else task.text
+    # A task title can be blank, and a close needs a note, so it never gets "".
+    close_note = plan.note_text(note) if note else (task.text or "Task done.")
     for followup_id in closes:
         try:
             holder = followup_module.close_followup(
@@ -2127,7 +2128,10 @@ def task_done(
             )
         except SpecfloError as exc:
             _refresh_checkpoint(svc, slug)
-            raise _die(f"{task.id} is done, but {followup_id} was not closed: {exc}")
+            message = f"{task.id} is done, but {followup_id} was not closed: {exc}"
+            if closed:
+                message += f" Closed before it: {', '.join(i for i, _ in closed)}."
+            raise _die(message)
         closed.append((followup_id, holder))
     written = _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
