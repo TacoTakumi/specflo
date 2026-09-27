@@ -819,6 +819,9 @@ def add_milestone(
     ``actor`` names the identity adding it, written as an ``Actor`` line after
     the checklist; a local add passes none and writes none.
     """
+    require_one_line("A milestone's text", text)
+    for item in exit_items or []:
+        require_one_line("A milestone's exit item", item)
     path = plan_path(root, cfg, slug)
     if not path.is_file():
         raise SpecfloError("No plan yet. Run `specflo plan start` first.")

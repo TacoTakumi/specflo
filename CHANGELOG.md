@@ -752,11 +752,12 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ### Fixed
 
-- **`decision add`, `requirement add` and `task add` refuse a line break.**
-  Each text field is one line, as in `followup add` and `task edit`. A value
-  carrying any line break `str.splitlines()` breaks on is refused before
-  anything is written. Before, an embedded line such as `### REQ-99 - ghost`
-  added an entry of its own and made the next ID jump.
+- **`decision add`, `requirement add`, `task add` and `milestone add` refuse
+  a line break.** Each text field and Exit item is one line, as in
+  `followup add` and `task edit`. A value carrying any line break
+  `str.splitlines()` breaks on is refused before anything is written.
+  Before, an embedded line such as `### REQ-99 - ghost` added an entry of its
+  own and made the next ID jump.
 - **A turn the provider refused no longer looks like an empty answer.**
   `specflo agent prompt` used to exit 0 and print nothing when the model's
   provider refused the call, so an orchestrator could not tell a refused

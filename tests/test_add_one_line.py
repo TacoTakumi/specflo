@@ -1,4 +1,4 @@
-"""decision add, requirement add and task add keep every text field on one line."""
+"""decision, requirement, task and milestone add keep every text field on one line."""
 
 import pytest
 
@@ -84,3 +84,21 @@ def test_a_one_line_add_still_records_the_entry(
 ):
     add(root, cfg, project)
     assert f"### {next_id} — " in path_of(root, cfg, project).read_text()
+
+
+def test_milestone_add_refuses_a_line_break_in_its_text_or_an_exit_item(root, cfg, project):
+    path = plan.plan_path(root, cfg, project)
+    before = path.read_text()
+    for value in (INJECTION, *OTHER_BREAKS):
+        for fields, what in (
+            ({"text": value, "exit_items": ["works"]}, "text"),
+            ({"text": "Storage", "exit_items": ["works", value]}, "exit item"),
+        ):
+            with pytest.raises(SpecfloError) as exc:
+                plan.add_milestone(root, cfg, project, **fields)
+            assert str(exc.value) == (
+                f"A milestone's {what} is one line: remove the line break."
+            ), (what, value)
+            assert path.read_text() == before, (what, value)
+    plan.add_milestone(root, cfg, project, "Storage", exit_items=["works"])
+    assert "### M-01 — Storage" in path.read_text()
