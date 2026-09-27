@@ -16,12 +16,14 @@ from typer.core import TyperGroup
 
 from agentsquire import check_stale
 from agentsquire.cli import skills_command_group
+from agentsquire.roots import resolve_roots
 from agentsquire.sources import default_source
 
 from . import __version__
 from . import auto as auto_module
 from . import brainstorm, checkpoint, checkouts, config, continuation, guide as guide_module, hook, plan, projects, spec
 from . import doc as doc_module
+from . import doctor as doctor_module
 from . import followup as followup_module
 from . import graph as graph_module
 from . import extension_install as extension_module
@@ -1075,6 +1077,30 @@ def guide_(
         "commands are the seam they call.",
     ]
     typer.echo("\n".join(lines))
+
+
+@app.command(name="doctor", epilog="Example: specflo doctor --json")
+def doctor_(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Check that specflo is on PATH and each agent harness has the skills.
+
+    Runs cold - works before `specflo init`. Exits 1 when a check fails; each
+    failure names the command that fixes it.
+    """
+    home, project = resolve_roots(None, None)
+    found = config.find_root(project)
+    checks = doctor_module.run_checks(
+        home=home, project=found or project, source=default_source("specflo"),
+        which=doctor_module.shutil.which,
+    )
+    failed = any(c.status == "fail" for c in checks)
+    if json_output:
+        typer.echo(json.dumps({"ok": not failed, "checks": [c.to_dict() for c in checks]}))
+    else:
+        typer.echo(doctor_module.render(checks))
+    if failed:
+        raise typer.Exit(1)
 
 
 @app.command(name="checkpoint", epilog="Example: specflo checkpoint --json")

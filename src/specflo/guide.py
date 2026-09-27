@@ -82,6 +82,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show the active project, its phase, and what's next."},
     {"name": "guide", "group": "setup", "args": "",
      "summary": "Show this overview of specflo and what to do next."},
+    {"name": "doctor", "group": "setup", "args": "",
+     "summary": "Check specflo is on PATH and each agent harness has the skills."},
     {"name": "checkpoint", "group": "setup", "args": "",
      "summary": "Print the resume prompt; refresh checkpoint.md."},
     {"name": "config get", "group": "setup", "args": "<key>",

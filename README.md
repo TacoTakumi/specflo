@@ -57,6 +57,9 @@ specflo extension install   # pi: same session-resume wiring, as a pi extension
 The last two lines are per-harness alternatives - run the one that matches your
 agent, or neither if it is some other harness.
 
+Check the setup with `specflo doctor`. It names the command that fixes each
+problem it finds.
+
 That is the whole setup. Start your coding agent and say:
 
 > We use specflo here. Start a new specflo project for <the thing to build>.
@@ -288,6 +291,7 @@ The work a project leaves for a later one. Each project keeps its entries in its
 ### Harness integration
 
 - `specflo skills install|status|update|uninstall [--scope user|project] [--harness NAME[:SCOPE]]` - install specflo's bundled workflow skills into the agent harnesses on your machine, and keep them current. See **[Skills](#skills)**.
+- `specflo doctor [--json]` - check the setup on this machine: the `specflo` command is on PATH, and each detected agent harness has every bundled skill, installed by `specflo skills install` or as a link to the same content. A missing, stale or locally modified skill and a broken or mismatched link each fail with the command that fixes it, and so does a machine where no harness has every skill. A harness with no specflo skills is listed and skipped. Runs cold (works before `specflo init`). Exits 1 when a check fails. `--json` emits `{ok, checks}`.
 - `specflo extension install [--scope user|project]` - install the bundled pi extension into pi's extension directory: `~/.pi/agent/extensions/specflo` by default, `./.pi/extensions/specflo` with `--scope project`. A plain local copy with a version stamp - no npm, no network - and pi discovers the directory on its own, so no pi settings are read or written. Re-run to update. See **[The pi extension](#the-pi-extension)**.
 
 ### Hosted projects: the daemon and remotes

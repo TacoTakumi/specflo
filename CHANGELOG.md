@@ -11,6 +11,11 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.15.0]
 
 ### Added
+- **`specflo doctor [--json]`** - check the setup on this machine: the
+  `specflo` command is on PATH, and each detected agent harness has every
+  bundled skill, installed or linked to the same content. A missing, stale
+  or locally modified skill and a broken or mismatched link each fail with
+  the command that fixes it. Exits 1 when a check fails.
 - **Follow-ups: `specflo followup add|close|list`** - record the work a
   project leaves for a later one. `add` writes an open `FU-NN` entry (title,
   Do line, optional From line) to the active project's `followup.md`,
