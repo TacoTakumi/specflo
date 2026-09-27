@@ -212,12 +212,14 @@ At quick level the project is worked with the `specflo-quick` skill, not this
 one. At fast level this loop runs as written, with one addition.
 
 **Uncovered work stops the loop.** At quick or fast level, when you find work
-the brief or the plan does not cover, stop. Do not add tasks for it, and do not
-do it on the side. Offer the user the move up: `specflo level fast` from quick,
-`specflo level full` from fast. The move keeps every document and every done
-task. Small, separate work can instead go to the deferred list (the brief's
-Deferred section, or the brainstorm's Out of scope / Deferred section) with
-the user's agreement.
+the goal needs that the brief or the plan does not cover, stop. Do not add
+tasks for it, and do not do it on the side. Offer the user the move up:
+`specflo level fast` from quick, `specflo level full` from fast. The move keeps
+every document and every done task. With the user's agreement, the work can
+instead go to the deferred list (the brief's Deferred section, or the
+brainstorm's Out of scope / Deferred section), where a later level of this
+project picks it up. Work the goal does not need does not stop the loop: it is
+a follow-up (see **Follow-ups**).
 
 **In a ladder run** (the auto payload carries a "Ladder run:" line) there is no
 user to offer the move to: put the uncovered work on the deferred list and
@@ -226,18 +228,26 @@ picks the deferred work up.
 
 ## Follow-ups
 
-Work you find that the project's goal does not need (a flaky test, a gap in a
-neighbouring command, a review finding this project will not fix) is recorded,
-not dropped and not done on the side:
-`specflo followup add "<title>" --do "<what a later project should do>" --from "<the task, finding or test it came from>"`.
-It gets an `FU-NN` ID in this project's followup document, and `specflo
-advance` lists it when the project completes. Work the goal needs but the plan
-does not cover is not a follow-up: at quick or fast level it stops the loop
-(see **Levels**).
+The deferred list and the follow-ups hold different work. The deferred list
+holds work inside this project's goal, for a later level of this project. A
+follow-up is work this project will not do. Record it, do not drop it, and do
+not do it on the side.
 
-When a task settles an open follow-up that an earlier project left (the
-brainstorm names the ones this project takes up), close it after the task's
-commit: `specflo followup close FU-NN --note "<what was done>"`.
+- **Work the goal does not need** (a flaky test, a gap in a neighbouring
+  command, a review finding this project will not fix):
+  `specflo followup add "<title>" --do "<what a later project should do>" --from "<the task, finding or test it came from>"`.
+  It gets an `FU-NN` ID in this project's followup document, and `specflo
+  advance` lists it when the project completes.
+- **Deferred work left at the end.** Before `specflo advance` completes the
+  project, add a follow-up for each item on the deferred list that is still
+  work to do: nothing reads the deferred list after completion. An item that
+  only marks the scope (what the project chose not to do) is not work and
+  stays where it is. In a ladder run, do this only when the advance completes
+  the project; below that, the next level picks the deferred work up.
+- **A follow-up this project settles.** When a task settles an open follow-up
+  that an earlier project left (the brainstorm names the ones this project
+  takes up), close it after the task's commit:
+  `specflo followup close FU-NN --note "<what was done>"`.
 
 ## Anti-sycophancy
 

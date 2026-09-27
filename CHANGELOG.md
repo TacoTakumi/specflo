@@ -23,7 +23,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   daemon is refused. `advance` lists the open follow-ups of the project it
   completes (`followups` in `--json`), and `new` prints how many the checkout
   holds. The brainstorm and quick skills run `followup list` while they
-  scout, and the execute skill records out-of-scope work with `followup add`.
+  scout, and the execute and quick skills record out-of-scope work with
+  `followup add` and turn deferred items still open at completion into
+  follow-ups.
 - **Levels: `specflo new <name> --level quick|fast|full`** - how much
   ceremony a project gets, recorded in `project.md` and shown by `status`
   (`Level:` line, `level` in `--json`). A project without the key is full.

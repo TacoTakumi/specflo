@@ -40,6 +40,26 @@ def test_the_execute_skill_records_leftover_work_as_a_followup():
     assert "specflo followup add" in _skill("specflo-execute")
 
 
+def _flat(text):
+    return " ".join(text.split())
+
+
+def test_the_quick_skill_sends_work_outside_the_goal_to_a_followup():
+    growing = _section(_skill("specflo-quick"), "## When the work grows")
+    assert "specflo followup add" in growing
+
+
+def test_the_quick_skill_turns_leftover_deferred_items_into_followups_on_completion():
+    complete = _flat(_step(_skill("specflo-quick"), "Complete"))
+    assert "Deferred" in complete and "specflo followup add" in complete
+
+
+def test_the_execute_skill_turns_leftover_deferred_items_into_followups_on_completion():
+    section = _flat(_section(_skill("specflo-execute"), "## Follow-ups"))
+    assert "deferred list" in section
+    assert "Before `specflo advance` completes the project" in section
+
+
 def test_the_readme_command_reference_lists_the_followup_group():
     reference = _section((REPO / "README.md").read_text(), "## Command reference")
     for verb in ("add", "close", "list"):

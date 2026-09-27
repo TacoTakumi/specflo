@@ -48,8 +48,12 @@ Before `specflo new`, propose a level and let the user confirm it:
    and proof.
 6. **Commit once.** One commit for the whole change; stage only the files you
    touched, never `git add -A`.
-7. **Complete.** `specflo advance` completes the project. There is **no review
-   round** at quick level: the check and its proof are the gate.
+7. **Complete.** First add a follow-up for each item still in Deferred:
+   `specflo followup add "<title>" --do "<what to do>"`. Nothing reads the
+   brief after completion. In a ladder run, skip this: the next level picks
+   Deferred up. Then `specflo advance` completes the project.
+   There is **no review round** at quick level: the check and its proof are
+   the gate.
 8. **Report in chat.** Show the user the goal, the check and the proof. Nothing
    waits for them; they read it after the work is done.
 
@@ -57,8 +61,12 @@ Before `specflo new`, propose a level and let the user confirm it:
 
 If you find work the brief does not cover, **stop**. Do not add it yourself.
 
-- Small and separate: write it to the brief's Deferred section
-  (`specflo section set brief "Deferred" --stdin`) and finish the one check.
+- Not needed for the goal (a flaky test, a gap in another command): record it
+  with `specflo followup add "<title>" --do "<what to do>"` and finish the one
+  check.
+- Needed for the goal, but small and not now: write it to the brief's
+  Deferred section (`specflo section set brief "Deferred" --stdin`) and
+  finish the one check.
 - Needs more than one check: offer the user `specflo level fast`. The move
   keeps the brief and seeds a short brainstorm, spec and plan from it.
 - In a ladder run (the auto payload carries a "Ladder run:" line) there is no
