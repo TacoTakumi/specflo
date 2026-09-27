@@ -561,15 +561,26 @@ def test_task_done_json_names_the_followups_it_closed(tmp_path, monkeypatch):
     assert json.loads(result.output)["closed_followups"] == ["FU-01"]
 
 
-def test_task_done_that_fails_to_close_still_refreshes_the_checkpoint(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    "error",
+    [
+        # Another command closed it between the check and the close.
+        SpecfloError("FU-01 in beta/followup is closed, not open."),
+        # The followup document cannot be written.
+        PermissionError(13, "Permission denied"),
+    ],
+    ids=["refused", "os error"],
+)
+def test_task_done_that_fails_to_close_still_refreshes_the_checkpoint(
+    tmp_path, monkeypatch, error
+):
     root, cfg = _task_in_progress(tmp_path, monkeypatch)
     followup.add_followup(root, cfg, "beta", "One", "X")
     checkpoint = root / "docs" / "projects" / "alpha" / "checkpoint.md"
     checkpoint.unlink(missing_ok=True)
 
     def refuse(*args, **kwargs):
-        # Another command closed it between the check and the close.
-        raise SpecfloError("FU-01 in beta/followup is closed, not open.")
+        raise error
 
     monkeypatch.setattr(followup, "close_followup", refuse)
     result = runner.invoke(app, ["task", "done", "T-01", "--closes", "FU-01"])

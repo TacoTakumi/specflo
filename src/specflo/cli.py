@@ -2126,7 +2126,8 @@ def task_done(
             holder = followup_module.close_followup(
                 root, cfg, followup_id, close_note, by=f"{slug}/{task.id}"
             )
-        except SpecfloError as exc:
+        except (SpecfloError, OSError) as exc:
+            # The task is saved already: say what did not close, never a traceback.
             _refresh_checkpoint(svc, slug)
             message = f"{task.id} is done, but {followup_id} was not closed: {exc}"
             if closed:
