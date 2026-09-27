@@ -32,21 +32,25 @@ Before `specflo new`, propose a level and let the user confirm it:
 
 ## Process
 
-1. **Fill the brief through the CLI.** Never open `brief.md` in an editor.
+1. **Scout.** Run `specflo followup list`: an open follow-up that an earlier
+   project left may be this change. If it is, name its ID in the Goal, and
+   close it after the commit with
+   `specflo followup close FU-NN --note "<what was done>"`.
+2. **Fill the brief through the CLI.** Never open `brief.md` in an editor.
    - `specflo section set brief "Goal" --stdin` - one or two sentences.
    - `specflo section set brief "Done when" --stdin` - exactly one list item,
      a check a command or test can prove.
-2. **Do the work.** Keep to what the check needs.
-3. **Record proof.** Run the check and record its output:
+3. **Do the work.** Keep to what the check needs.
+4. **Record proof.** Run the check and record its output:
    `specflo section set brief "Proof" --stdin`. Proof is the command and what
    it printed, not a claim that it passed.
-4. **Validate.** `specflo validate brief` must pass: a goal, exactly one check,
+5. **Validate.** `specflo validate brief` must pass: a goal, exactly one check,
    and proof.
-5. **Commit once.** One commit for the whole change; stage only the files you
+6. **Commit once.** One commit for the whole change; stage only the files you
    touched, never `git add -A`.
-6. **Complete.** `specflo advance` completes the project. There is **no review
+7. **Complete.** `specflo advance` completes the project. There is **no review
    round** at quick level: the check and its proof are the gate.
-7. **Report in chat.** Show the user the goal, the check and the proof. Nothing
+8. **Report in chat.** Show the user the goal, the check and the proof. Nothing
    waits for them; they read it after the work is done.
 
 ## When the work grows

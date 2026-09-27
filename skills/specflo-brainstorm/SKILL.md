@@ -69,7 +69,10 @@ Then continue the interview from there; do not start the brainstorm again.
    hand the research subagent the rough goal, and fold its digest into **Current
    understanding**, **## Research**, and **Canonical refs** *before* setting the
    agenda — so the gray areas reflect what already exists (an existing SDK, an
-   official client), not just what you assumed.
+   official client), not just what you assumed. Run `specflo followup list` as
+   well: an open follow-up that an earlier project left may be this work or a
+   piece of it. Name the ones this project takes up in the brainstorm, so the
+   execute phase closes them when the work lands.
 4. **Set the agenda (gray areas).** Surface 3–4 phase-specific ambiguities —
    decisions that could go multiple ways and would change the result. Let the
    user pick which to dig into. Avoid generic labels.

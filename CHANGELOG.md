@@ -11,6 +11,19 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.15.0]
 
 ### Added
+- **Follow-ups: `specflo followup add|close|list`** - record the work a
+  project leaves for a later one. `add` writes an open `FU-NN` entry (title,
+  Do line, optional From line) to the active project's `followup.md`,
+  created on the first add. The numbers run across every project in the
+  checkout, hand-written followup documents included, and two adds at the
+  same time never share one. `close FU-NN --note` closes an open entry in any
+  project with a dated Closed line, and `list` shows the open entries of
+  every project (`--all` adds the closed ones, `--json`). `doc show followup`
+  prints the document, `section set` refuses it, and a project hosted on a
+  daemon is refused. `advance` lists the open follow-ups of the project it
+  completes (`followups` in `--json`), and `new` prints how many the checkout
+  holds. The brainstorm and quick skills run `followup list` while they
+  scout, and the execute skill records out-of-scope work with `followup add`.
 - **Levels: `specflo new <name> --level quick|fast|full`** - how much
   ceremony a project gets, recorded in `project.md` and shown by `status`
   (`Level:` line, `level` in `--json`). A project without the key is full.

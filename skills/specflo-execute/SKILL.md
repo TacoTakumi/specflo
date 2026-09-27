@@ -224,6 +224,21 @@ user to offer the move to: put the uncovered work on the deferred list and
 carry on. The ladder moves up when the level completes, and the next level
 picks the deferred work up.
 
+## Follow-ups
+
+Work you find that the project's goal does not need (a flaky test, a gap in a
+neighbouring command, a review finding this project will not fix) is recorded,
+not dropped and not done on the side:
+`specflo followup add "<title>" --do "<what a later project should do>" --from "<the task, finding or test it came from>"`.
+It gets an `FU-NN` ID in this project's followup document, and `specflo
+advance` lists it when the project completes. Work the goal needs but the plan
+does not cover is not a follow-up: at quick or fast level it stops the loop
+(see **Levels**).
+
+When a task settles an open follow-up that an earlier project left (the
+brainstorm names the ones this project takes up), close it after the task's
+commit: `specflo followup close FU-NN --note "<what was done>"`.
+
 ## Anti-sycophancy
 
 Do not open with "All done!", "Looks perfect", or similar. State what's
