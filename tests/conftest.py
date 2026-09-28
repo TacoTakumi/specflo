@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-# pytester lets a test plant and run a small suite of its own.
-pytest_plugins = ["pytester"]
+# pytester lets a test plant and run a small suite of its own; leakcheck
+# fails a test that leaves behind a process carrying its tmp_path.
+pytest_plugins = ["pytester", "leakcheck"]
 
 
 def executable_identifiers(obj) -> str:
