@@ -86,7 +86,7 @@ def _review_hint(review: dict | None) -> str:
     """What to do next once every task is done, given where the review stands.
 
     No round yet, a round left open, a round that passed, and a round that
-    asked for changes each get their own next action (review-rounds REQ-20).
+    asked for changes each get their own next action.
     Only a passing round offers ``specflo advance``, and it reads the
     ``passing`` flag the review state carries rather than naming verdicts
     itself - so the hint and the completion gate can never disagree about
