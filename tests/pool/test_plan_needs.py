@@ -460,7 +460,8 @@ def test_a_local_task_list_is_byte_identical_to_the_plans_own_count(local_plan):
     assert result.stdout == json.dumps({
         "tasks": [
             {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
-             "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts,
+             "implements": t.implements, "fixes": t.fixes,
+             "depends_on": t.depends_on, "next": t.id in nexts,
              "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
             for t in plan.list_tasks(root, cfg, slug)
         ],
