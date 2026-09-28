@@ -207,7 +207,9 @@ def _drive_every_operation(service, projects_root, reported=None):
     finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
     assert (finding_id, finding_round) == ("F-01", round_path)
     assert svc.validate_artifact(slug, "execute") != []
-    assert svc.close_round(slug, "ready-to-merge") == round_path
+    closed = svc.close_round(slug, "ready-to-merge")
+    assert (closed.path, closed.verdict) == (round_path, "ready-to-merge")
+    assert closed.findings == {"blocker": 0, "should-fix": 0, "nit": 1}
     assert svc.validate_artifact(slug, "execute") == []
 
     # checkpoint and status are derived from the artifacts

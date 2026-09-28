@@ -2458,12 +2458,12 @@ def review_start(
 
 @review_app.command(
     "done",
-    epilog="Example: specflo review done --verdict ready-to-merge",
+    epilog="Example: specflo review done",
 )
 def review_done(
     verdict: str = typer.Option(
-        ..., "--verdict", metavar="<v>",
-        help="ready-to-merge | changes-requested | waived.",
+        None, "--verdict", metavar="<v>",
+        help="waived (with --reason); any other verdict must be the one the findings give.",
     ),
     reason: str = typer.Option(
         None, "--reason", help="Why the review was waived (waived only)."
@@ -2474,7 +2474,7 @@ def review_done(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Close the active project's open review round with a verdict."""
+    """Close the active project's open review round with the verdict its findings give."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     # The report is read here, on the client: only its text reaches the
@@ -2489,15 +2489,21 @@ def review_done(
         except (OSError, UnicodeDecodeError) as exc:
             raise _die(f"Cannot read {file} as text: {exc}")
     try:
-        path = svc.close_round(slug, verdict, reason=reason, report_text=report_text)
+        closed = svc.close_round(slug, verdict, reason=reason, report_text=report_text)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    locator, reported = _artifact_report(root, slug, path)
+    locator, reported = _artifact_report(root, slug, closed.path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": reported, "verdict": verdict}))
+        typer.echo(json.dumps({
+            "locator": locator, "path": reported, "verdict": closed.verdict,
+            "findings": closed.findings,
+        }))
+    elif closed.findings is None:
+        typer.echo(f"{locator} closed {closed.verdict}")
     else:
-        typer.echo(f"{locator} closed {verdict}")
+        counts = ", ".join(f"{n} {severity}" for severity, n in closed.findings.items())
+        typer.echo(f"{locator} closed {closed.verdict} ({counts})")
 
 
 @finding_app.command(

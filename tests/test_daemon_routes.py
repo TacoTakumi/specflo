@@ -21,6 +21,7 @@ from specflo.daemon import auth
 from specflo.daemon.app import create_app
 from specflo.plan import Task
 from specflo.projects import Project
+from specflo.review import ClosedRound
 from specflo.service import ProjectService, wire
 from specflo.service.local import LocalProjectService
 
@@ -100,7 +101,10 @@ def test_wire_round_trips_each_return_shape():
         ({"gpu": 2}, wire.OPERATIONS["list_pools"].returns),
         (None, wire.OPERATIONS["complete_artifact"].returns),
         (True, wire.OPERATIONS["has_artifact"].returns),
-        (Path("/srv/daemon/projects/thing/review-1.md"), wire.OPERATIONS["close_round"].returns),
+        (ClosedRound(Path("/srv/daemon/projects/thing/review-1.md"), "ready-to-merge",
+                     {"blocker": 0, "should-fix": 0, "nit": 1}), wire.OPERATIONS["close_round"].returns),
+        (ClosedRound(Path("/srv/daemon/projects/thing/review-1.md"), "waived", None),
+         wire.OPERATIONS["close_round"].returns),
     ]
     for value, hint in cases:
         encoded = wire.encode(value)
@@ -276,7 +280,7 @@ def test_close_round_takes_the_report_text_and_never_a_path(root, client):
     assert by_path.status_code == 422 and "report" in by_path.text
 
     text = "# Round 1\n\n## Findings\n\n- none\n"
-    path = call(client, "close_round", slug="thing", verdict="ready-to-merge", report_text=text)
+    path = call(client, "close_round", slug="thing", verdict="ready-to-merge", report_text=text).path
 
     assert path == Path(daemon.PROJECTS_DIRNAME) / "thing" / "review-1.md"
     assert (root / path).read_text().endswith(text)

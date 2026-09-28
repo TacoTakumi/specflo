@@ -142,7 +142,9 @@ def test_close_writes_the_verdict_into_the_open_round(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     assert _frontmatter(minted)["verdict"] == "ready-to-merge"
     assert "## Findings" in minted.read_text()       # the body survives the close
-    assert result.output.strip() == "thing/review-1 closed ready-to-merge"
+    assert result.output.strip() == (
+        "thing/review-1 closed ready-to-merge (0 blocker, 0 should-fix, 0 nit)"
+    )
     assert str(minted) not in result.output
 
 

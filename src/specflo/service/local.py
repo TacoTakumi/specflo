@@ -18,6 +18,7 @@ from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
 from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
+from ..review import ClosedRound
 from ..spec import Requirement
 from ..validators import VALIDATORS
 from .protocol import ExecutionGraph
@@ -435,11 +436,11 @@ class LocalProjectService:
     def close_round(
         self,
         slug: str,
-        verdict: str,
+        verdict: str | None = None,
         *,
         reason: str | None = None,
         report_text: str | None = None,
-    ) -> Path:
+    ) -> ClosedRound:
         return review.close_round(
             self.root, self.cfg, slug, verdict, reason=reason, report_text=report_text
         )

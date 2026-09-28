@@ -405,7 +405,9 @@ def test_review_done_file_reads_the_report_in_the_checkout_not_on_the_daemon(che
     done = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge", "--file", "report.md"])
 
     assert done.exit_code == 0, done.output
-    assert done.output.strip() == "hosted-thing/review-1 closed ready-to-merge"
+    assert done.output.strip() == (
+        "hosted-thing/review-1 closed ready-to-merge (0 blocker, 0 should-fix, 0 nit)"
+    )
     round_file = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md"
     assert round_file.read_text().endswith((checkout / "report.md").read_text())
     assert "the daemon's own file" not in round_file.read_text()
@@ -423,7 +425,7 @@ def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, li
         (["plan", "start"], "hosted-thing/plan", {"created": True}),
         (["review", "start"], "hosted-thing/review-1", {"created": True}),
         (["review", "done", "--verdict", "ready-to-merge"], "hosted-thing/review-1",
-         {"verdict": "ready-to-merge"}),
+         {"verdict": "ready-to-merge", "findings": {"blocker": 0, "should-fix": 0, "nit": 0}}),
     ):
         if args[:2] == ["review", "done"]:
             reviewhelp.write_none(

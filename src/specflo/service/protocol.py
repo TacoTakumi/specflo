@@ -19,6 +19,7 @@ from typing import Protocol, TypedDict, runtime_checkable
 from ..brainstorm import Decision
 from ..plan import Milestone, Task
 from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
+from ..review import ClosedRound
 from ..spec import Requirement
 
 
@@ -325,12 +326,13 @@ class ProjectService(Protocol):
     def close_round(
         self,
         slug: str,
-        verdict: str,
+        verdict: str | None = None,
         *,
         reason: str | None = None,
         report_text: str | None = None,
-    ) -> Path:
-        """Close the open round with a verdict; ``report_text`` becomes its body.
+    ) -> ClosedRound:
+        """Close the open round with the verdict its findings give; ``report_text``
+        becomes its body. An explicit verdict must be the derived one, or waived.
 
         The text, never a path: the caller reads its own report file, so the
         service opens nothing the caller did not send.

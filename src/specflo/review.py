@@ -12,6 +12,7 @@ leaves a permanent gap rather than a reused identity (D-07).
 
 from __future__ import annotations
 
+import dataclasses
 import datetime
 import re
 import subprocess
@@ -33,6 +34,21 @@ FINDINGS_HEADER = "## Findings"
 # Any F-NN in any round file counts for numbering, so a new ID can never
 # repeat one a round already names, in a finding line or in its prose.
 _ANY_FINDING_ID = re.compile(r"\bF-(\d+)\b")
+# One finding line, as `review finding add` writes it and as a reviewer with
+# no shell may write it by hand.
+_FINDING_LINE = re.compile(
+    r"^- (F-(\d+)) \((" + "|".join(map(re.escape, SEVERITIES)) + r")\) (\S.*)$"
+)
+# The whole Findings section of a round that found nothing. A section with
+# neither this nor a finding is refused, so a free-form report never passes
+# as a clean one.
+NONE_LINE = "- none"
+# What a refused close can do next, named in every refusal of its findings.
+_WAYS_ON = (
+    " To go on: rewrite the line in the '- F-NN (severity) text' form, re-add"
+    " the finding with `specflo review finding add`, or waive the round with"
+    " `specflo review waive --reason <why>`."
+)
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
 # completion gate; changes-requested blocks it.
 READY = "ready-to-merge"
@@ -282,16 +298,123 @@ def _round_number(path: Path, raw) -> int:
         ) from None
 
 
+@dataclasses.dataclass(frozen=True)
+class ClosedRound:
+    """What a close decided: the round, its verdict, and its findings per severity.
+
+    ``findings`` is None for a waived round, whose findings are never read.
+    """
+
+    path: Path
+    verdict: str
+    findings: dict[str, int] | None
+
+
+def _findings_lines(doc: str) -> list[str] | None:
+    """The non-blank lines under a document's Findings heading, comments dropped.
+
+    None when the document has no Findings heading at all.
+    """
+    section = markdown.section_body(doc, FINDINGS_HEADER)
+    if section is None:
+        return None
+    return [
+        line.strip()
+        for line in markdown.strip_comments(section).splitlines()
+        if line.strip()
+    ]
+
+
+def _defined_numbers(doc: str) -> set[int]:
+    """The number of each F-NN a finding line under the Findings heading defines."""
+    return {
+        int(match.group(2))
+        for line in _findings_lines(doc) or []
+        if (match := _FINDING_LINE.match(line))
+    }
+
+
+def parse_findings(
+    root: Path, cfg: SpecfloConfig, slug: str, path: Path, body: str
+) -> list[tuple[str, str, str]]:
+    """The round's findings as ``(F-NN, severity, text)``, or a refusal.
+
+    Every line under Findings is a finding line, or the section is exactly
+    ``- none``. Refused: a line in neither form, an F-NN that this round or
+    another round of the project already defines, a section with neither,
+    and ``- none`` beside findings. Each refusal names the line or the ID.
+    """
+    lines = _findings_lines(body)
+    if not lines:
+        raise SpecfloError(
+            f"{path.name} records no findings and no '{NONE_LINE}' under"
+            f" '{FINDINGS_HEADER}'; a clean round says '{NONE_LINE}' there."
+            + _WAYS_ON
+        )
+    if set(lines) == {NONE_LINE}:
+        return []
+    if NONE_LINE in lines:
+        raise SpecfloError(
+            f"{path.name} says '{NONE_LINE}' under '{FINDINGS_HEADER}' and also"
+            " records findings." + _WAYS_ON
+        )
+    elsewhere = {
+        number
+        for _, other in round_files(root, cfg, slug)
+        if other != path
+        for number in _defined_numbers(other.read_text())
+    }
+    seen: set[int] = set()
+    findings = []
+    for line in lines:
+        match = _FINDING_LINE.match(line)
+        if match is None:
+            raise SpecfloError(
+                f"{path.name} has a line under '{FINDINGS_HEADER}' that is not a"
+                f" finding: {line!r}." + _WAYS_ON
+            )
+        finding_id, number, severity, text = match.groups()
+        if int(number) in seen or int(number) in elsewhere:
+            where = (
+                "earlier in this round" if int(number) in seen
+                else "in another round of the project"
+            )
+            raise SpecfloError(
+                f"{path.name} records {finding_id}, an ID already used {where}."
+                + _WAYS_ON
+            )
+        seen.add(int(number))
+        findings.append((finding_id, severity, text))
+    return findings
+
+
+def derive_verdict(findings: list[tuple[str, str, str]]) -> tuple[str, dict[str, int]]:
+    """The verdict a round's findings give, and how many there are per severity.
+
+    Any blocker or should-fix finding asks for changes; nits never do.
+    """
+    counts = {severity: 0 for severity in SEVERITIES}
+    for _, severity, _ in findings:
+        counts[severity] += 1
+    blocking = counts["blocker"] + counts["should-fix"]
+    return (CHANGES_REQUESTED if blocking else READY), counts
+
+
 def close_round(
     root: Path,
     cfg: SpecfloConfig,
     slug: str,
-    verdict: str,
+    verdict: str | None = None,
     reason: str | None = None,
     today: str | None = None,
     report_text: str | None = None,
-) -> Path:
-    """Close the open round with ``verdict``, date and sha (REQ-04, REQ-05, REQ-07).
+) -> ClosedRound:
+    """Close the open round with the verdict its findings give, date and sha.
+
+    The verdict is derived from the round's Findings section (see
+    :func:`parse_findings` and :func:`derive_verdict`). An explicit
+    ``verdict`` is accepted only when it is the derived one, except
+    ``waived``, which closes the round without reading its findings.
 
     The date and sha stamp the close, overwriting the mint-time date: what
     matters is when the review was decided, not when its file appeared.
@@ -305,9 +428,11 @@ def close_round(
 
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
     not one of :data:`VERDICTS`, when ``waived`` comes without a reason
-    (REQ-06), when the body is already written, or when no round is open.
+    (REQ-06), when the body is already written, when no round is open, when
+    the findings are malformed, or when an explicit verdict is not the
+    derived one.
     """
-    if verdict not in VERDICTS:
+    if verdict is not None and verdict not in VERDICTS:
         raise SpecfloError(
             f"Unknown verdict {verdict!r}. Valid values: " + ", ".join(VERDICTS) + "."
         )
@@ -332,13 +457,27 @@ def close_round(
                     " overwrite it. Close the round without --file instead."
                 )
             body = report_text
+        counts = None
+        if verdict != WAIVED:
+            findings = parse_findings(root, cfg, slug, path, body)
+            derived, counts = derive_verdict(findings)
+            if verdict is not None and verdict != derived:
+                blocking = [f for f, severity, _ in findings if severity != "nit"]
+                raise SpecfloError(
+                    f"The findings in {path.name} make it {derived}"
+                    + (f" ({', '.join(blocking)})" if blocking else "")
+                    + f", not {verdict}. Run `specflo review done` without"
+                    " --verdict, or waive the round with `--verdict waived"
+                    " --reason <why>`."
+                )
+            verdict = derived
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
         fields["sha"] = head_sha(root)
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body))
-    return path
+    return ClosedRound(path=path, verdict=verdict, findings=counts)
 
 
 def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:

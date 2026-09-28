@@ -50,9 +50,9 @@ def record(root, cfg, slug, verdict) -> None:
 
 
 def close_round(root, cfg, slug, verdict, **kwargs) -> Path:
-    """``review.close_round`` after recording the findings ``verdict`` needs."""
+    """``review.close_round`` after recording the findings ``verdict`` needs; the round's path."""
     record(root, cfg, slug, verdict)
-    return review.close_round(root, cfg, slug, verdict, **kwargs)
+    return review.close_round(root, cfg, slug, verdict, **kwargs).path
 
 
 def review_done(runner, app, verdict="ready-to-merge", *extra, project_dir=None):
