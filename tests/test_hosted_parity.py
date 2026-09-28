@@ -13,6 +13,8 @@ else is identical.
 
 import json
 import re
+import subprocess
+import threading
 from pathlib import Path
 
 import httpx
@@ -21,6 +23,8 @@ from typer.testing import CliRunner
 
 from specflo import config, daemon
 from specflo.cli import app
+from test_review_regression import SLUG as MARKED_SLUG
+from test_review_regression import _findings, _hand_written_run, _regression_run
 
 runner = CliRunner()
 
@@ -536,3 +540,98 @@ def test_a_test_command_in_the_daemon_root_is_named_on_no_hosted_surface(
     _assert_whole_suite_alike(local, hosted, "whole test suite once")
     for args, _, text in hosted[1:]:
         assert DAEMON_TEST_COMMAND not in text, f"{' '.join(args)}:\n{text}"
+
+
+# --- finding locations and regression marks, local and hosted ----------------------------
+
+
+def _recording_git(monkeypatch) -> list[tuple[bool, list[str]]]:
+    """Every git process this test process starts from now on, as it starts:
+    whether the test's own thread started it, and its argv.
+
+    The CLI runs on the test's thread. The live daemon serves each request on
+    a thread of its own, so a git process started on any other thread is one
+    the daemon ran.
+    """
+    calls = []
+    client = threading.current_thread()
+    real_popen = subprocess.Popen
+
+    class RecordingPopen(real_popen):
+        def __init__(self, args, *rest, **kwargs):
+            argv = [str(arg) for arg in args] if isinstance(args, (list, tuple)) else [str(args)]
+            if Path(argv[0]).name == "git":
+                calls.append((threading.current_thread() is client, argv))
+            super().__init__(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "Popen", RecordingPopen)
+    return calls
+
+
+def _assert_only_the_client_ran_git(git, daemon_root: Path) -> None:
+    """The client blamed the lines in its checkout; the daemon, which holds no
+    git repository, ran no git at all and took the marks as data."""
+    assert not (daemon_root / ".git").exists()
+    assert [argv for on_client, argv in git if not on_client] == []
+    assert any("blame" in argv for on_client, argv in git if on_client), git
+
+
+def _marked_rounds(checkout: Path) -> Path:
+    return checkout / "docs" / "projects" / MARKED_SLUG
+
+
+def test_an_add_on_a_line_a_fix_changed_is_marked_alike_and_only_the_client_runs_git(
+    tmp_path, monkeypatch, live_daemon
+):
+    local, _ = _regression_run(tmp_path, monkeypatch, "local", [])
+    git = _recording_git(monkeypatch)
+    hosted, sent = _regression_run(
+        tmp_path, monkeypatch, "hosted", ["--remote", "home"],
+        register=[live_daemon["url"], "--token", live_daemon["token"]],
+    )
+
+    for mine, theirs in zip(local, hosted, strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal: {mine[1:]}\nhosted: {theirs[1:]}"
+    # The add on the line the fix changed succeeds with no note: the client
+    # could blame it, though the daemon holds no code.
+    add = ("review", "finding", "add", "--severity", "blocker", "--at", "src/x.py:10",
+           "--text", "The fix broke it")
+    assert (add, 0, "Recorded F-02 in thing/review-2.\n", "") in hosted
+    hosted_rounds = live_daemon["root"] / daemon.PROJECTS_DIRNAME / MARKED_SLUG
+    for rounds in (_marked_rounds(tmp_path / "local"), hosted_rounds):
+        assert _findings(rounds / "review-2.md")[0] == (
+            "- F-02 (blocker, regression) [src/x.py:10] The fix broke it"
+        )
+    assert sent[1]["regression"] is True
+    _assert_only_the_client_ran_git(git, live_daemon["root"])
+
+
+def test_a_hosted_review_done_marks_a_hand_written_line_as_a_local_one_does(
+    tmp_path, monkeypatch, live_daemon
+):
+    local, _, local_rounds = _hand_written_run(
+        tmp_path, monkeypatch, "local", [], _marked_rounds,
+    )
+    git = _recording_git(monkeypatch)
+    hosted, sent, hosted_rounds = _hand_written_run(
+        tmp_path, monkeypatch, "hosted", ["--remote", "home"],
+        lambda _: live_daemon["root"] / daemon.PROJECTS_DIRNAME / MARKED_SLUG,
+        register=[live_daemon["url"], "--token", live_daemon["token"]],
+    )
+
+    for mine, theirs in zip(local, hosted, strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal: {mine[1:]}\nhosted: {theirs[1:]}"
+    assert [code for _, code, _, _ in hosted] == [0] * len(hosted)
+    # A line written in the round file and one ingested with --file, each on
+    # a line a fix changed, are marked as the round closes.
+    for rounds in (local_rounds, hosted_rounds):
+        assert _findings(rounds / "review-2.md")[0] == (
+            "- F-02 (blocker, regression) [src/x.py:10] The fix broke it"
+        )
+        assert _findings(rounds / "review-3.md")[0] == (
+            "- F-05 (should-fix, regression) [src/x.py:19-20] And here"
+        )
+    for name in ("review-2.md", "review-3.md"):
+        assert (local_rounds / name).read_text() == (hosted_rounds / name).read_text()
+    assert sent == [[], ["F-02"], ["F-05"]]
+    _assert_only_the_client_ran_git(git, live_daemon["root"])
