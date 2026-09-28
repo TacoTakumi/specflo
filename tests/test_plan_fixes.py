@@ -223,3 +223,101 @@ def test_task_add_fixes_on_a_hosted_project_gives_the_same_plan(tmp_path, monkey
     assert hosted_refusal.exit_code == local_refusal.exit_code == 1
     assert hosted_refusal.output == local_refusal.output
     assert (hosted_dir / "plan.md").read_bytes() == before
+
+
+# --- only an open item --------------------------------------------------------
+
+
+def _ledger_steps():
+    """A plan with T-01 and three rounds. Round 1 asked for changes (blocker
+    F-01, should-fix F-02, nit F-03); round 2 checked F-01 closed and F-02
+    open, and asked for changes (blocker F-04); round 3 is open and has found
+    should-fix F-05. The open items are F-02 and F-04."""
+    pipeline = _pipeline()
+    last = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "add"])
+    finding = ["review", "finding", "add", "--severity"]
+    return [
+        *pipeline[: last + 1],
+        (["review", "start"], None),
+        ([*finding, "blocker", "--text", "The close drops the sha"], None),
+        ([*finding, "should-fix", "--text", "A message names the wrong command"], None),
+        ([*finding, "nit", "--text", "A name reads oddly"], None),
+        (["review", "done"], None),
+        (["review", "start", "--over-budget"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "check", "F-02", "open"], None),
+        ([*finding, "blocker", "--text", "The lock is dropped early"], None),
+        (["review", "done"], None),
+        (["review", "start", "--over-budget"], None),
+        ([*finding, "should-fix", "--text", "A refusal names no ID"], None),
+    ]
+
+
+# Each refused --fixes list, and what its refusal says.
+_REFUSED = [
+    (["F-03"], "F-03 is a nit"),
+    (["F-09"], "No closed review round records a finding F-09."),
+    (["F-01"], "F-01 was already checked closed in review-2.md."),
+    (["F-05"], "F-05 is a finding of the open round review-3.md"),
+    (["X-1"], "'X-1' is not a finding ID"),
+    (["F-02", "F-03"], "F-03 is a nit"),
+]
+
+
+def _add_fixing(text: str, *fixes: str):
+    """`task add` fixing ``fixes``, in the current checkout."""
+    args = ["task", "add", "--text", text, "--acceptance", "fixed", "--verify", "uv run pytest"]
+    for fix in fixes:
+        args += ["--fixes", fix]
+    return runner.invoke(app, args)
+
+
+def _refusals(plan_file) -> list[tuple[int, str]]:
+    """Each refused add's ``(exit code, output)``; plan.md is unchanged after each."""
+    outputs = []
+    for fixes, _ in _REFUSED:
+        before = plan_file.read_bytes()
+        result = _add_fixing("Fix it", *fixes)
+        assert plan_file.read_bytes() == before, fixes
+        outputs.append((result.exit_code, result.output))
+    return outputs
+
+
+def test_task_add_fixes_accepts_only_an_open_item(tmp_path, monkeypatch):
+    results, project_dir = _local_steps(tmp_path, monkeypatch, _ledger_steps())
+    assert all(code == 0 for code, _ in _outputs(results).values()), results
+    for (fixes, reason), (code, output) in zip(_REFUSED, _refusals(project_dir / "plan.md")):
+        assert code == 1, (fixes, output)
+        assert reason in output, (fixes, output)
+        assert "Open items a task can fix: F-02, F-04." in output, (fixes, output)
+
+    added = _add_fixing("Fix both", "F-02", "F-04")
+    assert (added.exit_code, added.output) == (0, "Recorded T-02 (fixes F-02, F-04).\n")
+    # An ID is written as the round spells it.
+    added = _add_fixing("Fix the lock", "F-4")
+    assert (added.exit_code, added.output) == (0, "Recorded T-03 (fixes F-04).\n")
+    document = (project_dir / "plan.md").read_text()
+    assert "- Fixes: F-02, F-04" in _entry(document, "T-02")
+    assert "- Fixes: F-04" in _entry(document, "T-03")
+
+
+def test_task_add_fixes_is_refused_the_same_way_on_a_hosted_project(
+    tmp_path, monkeypatch, live_daemon
+):
+    steps = _ledger_steps()
+    local, local_dir = _local_steps(tmp_path, monkeypatch, steps)
+    local_refusals = _refusals(local_dir / "plan.md")
+    local_added = _add_fixing("Fix both", "F-02", "F-04")
+    hosted, hosted_dir = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+    assert all(code == 0 for code, _ in _outputs(hosted).values()), hosted
+    hosted_refusals = _refusals(hosted_dir / "plan.md")
+    hosted_added = _add_fixing("Fix both", "F-02", "F-04")
+
+    assert [code for code, _ in hosted_refusals] == [1] * len(_REFUSED)
+    assert hosted_refusals == local_refusals
+    assert (hosted_added.exit_code, hosted_added.output) == (
+        local_added.exit_code, local_added.output
+    ) == (0, "Recorded T-02 (fixes F-02, F-04).\n")
+    assert _without_actor((hosted_dir / "plan.md").read_text()) == _without_actor(
+        (local_dir / "plan.md").read_text()
+    )

@@ -335,6 +335,10 @@ class LocalProjectService:
         needs: list[str] | None = None,
         fixes: list[str] | None = None,
     ) -> Task:
+        # Checked here, where a local and a hosted add both pass, so a task
+        # fixes only an open review item wherever the project lives.
+        if fixes:
+            fixes = review.check_fixes(self.root, self.cfg, slug, fixes)
         return plan.add_task(
             self.root, self.cfg, slug, text, acceptance, verify,
             implements=implements, depends_on=depends_on, files=files,

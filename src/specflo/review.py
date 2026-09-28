@@ -850,6 +850,54 @@ def check_finding(
     return finding_id, path
 
 
+def check_fixes(root: Path, cfg: SpecfloConfig, slug: str, fixes: list[str]) -> list[str]:
+    """The F-NN a fix task names, as the rounds spell them, or a refusal.
+
+    A task fixes only an open item: a blocker or should-fix finding of a
+    closed round that no reviewed round has checked closed, which is what
+    the next round checks. A value may list several IDs split by commas, as
+    the task's Fixes field does. Raises ``SpecfloError`` naming the ID on
+    anything that is not an F-NN, an ID no closed round records, a nit, an
+    item checked closed, and a finding of the open round, whose verdict is
+    not decided yet. Reads the round files and changes nothing.
+    """
+    rounds = round_files(root, cfg, slug)
+    current = open_round(root, cfg, slug)
+    latest = rounds[-1][0] if rounds else 0
+    items, known, closed = _ledger(root, cfg, slug, latest if current else latest + 1)
+    pending = _defined_numbers(current.read_text()) if current else set()
+    listed = ", ".join(items.values()) or "none"
+    accepted = []
+    for fix in (part.strip() for value in fixes for part in value.split(",")):
+        if not fix:
+            continue
+        match = re.fullmatch(r"F-(\d+)", fix)
+        if match is None:
+            raise SpecfloError(
+                f"{fix!r} is not a finding ID; one looks like F-01."
+                f" Open items a task can fix: {listed}."
+            )
+        key = int(match.group(1))
+        if key not in items:
+            if key in pending:
+                why = (
+                    f"{fix} is a finding of the open round {current.name}; close"
+                    " the round with `specflo review done` first."
+                )
+            elif key not in known:
+                why = f"No closed review round records a finding {fix}."
+            elif known[key][1] == "nit":
+                why = (
+                    f"{known[key][0]} is a nit, and a task fixes only a blocker"
+                    " or should-fix item."
+                )
+            else:
+                why = f"{known[key][0]} was already checked closed in {closed[key]}."
+            raise SpecfloError(f"{why} Open items a task can fix: {listed}.")
+        accepted.append(items[key])
+    return accepted
+
+
 def waive_round(
     root: Path,
     cfg: SpecfloConfig,
