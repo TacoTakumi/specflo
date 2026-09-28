@@ -875,16 +875,19 @@ def waive_round(
 
 
 def reviewer_brief(
-    root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False
+    root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False,
+    test_command: str | None = None,
 ) -> str:
     """The brief for the reviewer of the open round: one set of rules every round.
 
     Carries the round's scope (the whole branch, or the delta range and the
     earlier items to check), what each severity means, what is not a finding,
-    how to record, that the CLI sets the verdict, and to run only the tests
-    in scope. ``hosted`` says a daemon holds the project, where follow-ups
-    are not recorded, so the brief asks for such problems in the reply.
-    Raises ``SpecfloError`` when no round is open.
+    how to record, that the CLI sets the verdict, and which tests to run:
+    ``test_command`` each round when one is given, else only the tests in
+    scope. ``test_command`` is the caller's checkout command: a daemon holds
+    only the documents. ``hosted`` says a daemon holds the project, where
+    follow-ups are not recorded, so the brief asks for such problems in the
+    reply. Raises ``SpecfloError`` when no round is open.
     """
     scope = review_scope(root, cfg, slug)
     name = scope["file"]
@@ -965,7 +968,12 @@ def reviewer_brief(
         "",
         "## Tests",
         "",
-        "Run only the tests for the files in scope. The whole suite ran before the"
-        " first round.",
     ]
+    # A configured test_command is the whole suite: the reviewer runs it every
+    # round rather than guess which tests reach the changed code.
+    lines.append(
+        f"Run the whole test suite with `{test_command}` each round." if test_command else
+        "Run only the tests for the files in scope. The whole suite ran before the"
+        " first round."
+    )
     return "\n".join(lines) + "\n"

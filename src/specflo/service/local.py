@@ -441,8 +441,10 @@ class LocalProjectService:
     def review_scope(self, slug: str) -> dict:
         return review.review_scope(self.root, self.cfg, slug)
 
-    def review_prompt(self, slug: str) -> str:
-        return review.reviewer_brief(self.root, self.cfg, slug, hosted=self.hosted)
+    def review_prompt(self, slug: str, test_command: str | None = None) -> str:
+        return review.reviewer_brief(
+            self.root, self.cfg, slug, hosted=self.hosted, test_command=test_command
+        )
 
     def close_round(
         self,

@@ -2539,7 +2539,7 @@ def review_prompt() -> None:
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        text = svc.review_prompt(slug)
+        text = svc.review_prompt(slug, test_command=cfg.test_command)
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(text, nl=False)

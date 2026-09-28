@@ -295,19 +295,19 @@ def _review_steps():
     ]
 
 
-@pytest.fixture
-def local_review_run(tmp_path, monkeypatch):
+def _local_steps(tmp_path, monkeypatch, steps):
+    """``steps`` against a project in a checkout; the results and the project dir."""
     checkout = tmp_path / "local"
     checkout.mkdir()
     config.init_config(checkout)
     monkeypatch.chdir(checkout)
     project_dir = checkout / "docs" / "projects" / SLUG
     dirs = [str(project_dir), f"docs/projects/{SLUG}"]
-    return _run(checkout, dirs, [], steps=_review_steps()), project_dir
+    return _run(checkout, dirs, [], steps=steps), project_dir
 
 
-@pytest.fixture
-def hosted_review_run(tmp_path, monkeypatch, live_daemon):
+def _hosted_steps(tmp_path, monkeypatch, live_daemon, steps):
+    """``steps`` against a project on a daemon; the results and the project dir."""
     checkout = tmp_path / "hosted"
     checkout.mkdir()
     config.init_config(checkout)
@@ -318,7 +318,17 @@ def hosted_review_run(tmp_path, monkeypatch, live_daemon):
     assert registered.exit_code == 0, registered.output
     project_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG
     dirs = [str(project_dir), f"projects/{SLUG}"]
-    return _run(checkout, dirs, ["--remote", "home"], steps=_review_steps()), project_dir
+    return _run(checkout, dirs, ["--remote", "home"], steps=steps), project_dir
+
+
+@pytest.fixture
+def local_review_run(tmp_path, monkeypatch):
+    return _local_steps(tmp_path, monkeypatch, _review_steps())
+
+
+@pytest.fixture
+def hosted_review_run(tmp_path, monkeypatch, live_daemon):
+    return _hosted_steps(tmp_path, monkeypatch, live_daemon, _review_steps())
 
 
 def _without_follow_up_lines(brief: str) -> str:
@@ -370,3 +380,32 @@ def test_the_review_scenario_exercises_each_outcome(local_review_run):
     assert outcome(("review", "waive", "--reason", ""))[0] == 1
     assert "review-4 closed waived" in outcome(("review", "waive", "--reason", "Checked by hand"))[1]
     assert outcome(("review", "prompt"), 2)[0] == 1             # no round open after the waive
+
+
+TEST_COMMAND = "run-the-suite-sentinel"
+
+
+def _test_command_steps():
+    """Set test_command in the checkout, where the code and its suite live, and
+    print the open round's brief."""
+    return [
+        (["config", "set", "test_command", TEST_COMMAND], None),
+        (["review", "start"], None),
+        (["review", "prompt"], None),
+    ]
+
+
+def test_a_set_test_command_gives_a_hosted_reviewer_the_same_brief(
+    tmp_path, monkeypatch, live_daemon
+):
+    local, _ = _local_steps(tmp_path, monkeypatch, _test_command_steps())
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, _test_command_steps())
+    briefs = []
+    for run in (local, hosted):
+        ((code, brief),) = [
+            (code, text) for args, code, text in run[1:] if args[:2] == ["review", "prompt"]
+        ]
+        assert code == 0, brief
+        assert f"`{TEST_COMMAND}`" in brief.split("\n## Tests\n", 1)[1], brief
+        briefs.append(_without_follow_up_lines(brief))
+    assert briefs[0] == briefs[1], f"local:\n{briefs[0]}\nhosted:\n{briefs[1]}"

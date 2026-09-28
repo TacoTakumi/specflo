@@ -2,7 +2,8 @@
 
 ``specflo review prompt`` prints what the reviewer of the open round needs:
 the scope, what each severity means, what is not a finding, how to record,
-that the CLI sets the verdict, and to run only the tests in scope.
+that the CLI sets the verdict, and which tests to run: the configured
+test_command each round when one is set, else only the tests in scope.
 """
 
 from typer.testing import CliRunner
@@ -73,6 +74,41 @@ def test_a_delta_round_gets_its_range_and_every_item_to_check(tmp_path, monkeypa
     assert "F-03" not in text
     for element in _ELEMENTS:
         assert element in text, element
+
+
+# The Tests part as it reads with no test_command set; it must not change.
+_TARGETED_TESTS = (
+    "Run only the tests for the files in scope. The whole suite ran before the"
+    " first round."
+)
+_TEST_COMMAND = "run-the-suite-sentinel"
+
+
+def _tests_part(text):
+    """The brief's Tests part: everything under ``## Tests``."""
+    assert "\n## Tests\n" in text, text
+    return text.split("\n## Tests\n", 1)[1]
+
+
+def test_a_set_test_command_is_the_suite_the_reviewer_runs(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    assert runner.invoke(app, ["config", "set", "test_command", _TEST_COMMAND]).exit_code == 0
+    runner.invoke(app, ["review", "start"])
+
+    tests = _tests_part(_prompt())
+
+    assert f"`{_TEST_COMMAND}`" in tests
+    assert "each round" in tests
+    assert "Run only the tests for the files in scope" not in tests
+
+
+def test_without_a_test_command_the_brief_keeps_the_targeted_tests(tmp_path, monkeypatch):
+    _project(tmp_path, monkeypatch)
+    runner.invoke(app, ["review", "start"])
+
+    tests = _tests_part(_prompt())
+
+    assert " ".join(tests.split()) == _TARGETED_TESTS
 
 
 def test_no_open_round_refuses_naming_review_start(tmp_path, monkeypatch):
