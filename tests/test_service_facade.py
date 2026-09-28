@@ -204,6 +204,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     # review: the execute gate reads the round
     round_path, created = svc.start_round(slug)
     assert created and round_path.name == "review-1.md"
+    scope = svc.review_scope(slug)
+    assert (scope["scope"], scope["range"], scope["items"]) == ("whole-branch", None, [])
     finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
     assert (finding_id, finding_round) == ("F-01", round_path)
     assert svc.validate_artifact(slug, "execute") != []

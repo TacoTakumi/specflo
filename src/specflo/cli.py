@@ -2438,22 +2438,32 @@ def milestone_show(
 
 @review_app.command("start", epilog="Example: specflo review start")
 def review_start(
+    full: bool = typer.Option(
+        False, "--full", help="Review the whole branch, not only the diff since the last round."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Mint the active project's next review round and print its locator."""
+    """Mint the active project's next review round and print its locator and scope."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        path, created = svc.start_round(slug)
+        path, created = svc.start_round(slug, full=full)
+        scope = svc.review_scope(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({"locator": locator, "path": reported, "created": created}))
-    else:
-        note = "" if created else " (already open)"
-        typer.echo(f"{locator}{note}")
+        typer.echo(json.dumps({
+            "locator": locator, "path": reported, "created": created,
+            "scope": scope["scope"], "range": scope["range"], "items": scope["items"],
+        }))
+        return
+    note = "" if created else " (already open)"
+    typer.echo(f"{locator}{note}")
+    typer.echo(f"Scope: {scope['range'] or 'whole branch'}")
+    if scope["items"]:
+        typer.echo("Items to check: " + ", ".join(scope["items"]))
 
 
 @review_app.command(

@@ -430,8 +430,11 @@ class LocalProjectService:
 
     # --- reviews -----------------------------------------------------------
 
-    def start_round(self, slug: str) -> tuple[Path, bool]:
-        return review.start_round(self.root, self.cfg, slug)
+    def start_round(self, slug: str, full: bool = False) -> tuple[Path, bool]:
+        return review.start_round(self.root, self.cfg, slug, full=full)
+
+    def review_scope(self, slug: str) -> dict:
+        return review.review_scope(self.root, self.cfg, slug)
 
     def close_round(
         self,

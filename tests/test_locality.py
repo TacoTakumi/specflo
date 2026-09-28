@@ -423,7 +423,8 @@ def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, li
         (["brainstorm", "start"], "hosted-thing/brainstorm", {"created": False}),
         (["spec", "start"], "hosted-thing/spec", {"created": True}),
         (["plan", "start"], "hosted-thing/plan", {"created": True}),
-        (["review", "start"], "hosted-thing/review-1", {"created": True}),
+        (["review", "start"], "hosted-thing/review-1",
+         {"created": True, "scope": "whole-branch", "range": None, "items": []}),
         (["review", "done", "--verdict", "ready-to-merge"], "hosted-thing/review-1",
          {"verdict": "ready-to-merge", "findings": {"blocker": 0, "should-fix": 0, "nit": 0}}),
     ):

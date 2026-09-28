@@ -24,7 +24,7 @@ from . import followup, markdown
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
-from .projects import project_dir
+from .projects import load_project, project_dir
 
 _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
 # A finding's severity. A blocker or a should-fix item asks for changes; a
@@ -60,7 +60,7 @@ VERDICTS = (READY, CHANGES_REQUESTED, WAIVED)
 PASSING = (READY, WAIVED)
 # Frontmatter key order, pinned so a close rewrites a round file in the
 # shape `review start` minted it.
-_FIELDS = ("round", "verdict", "date", "sha", "reason")
+_FIELDS = ("round", "verdict", "date", "sha", "base", "level", "reason")
 # Minting reads every round file then writes one; the lock covers that whole
 # critical section so two processes cannot mint the same number. It is named
 # for the series, not for a file, because the file's name is what is being
@@ -72,7 +72,9 @@ _TEMPLATE = """\
 round: {number}
 verdict: ''
 date: '{today}'
-sha: ''
+sha: '{sha}'
+base: '{base}'
+level: '{level}'
 reason: ''
 ---
 
@@ -152,14 +154,37 @@ def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
     return project_dir(root, cfg, slug) / state["file"]
 
 
+def _reviewed_sha(rounds: list[tuple[int, Path]]) -> str:
+    """The sha of the latest of ``rounds`` that was reviewed; "" when none was.
+
+    A waived round reviewed nothing, so a range never starts at its sha: that
+    would skip the fixes made before the waive.
+    """
+    for _, path in reversed(rounds):
+        fields = frontmatter(path)
+        if fields.get("verdict") in (READY, CHANGES_REQUESTED):
+            return str(fields.get("sha", "") or "")
+    return ""
+
+
 def start_round(
-    root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    today: str | None = None,
+    full: bool = False,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
     Returns ``(path, created)``; ``created`` is False when a round was already
     open, which is never an error - reusing it is how an abandoned review is
-    resumed, and there is deliberately no way to discard one.
+    resumed, and there is deliberately no way to discard one. A reused round
+    keeps the scope it opened with.
+
+    The new round records HEAD (the commit the reviewer reads), the project's
+    level, and its base: the sha of the latest reviewed round, from which it
+    reviews only the diff. ``full``, or no reviewed round with a sha, leaves
+    the base empty and the round reviews the whole branch.
     """
     today = today or datetime.date.today().isoformat()
     directory = project_dir(root, cfg, slug)
@@ -167,15 +192,23 @@ def start_round(
         existing = open_round(root, cfg, slug)
         if existing is not None:
             return existing, False
-        number = max((n for n, _ in round_files(root, cfg, slug)), default=0) + 1
+        rounds = round_files(root, cfg, slug)
+        number = max((n for n, _ in rounds), default=0) + 1
         path = directory / f"review-{number}.md"
-        path.write_text(_TEMPLATE.format(number=number, today=today))
+        path.write_text(_TEMPLATE.format(
+            number=number,
+            today=today,
+            sha=head_sha(root),
+            base="" if full else _reviewed_sha(rounds),
+            level=load_project(root, cfg, slug).level,
+        ))
     return path, True
 
 
 def skeleton_body(number: int) -> str:
     """The body ``review start`` mints for round ``number``."""
-    return _TEMPLATE.format(number=number, today="").split("---", 2)[2].lstrip("\n")
+    minted = _TEMPLATE.format(number=number, today="", sha="", base="", level="")
+    return minted.split("---", 2)[2].lstrip("\n")
 
 
 def body_of(path: Path) -> str:
@@ -419,8 +452,9 @@ def close_round(
     A round with nits adds one follow-up naming their IDs, so the nits stay
     listed after the project completes without blocking it.
 
-    The date and sha stamp the close, overwriting the mint-time date: what
-    matters is when the review was decided, not when its file appeared.
+    The date stamps the close, overwriting the mint-time date: what matters
+    is when the review was decided, not when its file appeared. The sha stays
+    the one stamped when the round opened.
 
     ``report_text`` becomes the round's body (REQ-10) - the escape hatch for
     a reviewer that returns its report as text rather than writing into the
@@ -487,7 +521,10 @@ def close_round(
                 )
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
-        fields["sha"] = head_sha(root)
+        # The sha the round opened at is the commit its reviewer read; only a
+        # round that never got one takes HEAD now.
+        if not fields.get("sha"):
+            fields["sha"] = head_sha(root)
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body))
@@ -548,3 +585,43 @@ def add_finding(
             )
         )
     return finding_id, path
+
+
+WHOLE_BRANCH = "whole-branch"
+DELTA = "delta"
+
+
+def items_to_check(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> list[str]:
+    """The blocker and should-fix F-NN that rounds before round ``number`` recorded."""
+    items: dict[str, None] = {}
+    for n, path in round_files(root, cfg, slug):
+        if n >= number:
+            break
+        for line in _findings_lines(path.read_text()) or []:
+            match = _FINDING_LINE.match(line)
+            if match and match.group(3) != "nit":
+                items[match.group(1)] = None
+    return list(items)
+
+
+def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    """What the open round reviews: its scope, its range, and the items to check.
+
+    A round with a base reviews the delta ``<base>..HEAD``; one without
+    reviews the whole branch. Reads the round files and changes nothing.
+    Raises ``SpecfloError`` when no round is open.
+    """
+    path = open_round(root, cfg, slug)
+    if path is None:
+        raise SpecfloError("No review is open. Start one with `specflo review start`.")
+    fields = frontmatter(path)
+    number = _round_number(path, fields.get("round"))
+    base = str(fields.get("base", "") or "")
+    return {
+        "round": number,
+        "file": path.name,
+        "scope": DELTA if base else WHOLE_BRANCH,
+        "base": base,
+        "range": f"{base}..HEAD" if base else None,
+        "items": items_to_check(root, cfg, slug, number),
+    }

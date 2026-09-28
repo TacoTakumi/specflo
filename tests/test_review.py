@@ -46,7 +46,7 @@ def test_mint_creates_the_first_round_and_prints_its_path(tmp_path, monkeypatch)
     minted = project_dir / "review-1.md"
     assert minted.is_file()
     # The human line carries the round's locator, never its path.
-    assert result.output.strip() == "thing/review-1"
+    assert result.output.splitlines()[0] == "thing/review-1"
     assert str(minted) not in result.output
 
 
@@ -68,7 +68,9 @@ def test_mint_writes_the_skeleton_frontmatter_and_headings(tmp_path, monkeypatch
     runner.invoke(app, ["review", "start"])
 
     minted = project_dir / "review-1.md"
-    assert set(_frontmatter(minted)) == {"round", "verdict", "date", "sha", "reason"}
+    assert set(_frontmatter(minted)) == {
+        "round", "verdict", "date", "sha", "base", "level", "reason"
+    }
     assert _frontmatter(minted)["round"] == 1
     assert not _frontmatter(minted)["verdict"]        # open until `review done`
     body = minted.read_text()
@@ -115,7 +117,7 @@ def test_start_with_an_open_round_reuses_it_and_mints_nothing(tmp_path, monkeypa
     assert result.exit_code == 0, result.output
     # The round is carried with a note that it is already open. The line is
     # the locator plus the note, so no path can smuggle "open" in.
-    assert result.output.strip() == "thing/review-2 (already open)"
+    assert result.output.splitlines()[0] == "thing/review-2 (already open)"
     assert str(still_open) not in result.output
     assert not (project_dir / "review-3.md").exists()
     assert still_open.read_text() == before          # reused, not rewritten

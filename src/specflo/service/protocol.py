@@ -319,8 +319,13 @@ class ProjectService(Protocol):
 
     # --- reviews -----------------------------------------------------------
 
-    def start_round(self, slug: str) -> tuple[Path, bool]:
-        """Mint the next review round or hand back the open one."""
+    def start_round(self, slug: str, full: bool = False) -> tuple[Path, bool]:
+        """Mint the next review round or hand back the open one; ``full``
+        reviews the whole branch rather than the delta since the last round."""
+        ...
+
+    def review_scope(self, slug: str) -> dict:
+        """The open round's scope, range and the earlier items it must check."""
         ...
 
     def close_round(
