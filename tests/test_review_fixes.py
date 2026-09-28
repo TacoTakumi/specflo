@@ -1,0 +1,281 @@
+"""Review start waits for fix tasks: a round opens once each open item is fixed by a done task.
+
+After a round asks for changes, each open item - a blocker or should-fix
+finding no reviewed round has checked closed - needs a task that fixes it
+(``task add --fixes F-NN``) and is done before ``review start`` opens the next
+round, with or without --full or --over-budget. The refusal names each item
+and the command, and changes no file. A waive is never refused. A nit never
+needs a fix task, and a superseded task fixes nothing. A hosted project is
+refused the same way.
+"""
+
+import json
+
+import pytest
+from typer.testing import CliRunner
+
+from specflo import config, plan, projects, review, spec
+from specflo.cli import app
+from specflo.errors import SpecfloError
+from specflo.service.local import LocalProjectService
+from test_hosted_parity import _hosted_steps, _local_steps, _pipeline
+
+runner = CliRunner()
+
+# Every form of `review start` the refusal covers.
+_STARTS = [["review", "start"], ["review", "start", "--full"], ["review", "start", "--over-budget"]]
+
+
+def _steps():
+    """The pipeline through T-01 done, then a round that asks for changes: should-fix F-01."""
+    pipeline = _pipeline()
+    done = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "done"])
+    return [
+        *pipeline[: done + 1],
+        (["review", "start"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--text",
+          "A message names the wrong command"], None),
+        (["review", "done"], None),
+    ]
+
+
+def _assert_all_ok(results):
+    """Each step's last run exits 0: the pipeline validates the brainstorm once
+    before it is complete, and again after."""
+    codes = {tuple(args): (code, text) for args, code, text in results[1:]}
+    assert all(code == 0 for code, _ in codes.values()), codes
+
+
+def _ok(args):
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, (args, result.output)
+    return result
+
+
+def _add_fix(text: str, *fixes: str) -> str:
+    """`task add` fixing ``fixes``; the new task's ID."""
+    args = ["task", "add", "--text", text, "--acceptance", "fixed", "--verify", "uv run pytest"]
+    for fix in fixes:
+        args += ["--fixes", fix]
+    return _ok(args).output.split()[1]
+
+
+def _files(project_dir) -> dict[str, bytes]:
+    return {path.name: path.read_bytes() for path in project_dir.iterdir() if path.is_file()}
+
+
+def _refused_starts(project_dir) -> list[tuple[int, str]]:
+    """Each form of review start's ``(exit code, output)``; no file changes after each."""
+    outputs = []
+    for args in _STARTS:
+        before = _files(project_dir)
+        result = runner.invoke(app, args)
+        assert _files(project_dir) == before, args
+        outputs.append((result.exit_code, result.output))
+    return outputs
+
+
+def _opened() -> dict:
+    """`review start --json`, less the locator and path, which name where the project lives."""
+    opened = json.loads(_ok(["review", "start", "--json"]).output)
+    return {key: opened[key] for key in ("created", "scope", "range", "items")}
+
+
+def _assert_refused(outputs, *named):
+    for code, output in outputs:
+        assert code == 1, output
+        for text in named:
+            assert text in output, output
+
+
+def test_review_start_waits_for_a_done_fix_task(tmp_path, monkeypatch):
+    results, project_dir = _local_steps(tmp_path, monkeypatch, _steps())
+    _assert_all_ok(results)
+
+    _assert_refused(
+        _refused_starts(project_dir),
+        "F-01 (no fix task)", "specflo task add --fixes F-01",
+        "specflo review waive --reason <why>",
+    )
+
+    fix = _add_fix("Name the right command", "F-01")
+    _assert_refused(_refused_starts(project_dir), "F-01 (T-02 is not done)",
+                    "specflo task add --fixes F-01")
+    _ok(["task", "start", fix])
+    _assert_refused(_refused_starts(project_dir), "F-01 (T-02 is not done)")
+
+    _ok(["task", "done", fix])
+    opened = json.loads(_ok(["review", "start", "--json"]).output)
+    assert (opened["created"], opened["items"]) == (True, ["F-01"])
+    assert (project_dir / "review-2.md").is_file()
+
+
+def test_review_waive_is_not_refused(tmp_path, monkeypatch):
+    results, project_dir = _local_steps(tmp_path, monkeypatch, _steps())
+    _assert_all_ok(results)
+    _assert_refused(_refused_starts(project_dir)[:1], "F-01")
+
+    waived = _ok(["review", "waive", "--reason", "Checked by hand"])
+
+    assert "review-2 closed waived" in waived.output
+    assert review.frontmatter(project_dir / "review-2.md")["verdict"] == "waived"
+    # A waive reviewed nothing: the item is still open, and still unfixed.
+    _assert_refused(_refused_starts(project_dir)[:1], "F-01 (no fix task)")
+
+
+def test_the_fix_refusal_comes_before_the_budget_refusal(tmp_path, monkeypatch):
+    """Round 2 spends the budget of two rounds and leaves F-02 open: F-02 is
+    named first, and the budget refusal comes only once F-02 is fixed."""
+    results, project_dir = _local_steps(tmp_path, monkeypatch, _steps())
+    _assert_all_ok(results)
+    first = _add_fix("Name the right command", "F-01")
+    _ok(["task", "start", first])
+    _ok(["task", "done", first])
+    _ok(["review", "start"])
+    _ok(["review", "finding", "check", "F-01", "closed"])
+    _ok(["review", "finding", "add", "--severity", "should-fix", "--text", "The close drops the sha"])
+    _ok(["review", "done"])
+
+    refused = runner.invoke(app, ["review", "start"])
+    assert refused.exit_code == 1
+    assert "F-02 (no fix task)" in refused.output
+    assert "--over-budget" not in refused.output
+
+    second = _add_fix("Keep the sha", "F-02")
+    _ok(["task", "start", second])
+    _ok(["task", "done", second])
+    refused = runner.invoke(app, ["review", "start"])
+    assert refused.exit_code == 1
+    assert "review budget" in refused.output and "--over-budget" in refused.output
+    assert "fix task" not in refused.output
+    opened = json.loads(_ok(["review", "start", "--over-budget", "--json"]).output)
+    assert (opened["created"], opened["items"]) == (True, ["F-02"])
+
+
+def test_review_start_is_refused_the_same_way_on_a_hosted_project(
+    tmp_path, monkeypatch, live_daemon
+):
+    steps = _steps()
+    local, local_dir = _local_steps(tmp_path, monkeypatch, steps)
+    local_refusals = _refused_starts(local_dir)
+    local_fix = _add_fix("Name the right command", "F-01")
+    local_pending = _refused_starts(local_dir)
+    _ok(["task", "start", local_fix])
+    _ok(["task", "done", local_fix])
+    local_opened = _opened()
+
+    hosted, hosted_dir = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+    _assert_all_ok(hosted)
+    hosted_refusals = _refused_starts(hosted_dir)
+    hosted_fix = _add_fix("Name the right command", "F-01")
+    hosted_pending = _refused_starts(hosted_dir)
+    _ok(["task", "start", hosted_fix])
+    _ok(["task", "done", hosted_fix])
+    hosted_opened = _opened()
+
+    _assert_refused(hosted_refusals, "F-01 (no fix task)", "specflo task add --fixes F-01")
+    assert hosted_refusals == local_refusals
+    assert hosted_pending == local_pending
+    assert hosted_opened == local_opened == {
+        "created": True, "scope": "whole-branch", "range": None, "items": ["F-01"],
+    }
+    assert (hosted_dir / "review-2.md").is_file()
+
+
+# --- which items and which tasks count ----------------------------------------
+
+
+@pytest.fixture
+def reviewed(tmp_path):
+    """A project with a plan and a closed round 1 that asked for changes:
+    blocker F-01 and nit F-02. (root, cfg, slug, service)."""
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing")
+    spec.start_spec(tmp_path, cfg, "thing")
+    spec.add_requirement(tmp_path, cfg, "thing", "Prints help", acceptance="exits 0")
+    plan.start_plan(tmp_path, cfg, "thing")
+    plan.add_task(tmp_path, cfg, "thing", "Build help", "help prints", "uv run pytest",
+                  implements=["REQ-01"])
+    review.start_round(tmp_path, cfg, "thing", sha="")
+    review.add_finding(tmp_path, cfg, "thing", "blocker", "The close drops the sha")
+    review.add_finding(tmp_path, cfg, "thing", "nit", "A name reads oddly")
+    review.close_round(tmp_path, cfg, "thing", nits_followup=False)
+    return tmp_path, cfg, "thing", LocalProjectService(tmp_path, cfg)
+
+
+def _done_fix(root, cfg, slug, *fixes, text="Keep the sha") -> str:
+    task = plan.add_task(root, cfg, slug, text, "kept", "uv run pytest",
+                         implements=[], fixes=list(fixes))
+    plan.start_task(root, cfg, slug, task.id)
+    plan.done_task(root, cfg, slug, task.id)
+    return task.id
+
+
+def test_a_nit_needs_no_fix_task(reviewed):
+    root, cfg, slug, service = reviewed
+    assert review.unfixed_items(root, cfg, slug) == {"F-01": []}
+    _done_fix(root, cfg, slug, "F-01")
+    assert review.unfixed_items(root, cfg, slug) == {}
+    path, created = service.start_round(slug, sha="")
+    assert (path.name, created) == ("review-2.md", True)
+
+
+def test_a_superseded_task_fixes_nothing(reviewed):
+    root, cfg, slug, service = reviewed
+    fix = _done_fix(root, cfg, slug, "F-01")
+    plan.add_task(root, cfg, slug, "Build help again", "help prints", "uv run pytest",
+                  implements=["REQ-01"], supersedes=fix)
+    # Superseding resets the old task to pending; mark it done by hand, so only
+    # its status keeps it from counting.
+    path = plan.plan_path(root, cfg, slug)
+    document = path.read_text()
+    start = document.index(f"### {fix} ")
+    path.write_text(document[:start] + document[start:].replace(
+        "- Progress: pending", "- Progress: done", 1))
+    assert next(t for t in plan.list_tasks(root, cfg, slug, include_superseded=True)
+                if t.id == fix).progress == "done"
+
+    assert review.unfixed_items(root, cfg, slug) == {"F-01": []}
+    with pytest.raises(SpecfloError, match=r"F-01 \(no fix task\)"):
+        service.start_round(slug, sha="")
+
+
+def test_a_project_with_no_plan_is_refused_naming_the_item(tmp_path):
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing")
+    review.start_round(tmp_path, cfg, "thing", sha="")
+    review.add_finding(tmp_path, cfg, "thing", "should-fix", "A message names the wrong command")
+    review.close_round(tmp_path, cfg, "thing", nits_followup=False)
+    with pytest.raises(SpecfloError, match=r"F-01 \(no fix task\)"):
+        LocalProjectService(tmp_path, cfg).start_round("thing", sha="")
+    assert [path.name for _, path in review.round_files(tmp_path, cfg, "thing")] == ["review-1.md"]
+
+
+def test_an_item_checked_closed_needs_no_fix_task(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    service.start_round(slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "closed")
+    review.add_finding(root, cfg, slug, "should-fix", "A message names the wrong command")
+    review.close_round(root, cfg, slug, nits_followup=False)
+    assert review.unfixed_items(root, cfg, slug) == {"F-03": []}
+    _done_fix(root, cfg, slug, "F-03", text="Name the right command")
+    path, created = service.start_round(slug, sha="", over_budget=True)
+    assert (path.name, created) == ("review-3.md", True)
+
+
+def test_an_open_round_is_handed_back_without_the_check(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    opened, _ = service.start_round(slug, sha="")
+    plan.reopen_task(root, cfg, slug, "T-02")
+    path, created = service.start_round(slug, sha="")
+    assert (path, created) == (opened, False)
+
+
+def test_the_ladder_and_the_waive_mint_a_round_without_the_check(reviewed):
+    root, cfg, slug, service = reviewed
+    path, created = review.start_round(root, cfg, slug, sha="")
+    assert (path.name, created) == ("review-2.md", True)
+    review.close_round(root, cfg, slug, "waived", reason="Checked by hand")
+    assert service.waive_round(slug, "Checked by hand again", sha="").name == "review-3.md"

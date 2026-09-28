@@ -273,12 +273,14 @@ def test_task_add_fixes_on_a_hosted_project_gives_the_same_plan(tmp_path, monkey
 
 def _ledger_steps():
     """A plan with T-01 and three rounds. Round 1 asked for changes (blocker
-    F-01, should-fix F-02, nit F-03); round 2 checked F-01 closed and F-02
-    open, and asked for changes (blocker F-04); round 3 is open and has found
-    should-fix F-05. The open items are F-02 and F-04."""
+    F-01, should-fix F-02, nit F-03), fixed by T-02; round 2 checked F-01
+    closed and F-02 open, and asked for changes (blocker F-04), fixed by
+    T-03; round 3 is open and has found should-fix F-05. The open items are
+    F-02 and F-04."""
     pipeline = _pipeline()
     last = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "add"])
     finding = ["review", "finding", "add", "--severity"]
+    fix = ["task", "add", "--acceptance", "fixed", "--verify", "uv run pytest"]
     return [
         *pipeline[: last + 1],
         (["review", "start"], None),
@@ -286,11 +288,17 @@ def _ledger_steps():
         ([*finding, "should-fix", "--text", "A message names the wrong command"], None),
         ([*finding, "nit", "--text", "A name reads oddly"], None),
         (["review", "done"], None),
+        ([*fix, "--text", "Keep the sha", "--fixes", "F-01", "--fixes", "F-02"], None),
+        (["task", "start", "T-02"], None),
+        (["task", "done", "T-02"], None),
         (["review", "start", "--over-budget"], None),
         (["review", "finding", "check", "F-01", "closed"], None),
         (["review", "finding", "check", "F-02", "open"], None),
         ([*finding, "blocker", "--text", "The lock is dropped early"], None),
         (["review", "done"], None),
+        ([*fix, "--text", "Hold the lock", "--fixes", "F-04"], None),
+        (["task", "start", "T-03"], None),
+        (["task", "done", "T-03"], None),
         (["review", "start", "--over-budget"], None),
         ([*finding, "should-fix", "--text", "A refusal names no ID"], None),
     ]
@@ -335,13 +343,13 @@ def test_task_add_fixes_accepts_only_an_open_item(tmp_path, monkeypatch):
         assert "Open items a task can fix: F-02, F-04." in output, (fixes, output)
 
     added = _add_fixing("Fix both", "F-02", "F-04")
-    assert (added.exit_code, added.output) == (0, "Recorded T-02 (fixes F-02, F-04).\n")
+    assert (added.exit_code, added.output) == (0, "Recorded T-04 (fixes F-02, F-04).\n")
     # An ID is written as the round spells it.
     added = _add_fixing("Fix the lock", "F-4")
-    assert (added.exit_code, added.output) == (0, "Recorded T-03 (fixes F-04).\n")
+    assert (added.exit_code, added.output) == (0, "Recorded T-05 (fixes F-04).\n")
     document = (project_dir / "plan.md").read_text()
-    assert "- Fixes: F-02, F-04" in _entry(document, "T-02")
-    assert "- Fixes: F-04" in _entry(document, "T-03")
+    assert "- Fixes: F-02, F-04" in _entry(document, "T-04")
+    assert "- Fixes: F-04" in _entry(document, "T-05")
 
 
 def test_task_add_fixes_is_refused_the_same_way_on_a_hosted_project(
@@ -360,7 +368,7 @@ def test_task_add_fixes_is_refused_the_same_way_on_a_hosted_project(
     assert hosted_refusals == local_refusals
     assert (hosted_added.exit_code, hosted_added.output) == (
         local_added.exit_code, local_added.output
-    ) == (0, "Recorded T-02 (fixes F-02, F-04).\n")
+    ) == (0, "Recorded T-04 (fixes F-02, F-04).\n")
     assert _without_actor((hosted_dir / "plan.md").read_text()) == _without_actor(
         (local_dir / "plan.md").read_text()
     )

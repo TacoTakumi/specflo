@@ -4,13 +4,14 @@
 test that closes a round records findings first: ``- none`` for a
 ready-to-merge round, one blocker for a changes-requested one. It also checks
 every earlier item closed, since a round closes only once each is checked. A
-waived round needs none of it.
+waived round needs none of it. ``review start`` opens a round only once each
+open item has a done fix task, which :func:`fix_open_items` adds.
 """
 
 import json
 from pathlib import Path
 
-from specflo import config, markdown, review
+from specflo import config, markdown, plan, review
 
 NONE_LINE = "- none"
 BLOCKER_TEXT = "A blocker the next round must see fixed"
@@ -35,6 +36,55 @@ def write_none(path: Path) -> None:
     if markdown.section_body(doc, review.FINDINGS_HEADER) is None:
         doc = doc.rstrip("\n") + f"\n\n{review.FINDINGS_HEADER}\n"
     Path(path).write_text(markdown.replace_section_body(doc, review.FINDINGS_HEADER, NONE_LINE))
+
+
+def fix_open_items(root, cfg, slug) -> list[str]:
+    """Add a done task fixing each open item that has none; the tasks' IDs.
+
+    ``review start`` opens no round while an open item has no done fix task.
+    A project with no plan gets one, and only when an item needs a task.
+    """
+    unfixed = review.unfixed_items(root, cfg, slug)
+    if unfixed:
+        plan.start_plan(root, cfg, slug)
+    added = []
+    for item in unfixed:
+        task = plan.add_task(root, cfg, slug, f"Fix {item}", f"{item} is fixed",
+                             "uv run pytest", implements=[], fixes=[item])
+        plan.start_task(root, cfg, slug, task.id)
+        plan.done_task(root, cfg, slug, task.id)
+        added.append(task.id)
+    return added
+
+
+def fix_by_cli(runner, app, *items: str) -> list[str]:
+    """Add, start and finish a task fixing each of ``items`` through the CLI; the tasks' IDs.
+
+    For a hosted project, whose plan only the daemon holds. A plan is started
+    first; one already started is kept.
+    """
+    started = runner.invoke(app, ["plan", "start"])
+    assert started.exit_code == 0, started.output
+    added = []
+    for item in items:
+        result = runner.invoke(app, [
+            "task", "add", "--text", f"Fix {item}", "--acceptance", f"{item} is fixed",
+            "--verify", "uv run pytest", "--fixes", item,
+        ])
+        assert result.exit_code == 0, result.output
+        task_id = result.output.split()[1]
+        for verb in ("start", "done"):
+            moved = runner.invoke(app, ["task", verb, task_id])
+            assert moved.exit_code == 0, moved.output
+        added.append(task_id)
+    return added
+
+
+def fix_active_open_items() -> list[str]:
+    """:func:`fix_open_items` for the active project of the current checkout."""
+    root = config.find_root(Path.cwd())
+    cfg = config.load_config(root)
+    return fix_open_items(root, cfg, cfg.active_project)
 
 
 def _active_project_dir() -> Path:

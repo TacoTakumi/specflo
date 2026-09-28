@@ -8,6 +8,7 @@ test_command each round when one is set, else only the tests in scope.
 
 from typer.testing import CliRunner
 
+from reviewhelp import fix_active_open_items
 from specflo import config, projects
 from specflo.cli import app
 
@@ -63,6 +64,7 @@ def test_a_delta_round_gets_its_range_and_every_item_to_check(tmp_path, monkeypa
         "reason: ''\n---\n\n# Review round 1\n\n## Findings\n\n"
         "- F-01 (blocker) One\n- F-02 (should-fix) Two\n- F-03 (nit) Three\n"
     )
+    fix_active_open_items()
     runner.invoke(app, ["review", "start"])
 
     text = _prompt()

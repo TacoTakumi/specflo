@@ -526,6 +526,7 @@ def test_a_hosted_round_is_stamped_with_the_checkouts_head_and_gets_a_delta(chec
     runner.invoke(app, ["review", "finding", "add", "--severity", "blocker", "--text", "One"])
     assert runner.invoke(app, ["review", "done"]).exit_code == 0
     _commit(checkout, "fix.txt")
+    reviewhelp.fix_by_cli(runner, app, "F-01")
 
     result = runner.invoke(app, ["review", "start"])
 

@@ -12,6 +12,7 @@ import subprocess
 
 from typer.testing import CliRunner
 
+from reviewhelp import fix_active_open_items
 from specflo import config, projects, review
 from specflo.cli import app
 
@@ -59,6 +60,8 @@ def _round(project_dir, number, verdict, sha, findings, extra=""):
 
 
 def _start(*args):
+    # A round opens only once each open item has a done fix task.
+    fix_active_open_items()
     result = runner.invoke(app, ["review", "start", *args])
     assert result.exit_code == 0, result.output
     return result
@@ -162,6 +165,7 @@ def test_json_carries_the_scope_the_range_and_the_items(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     _round(project_dir, 1, "changes-requested", "abc1234",
            ["- F-01 (blocker) One", "- F-02 (should-fix) Two"])
+    fix_active_open_items()
 
     data = json.loads(runner.invoke(app, ["review", "start", "--json"]).output)
 

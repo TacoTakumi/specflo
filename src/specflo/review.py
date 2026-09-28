@@ -22,7 +22,7 @@ from pathlib import Path
 
 import yaml
 
-from . import followup, markdown
+from . import followup, markdown, plan
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
@@ -206,6 +206,55 @@ def budget_message(state: dict) -> str:
     )
 
 
+def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[str]]:
+    """The open items no done task fixes, each with the tasks that fix it but are not done.
+
+    An open item is a blocker or should-fix finding of a closed round that no
+    reviewed round has checked closed; a nit never is one. Only an active
+    task whose progress is done counts as its fix: a superseded task fixes
+    nothing, and a project with no plan has no fix at all. Reads the round
+    files and plan.md and changes nothing.
+    """
+    rounds = round_files(root, cfg, slug)
+    latest = rounds[-1][0] if rounds else 0
+    items = _ledger(root, cfg, slug, latest + 1)[0]
+    if not items:
+        return {}
+    try:
+        tasks = plan.list_tasks(root, cfg, slug)
+    except SpecfloError:
+        tasks = []
+    fixing: dict[int, list] = {key: [] for key in items}
+    for task in tasks:
+        for fix in task.fixes:
+            match = re.fullmatch(r"F-(\d+)", fix.strip())
+            if match and int(match.group(1)) in fixing:
+                fixing[int(match.group(1))].append(task)
+    return {
+        items[key]: [task.id for task in fixes]
+        for key, fixes in fixing.items()
+        if not any(task.progress == "done" for task in fixes)
+    }
+
+
+def unfixed_message(unfixed: dict[str, list[str]]) -> str:
+    """What to tell the user when an open item has no done fix task."""
+    named = ", ".join(
+        f"{item} ("
+        + (f"{', '.join(tasks)} {'is' if len(tasks) == 1 else 'are'} not done" if tasks
+           else "no fix task")
+        + ")"
+        for item, tasks in unfixed.items()
+    )
+    fixes = next(iter(unfixed)) if len(unfixed) == 1 else "F-NN"
+    return (
+        f"No review round opens while an open item has no done fix task: {named}."
+        f" Each needs a task that fixes it, added with `specflo task add --fixes {fixes}`"
+        " and finished with `specflo task done`; then run `specflo review start` again."
+        " Or waive the review with `specflo review waive --reason <why>`."
+    )
+
+
 def start_round(
     root: Path,
     cfg: SpecfloConfig,
@@ -214,6 +263,7 @@ def start_round(
     full: bool = False,
     over_budget: bool = False,
     sha: str | None = None,
+    need_fixes: bool = False,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
@@ -236,6 +286,11 @@ def start_round(
 
     When the level's budget is spent (see :func:`budget`), no round opens
     unless ``over_budget`` says the user chose one more.
+
+    ``need_fixes`` opens no round while an open item has no done fix task
+    (see :func:`unfixed_items`), whatever ``full`` and ``over_budget`` say.
+    The ``review start`` verb asks for it; a ladder's climb, which opens a
+    level's round before the level's work, and a waive do not.
     """
     today = today or datetime.date.today().isoformat()
     directory = project_dir(root, cfg, slug)
@@ -244,6 +299,10 @@ def start_round(
         if existing is not None:
             _restamp_untouched(root, existing, sha)
             return existing, False
+        # Before the budget: --over-budget cannot open a round while an item
+        # is unfixed, so the budget's choice is asked only once it could.
+        if need_fixes and (unfixed := unfixed_items(root, cfg, slug)):
+            raise SpecfloError(unfixed_message(unfixed))
         state = budget(root, cfg, slug)
         if state["spent"] and not over_budget:
             raise SpecfloError(budget_message(state))

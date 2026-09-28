@@ -8,6 +8,7 @@ round with ``--over-budget``, or a waive.
 
 from typer.testing import CliRunner
 
+from reviewhelp import fix_active_open_items
 from specflo import config, projects, review
 from specflo.cli import app
 
@@ -41,6 +42,7 @@ def test_start_past_the_budget_refuses_naming_both_ways_on(tmp_path, monkeypatch
     project_dir = _project(tmp_path, monkeypatch)
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "changes-requested")
+    fix_active_open_items()
 
     result = _start()
 
@@ -54,6 +56,7 @@ def test_over_budget_opens_one_more_round(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "changes-requested")
+    fix_active_open_items()
 
     result = _start("--over-budget")
 
@@ -65,6 +68,7 @@ def test_each_further_round_needs_the_flag_again(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     for number in (1, 2, 3):
         _round(project_dir, number, "changes-requested")
+    fix_active_open_items()
 
     assert _start().exit_code != 0
     assert _start("--over-budget").exit_code == 0
@@ -74,6 +78,7 @@ def test_the_budget_does_not_limit_start_after_a_passing_round(tmp_path, monkeyp
     project_dir = _project(tmp_path, monkeypatch)
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "ready-to-merge", findings=("- none",))
+    fix_active_open_items()
 
     result = _start()
 
@@ -86,6 +91,7 @@ def test_the_budget_does_not_limit_start_after_a_waived_round(tmp_path, monkeypa
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "changes-requested")
     _round(project_dir, 3, "waived", findings=("- none",))
+    fix_active_open_items()
 
     assert _start().exit_code == 0
 
@@ -94,6 +100,7 @@ def test_rounds_of_an_earlier_level_do_not_count(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch, level="full")
     _round(project_dir, 1, "changes-requested", level="fast")
     _round(project_dir, 2, "changes-requested", level="fast")
+    fix_active_open_items()
 
     result = _start()
 
@@ -105,8 +112,11 @@ def test_a_round_with_no_level_counts_toward_the_current_level(tmp_path, monkeyp
     project_dir = _project(tmp_path, monkeypatch, level="fast")
     _round(project_dir, 1, "changes-requested", level=None)
     _round(project_dir, 2, "changes-requested", level="fast")
+    fix_active_open_items()
 
-    assert _start().exit_code != 0
+    result = _start()
+    assert result.exit_code != 0
+    assert "specflo review start --over-budget" in result.output
 
 
 def test_a_larger_budget_allows_more_rounds(tmp_path, monkeypatch):
@@ -114,6 +124,7 @@ def test_a_larger_budget_allows_more_rounds(tmp_path, monkeypatch):
     assert runner.invoke(app, ["config", "set", "review_max_rounds", "3"]).exit_code == 0
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "changes-requested")
+    fix_active_open_items()
 
     assert _start().exit_code == 0
     assert (project_dir / "review-3.md").is_file()
@@ -123,6 +134,7 @@ def test_an_open_round_is_handed_back_whatever_the_budget(tmp_path, monkeypatch)
     project_dir = _project(tmp_path, monkeypatch)
     _round(project_dir, 1, "changes-requested")
     _round(project_dir, 2, "changes-requested")
+    fix_active_open_items()
     assert _start("--over-budget").exit_code == 0
 
     again = _start()
@@ -176,6 +188,7 @@ def test_waive_refuses_an_empty_reason_and_writes_nothing(tmp_path, monkeypatch)
         assert "reason" in result.output.lower()
     assert not (project_dir / "review-2.md").exists()
 
+    fix_active_open_items()
     assert _start().exit_code == 0
     before = (project_dir / "review-2.md").read_text()
     assert runner.invoke(app, ["review", "waive", "--reason", ""]).exit_code != 0

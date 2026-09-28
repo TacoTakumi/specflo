@@ -11,6 +11,7 @@ import multiprocessing
 import pytest
 from typer.testing import CliRunner
 
+from reviewhelp import fix_active_open_items
 from specflo import config, markdown, projects, review
 from specflo.cli import app
 
@@ -135,6 +136,7 @@ def test_ids_continue_across_rounds(tmp_path, monkeypatch):
         project_dir, 1,
         ["- F-01 (blocker) One", "- F-02 (should-fix) Two", "- F-03 (nit) Three"],
     )
+    fix_active_open_items()
     runner.invoke(app, ["review", "start"])
 
     result = _add("nit", "Four")
@@ -170,6 +172,7 @@ def test_concurrent_adds_get_distinct_ids(tmp_path, monkeypatch):
 
 def _open(project_dir, findings=None):
     """Start the next round; with ``findings``, write them as its Findings section."""
+    fix_active_open_items()
     assert runner.invoke(app, ["review", "start"]).exit_code == 0
     path = review.open_round(project_dir.parents[2], config.load_config(project_dir.parents[2]), "thing")
     if findings is not None:

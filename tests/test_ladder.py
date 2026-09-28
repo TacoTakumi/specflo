@@ -675,7 +675,9 @@ def test_a_deferred_list_that_says_none_counts_no_items():
 
 
 def _round_asking_for_changes(*checks, severity="blocker", text="Still wrong"):
-    """Open a round, check each earlier item as given, add one finding, close it."""
+    """Fix the open items, open a round, check each earlier item as given, add
+    one finding, close it."""
+    reviewhelp.fix_active_open_items()
     _ok(["review", "start", "--over-budget"])
     for item, state in checks:
         _ok(["review", "finding", "check", item, state])
@@ -720,6 +722,10 @@ def test_a_ladder_waives_a_fast_level_at_its_budget_and_climbs(repo):
     climbed = json.loads(_ok(["auto", "--json"]).output)
 
     assert climbed["reason"] != auto.STOP_REVIEW_BUDGET
+    # The climb opens the full level's round though F-02 has no fix task:
+    # the pass goes on rather than stopping at the climb.
+    assert (climbed["stop"], climbed["reason"]) == (False, None)
+    assert _review_verdict(repo, 4)["verdict"] == ""
     assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/full"
     row = _row(repo, "fast")
     assert row["review"].startswith("waived (budget)")

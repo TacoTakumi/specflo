@@ -8,7 +8,7 @@ deleted round leaves a permanent gap (REQ-02).
 import yaml
 from typer.testing import CliRunner
 
-from reviewhelp import review_done
+from reviewhelp import fix_active_open_items, review_done
 from specflo import config, projects
 from specflo.cli import app
 
@@ -171,6 +171,7 @@ def test_close_accepts_each_of_the_three_verdicts(tmp_path, monkeypatch):
     for number, verdict in enumerate(
         ("changes-requested", "ready-to-merge", "waived"), start=1
     ):
+        fix_active_open_items()
         runner.invoke(app, ["review", "start"])
         extra = ["--reason", "not reviewing this one"] if verdict == "waived" else []
         result = review_done(runner, app, verdict, *extra)

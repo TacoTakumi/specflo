@@ -266,8 +266,19 @@ def test_an_unknown_egress_class_is_refused_the_same_way_locally_and_hosted(
 # --- the review loop, local and hosted ---------------------------------------------------
 
 
+def _fix(text: str, item: str, task_id: str) -> list:
+    """The steps that add, start and finish ``task_id``, a task fixing ``item``."""
+    return [
+        (["task", "add", "--text", text, "--acceptance", "fixed", "--verify", "uv run pytest",
+          "--fixes", item], None),
+        (["task", "start", task_id], None),
+        (["task", "done", task_id], None),
+    ]
+
+
 def _review_steps():
-    """Every review command and flag, refusals included, over four rounds."""
+    """Every review command and flag, refusals included, over four rounds,
+    with the fix task each round that asks for changes needs."""
     return [
         (["review", "start"], None),
         (["review", "prompt"], None),
@@ -276,12 +287,15 @@ def _review_steps():
         (["review", "finding", "add", "--severity", "major", "--text", "Refused"], None),
         (["review", "done", "--verdict", "ready-to-merge"], None),
         (["review", "done"], None),
+        (["plan", "start"], None),
+        *_fix("Keep the sha", "F-01", "T-01"),
         (["review", "start", "--full"], None),
         (["review", "prompt"], None),
         (["review", "finding", "check", "F-02", "closed"], None),
         (["review", "finding", "check", "F-01", "open"], None),
         (["review", "finding", "add", "--severity", "should-fix", "--text", "A message names the wrong command"], None),
         (["review", "done"], None),
+        *_fix("Name the right command", "F-03", "T-02"),
         (["review", "start"], None),
         (["review", "start", "--over-budget"], None),
         (["review", "done"], None),
@@ -444,6 +458,7 @@ def _whole_suite_steps(test_command: str | None = TEST_COMMAND):
         (["review", "prompt"], None),
         (["review", "finding", "add", "--severity", "blocker", "--text", "One"], None),
         (["review", "done"], None),
+        *_fix("Fix one", "F-01", "T-02"),
         (["review", "start"], None),
         (["review", "finding", "check", "F-01", "closed"], None),
         (["review", "finding", "add", "--severity", "nit", "--text", "A typo"], None),
@@ -476,7 +491,8 @@ def _assert_whole_suite_alike(local, hosted, hint: str) -> None:
             mine = (args, mine[1], _without_follow_up_lines(mine[2]))
             theirs = (args, theirs[1], _without_follow_up_lines(theirs[2]))
         assert mine[1:] == theirs[1:], f"{' '.join(args)}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
-        if args in _HINT_SURFACES or args[:2] == ["task", "done"]:
+        # The pipeline's last task done; the fix task's done hints at the review.
+        if args in _HINT_SURFACES or args == ["task", "done", "T-01"]:
             # The session-start JSON names it twice: in the status block and
             # in the checkpoint.
             assert mine[1] == 0, mine[2]
