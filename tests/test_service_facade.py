@@ -211,6 +211,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert (finding_id, finding_round) == ("F-01", round_path)
     with pytest.raises(SpecfloError, match="finding of this round"):
         svc.check_finding(slug, "F-01", "closed")
+    with pytest.raises(SpecfloError, match="finding of the open round review-1.md"):
+        svc.reject_finding(slug, "F-01", "Style only")
     assert svc.validate_artifact(slug, "execute") != []
     closed = svc.close_round(slug, "ready-to-merge")
     assert (closed.path, closed.verdict) == (round_path, "ready-to-merge")

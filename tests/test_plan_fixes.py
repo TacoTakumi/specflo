@@ -372,3 +372,46 @@ def test_task_add_fixes_is_refused_the_same_way_on_a_hosted_project(
     assert _without_actor((hosted_dir / "plan.md").read_text()) == _without_actor(
         (local_dir / "plan.md").read_text()
     )
+
+
+# --- a rejected item ----------------------------------------------------------
+
+
+def _rejected_steps():
+    """The three rounds of :func:`_ledger_steps`, then F-04 rejected: the
+    only open item left is F-02."""
+    return [
+        *_ledger_steps(),
+        (["review", "finding", "reject", "F-04", "--reason", "The caller holds the lock"], None),
+    ]
+
+
+def _add_rejected(plan_file) -> tuple[int, str]:
+    """A `task add --fixes F-04` after F-04 was rejected; plan.md is unchanged."""
+    before = plan_file.read_bytes()
+    result = _add_fixing("Hold the lock again", "F-04")
+    assert plan_file.read_bytes() == before
+    return result.exit_code, result.output
+
+
+def test_task_add_fixes_is_refused_for_a_rejected_item(tmp_path, monkeypatch):
+    results, project_dir = _local_steps(tmp_path, monkeypatch, _rejected_steps())
+    assert all(code == 0 for code, _ in _outputs(results).values()), results
+    code, output = _add_rejected(project_dir / "plan.md")
+    assert code == 1, output
+    assert "F-04 was rejected in review-2.md. Open items a task can fix: F-02." in output
+
+
+def test_task_add_fixes_is_refused_for_a_rejected_item_on_a_hosted_project(
+    tmp_path, monkeypatch, live_daemon
+):
+    steps = _rejected_steps()
+    local, local_dir = _local_steps(tmp_path, monkeypatch, steps)
+    local_refusal = _add_rejected(local_dir / "plan.md")
+    hosted, hosted_dir = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+    assert all(code == 0 for code, _ in _outputs(hosted).values()), hosted
+    hosted_refusal = _add_rejected(hosted_dir / "plan.md")
+
+    assert hosted_refusal == local_refusal
+    assert hosted_refusal[0] == 1
+    assert "F-04 was rejected in review-2.md." in hosted_refusal[1]

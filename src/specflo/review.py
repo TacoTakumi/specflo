@@ -18,13 +18,14 @@ import dataclasses
 import datetime
 import re
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
 
 from . import followup, markdown, plan
 from .config import SpecfloConfig
-from .errors import SpecfloError
+from .errors import SpecfloError, require_one_line
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
@@ -61,6 +62,15 @@ EARLIER_HEADER = "## Earlier findings"
 CHECK_STATES = ("closed", "open")
 _CHECK_LINE = re.compile(r"^- (F-(\d+)) (closed|open)$")
 _CHECK_HOW = "`specflo review finding check F-NN closed|open`"
+# Where the round that recorded a finding says it was settled without a fix,
+# one line per finding: '- F-NN rejected: <reason>'. A settled finding leaves
+# the ledger. The section is appended to a closed round, so a round file with
+# none reads as it always did.
+SETTLED_HEADER = "## Settled"
+REJECTED = "rejected"
+_SETTLED_LINE = re.compile(
+    r"^- (?P<id>F-(?P<number>\d+)) (?P<kind>" + REJECTED + r"): (?P<detail>\S.*)$"
+)
 # What a refused close can do next, named in every refusal of its findings.
 _WAYS_ON = (
     " To go on: rewrite the line in the '- F-NN (severity) [file:line] text'"
@@ -276,7 +286,8 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     """The open items no done task fixes, each with the tasks that fix it but are not done.
 
     An open item is a blocker or should-fix finding of a closed round that no
-    reviewed round has checked closed; a nit never is one. Only an active
+    reviewed round has checked closed and none has settled; a nit never is
+    one. Only an active
     task whose progress is done counts as its fix: a superseded task fixes
     nothing, and a project with no plan has no fix at all. Reads the round
     files and plan.md and changes nothing.
@@ -786,20 +797,38 @@ def derive_verdict(
     return (CHANGES_REQUESTED if blocking else READY), counts
 
 
+def parse_settled(doc: str) -> dict[int, tuple[str, str]]:
+    """Each finding a document's Settled section settles, keyed by its number:
+    how it was settled and the rest of its line, such as a rejection's reason.
+
+    A line in another form settles nothing: this reads a closed round and
+    never refuses it.
+    """
+    return {
+        int(match.group("number")): (match.group("kind"), match.group("detail"))
+        for line in _section_lines(doc, SETTLED_HEADER) or []
+        if (match := _SETTLED_LINE.match(line))
+    }
+
+
 def _ledger(
     root: Path, cfg: SpecfloConfig, slug: str, number: int
-) -> tuple[dict[int, str], dict[int, tuple[str, str]], dict[int, str]]:
+) -> tuple[
+    dict[int, str], dict[int, tuple[str, str]], dict[int, str], dict[int, tuple[str, str]]
+]:
     """What the rounds before round ``number`` leave for it to check.
 
-    Returns ``(items, known, closed)``, each keyed by the finding's number:
-    the blocker and should-fix items no reviewed round has checked closed,
-    every finding recorded (ID and severity), and the round file where each
-    closed item was checked closed. A waived round's checks do not close an
-    item: a waive reviewed nothing.
+    Returns ``(items, known, closed, settled)``, each keyed by the finding's
+    number: the blocker and should-fix items no reviewed round has checked
+    closed and none has settled, every finding recorded (ID and severity),
+    the round file where each closed item was checked closed, and how each
+    settled finding was settled and the round file that says so. A waived
+    round's checks do not close an item: a waive reviewed nothing.
     """
     items: dict[int, str] = {}
     known: dict[int, tuple[str, str]] = {}
     closed: dict[int, str] = {}
+    settled: dict[int, tuple[str, str]] = {}
     for n, path in round_files(root, cfg, slug):
         if n >= number:
             break
@@ -816,7 +845,11 @@ def _ledger(
                 known[finding.number] = (finding.id, finding.severity)
                 if finding.severity != "nit":
                     items[finding.number] = finding.id
-    return items, known, closed
+        for key, (kind, _) in parse_settled(doc).items():
+            settled[key] = (kind, path.name)
+    for key in settled:
+        items.pop(key, None)
+    return items, known, closed, settled
 
 
 def parse_checks(
@@ -829,7 +862,7 @@ def parse_checks(
     '- F-NN closed|open' form, a check of anything else, and an item with
     no check. Each refusal names the line or the IDs.
     """
-    items, _, _ = _ledger(root, cfg, slug, number)
+    items = _ledger(root, cfg, slug, number)[0]
     states: dict[int, str] = {}
     for line in _section_lines(body, EARLIER_HEADER) or []:
         match = _CHECK_LINE.match(line)
@@ -1258,7 +1291,8 @@ DELTA = "delta"
 
 def items_to_check(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> list[str]:
     """The blocker and should-fix F-NN round ``number`` must check: those the
-    rounds before it recorded and no reviewed round has checked closed."""
+    rounds before it recorded, no reviewed round has checked closed and none
+    has settled."""
     return list(_ledger(root, cfg, slug, number)[0].values())
 
 
@@ -1300,9 +1334,9 @@ def check_finding(
 
     Returns ``(F-NN, round path)``. Only an item the round checks is
     accepted: a blocker or should-fix finding of an earlier round that no
-    reviewed round has checked closed. A second check of an item replaces
-    the first. Raises ``SpecfloError``, leaving the file untouched, on
-    anything else.
+    reviewed round has checked closed and none has settled. A second check
+    of an item replaces the first. Raises ``SpecfloError``, leaving the file
+    untouched, on anything else.
     """
     if state not in CHECK_STATES:
         raise SpecfloError(
@@ -1320,7 +1354,7 @@ def check_finding(
             )
         doc = path.read_text()
         number = _round_number(path, frontmatter(path).get("round"))
-        items, known, closed = _ledger(root, cfg, slug, number)
+        items, known, closed, settled = _ledger(root, cfg, slug, number)
         if key not in items:
             if key in _defined_numbers(doc):
                 why = f"{finding_id} is a finding of this round; a round checks only earlier items."
@@ -1328,6 +1362,8 @@ def check_finding(
                 why = f"No earlier round records a finding {finding_id}."
             elif known[key][1] == "nit":
                 why = f"{known[key][0]} is a nit, and a nit is never checked."
+            elif key in settled:
+                why = _settled_why(known[key][0], settled[key])
             else:
                 why = f"{known[key][0]} was already checked closed in {closed[key]}."
             listed = ", ".join(items.values()) or "none"
@@ -1357,17 +1393,20 @@ def check_fixes(root: Path, cfg: SpecfloConfig, slug: str, fixes: list[str]) -> 
     """The F-NN a fix task names, as the rounds spell them, or a refusal.
 
     A task fixes only an open item: a blocker or should-fix finding of a
-    closed round that no reviewed round has checked closed, which is what
-    the next round checks. A value may list several IDs split by commas, as
-    the task's Fixes field does. Raises ``SpecfloError`` naming the ID on
-    anything that is not an F-NN, an ID no closed round records, a nit, an
-    item checked closed, and a finding of the open round, whose verdict is
-    not decided yet. Reads the round files and changes nothing.
+    closed round that no reviewed round has checked closed and none has
+    settled, which is what the next round checks. A value may list several
+    IDs split by commas, as the task's Fixes field does. Raises
+    ``SpecfloError`` naming the ID on anything that is not an F-NN, an ID no
+    closed round records, a nit, an item checked closed, a settled finding
+    (naming how and in which round), and a finding of the open round, whose
+    verdict is not decided yet. Reads the round files and changes nothing.
     """
     rounds = round_files(root, cfg, slug)
     current = open_round(root, cfg, slug)
     latest = rounds[-1][0] if rounds else 0
-    items, known, closed = _ledger(root, cfg, slug, latest if current else latest + 1)
+    items, known, closed, settled = _ledger(
+        root, cfg, slug, latest if current else latest + 1
+    )
     pending = _defined_numbers(current.read_text()) if current else set()
     listed = ", ".join(items.values()) or "none"
     accepted = []
@@ -1394,11 +1433,129 @@ def check_fixes(root: Path, cfg: SpecfloConfig, slug: str, fixes: list[str]) -> 
                     f"{known[key][0]} is a nit, and a task fixes only a blocker"
                     " or should-fix item."
                 )
+            elif key in settled:
+                why = _settled_why(known[key][0], settled[key])
             else:
                 why = f"{known[key][0]} was already checked closed in {closed[key]}."
             raise SpecfloError(f"{why} Open items a task can fix: {listed}.")
         accepted.append(items[key])
     return accepted
+
+
+def _settled_why(finding_id: str, settled: tuple[str, str]) -> str:
+    """Why a settled finding is no item: how it was settled, and in which round file."""
+    kind, where = settled
+    return f"{finding_id} was {kind} in {where}."
+
+
+def settle_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, finding_id: str, kind: str,
+    line: Callable[[str], str],
+) -> tuple[str, Path]:
+    """Write a line under Settled in the round that recorded ``finding_id``.
+
+    Returns ``(F-NN, that round's path)``, the ID as the round spells it.
+    Only an open item is settled: a blocker or should-fix finding of a
+    closed round that no reviewed round has checked closed and none has
+    settled. ``kind`` is how it is settled, named in the refusals. ``line``
+    is called with the F-NN only once every refusal has passed, under the
+    lock, and gives the whole line to write, so whatever it records beside
+    the line is recorded only for a finding that settles.
+
+    The round's first settled finding appends the Settled section to its
+    file. Every byte before the section stays: the round is closed, and its
+    frontmatter, findings and checks are never rewritten.
+
+    Raises ``SpecfloError``, leaving every file untouched, naming the ID on
+    anything that is not an F-NN, an ID no closed round records, a nit, an
+    item checked closed, a finding already settled, a finding of the open
+    round, and an item the open round has checked: that check would then
+    name no item, and the round could not close. Each refusal lists the
+    open items.
+    """
+    match = re.fullmatch(r"F-(\d+)", finding_id)
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        rounds = round_files(root, cfg, slug)
+        current = open_round(root, cfg, slug)
+        latest = rounds[-1][0] if rounds else 0
+        upto = latest if current else latest + 1
+        items, known, closed, settled = _ledger(root, cfg, slug, upto)
+        doc = current.read_text() if current else ""
+        key = int(match.group(1)) if match else None
+        checked = {
+            int(found.group(2))
+            for text in _section_lines(doc, EARLIER_HEADER) or []
+            if (found := _CHECK_LINE.match(text))
+        }
+        why = None
+        if key is None:
+            why = f"{finding_id!r} is not a finding ID; one looks like F-01."
+        elif key not in items:
+            if key in _defined_numbers(doc):
+                why = (
+                    f"{finding_id} is a finding of the open round {current.name}; close"
+                    " the round with `specflo review done` first."
+                )
+            elif key not in known:
+                why = f"No closed review round records a finding {finding_id}."
+            elif known[key][1] == "nit":
+                why = f"{known[key][0]} is a nit, and a nit is never {kind}."
+            elif key in settled:
+                why = f"{known[key][0]} was already {settled[key][0]} in {settled[key][1]}."
+            else:
+                why = f"{known[key][0]} was already checked closed in {closed[key]}."
+        elif key in checked:
+            why = (
+                f"{items[key]} is checked in the open round {current.name}; close"
+                " the round with `specflo review done` first."
+            )
+        if why is not None:
+            listed = ", ".join(items.values()) or "none"
+            raise SpecfloError(f"{why} Open items: {listed}.")
+        finding_id = items[key]
+        # The round whose finding the ledger reads: the last that records it.
+        path = next(
+            path for n, path in reversed(rounds)
+            if n < upto and key in _defined_numbers(path.read_text())
+        )
+        entry = line(finding_id)
+        text = path.read_text()
+        body = markdown.section_body(text, SETTLED_HEADER)
+        if body is None:
+            # A blank line before the heading, whatever the file ends with.
+            trailing = len(text) - len(text.rstrip("\n"))
+            gap = "\n" * max(0, 2 - trailing) if text.strip() else ""
+            text = f"{text}{gap}{SETTLED_HEADER}\n\n{entry}\n"
+        else:
+            kept = body.strip("\n")
+            text = markdown.replace_section_body(
+                text, SETTLED_HEADER, f"{kept}\n{entry}" if kept else entry
+            )
+        path.write_text(text)
+    return finding_id, path
+
+
+def reject_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, finding_id: str, reason: str
+) -> tuple[str, Path]:
+    """Settle an open item as rejected: '- F-NN rejected: <reason>' under
+    Settled in the round that recorded it (see :func:`settle_finding`).
+
+    Returns ``(F-NN, that round's path)``. The reason says why the finding
+    is not a problem, so no fix is owed for it. Raises ``SpecfloError``,
+    leaving every file untouched, on an empty or multi-line reason, before
+    any file is read, and on anything :func:`settle_finding` refuses.
+    """
+    if not (reason or "").strip():
+        raise SpecfloError(
+            "A rejection needs a non-empty --reason, so the round that recorded the"
+            " finding says why it is not a problem."
+        )
+    require_one_line("A rejection's --reason", reason)
+    reason = reason.strip()
+    return settle_finding(
+        root, cfg, slug, finding_id, REJECTED, lambda found: f"- {found} {REJECTED}: {reason}"
+    )
 
 
 def waive_round(

@@ -2698,6 +2698,35 @@ def review_finding_check(
         typer.echo(f"Checked {checked} {state} in {locator}.")
 
 
+@finding_app.command(
+    "reject",
+    epilog='Example: specflo review finding reject F-02 --reason "The caller never passes None"',
+)
+def review_finding_reject(
+    finding_id: str = typer.Argument(..., metavar="<F-NN>", help="An open blocker or should-fix item."),
+    reason: str = typer.Option(
+        ..., "--reason", help="Why the finding is not a problem (one line)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Reject an open finding with a reason: no round checks it and no task fixes it."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        rejected, path = svc.reject_finding(slug, finding_id, reason)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    # The item has left the ledger, which the next-step hint names.
+    _refresh_checkpoint(svc, slug)
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps(
+            {"id": rejected, "reason": reason.strip(), "locator": locator, "path": reported}
+        ))
+    else:
+        typer.echo(f"Rejected {rejected} in {locator}.")
+
+
 @doc_app.command("show", epilog="Example: specflo doc show brainstorm")
 def doc_show(
     artifact: str = typer.Argument(

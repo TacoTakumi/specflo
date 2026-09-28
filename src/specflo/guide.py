@@ -215,6 +215,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Record a finding (F-NN) with --severity blocker|should-fix|nit and --text."},
     {"name": "review finding check", "group": "workflow", "args": "<F-NN> <closed|open>",
      "summary": "Record whether an earlier blocker or should-fix item is fixed."},
+    {"name": "review finding reject", "group": "workflow", "args": "<F-NN> --reason <why>",
+     "summary": "Reject an open blocker or should-fix item: no round checks it, no task fixes it."},
     {"name": "review done", "group": "workflow", "args": "",
      "summary": "Close the open review round; the verdict comes from its findings."},
     {"name": "review waive", "group": "workflow", "args": "",

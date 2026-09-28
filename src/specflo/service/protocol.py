@@ -381,6 +381,12 @@ class ProjectService(Protocol):
         """Record an earlier item closed or open in the open round; ``(F-NN, round path)``."""
         ...
 
+    def reject_finding(self, slug: str, finding_id: str, reason: str) -> tuple[str, Path]:
+        """Settle an open item as rejected with ``reason``, under Settled in the
+        round that recorded it, so no later round checks it and no task fixes
+        it; ``(F-NN, that round's path)``."""
+        ...
+
     def waive_round(self, slug: str, reason: str, sha: str | None = None) -> Path:
         """Close the open round waived, or mint one and close it waived."""
         ...

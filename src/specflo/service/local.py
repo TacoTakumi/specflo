@@ -484,6 +484,9 @@ class LocalProjectService:
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:
         return review.check_finding(self.root, self.cfg, slug, finding_id, state)
 
+    def reject_finding(self, slug: str, finding_id: str, reason: str) -> tuple[str, Path]:
+        return review.reject_finding(self.root, self.cfg, slug, finding_id, reason)
+
     def waive_round(self, slug: str, reason: str, sha: str | None = None) -> Path:
         return review.waive_round(self.root, self.cfg, slug, reason, sha=sha)
 
