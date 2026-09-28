@@ -316,7 +316,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
     payload["active_project"] = project.slug
     payload["phase"] = project.phase
     # auto imports much of the package, so it is read here, at call time.
-    from . import auto, validators
+    from . import auto, plan, review, validators
 
     complete = project.status == projects.COMPLETE_STATUS
     # The same inputs status reads, so fast level's one approval reads alike.
@@ -331,6 +331,13 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
         or workflow.next_step(
             project.phase, level=project.level, complete=complete, validates=validates,
             unattended=auto.run_under_way(root, cfg, project),
+            # The inputs status reads at execute, so the review-aware hint
+            # reads alike on both surfaces.
+            progress=(
+                plan.plan_progress(root, cfg, project.slug)
+                if project.phase == "execute" else None
+            ),
+            review=review.review_state(root, cfg, project.slug),
         )
     )
     payload["next_action"] = project.phase

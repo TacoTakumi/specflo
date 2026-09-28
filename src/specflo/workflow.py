@@ -85,31 +85,51 @@ def resolve_reopen_target(
 def _review_hint(review: dict | None) -> str:
     """What to do next once every task is done, given where the review stands.
 
-    Four states, four different next actions (review-rounds REQ-20): no round
-    yet, a round left open, a round that passed, and a round that did not. Only
-    the passing one offers ``specflo advance``, and it reads the ``passing`` flag
-    the review state carries rather than naming verdicts itself - so the hint and
-    the completion gate can never disagree about which verdicts clear it.
+    No round yet, a round left open, a round that passed, and a round that
+    asked for changes each get their own next action (review-rounds REQ-20).
+    Only a passing round offers ``specflo advance``, and it reads the
+    ``passing`` flag the review state carries rather than naming verdicts
+    itself - so the hint and the completion gate can never disagree about
+    which verdicts clear it. The later keys (open items, the spent budget,
+    earlier changes) are read with defaults, as a state dict may predate them.
     """
     if review is None:
         return (
-            "All tasks done - run the final whole-branch review (fresh context) "
-            "and record it: `specflo review start`, then `specflo review done "
-            "--verdict <v>`."
+            "All tasks done - run the whole test suite once, then open the final "
+            "review round with `specflo review start`, hand a fresh-context "
+            "reviewer the brief `specflo review prompt` prints, and close the "
+            "round with `specflo review done`."
         )
     if review["open"]:
         return (
-            f"All tasks done - finish the open review round {review['file']} and "
-            "close it with `specflo review done --verdict <v>`."
+            f"All tasks done - finish the open review round {review['file']}: the "
+            "reviewer works from `specflo review prompt` and records findings "
+            "through the CLI; then close it with `specflo review done`."
         )
     if review["passing"]:
+        if review.get("after_changes"):
+            return (
+                f"All tasks done and {review['file']} is {review['verdict']} after a "
+                "round that asked for changes - run the whole test suite once more, "
+                "then `specflo advance` to complete the project."
+            )
         return (
             f"All tasks done and {review['file']} is {review['verdict']} - run "
             "`specflo advance` to complete the project."
         )
+    if review.get("budget_spent"):
+        return (
+            f"All tasks done - {review['file']} asks for changes and the level has "
+            "used its review budget. The next step is the user's choice: one more "
+            "round with `specflo review start --over-budget`, or waive the review "
+            "with `specflo review waive --reason <why>`."
+        )
+    items = review.get("open_items") or []
+    named = f" ({', '.join(items)})" if items else ""
     return (
-        f"All tasks done - address the findings in {review['file']}, then run "
-        "another round with `specflo review start`."
+        f"All tasks done - address the findings in {review['file']}: fix the "
+        f"blocker and should-fix items{named}, never the nits, commit, then run "
+        "`specflo review start` for a round that checks the fixes."
     )
 
 

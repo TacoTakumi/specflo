@@ -308,3 +308,95 @@ def test_fast_advance_out_of_brainstorm_and_spec_says_keep_going(tmp_path, monke
          "--from", "REQ-01"])
     status = _ok(["status"]).output
     assert "approv" in status and "without waiting" not in status
+
+
+# --- the hints follow the converging review loop -------------------------------------
+
+
+def test_hint_after_changes_within_budget_names_the_open_items():
+    state = {**_closed(1, "changes-requested"), "open_items": ["F-01", "F-02"],
+             "budget_spent": False, "after_changes": False}
+
+    hint = _hint(state)
+
+    assert "F-01, F-02" in hint
+    assert "fix the blocker and should-fix items" in hint
+    assert "never the nits" in hint
+    assert "commit" in hint and "specflo review start" in hint
+    assert "--over-budget" not in hint and "specflo advance" not in hint
+
+
+def test_hint_at_the_budget_names_the_two_choices():
+    state = {**_closed(2, "changes-requested"), "open_items": ["F-03"],
+             "budget_spent": True, "after_changes": True}
+
+    hint = _hint(state)
+
+    assert "specflo review start --over-budget" in hint
+    assert "specflo review waive --reason" in hint
+    assert "specflo advance" not in hint
+
+
+def test_hint_after_a_pass_that_followed_changes_asks_for_the_whole_suite():
+    after = _hint({**_closed(2, "ready-to-merge"), "after_changes": True})
+    first = _hint({**_closed(1, "ready-to-merge"), "after_changes": False})
+
+    assert "whole test suite" in after and "specflo advance" in after
+    assert "whole test suite" not in first and "specflo advance" in first
+
+
+def _execute_all_done(tmp_path, monkeypatch):
+    from test_cli import _project_at_execute
+
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(_runner, app, tmp_path)
+    _runner.invoke(app, ["task", "start", "T-01"])
+    _runner.invoke(app, ["task", "done", "T-01"])
+    return tmp_path / "docs" / "projects" / "thing"
+
+
+def _write_round(project_dir, number, verdict, findings):
+    (project_dir / f"review-{number}.md").write_text(
+        f"---\nround: {number}\nverdict: {verdict}\ndate: '2026-08-22'\nsha: ''\n"
+        f"level: full\nreason: ''\n---\n\n# Review round {number}\n\n## Findings\n\n"
+        + "\n".join(findings) + "\n"
+    )
+
+
+def _surfaces():
+    """The next-step hint as status, the checkpoint and guide each report it."""
+    import json as _json
+
+    status = _json.loads(_runner.invoke(app, ["status", "--json"]).stdout)["next_step"]
+    do_next = _runner.invoke(app, ["checkpoint"]).stdout.split("## Do next", 1)[1]
+    guide = _json.loads(_runner.invoke(app, ["guide", "--json"]).stdout)["next_step"]
+    return {"status": status, "checkpoint": do_next, "guide": guide}
+
+
+def test_every_surface_names_the_open_items_after_changes(tmp_path, monkeypatch):
+    project_dir = _execute_all_done(tmp_path, monkeypatch)
+    _write_round(project_dir, 1, "changes-requested", ["- F-01 (blocker) One", "- F-02 (nit) Two"])
+
+    for surface, hint in _surfaces().items():
+        assert "(F-01)" in hint, surface
+        assert "specflo review start" in hint, surface
+
+
+def test_every_surface_names_the_two_choices_at_the_budget(tmp_path, monkeypatch):
+    project_dir = _execute_all_done(tmp_path, monkeypatch)
+    _write_round(project_dir, 1, "changes-requested", ["- F-01 (blocker) One"])
+    _write_round(project_dir, 2, "changes-requested", ["- F-02 (blocker) Two"])
+
+    for surface, hint in _surfaces().items():
+        assert "specflo review start --over-budget" in hint, surface
+        assert "specflo review waive --reason" in hint, surface
+
+
+def test_every_surface_asks_for_the_whole_suite_after_fixes(tmp_path, monkeypatch):
+    project_dir = _execute_all_done(tmp_path, monkeypatch)
+    _write_round(project_dir, 1, "changes-requested", ["- F-01 (blocker) One"])
+    _write_round(project_dir, 2, "ready-to-merge", ["- none"])
+
+    for surface, hint in _surfaces().items():
+        assert "whole test suite" in hint, surface
+        assert "specflo advance" in hint, surface

@@ -304,6 +304,16 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         "sha": str(fields.get("sha", "") or ""),
         "reason": str(fields.get("reason", "") or ""),
         "file": path.name,
+        # What the next-step hint turns on after a close: the items the next
+        # round must check, whether the level's round budget is spent, and
+        # whether any earlier round asked for changes (fixes were made, so the
+        # whole suite runs once more before completion).
+        "open_items": items_to_check(root, cfg, slug, latest + 1),
+        "budget_spent": budget(root, cfg, slug)["spent"],
+        "after_changes": any(
+            frontmatter(earlier).get("verdict") == CHANGES_REQUESTED
+            for _, earlier in files[:-1]
+        ),
     }
 
 
@@ -318,13 +328,13 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     state = review_state(root, cfg, slug)
     if state is None:
         return [
-            "no review round recorded: run the final whole-branch review, then"
-            " `specflo review start` and `specflo review done --verdict <v>`."
+            "no review round recorded: open one with `specflo review start`, hand the"
+            " reviewer `specflo review prompt`, and close it with `specflo review done`."
         ]
     if state["open"]:
         return [
             f"review round {state['latest']} is still open ({state['file']}):"
-            " close it with `specflo review done --verdict <v>`."
+            " close it with `specflo review done`."
         ]
     if state["verdict"] not in PASSING:
         return [
