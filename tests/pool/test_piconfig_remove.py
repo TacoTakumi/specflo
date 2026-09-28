@@ -162,13 +162,33 @@ def test_nothing_to_remove_is_not_a_failure(tmp_path: Path) -> None:
     piconfig.remove(tmp_path / "never-was", tmp_path)
 
 
-def test_a_directory_the_member_made_unreadable_is_removed_all_the_same(tmp_path: Path) -> None:
+@pytest.fixture
+def take_rights():
+    """Take rights from a directory for one test. Its teardown gives each one
+    that is still there owner rwx back, passed or failed, so pytest can remove
+    its temporary directory."""
+    taken: list[Path] = []
+
+    def take(directory: Path, mode: int) -> None:
+        taken.append(directory)
+        directory.chmod(mode)
+
+    yield take
+    # a parent first, so its children can be seen again
+    for directory in sorted(taken, key=lambda path: len(path.parts)):
+        if directory.is_dir():
+            directory.chmod(0o700)
+
+
+def test_a_directory_the_member_made_unreadable_is_removed_all_the_same(
+    tmp_path: Path, take_rights
+) -> None:
     directory = piconfig.create(tmp_path / 'generated', NO_TRAIN_MEMBER, ACCOUNTS)
     locked = directory / "sessions" / "locked"
     locked.mkdir(parents=True)
     (locked / "one.jsonl").write_text("{}\n", encoding="utf-8")
-    locked.chmod(0o000)
-    (directory / "sessions").chmod(0o500)
+    take_rights(locked, 0o000)
+    take_rights(directory / "sessions", 0o500)
 
     piconfig.remove(directory, tmp_path / 'generated')
 
