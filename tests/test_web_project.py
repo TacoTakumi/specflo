@@ -29,6 +29,7 @@ from specflo.daemon.workitems import WorkItems
 from specflo.doc import ARTIFACTS
 from specflo.service.local import LocalProjectService
 from specflo.workflow import PHASES
+from waits import wait_until
 
 
 @pytest.fixture
@@ -547,6 +548,21 @@ def agent_section(html):
     return unescape(re.sub(r"<[^>]+>", " ", match.group(1))) if match else None
 
 
+def page_once_idle(client, slug, name):
+    """The project page once its state line says ``name`` is idle.
+
+    A start returns when the agent has taken its opening prompt, not when
+    the run that prompt opens settles. The state line is the chat log's last
+    state entry, which the pump writes as the agent reports the settle, so
+    a page read at once can still say the agent is working.
+    """
+    def idle_page():
+        html = page(client, slug).text
+        return html if f"{name} is idle." in (agent_section(html) or "") else None
+
+    return wait_until(idle_page, message=f"the page to say {name} is idle")
+
+
 def start_agent_form(html):
     """The start-agent form, or None: ``(action, hidden fields)``."""
     match = re.search(r'<form[^>]*id="start-agent"[^>]*>(.*?)</form>', html, re.S)
@@ -595,7 +611,7 @@ def test_the_control_starts_the_agent_and_the_page_then_shows_it_serving(client,
     name = seat.agent_name(slug)
     assert seat.agent_mapping(root) == {slug: name}
     assert config.config_path(seat.seat_dir(root, slug)).is_file()
-    html = page(client, slug).text
+    html = page_once_idle(client, slug, name)
     assert start_agent_form(html) is None
     assert f"{name} is idle." in agent_section(html)
     last = audit_records(root)[-1]
@@ -676,7 +692,7 @@ def test_an_agent_stopped_out_of_band_brings_the_control_back_and_the_control_re
 
     assert client.post(start_agent_url(slug), data={"session": secret}).status_code == 303
 
-    html = page(client, slug).text
+    html = page_once_idle(client, slug, name)
     assert start_agent_form(html) is None
     assert f"{name} is idle" in agent_section(html)
     assert seat.liveness(root, slug).alive is True
@@ -690,7 +706,7 @@ def test_a_fresh_daemon_over_the_same_root_finds_the_live_agent_by_discovery(cli
     audits = len(audit_records(root))
 
     again = signed_in(root, "developer")
-    html = again.get(web.PROJECT_PATH.format(slug=slug)).text
+    html = page_once_idle(again, slug, name)
 
     assert start_agent_form(html) is None
     assert f"{name} is idle" in agent_section(html)
