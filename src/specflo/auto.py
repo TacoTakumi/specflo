@@ -842,21 +842,25 @@ def auto_pass_result(
             save_run_state(root, cfg, project.slug, state)
             project = projects.load_project(root, cfg, project.slug)
         # The review budget is spent: the next round, or a waive, is the
-        # user's choice, so the pass hands off without counting.
-        if ladder is None and project.phase == "execute":
+        # user's choice, so the pass hands off without counting. A ladder has
+        # no user to ask: it waives the level's review and goes on.
+        extras = []
+        if project.phase == "execute":
             budget = review_module.budget(root, cfg, project.slug)
-            if budget["spent"]:
+            if budget["spent"] and ladder is None:
                 _mark_run_ended(root, cfg, project.slug)
                 return _pass_result(
                     escalation_message(review_module.budget_message(budget)),
                     STOP_REVIEW_BUDGET,
                 )
+            if budget["spent"]:
+                extras.append(ladder_module.waive_for_budget(root, cfg, project.slug))
         # Over the level's cap (a fact of the documents): the run never stops
         # or moves up for it. Quick cuts down to one check; fast only warns.
-        extra = None
         outgrew = validators.outgrown(root, cfg, project, unattended=True)
         if outgrew is not None:
-            extra = ladder_module.over_cap_clause(outgrew, ladder is not None)
+            extras.append(ladder_module.over_cap_clause(outgrew, ladder is not None))
+        extra = "\n".join(extras) or None
         passes = int(state.get("passes", 0)) + 1
         state["passes"] = passes
         # This pass continues the run, so any end marker left by an earlier stop

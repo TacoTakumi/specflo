@@ -7,7 +7,7 @@ import pytest
 import reviewhelp
 from typer.testing import CliRunner
 
-from specflo import auto, config, projects
+from specflo import auto, config, projects, review
 from specflo.cli import app
 
 runner = CliRunner()
@@ -668,3 +668,95 @@ def test_a_deferred_list_that_says_none_counts_no_items():
     doc = "## Deferred\n- none\n\n## Next\n"
     assert ladder._list_count(doc, "## Deferred") == 0
     assert ladder._list_count("## Deferred\n- later: colours\n- None.\n", "## Deferred") == 1
+
+
+# --- the review budget inside a ladder: waive and climb -----------------------------------
+
+
+def _round_asking_for_changes(*checks, severity="blocker", text="Still wrong"):
+    """Open a round, check each earlier item as given, add one finding, close it."""
+    _ok(["review", "start", "--over-budget"])
+    for item, state in checks:
+        _ok(["review", "finding", "check", item, state])
+    _ok(["review", "finding", "add", "--severity", severity, "--text", text])
+    _ok(["review", "done"])
+
+
+def _fast_level_at_its_budget(repo):
+    """A ladder at fast level whose two review rounds both asked for changes."""
+    _ladder_at_quick(repo)
+    _finish_quick(repo)
+    _ok(["auto", "--json"])
+    _ok(["decision", "add", "--text", "keep it small", "--rationale", "weighed a, b"])
+    _ok(["section", "set", "brainstorm", "Out of scope / Deferred", "--stdin"], "none\n")
+    _ok(["advance"])
+    _ok(["section", "set", "spec", "In scope", "--stdin"], "- the greeting.\n")
+    _ok(["section", "set", "spec", "Out of scope", "--stdin"], "- the rest.\n")
+    _ok(["advance"])
+    _ok(["advance"])
+    _work(repo, "fast.txt")
+    _round_asking_for_changes()                                   # F-01
+    _round_asking_for_changes(("F-01", "open"), severity="should-fix")   # F-02
+
+
+def _review_verdict(repo, number):
+    path = repo / "docs" / "projects" / "thing" / f"review-{number}.md"
+    return review.frontmatter(path)
+
+
+def test_a_ladder_waives_a_fast_level_at_its_budget_and_climbs(repo):
+    _fast_level_at_its_budget(repo)
+
+    waived = json.loads(_ok(["auto", "--json"]).output)
+
+    assert (waived["stop"], waived["reason"]) == (False, None)
+    fields = _review_verdict(repo, 3)
+    assert (fields["verdict"], fields["reason"]) == ("waived", "review budget reached in a ladder run")
+    assert "specflo advance" in waived["payload"]
+    assert "F-01" in waived["payload"] and "F-02" in waived["payload"]
+
+    _ok(["advance"])
+    climbed = json.loads(_ok(["auto", "--json"]).output)
+
+    assert climbed["reason"] != auto.STOP_REVIEW_BUDGET
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "specflo/thing/full"
+    row = _row(repo, "fast")
+    assert row["review"].startswith("waived (budget)")
+    assert "F-01" in row["review"] and "F-02" in row["review"]
+
+
+def test_the_open_items_carry_into_the_full_levels_first_round(repo):
+    _fast_level_at_its_budget(repo)
+    _ok(["auto", "--json"])
+    _ok(["advance"])
+    _ok(["auto", "--json"])
+
+    scope = json.loads(_ok(["review", "start", "--json"]).output)
+
+    assert scope["scope"] == "delta"
+    assert scope["items"] == ["F-01", "F-02"]
+
+
+def test_a_ladder_at_full_level_waives_at_its_budget_and_ends(repo):
+    _ladder_at_full(repo)
+    _ok(["advance"])
+    _ok(["advance"])
+    _ok(["advance"])
+    _work(repo, "full.txt")
+    # The round the climb opened, then one more: both ask for changes.
+    _ok(["review", "finding", "add", "--severity", "blocker", "--text", "Wrong"])
+    _ok(["review", "done"])
+    _round_asking_for_changes(("F-01", "open"))
+    reasons = []
+
+    waived = json.loads(_ok(["auto", "--json"]).output)
+    reasons.append(waived["reason"])
+    _ok(["advance"])
+    closing = json.loads(_ok(["auto", "--json"]).output)
+    reasons.append(closing["reason"])
+
+    assert auto.STOP_REVIEW_BUDGET not in reasons
+    assert closing["reason"] == auto.STOP_PROJECT_COMPLETE
+    row = _row(repo, "full")
+    assert row["review"].startswith("waived (budget)")
+    assert "F-01" in row["review"] and "F-02" in row["review"]

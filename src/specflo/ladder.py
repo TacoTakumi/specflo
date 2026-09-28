@@ -186,6 +186,48 @@ def _seconds(started: str, ended: str) -> int:
     return max(0, int(delta.total_seconds()))
 
 
+# The reason a ladder records when it waives a level's review at the round
+# budget. A ladder has no user to ask, and a level that did not converge in
+# its budget is itself a result the comparison shows.
+BUDGET_WAIVE_REASON = "review budget reached in a ladder run"
+
+
+def _open_items(root: Path, cfg: SpecfloConfig, slug: str, state: dict) -> list[str]:
+    """The blocker and should-fix items the latest round leaves open."""
+    return review.items_to_check(root, cfg, slug, state["latest"] + 1)
+
+
+def _review_cell(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> str:
+    """A level's Review cell: its latest verdict, or the budget waive and its open items."""
+    state = review.review_state(root, cfg, slug)
+    if level == projects.QUICK_LEVEL or state is None:
+        return "none"
+    if state["verdict"] == review.WAIVED and state["reason"] == BUDGET_WAIVE_REASON:
+        items = _open_items(root, cfg, slug, state)
+        return "waived (budget)" + (f": {', '.join(items)}" if items else "")
+    return state["verdict"] or "open"
+
+
+def waive_for_budget(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """Waive the level's review at its round budget; the clause the pass adds.
+
+    The open items stay open: the next level's first round is a delta round
+    that must check them, and at full level the ladder's row lists them.
+    """
+    from .service.resolve import local_service
+
+    level = projects.load_project(root, cfg, slug).level
+    review.waive_round(root, cfg, slug, BUDGET_WAIVE_REASON)
+    local_service(root, cfg).write_checkpoint(slug)
+    items = _open_items(root, cfg, slug, review.review_state(root, cfg, slug))
+    left = f" It leaves open: {', '.join(items)}." if items else ""
+    return (
+        f"- The {level} level used its review budget, so the ladder waived its review"
+        f" ({BUDGET_WAIVE_REASON}).{left} Do not run another round: complete the level"
+        " with `specflo advance`."
+    )
+
+
 def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: str) -> None:
     """Append ``level``'s row to ladder.md, once, from git and the documents."""
     entry = record["levels"][level]
@@ -194,11 +236,10 @@ def write_row(root: Path, cfg: SpecfloConfig, slug: str, record: dict, level: st
     commits, files, added, removed = _diff_numbers(
         root, entry["start_commit"], entry["end_commit"]
     )
-    state = review.review_state(root, cfg, slug)
-    verdict = "none" if level == projects.QUICK_LEVEL or state is None else (state["verdict"] or "open")
     cells = [
         level, f"`{entry['branch']}`", str(commits), str(files), str(added), str(removed),
-        _tasks_cell(root, cfg, slug, level), _test_result(root, cfg), verdict,
+        _tasks_cell(root, cfg, slug, level), _test_result(root, cfg),
+        _review_cell(root, cfg, slug, level),
         str(_deferred_count(root, cfg, slug, level)),
         str(_seconds(entry["started"], entry["ended"])),
     ]
