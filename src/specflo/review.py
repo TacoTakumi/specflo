@@ -822,3 +822,90 @@ def waive_round(
     if open_round(root, cfg, slug) is None:
         start_round(root, cfg, slug, today=today, over_budget=True)
     return close_round(root, cfg, slug, WAIVED, reason=reason, today=today).path
+
+
+def reviewer_brief(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """The brief for the reviewer of the open round: one set of rules every round.
+
+    Carries the round's scope (the whole branch, or the delta range and the
+    earlier items to check), what each severity means, what is not a finding,
+    how to record, that the CLI sets the verdict, and to run only the tests
+    in scope. Raises ``SpecfloError`` when no round is open.
+    """
+    scope = review_scope(root, cfg, slug)
+    name = scope["file"]
+    if scope["range"]:
+        where = (
+            f"This is a delta round: review only the changes in `{scope['range']}`"
+            f" (`git diff {scope['range']}`), the fixes made since the last reviewed"
+            " round."
+        )
+        outside = (
+            "A problem the branch did not introduce, or one outside"
+            f" `{scope['range']}`, is not a finding."
+        )
+    else:
+        where = "This round reviews the whole branch: every change the branch makes."
+        outside = "A problem the branch did not introduce is not a finding."
+    lines = [
+        f"# Reviewer brief: {slug}, review round {scope['round']} ({name})",
+        "",
+        "Review the work and record what you find through the specflo CLI.",
+        "",
+        "## Scope",
+        "",
+        where,
+    ]
+    if scope["items"]:
+        lines += [
+            "",
+            "Earlier rounds left these blocker and should-fix items. Check each one"
+            " and record whether it is fixed:",
+            "",
+            *(f"- {item}" for item in scope["items"]),
+        ]
+    lines += [
+        "",
+        "## Severity",
+        "",
+        "- blocker: wrong behaviour, a broken requirement, or data loss.",
+        "- should-fix: a real problem to fix before merge, smaller than a blocker.",
+        "- nit: style, naming, wording or docs polish. Wording in agent-facing text"
+        " (skills, prompts, messages an agent reads) is a nit unless it tells the"
+        " agent to do the wrong thing.",
+        "",
+        "A blocker or should-fix finding asks for changes. A nit never blocks: it goes"
+        " to a follow-up when the round closes.",
+        "",
+        "## What is not a finding",
+        "",
+        f"{outside} Record it with `specflo followup add \"<title>\" --do \"<what to"
+        f" do>\" --from \"{name}\"` instead, so it never blocks this round.",
+        "",
+        "## How to record",
+        "",
+        "- Each finding: `specflo review finding add --severity blocker|should-fix|nit"
+        " --text \"<one line>\"`.",
+    ]
+    if scope["items"]:
+        lines.append(
+            "- Each earlier item above: `specflo review finding check F-NN closed|open`."
+        )
+    else:
+        lines.append(
+            "- No earlier items to check this round. A later round records each one"
+            " with `specflo review finding check F-NN closed|open`."
+        )
+    lines += [
+        f"- One line under `## Scope reviewed` in {name} saying what you read.",
+        f"- A round with no findings: `- none` as the only line under `## Findings` in {name}.",
+        "",
+        "Do not choose a verdict. `specflo review done` derives it from what you"
+        " recorded when the round closes.",
+        "",
+        "## Tests",
+        "",
+        "Run only the tests for the files in scope. The whole suite ran before the"
+        " first round.",
+    ]
+    return "\n".join(lines) + "\n"

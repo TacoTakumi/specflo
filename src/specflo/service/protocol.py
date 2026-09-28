@@ -331,6 +331,10 @@ class ProjectService(Protocol):
         """The open round's scope, range and the earlier items it must check."""
         ...
 
+    def review_prompt(self, slug: str) -> str:
+        """The reviewer brief for the open round."""
+        ...
+
     def close_round(
         self,
         slug: str,

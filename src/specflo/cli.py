@@ -2522,6 +2522,18 @@ def review_done(
         typer.echo(f"{locator} closed {closed.verdict} ({counts})")
 
 
+@review_app.command("prompt", epilog="Example: specflo review prompt")
+def review_prompt() -> None:
+    """Print the reviewer brief for the active project's open review round."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        text = svc.review_prompt(slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(text, nl=False)
+
+
 @review_app.command(
     "waive",
     epilog='Example: specflo review waive --reason "Reviewed by hand before the upgrade"',
