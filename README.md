@@ -152,6 +152,19 @@ by default); past that, the user chooses one more round (`specflo review start
 requires the latest round to have closed with a passing verdict, so a review that
 happened in some cleared context is no longer something you have to remember.
 
+Set the `test_command` config key to the command that runs your whole test
+suite (`specflo config set test_command "uv run pytest"`), and specflo names it
+where the whole suite is due. The next-step hints that call for the whole suite
+(before the first review round, and after a round that asked for changes
+passes) name it in backticks, in `status`, `checkpoint`, `guide` and `advance`.
+`specflo review prompt` tells the reviewer to run it each round, in place of
+running only the tests for the files in scope; a project hosted on a daemon
+gets the same brief, since the client passes its checkout's command. The
+`specflo-quick` and `specflo-execute` skills run the command
+`specflo config get test_command` prints at each step that runs the whole
+suite. Unset, the hints ask for the whole suite without naming a command, and
+the brief asks for only the tests for the files in scope.
+
 Artifacts are plain markdown under `docs/projects/<slug>/` (configurable):
 
 ```text
@@ -310,7 +323,7 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo task list [--json]` - all tasks with their progress state and the deps-aware next-actionable marker. `--json` is the orchestrator's frontier: each task also carries `files`, `needs` and `ready` (true exactly when the task is pending and next-actionable; an in-progress task is never ready, even when the next-actionable marker falls back to it because every pending task is held back), and the payload carries `pools`, a map from pool name to `{size, holders}` where holders are the in-progress tasks needing that pool.
 - `specflo task show [<T-NN>] [--json]` - a task's brief: acceptance criterion, cited requirements, and constraints, plus the execution mode and, when set, `Files:` and `Needs:` lines (a task needing `user` is marked as not delegated). Defaults to the next actionable task.
 - `specflo review start [--full] [--over-budget] [--json]` - mint the next numbered review round (`review-N.md`) in the project directory and print its locator and scope. The round records `HEAD` of this checkout (inside a git repo; for a project a daemon holds too, since the code lives here), the project's level and its base. A round already open that nobody has written into takes `HEAD` again when `review start` hands it back, so a round opened early (a ladder opens one when it climbs) starts its range at the commit the reviewer read. Round 1 reviews the whole branch. After a reviewed round (not a waived one), the next round is a delta round: it prints the range `<sha>..HEAD` from the latest reviewed round's sha and the earlier blocker and should-fix items it must check. `--full` reviews the whole branch again and keeps the items. Numbering only ever goes up, so a deleted round leaves a permanent gap rather than a reused identity. With a round already open, prints that round and mints nothing - reusing it is how an abandoned review is resumed. When the latest round is `changes-requested` and the level has used its `review_max_rounds` rounds, it opens nothing and names the two ways on; `--over-budget` opens one more round, and each further round needs the flag again. Rounds of an earlier level do not count. `--json` adds `scope` (`whole-branch` or `delta`), `range` and `items`.
-- `specflo review prompt` - print the reviewer brief for the open round: its scope and the items to check, what `blocker`, `should-fix` and `nit` mean (wording in agent-facing text is a nit unless it tells the agent to do the wrong thing), that a problem the branch did not introduce or one outside the delta range goes to `specflo followup add`, how to record, that the CLI sets the verdict, and to run only the tests in scope. Refused with no round open.
+- `specflo review prompt` - print the reviewer brief for the open round: its scope and the items to check, what `blocker`, `should-fix` and `nit` mean (wording in agent-facing text is a nit unless it tells the agent to do the wrong thing), that a problem the branch did not introduce or one outside the delta range goes to `specflo followup add`, how to record, that the CLI sets the verdict, and to run only the tests in scope, or the `test_command` each round when that key is set. Refused with no round open.
 - `specflo review finding add --severity blocker|should-fix|nit --text ... [--json]` - append `- F-NN (severity) text` to the open round's Findings section and print the new `F-NN`. IDs run across every round of the project, and two adds at once never share one. A reviewer with no shell may write the same lines by hand. An unknown severity, an empty text or a line break is refused and nothing is written.
 - `specflo review finding check <F-NN> closed|open [--json]` - write `- F-NN closed` or `- F-NN open` under the open round's Earlier findings section. Only a blocker or should-fix finding of an earlier round that no reviewed round has checked closed is accepted; a second check of an item replaces the first.
 - `specflo review done [--verdict ...] [--reason ...] [--file <path>] [--json]` - close the open round with the verdict its findings give, and print the count per severity. Any blocker or should-fix finding, or an earlier item checked open, is `changes-requested`; only nits, or `- none` as the whole Findings section, is `ready-to-merge`. It refuses, leaving the round open, a line under Findings not in the `- F-NN (severity) text` form, an `F-NN` used elsewhere in the project, a section with neither findings nor `- none`, `- none` beside findings, and an earlier item with no check line; the message names the line or ID and the ways on. `--verdict` is accepted only when it equals the derived verdict, except `--verdict waived --reason ...`, which closes the round without reading its findings. A round with nits adds one follow-up, `Nits from review round N`, naming their IDs; follow-ups work only for projects in the checkout, so a round a daemon holds keeps its nits in the round file. The date is stamped at close; the sha stays the one stamped at `review start`. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
@@ -943,9 +956,21 @@ needed).
 
 ```bash
 uv sync                    # create the venv and install deps (incl. dev group)
-uv run pytest              # run the tests
+uv run pytest              # run the tests, on 8 parallel workers
+uv run pytest -n 0         # run the tests in one process, for -s output or pdb
 uv run specflo --help      # run the CLI without installing it
 ```
+
+`uv run pytest` runs the suite on 8 pytest-xdist workers (`-n 8` in the pytest
+config in `pyproject.toml`). `-n 0` on the command line turns that off, which
+`-s` output and pdb need. Each test has a 120 s limit (pytest-timeout, signal
+method): a test that hangs fails at its limit, its fixture teardown runs, and
+the run goes on.
+
+The tests wait through one shared helper, `tests/waits.py`. On a slow or
+loaded machine, set `SPECFLO_TEST_WAIT_SCALE` to a number above 0 (default 1)
+to multiply every limit and settle pause of that helper, for example
+`SPECFLO_TEST_WAIT_SCALE=3 uv run pytest`.
 
 ## License
 

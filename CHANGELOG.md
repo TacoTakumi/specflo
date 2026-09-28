@@ -105,6 +105,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   kill switch is set.
 - **`test_command` config key** - the command a ladder run tests each level's
   branch with; unset means `not run`.
+- **`test_command` names the whole test suite.** Set it with, for example,
+  `specflo config set test_command "uv run pytest"`. The next-step hints
+  that call for the whole suite (before the first review round, and after a
+  round that asked for changes passes) name it in backticks, in `status`,
+  `checkpoint`, `guide` and `advance`. `specflo review prompt` tells the
+  reviewer to run it each round, in place of "Run only the tests for the
+  files in scope"; a hosted project gets the same brief, since the client
+  passes its checkout's command. The `specflo-quick` and `specflo-execute`
+  skills tell the agent to run the command `specflo config get test_command`
+  prints at each step that runs the whole suite. Unset, the hints, the brief
+  and the skills read as before.
 - **Level caps in auto runs** - a cap never stops a run or moves the project
   up: a quick brief with two checks is told to keep one, and a fast project
   past its caps only warns. The checkpoint says so. The `outgrew-level` stop
@@ -817,6 +828,14 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **The pool client builds its records from the keys it knows.** A lease,
   team member, waiting notice, grant or lease end from a newer daemon with
   a field this client does not know is read as if the field were absent.
+- **The test suite runs in parallel.** `uv run pytest` runs it on 8
+  pytest-xdist workers (`-n 8` in the pytest config); `uv run pytest -n 0`
+  turns that off, for `-s` output or pdb. Each test has a 120 s limit
+  (pytest-timeout, signal method): a test that hangs fails at its limit, its
+  fixture teardown runs, and the run goes on. The environment variable
+  `SPECFLO_TEST_WAIT_SCALE` (a number, default 1) scales every limit and
+  settle pause of the tests' shared wait helper, for a slow or loaded
+  machine.
 
 ### Fixed
 
