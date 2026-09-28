@@ -254,14 +254,18 @@ def write_checkpoint(
     today: str | None = None,
     *,
     locators: bool = False,
+    test_command: str | None = None,
 ) -> Path:
     """Render the checkpoint for ``project`` and write ``checkpoint.md``.
 
-    ``cfg`` and ``locators`` are forwarded to :func:`build_checkpoint`, so the
-    written checkpoint reflects derived doneness for brainstorm/spec/plan
-    (REQ-01) and names files the way its readers can resolve them.
+    ``cfg``, ``locators`` and ``test_command`` are forwarded to
+    :func:`build_checkpoint`, so the written checkpoint reflects derived
+    doneness for brainstorm/spec/plan (REQ-01), names files the way its readers
+    can resolve them, and names the whole-suite command as that function does.
     """
-    payload = build_checkpoint(root, project, cfg=cfg, today=today, locators=locators)
+    payload = build_checkpoint(
+        root, project, cfg=cfg, today=today, locators=locators, test_command=test_command
+    )
     path = project.path / CHECKPOINT_FILENAME
     path.write_text(render_checkpoint(payload))
     return path

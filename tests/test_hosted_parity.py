@@ -507,7 +507,13 @@ def test_a_test_command_in_the_daemon_root_is_named_on_no_hosted_surface(
     # holds only the documents, so a hosted run reads as a local one with no
     # command set, on every surface.
     config.write_value(live_daemon["root"], config.field_for("test_command"), DAEMON_TEST_COMMAND)
-    steps = _whole_suite_steps(None)
+    # The daemon rewrites its checkpoint file on each mutation: read the file
+    # after each step that writes it while the hint calls for the whole suite.
+    steps = []
+    for step in _whole_suite_steps(None):
+        steps.append(step)
+        if step[0] == ["checkpoint"] or step[0][:2] == ["task", "done"]:
+            steps.append((["doc", "show", "checkpoint"], None))
     local, _ = _local_steps(tmp_path, monkeypatch, steps)
     hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
     assert len(local) == len(hosted) == len(steps) + 1

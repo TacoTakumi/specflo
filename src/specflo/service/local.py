@@ -489,9 +489,12 @@ class LocalProjectService:
         )
 
     def write_checkpoint(self, slug: str) -> Path:
+        # No caller sends a command for the file: a daemon's names none, a
+        # checkout's names this checkout's.
         project = projects.load_project(self.root, self.cfg, slug)
         return checkpoint.write_checkpoint(
-            self.root, project, cfg=self.cfg, locators=self.hosted
+            self.root, project, cfg=self.cfg, locators=self.hosted,
+            test_command=self._suite_command(None),
         )
 
     def build_status(self, slug: str, test_command: str | None = None) -> dict:
