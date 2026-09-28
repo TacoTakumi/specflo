@@ -358,8 +358,14 @@ class ProjectService(Protocol):
         """
         ...
 
-    def add_finding(self, slug: str, severity: str, text: str) -> tuple[str, Path]:
-        """Record one finding in the open round; ``(F-NN, round path)``."""
+    def add_finding(
+        self, slug: str, severity: str, text: str, location: str | None = None,
+    ) -> tuple[str, Path]:
+        """Record one finding in the open round; ``(F-NN, round path)``.
+        ``location``, ``file:line`` or ``file:a-b``, is needed for a blocker or
+        should-fix. It is data: the caller checks it against the round's sha
+        in its own checkout, where the code lives; a daemon holds only the
+        documents."""
         ...
 
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:

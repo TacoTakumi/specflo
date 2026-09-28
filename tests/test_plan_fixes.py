@@ -184,8 +184,8 @@ def _steps():
     return [
         *pipeline[: last + 1],
         (["review", "start"], None),
-        (["review", "finding", "add", "--severity", "blocker", "--text", "The close drops the sha"], None),
-        (["review", "finding", "add", "--severity", "should-fix", "--text", "A message names the wrong command"], None),
+        (["review", "finding", "add", "--severity", "blocker", "--at", "src/app.py:3", "--text", "The close drops the sha"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:9-12", "--text", "A message names the wrong command"], None),
         (["review", "done"], None),
         ([*fix, "--text", "Keep the sha", "--fixes", "F-02"], None),
         ([*fix, "--text", "Fix the close", "--fixes", "F-01", "--fixes", "F-02",
@@ -284,8 +284,8 @@ def _ledger_steps():
     return [
         *pipeline[: last + 1],
         (["review", "start"], None),
-        ([*finding, "blocker", "--text", "The close drops the sha"], None),
-        ([*finding, "should-fix", "--text", "A message names the wrong command"], None),
+        ([*finding, "blocker", "--at", "src/app.py:3", "--text", "The close drops the sha"], None),
+        ([*finding, "should-fix", "--at", "src/app.py:9-12", "--text", "A message names the wrong command"], None),
         ([*finding, "nit", "--text", "A name reads oddly"], None),
         (["review", "done"], None),
         ([*fix, "--text", "Keep the sha", "--fixes", "F-01", "--fixes", "F-02"], None),
@@ -294,13 +294,13 @@ def _ledger_steps():
         (["review", "start", "--over-budget"], None),
         (["review", "finding", "check", "F-01", "closed"], None),
         (["review", "finding", "check", "F-02", "open"], None),
-        ([*finding, "blocker", "--text", "The lock is dropped early"], None),
+        ([*finding, "blocker", "--at", "src/app.py:20", "--text", "The lock is dropped early"], None),
         (["review", "done"], None),
         ([*fix, "--text", "Hold the lock", "--fixes", "F-04"], None),
         (["task", "start", "T-03"], None),
         (["task", "done", "T-03"], None),
         (["review", "start", "--over-budget"], None),
-        ([*finding, "should-fix", "--text", "A refusal names no ID"], None),
+        ([*finding, "should-fix", "--at", "src/app.py:30", "--text", "A refusal names no ID"], None),
     ]
 
 

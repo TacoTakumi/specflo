@@ -27,8 +27,11 @@ def _project(tmp_path, monkeypatch):
     return tmp_path / "docs" / "projects" / "thing"
 
 
-def _add(severity, text):
-    return runner.invoke(app, ["review", "finding", "add", "--severity", severity, "--text", text])
+def _add(severity, text, at=None):
+    where = [] if at is None else ["--at", at]
+    return runner.invoke(
+        app, ["review", "finding", "add", "--severity", severity, *where, "--text", text]
+    )
 
 
 def _findings(path):
@@ -50,25 +53,27 @@ def test_add_appends_the_finding_line_and_prints_its_id(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     runner.invoke(app, ["review", "start"])
 
-    result = _add("blocker", "The close drops the sha")
+    result = _add("blocker", "The close drops the sha", "src/app.py:3")
 
     assert result.exit_code == 0, result.output
     assert "F-01" in result.output
-    assert _findings(project_dir / "review-1.md").strip() == "- F-01 (blocker) The close drops the sha"
+    assert _findings(project_dir / "review-1.md").strip() == (
+        "- F-01 (blocker) [src/app.py:3] The close drops the sha"
+    )
 
 
 def test_add_keeps_earlier_findings_in_order(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     runner.invoke(app, ["review", "start"])
 
-    _add("blocker", "One")
-    _add("should-fix", "Two")
+    _add("blocker", "One", "src/app.py:1")
+    _add("should-fix", "Two", "src/app.py:2-4")
     result = _add("nit", "Three")
 
     assert "F-03" in result.output
     assert _findings(project_dir / "review-1.md").strip().splitlines() == [
-        "- F-01 (blocker) One",
-        "- F-02 (should-fix) Two",
+        "- F-01 (blocker) [src/app.py:1] One",
+        "- F-02 (should-fix) [src/app.py:2-4] Two",
         "- F-03 (nit) Three",
     ]
     # The next heading is still where it was, one blank line below the list.
@@ -95,7 +100,7 @@ def test_add_with_no_open_round_refuses_naming_review_start(tmp_path, monkeypatc
     closed = _closed_round(project_dir, 1, ["- F-01 (blocker) One"])
     before = closed.read_text()
 
-    result = _add("blocker", "Two")
+    result = _add("blocker", "Two", "src/app.py:1")
 
     assert result.exit_code != 0
     assert "specflo review start" in result.output
@@ -210,7 +215,7 @@ def test_done_derives_the_verdict_and_prints_the_counts(tmp_path, monkeypatch, f
 def test_done_json_carries_the_verdict_and_the_counts(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     _open(project_dir)
-    _add("blocker", "One")
+    _add("blocker", "One", "src/app.py:1")
     _add("nit", "Two")
 
     data = json.loads(runner.invoke(app, ["review", "done", "--json"]).output)

@@ -33,8 +33,8 @@ def _steps():
     return [
         *pipeline[: done + 1],
         (["review", "start"], None),
-        (["review", "finding", "add", "--severity", "should-fix", "--text",
-          "A message names the wrong command"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:9-12",
+          "--text", "A message names the wrong command"], None),
         (["review", "done"], None),
     ]
 
@@ -133,7 +133,8 @@ def test_the_fix_refusal_comes_before_the_budget_refusal(tmp_path, monkeypatch):
     _ok(["task", "done", first])
     _ok(["review", "start"])
     _ok(["review", "finding", "check", "F-01", "closed"])
-    _ok(["review", "finding", "add", "--severity", "should-fix", "--text", "The close drops the sha"])
+    _ok(["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:3",
+         "--text", "The close drops the sha"])
     _ok(["review", "done"])
 
     refused = runner.invoke(app, ["review", "start"])
@@ -197,7 +198,7 @@ def reviewed(tmp_path):
     plan.add_task(tmp_path, cfg, "thing", "Build help", "help prints", "uv run pytest",
                   implements=["REQ-01"])
     review.start_round(tmp_path, cfg, "thing", sha="")
-    review.add_finding(tmp_path, cfg, "thing", "blocker", "The close drops the sha")
+    review.add_finding(tmp_path, cfg, "thing", "blocker", "The close drops the sha", "src/app.py:3")
     review.add_finding(tmp_path, cfg, "thing", "nit", "A name reads oddly")
     review.close_round(tmp_path, cfg, "thing", nits_followup=False)
     return tmp_path, cfg, "thing", LocalProjectService(tmp_path, cfg)
@@ -244,7 +245,8 @@ def test_a_project_with_no_plan_is_refused_naming_the_item(tmp_path):
     cfg = config.init_config(tmp_path)
     projects.create_project(tmp_path, cfg, "Thing")
     review.start_round(tmp_path, cfg, "thing", sha="")
-    review.add_finding(tmp_path, cfg, "thing", "should-fix", "A message names the wrong command")
+    review.add_finding(tmp_path, cfg, "thing", "should-fix", "A message names the wrong command",
+                       "src/app.py:9-12")
     review.close_round(tmp_path, cfg, "thing", nits_followup=False)
     with pytest.raises(SpecfloError, match=r"F-01 \(no fix task\)"):
         LocalProjectService(tmp_path, cfg).start_round("thing", sha="")
@@ -256,7 +258,8 @@ def test_an_item_checked_closed_needs_no_fix_task(reviewed):
     _done_fix(root, cfg, slug, "F-01")
     service.start_round(slug, sha="")
     review.check_finding(root, cfg, slug, "F-01", "closed")
-    review.add_finding(root, cfg, slug, "should-fix", "A message names the wrong command")
+    review.add_finding(root, cfg, slug, "should-fix", "A message names the wrong command",
+                       "src/app.py:9-12")
     review.close_round(root, cfg, slug, nits_followup=False)
     assert review.unfixed_items(root, cfg, slug) == {"F-03": []}
     _done_fix(root, cfg, slug, "F-03", text="Name the right command")

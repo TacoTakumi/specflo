@@ -399,9 +399,10 @@ _ARTIFACT_MODULES = {
     "specflo.checkpoint", "specflo.status", "specflo.doc", "specflo.index",
 }
 _ARTIFACT_MODULE_ALLOWLIST = {
-    # HEAD of the caller's own checkout, where the code under review lives:
-    # read on the client, like a --file, and never a project file.
-    "specflo.review": {"head_sha"},
+    # HEAD of the caller's own checkout, where the code under review lives,
+    # and a finding's location checked there against the round's sha: read
+    # on the client, like a --file, and never a project file.
+    "specflo.review": {"head_sha", "validate_finding", "check_location"},
     "specflo.projects": {
         "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
         "LEVELS", "QUICK_LEVEL", "FAST_LEVEL", "FULL_LEVEL", "validate_level",

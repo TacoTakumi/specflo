@@ -471,8 +471,10 @@ class LocalProjectService:
             report_text=report_text, sha=sha, nits_followup=not self.hosted,
         )
 
-    def add_finding(self, slug: str, severity: str, text: str) -> tuple[str, Path]:
-        return review.add_finding(self.root, self.cfg, slug, severity, text)
+    def add_finding(
+        self, slug: str, severity: str, text: str, location: str | None = None,
+    ) -> tuple[str, Path]:
+        return review.add_finding(self.root, self.cfg, slug, severity, text, location)
 
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:
         return review.check_finding(self.root, self.cfg, slug, finding_id, state)

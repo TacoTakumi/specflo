@@ -2594,27 +2594,46 @@ def review_waive(
 
 @finding_app.command(
     "add",
-    epilog='Example: specflo review finding add --severity blocker --text "The close drops the sha"',
+    epilog='Example: specflo review finding add --severity blocker --at src/app.py:9-12'
+    ' --text "The close drops the sha"',
 )
 def review_finding_add(
     severity: str = typer.Option(
         ..., "--severity", metavar="<s>", help="blocker | should-fix | nit."
     ),
     text: str = typer.Option(..., "--text", metavar="<t>", help="The finding (one line)."),
+    at: str = typer.Option(
+        None, "--at", metavar="<file>:<line>[-<line>]",
+        help="Where the defect is, as the file is at the round's sha."
+        " Needed for blocker and should-fix.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Record one finding (F-NN) in the active project's open review round."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
+    unchecked = None
     try:
-        finding_id, path = svc.add_finding(slug, severity, text)
+        where = review_module.validate_finding(severity, text, at)
+        if where is not None:
+            # The location is checked here, in the checkout that holds the
+            # code, against the sha the round opened at: a daemon holds only
+            # the documents, so the service takes the location as data.
+            sha = svc.review_scope(slug)["sha"]
+            unchecked = review_module.check_location(root, sha, *where)
+        finding_id, path = svc.add_finding(slug, severity, text, location=at)
     except SpecfloError as exc:
         raise _die(str(exc))
+    if unchecked:
+        typer.secho(
+            f"note: --at {at} was not checked: {unchecked}.", fg=typer.colors.YELLOW, err=True
+        )
     locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps(
-            {"id": finding_id, "severity": severity, "locator": locator, "path": reported}
-        ))
+        typer.echo(json.dumps({
+            "id": finding_id, "severity": severity, "location": at,
+            "locator": locator, "path": reported,
+        }))
     else:
         typer.echo(f"Recorded {finding_id} in {locator}.")
 

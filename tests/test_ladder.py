@@ -681,7 +681,7 @@ def _round_asking_for_changes(*checks, severity="blocker", text="Still wrong"):
     _ok(["review", "start", "--over-budget"])
     for item, state in checks:
         _ok(["review", "finding", "check", item, state])
-    _ok(["review", "finding", "add", "--severity", severity, "--text", text])
+    _ok(["review", "finding", "add", "--severity", severity, "--at", "app.txt:1", "--text", text])
     _ok(["review", "done"])
 
 
@@ -751,7 +751,7 @@ def test_a_ladder_at_full_level_waives_at_its_budget_and_ends(repo):
     _ok(["advance"])
     _work(repo, "full.txt")
     # The round the climb opened, then one more: both ask for changes.
-    _ok(["review", "finding", "add", "--severity", "blocker", "--text", "Wrong"])
+    _ok(["review", "finding", "add", "--severity", "blocker", "--at", "app.txt:1", "--text", "Wrong"])
     _ok(["review", "done"])
     _round_asking_for_changes(("F-01", "open"))
     reasons = []

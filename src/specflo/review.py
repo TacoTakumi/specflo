@@ -63,10 +63,14 @@ _CHECK_LINE = re.compile(r"^- (F-(\d+)) (closed|open)$")
 _CHECK_HOW = "`specflo review finding check F-NN closed|open`"
 # What a refused close can do next, named in every refusal of its findings.
 _WAYS_ON = (
-    " To go on: rewrite the line in the '- F-NN (severity) text' form, re-add"
-    " the finding with `specflo review finding add`, or waive the round with"
-    " `specflo review waive --reason <why>`."
+    " To go on: rewrite the line in the '- F-NN (severity) [file:line] text'"
+    " form, re-add the finding with `specflo review finding add`, or waive the"
+    " round with `specflo review waive --reason <why>`."
 )
+# The severities whose finding must name where its defect is.
+LOCATED = ("blocker", "should-fix")
+# How `review finding add --at` spells a location, named in its refusals.
+AT_FORM = "<file>:<line> or <file>:<line>-<line>"
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
 # completion gate; changes-requested blocks it.
 READY = "ready-to-merge"
@@ -847,18 +851,41 @@ def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:
     return f"F-{max(numbers, default=0) + 1:02d}"
 
 
-def add_finding(
-    root: Path, cfg: SpecfloConfig, slug: str, severity: str, text: str
-) -> tuple[str, Path]:
-    """Append ``- F-NN (severity) text`` to the open round's Findings section.
+def parse_location(at: str) -> tuple[str, int, int | None]:
+    """The file and lines a location names: ``(path, start, end)``, or a refusal.
 
-    Returns ``(F-NN, round path)``. The ID is numbered across every round of
-    the project, and the lock spans the read that picks it and the write that
-    records it, so two adds at once never share an ID.
+    ``end`` is None for one line. Refused: anything not in the form
+    ``file:line`` or ``file:a-b``, and a range that ends before it starts.
+    Reads nothing: whether the file holds those lines is
+    :func:`check_location`'s question.
+    """
+    match = re.fullmatch(_LOCATION, at)
+    if match is None:
+        raise SpecfloError(
+            f"--at {at!r} is not a location. Write it as {AT_FORM}, such as"
+            " src/app.py:10 or src/app.py:9-12: a line starts at 1, and the file"
+            " has no spaces or brackets in its name."
+        )
+    path, start = match.group("path"), int(match.group("start"))
+    end = int(match.group("end")) if match.group("end") else None
+    if end is not None and end < start:
+        raise SpecfloError(
+            f"--at {at}: the range ends before it starts. Write the lower line"
+            f" first: {path}:{end}-{start}."
+        )
+    return path, start, end
 
-    Raises ``SpecfloError`` - leaving every file untouched - on a severity
-    outside :data:`SEVERITIES`, an empty or multi-line text, no open round,
-    or an open round with no Findings section.
+
+def validate_finding(
+    severity: str, text: str, location: str | None
+) -> tuple[str, int, int | None] | None:
+    """Refuse a finding :func:`add_finding` would refuse before it reads a file.
+
+    Returns the parsed location, or None for a finding with none. Raises
+    ``SpecfloError`` on a severity outside :data:`SEVERITIES`, an empty or
+    multi-line text, a blocker or should-fix with no location, and a location
+    :func:`parse_location` refuses. The CLI asks first, so a bad argument is
+    named before it checks the location in its checkout.
     """
     if severity not in SEVERITIES:
         raise SpecfloError(
@@ -869,6 +896,89 @@ def add_finding(
     # Any line break the round file is later split on, not only \n and \r.
     if text.splitlines() != [text]:
         raise SpecfloError("A finding's --text must be one line.")
+    if location is None:
+        if severity in LOCATED:
+            raise SpecfloError(
+                f"A {severity} finding needs --at {AT_FORM}: where its defect is,"
+                " as the file is at the round's sha. Only a nit may leave it out."
+            )
+        return None
+    return parse_location(location)
+
+
+def check_location(
+    root: Path, sha: str, path: str, start: int, end: int | None
+) -> str | None:
+    """Refuse a location whose lines are not inside a file at ``sha``.
+
+    Runs git in the checkout at ``root``, which must be the caller's: a
+    daemon holds only the documents, so this never runs in a service.
+    ``path`` is as git names it at ``sha``, from the repository root.
+
+    Returns None once the location is checked, or why it could not be
+    checked: the round records no sha or one that is not a commit id, or git
+    here cannot read that commit (git missing, no repository, or a commit
+    not fetched). Such a location is
+    not refused - a reviewer the checkout cannot answer for still records it.
+    Raises ``SpecfloError`` when ``path`` is not a file at ``sha`` or a line
+    lies past its end.
+    """
+    if not sha:
+        return "the round records no sha"
+    # The sha may come from a daemon: only a commit id goes into git's argv.
+    if not re.fullmatch(r"[0-9a-f]{4,64}", sha):
+        return f"the round's sha {sha!r} is not a commit id"
+    try:
+        commit = subprocess.run(
+            ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+            cwd=root, capture_output=True, timeout=30,
+        )
+        if commit.returncode != 0:
+            return f"this checkout has no commit {sha}"
+        blob = subprocess.run(
+            ["git", "cat-file", "blob", f"{sha}:{path}"],
+            cwd=root, capture_output=True, timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return f"git cannot read commit {sha} here"
+    shown = f"{path}:{start}" if end is None else f"{path}:{start}-{end}"
+    if blob.returncode != 0:
+        raise SpecfloError(
+            f"--at {shown}: {path} is not a file at the round's sha {sha}. Name the"
+            " file as it is at that commit, from the repository root."
+        )
+    data = blob.stdout
+    count = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
+    last = start if end is None else end
+    if last > count:
+        lines = "line" if count == 1 else "lines"
+        raise SpecfloError(
+            f"--at {shown}: {path} has {count} {lines} at the round's sha {sha},"
+            f" so line {last} is past its end."
+        )
+    return None
+
+
+def add_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, severity: str, text: str,
+    location: str | None = None,
+) -> tuple[str, Path]:
+    """Append ``- F-NN (severity) [location] text`` to the open round's Findings section.
+
+    Returns ``(F-NN, round path)``. The ID is numbered across every round of
+    the project, and the lock spans the read that picks it and the write that
+    records it, so two adds at once never share an ID.
+
+    ``location`` is ``file:line`` or ``file:a-b``, written as sent: the caller
+    checks it against the round's sha in its own checkout (see
+    :func:`check_location`), since a daemon holds no code. A nit may have none.
+
+    Raises ``SpecfloError`` - leaving every file untouched - on anything
+    :func:`validate_finding` refuses, no open round, or an open round with no
+    Findings section.
+    """
+    where = validate_finding(severity, text, location)
+    path_, start, end = where or (None, None, None)
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
         if path is None:
@@ -883,7 +993,7 @@ def add_finding(
                 " by hand, then add the finding again."
             )
         finding_id = _next_finding_id(root, cfg, slug)
-        line = render_finding_line(Finding(finding_id, severity, text.strip()))
+        line = render_finding_line(Finding(finding_id, severity, text.strip(), path_, start, end))
         kept = body.strip("\n")
         path.write_text(
             markdown.replace_section_body(
@@ -907,8 +1017,10 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     """What the open round reviews: its scope, its range, and the items to check.
 
     A round with a base reviews the delta ``<base>..HEAD``; one without
-    reviews the whole branch. Reads the round files and changes nothing.
-    Raises ``SpecfloError`` when no round is open.
+    reviews the whole branch. ``sha`` is the commit the round opened at,
+    which a caller checks a finding's location against in its own checkout.
+    Reads the round files and changes nothing. Raises ``SpecfloError`` when
+    no round is open.
     """
     path = open_round(root, cfg, slug)
     if path is None:
@@ -919,6 +1031,7 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     return {
         "round": number,
         "file": path.name,
+        "sha": str(fields.get("sha", "") or ""),
         "scope": DELTA if base else WHOLE_BRANCH,
         "base": base,
         "range": f"{base}..HEAD" if base else None,
@@ -1161,7 +1274,9 @@ def reviewer_brief(
         "## How to record",
         "",
         "- Each finding: `specflo review finding add --severity blocker|should-fix|nit"
-        " --text \"<one line>\"`.",
+        " --at <file>:<line>[-<line>] --text \"<one line>\"`. `--at` names where the"
+        " defect is, as the file is at the round's sha; a blocker or should-fix needs"
+        " it, and a nit may leave it out.",
     ]
     if scope["items"]:
         lines.append(

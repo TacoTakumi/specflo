@@ -15,6 +15,9 @@ from specflo import config, markdown, plan, review
 
 NONE_LINE = "- none"
 BLOCKER_TEXT = "A blocker the next round must see fixed"
+# Where that blocker is: a blocker needs a location. In a checkout whose
+# round has a sha, the CLI checks it there, so such a checkout needs the file.
+BLOCKER_AT = "src/app.py:1"
 
 
 def latest_round(project_dir: Path) -> Path:
@@ -101,7 +104,7 @@ def record(root, cfg, slug, verdict) -> None:
     if verdict == review.READY:
         write_none(review.open_round(root, cfg, slug))
     elif verdict == review.CHANGES_REQUESTED:
-        review.add_finding(root, cfg, slug, "blocker", BLOCKER_TEXT)
+        review.add_finding(root, cfg, slug, "blocker", BLOCKER_TEXT, BLOCKER_AT)
 
 
 def close_round(root, cfg, slug, verdict, **kwargs) -> Path:
@@ -125,7 +128,8 @@ def review_done(runner, app, verdict="ready-to-merge", *extra, project_dir=None)
             assert checked.exit_code == 0, checked.output
     if verdict == review.CHANGES_REQUESTED:
         added = runner.invoke(
-            app, ["review", "finding", "add", "--severity", "blocker", "--text", BLOCKER_TEXT]
+            app, ["review", "finding", "add", "--severity", "blocker", "--at", BLOCKER_AT,
+                  "--text", BLOCKER_TEXT]
         )
         assert added.exit_code == 0, added.output
     elif verdict == review.READY:

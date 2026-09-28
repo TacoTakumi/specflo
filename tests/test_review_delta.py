@@ -250,7 +250,9 @@ def test_a_second_check_of_an_item_replaces_the_first(tmp_path, monkeypatch):
 def test_check_refuses_what_is_not_an_item_and_leaves_the_file(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     path = _delta(project_dir)
-    added = runner.invoke(app, ["review", "finding", "add", "--severity", "blocker", "--text", "New"])
+    added = runner.invoke(
+        app, ["review", "finding", "add", "--severity", "blocker", "--at", "src/app.py:1", "--text", "New"]
+    )
     assert "F-04" in added.output
     before = path.read_text()
 
