@@ -7,6 +7,9 @@ from pathlib import Path
 
 import pytest
 
+# pytester lets a test plant and run a small suite of its own.
+pytest_plugins = ["pytester"]
+
 
 def executable_identifiers(obj) -> str:
     """Every identifier and string *value* in ``obj``, docstrings excluded.
