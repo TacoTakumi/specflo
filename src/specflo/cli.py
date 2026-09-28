@@ -26,6 +26,7 @@ from . import doc as doc_module
 from . import doctor as doctor_module
 from . import followup as followup_module
 from . import graph as graph_module
+from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
 from . import workflow
@@ -2451,7 +2452,11 @@ def review_start(
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        path, created = svc.start_round(slug, full=full, over_budget=over_budget)
+        # HEAD is read here, in the checkout that holds the code: a daemon
+        # holds only the documents, so its own git names nothing reviewed.
+        path, created = svc.start_round(
+            slug, full=full, over_budget=over_budget, sha=review_module.head_sha(root)
+        )
         scope = svc.review_scope(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -2503,7 +2508,10 @@ def review_done(
         except (OSError, UnicodeDecodeError) as exc:
             raise _die(f"Cannot read {file} as text: {exc}")
     try:
-        closed = svc.close_round(slug, verdict, reason=reason, report_text=report_text)
+        closed = svc.close_round(
+            slug, verdict, reason=reason, report_text=report_text,
+            sha=review_module.head_sha(root),
+        )
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
@@ -2546,7 +2554,7 @@ def review_waive(
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        path = svc.waive_round(slug, reason)
+        path = svc.waive_round(slug, reason, sha=review_module.head_sha(root))
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)

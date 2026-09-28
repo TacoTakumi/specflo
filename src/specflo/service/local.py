@@ -431,17 +431,18 @@ class LocalProjectService:
     # --- reviews -----------------------------------------------------------
 
     def start_round(
-        self, slug: str, full: bool = False, over_budget: bool = False
+        self, slug: str, full: bool = False, over_budget: bool = False,
+        sha: str | None = None,
     ) -> tuple[Path, bool]:
         return review.start_round(
-            self.root, self.cfg, slug, full=full, over_budget=over_budget
+            self.root, self.cfg, slug, full=full, over_budget=over_budget, sha=sha
         )
 
     def review_scope(self, slug: str) -> dict:
         return review.review_scope(self.root, self.cfg, slug)
 
     def review_prompt(self, slug: str) -> str:
-        return review.reviewer_brief(self.root, self.cfg, slug)
+        return review.reviewer_brief(self.root, self.cfg, slug, hosted=self.hosted)
 
     def close_round(
         self,
@@ -450,9 +451,13 @@ class LocalProjectService:
         *,
         reason: str | None = None,
         report_text: str | None = None,
+        sha: str | None = None,
     ) -> ClosedRound:
+        # Follow-ups work only for projects in a checkout: a daemon's round
+        # keeps its nits in the round file.
         return review.close_round(
-            self.root, self.cfg, slug, verdict, reason=reason, report_text=report_text
+            self.root, self.cfg, slug, verdict, reason=reason,
+            report_text=report_text, sha=sha, nits_followup=not self.hosted,
         )
 
     def add_finding(self, slug: str, severity: str, text: str) -> tuple[str, Path]:
@@ -461,8 +466,8 @@ class LocalProjectService:
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:
         return review.check_finding(self.root, self.cfg, slug, finding_id, state)
 
-    def waive_round(self, slug: str, reason: str) -> Path:
-        return review.waive_round(self.root, self.cfg, slug, reason)
+    def waive_round(self, slug: str, reason: str, sha: str | None = None) -> Path:
+        return review.waive_round(self.root, self.cfg, slug, reason, sha=sha)
 
     # --- checkpoint and status ---------------------------------------------
 

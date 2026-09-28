@@ -320,11 +320,14 @@ class ProjectService(Protocol):
     # --- reviews -----------------------------------------------------------
 
     def start_round(
-        self, slug: str, full: bool = False, over_budget: bool = False
+        self, slug: str, full: bool = False, over_budget: bool = False,
+        sha: str | None = None,
     ) -> tuple[Path, bool]:
         """Mint the next review round or hand back the open one; ``full``
         reviews the whole branch rather than the delta since the last round,
-        and ``over_budget`` opens a round past the level's round budget."""
+        and ``over_budget`` opens a round past the level's round budget.
+        ``sha`` is HEAD of the caller's checkout, where the code lives: a
+        daemon holds only the documents."""
         ...
 
     def review_scope(self, slug: str) -> dict:
@@ -342,9 +345,11 @@ class ProjectService(Protocol):
         *,
         reason: str | None = None,
         report_text: str | None = None,
+        sha: str | None = None,
     ) -> ClosedRound:
         """Close the open round with the verdict its findings give; ``report_text``
         becomes its body. An explicit verdict must be the derived one, or waived.
+        ``sha``, HEAD of the caller's checkout, fills a round opened without one.
 
         The text, never a path: the caller reads its own report file, so the
         service opens nothing the caller did not send.
@@ -359,7 +364,7 @@ class ProjectService(Protocol):
         """Record an earlier item closed or open in the open round; ``(F-NN, round path)``."""
         ...
 
-    def waive_round(self, slug: str, reason: str) -> Path:
+    def waive_round(self, slug: str, reason: str, sha: str | None = None) -> Path:
         """Close the open round waived, or mint one and close it waived."""
         ...
 

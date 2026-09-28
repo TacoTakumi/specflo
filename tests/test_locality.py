@@ -497,3 +497,60 @@ def test_a_hosted_project_the_daemon_no_longer_holds_is_refused_without_its_path
         elif args[0] not in ("list", "hook"):
             assert result.exit_code == 1, (args, text)
             assert "No project 'ghost'." in text, (args, text)
+
+
+def _git(root, *args):
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=root, capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _commit(root, name):
+    (root / name).write_text(f"{name}\n")
+    _git(root, "add", name)
+    _git(root, "commit", "-qm", name)
+    return _git(root, "rev-parse", "--short", "HEAD")
+
+
+def test_a_hosted_round_is_stamped_with_the_checkouts_head_and_gets_a_delta(checkout, live_daemon):
+    # The code under review is the checkout's; the daemon only holds the
+    # documents, so its own git (none here) must never stamp a round.
+    _git(checkout, "init", "-q")
+    _git(checkout, "config", "user.email", "t@example.com")
+    _git(checkout, "config", "user.name", "T")
+    first = _commit(checkout, "one.txt")
+    runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    runner.invoke(app, ["review", "finding", "add", "--severity", "blocker", "--text", "One"])
+    assert runner.invoke(app, ["review", "done"]).exit_code == 0
+    _commit(checkout, "fix.txt")
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code == 0, result.output
+    assert f"Scope: {first}..HEAD" in result.output
+    from specflo import review
+
+    round_1 = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md"
+    assert review.frontmatter(round_1)["sha"] == first
+
+
+def test_a_hosted_round_with_nits_adds_no_follow_up_and_its_brief_needs_none(checkout, live_daemon):
+    # Follow-ups work only for projects in a checkout, so a hosted round keeps
+    # its nits in the round file and its brief never sends the reviewer to
+    # `followup add`, which the CLI refuses for a hosted project.
+    runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
+    assert runner.invoke(app, ["review", "start"]).exit_code == 0
+    brief = runner.invoke(app, ["review", "prompt"]).output
+    runner.invoke(app, ["review", "finding", "add", "--severity", "nit", "--text", "A typo"])
+
+    done = runner.invoke(app, ["review", "done"])
+
+    assert done.exit_code == 0, done.output
+    assert "ready-to-merge" in done.output
+    daemon_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing"
+    assert not (daemon_dir / "followup.md").exists()
+    assert "specflo followup add" not in brief
+    assert "checkout" in brief

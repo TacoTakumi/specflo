@@ -638,10 +638,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   naming them, and the output counts the findings per severity. Breaking: a
   free-form report no longer closes a round, and `--json` adds `findings`
   and `still_open`.
-- **`review start` stamps the round when it opens.** It records `HEAD`, the
-  project's level and the delta base, prints the round's scope, and `--json`
-  adds `scope`, `range` and `items`. `review done` keeps the sha stamped at
-  open and fills it only when it is empty.
+- **`review start` stamps the round when it opens.** It records `HEAD` of
+  the checkout (also for a project a daemon holds, where the code still
+  lives in the checkout), the project's level and the delta base, prints the
+  round's scope, and `--json` adds `scope`, `range` and `items`. An open
+  round nobody has written into takes `HEAD` again when `review start` hands
+  it back. `review done` keeps the sha stamped at open and fills it only
+  when it is empty. A round a daemon holds keeps its nits in the round file,
+  since follow-ups work only for projects in the checkout.
 - **The review hints follow the loop.** `status`, the checkpoint and `guide`
   say to run the whole suite before round 1, name the open items after a
   round asks for changes, name the two choices at the round budget, and ask

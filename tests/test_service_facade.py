@@ -399,6 +399,9 @@ _ARTIFACT_MODULES = {
     "specflo.checkpoint", "specflo.status", "specflo.doc", "specflo.index",
 }
 _ARTIFACT_MODULE_ALLOWLIST = {
+    # HEAD of the caller's own checkout, where the code under review lives:
+    # read on the client, like a --file, and never a project file.
+    "specflo.review": {"head_sha"},
     "specflo.projects": {
         "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
         "LEVELS", "QUICK_LEVEL", "FAST_LEVEL", "FULL_LEVEL", "validate_level",
@@ -417,7 +420,7 @@ _ARTIFACT_MODULE_ALLOWLIST = {
 # need through the facade.
 _CLI_ARTIFACT_IMPORTS = {
     "specflo.projects", "specflo.brainstorm", "specflo.spec", "specflo.plan",
-    "specflo.checkpoint", "specflo.status", "specflo.doc",
+    "specflo.checkpoint", "specflo.status", "specflo.doc", "specflo.review",
 }
 
 # File primitives a command may not call on anything: an artifact path is

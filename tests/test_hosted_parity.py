@@ -321,6 +321,14 @@ def hosted_review_run(tmp_path, monkeypatch, live_daemon):
     return _run(checkout, dirs, ["--remote", "home"], steps=_review_steps()), project_dir
 
 
+def _without_follow_up_lines(brief: str) -> str:
+    """A reviewer brief less the lines that say where follow-ups and nits go."""
+    return "\n".join(
+        line for line in brief.splitlines()
+        if not any(word in line.lower() for word in ("follow-up", "followup", "stays listed"))
+    )
+
+
 def test_the_review_loop_is_identical_for_a_local_and_a_hosted_project(
     local_review_run, hosted_review_run
 ):
@@ -329,6 +337,13 @@ def test_the_review_loop_is_identical_for_a_local_and_a_hosted_project(
     assert len(local) == len(hosted) == len(_review_steps()) + 1
     for mine, theirs in zip(local[1:], hosted[1:]):
         args = mine[0]
+        if args[:2] == ["review", "prompt"] and mine[1] == 0:
+            # The one documented difference: follow-ups work only for projects
+            # in a checkout, so a hosted brief asks for such problems in the
+            # reply and keeps nits in the round.
+            assert "specflo followup add" in mine[2] and "specflo followup add" not in theirs[2]
+            mine = (args, mine[1], _without_follow_up_lines(mine[2]))
+            theirs = (args, theirs[1], _without_follow_up_lines(theirs[2]))
         assert mine[1:] == theirs[1:], f"{' '.join(args)}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
     # The round files themselves, byte for byte.
     names = sorted(p.name for p in local_dir.glob("review-*.md"))

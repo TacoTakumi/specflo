@@ -211,6 +211,7 @@ def start_round(
     today: str | None = None,
     full: bool = False,
     over_budget: bool = False,
+    sha: str | None = None,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
@@ -222,7 +223,14 @@ def start_round(
     The new round records HEAD (the commit the reviewer reads), the project's
     level, and its base: the sha of the latest reviewed round, from which it
     reviews only the diff. ``full``, or no reviewed round with a sha, leaves
-    the base empty and the round reviews the whole branch.
+    the base empty and the round reviews the whole branch. ``sha`` is HEAD as
+    the caller's checkout names it; None reads it from ``root``, which is only
+    right where ``root`` is that checkout, never on a daemon.
+
+    A reused round nobody has written into yet takes HEAD again: its review
+    begins now. A ladder opens a level's round when it climbs, long before
+    the level's work, and the next round's range must start at the commit
+    the reviewer read, not at the climb.
 
     When the level's budget is spent (see :func:`budget`), no round opens
     unless ``over_budget`` says the user chose one more.
@@ -232,6 +240,7 @@ def start_round(
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         existing = open_round(root, cfg, slug)
         if existing is not None:
+            _restamp_untouched(root, existing, sha)
             return existing, False
         state = budget(root, cfg, slug)
         if state["spent"] and not over_budget:
@@ -242,11 +251,26 @@ def start_round(
         path.write_text(_TEMPLATE.format(
             number=number,
             today=today,
-            sha=head_sha(root),
+            sha=head_sha(root) if sha is None else sha,
             base="" if full else _reviewed_sha(rounds),
             level=load_project(root, cfg, slug).level,
         ))
     return path, True
+
+
+def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
+    """Stamp an open round nobody has written into with HEAD, if it moved."""
+    fields = frontmatter(path)
+    try:
+        number = _round_number(path, fields.get("round"))
+    except SpecfloError:
+        return  # a hand-mangled round is its author's to fix; reuse it as it is
+    if body_of(path).strip() != skeleton_body(number).strip():
+        return
+    head = head_sha(root) if sha is None else sha
+    if head and head != str(fields.get("sha", "") or ""):
+        fields["sha"] = head
+        path.write_text(_render(fields, body_of(path)))
 
 
 def skeleton_body(number: int) -> str:
@@ -573,6 +597,8 @@ def close_round(
     reason: str | None = None,
     today: str | None = None,
     report_text: str | None = None,
+    sha: str | None = None,
+    nits_followup: bool = True,
 ) -> ClosedRound:
     """Close the open round with the verdict its findings give, date and sha.
 
@@ -582,7 +608,12 @@ def close_round(
     ``waived``, which closes the round without reading its findings.
 
     A round with nits adds one follow-up naming their IDs, so the nits stay
-    listed after the project completes without blocking it.
+    listed after the project completes without blocking it. ``nits_followup``
+    False keeps them in the round file only: follow-ups work only for
+    projects in a checkout, so a daemon-held round adds none.
+
+    ``sha`` is HEAD as the caller's checkout names it, used only when the
+    round has no sha yet; None reads it from ``root``.
 
     The date stamps the close, overwriting the mint-time date: what matters
     is when the review was decided, not when its file appeared. The sha stays
@@ -644,7 +675,7 @@ def close_round(
                 )
             verdict = derived
             nits = [f for f, severity, _ in findings if severity == "nit"]
-            if nits:
+            if nits and nits_followup:
                 # Before the round is written: a follow-up that cannot be
                 # added refuses the close rather than losing the nits.
                 followup.add_followup(
@@ -659,7 +690,7 @@ def close_round(
         # The sha the round opened at is the commit its reviewer read; only a
         # round that never got one takes HEAD now.
         if not fields.get("sha"):
-            fields["sha"] = head_sha(root)
+            fields["sha"] = head_sha(root) if sha is None else sha
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body))
@@ -816,7 +847,12 @@ def check_finding(
 
 
 def waive_round(
-    root: Path, cfg: SpecfloConfig, slug: str, reason: str, today: str | None = None
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    reason: str,
+    today: str | None = None,
+    sha: str | None = None,
 ) -> Path:
     """Close the open round waived with ``reason``, or mint one and close it so.
 
@@ -830,17 +866,21 @@ def waive_round(
             " records why."
         )
     if open_round(root, cfg, slug) is None:
-        start_round(root, cfg, slug, today=today, over_budget=True)
-    return close_round(root, cfg, slug, WAIVED, reason=reason, today=today).path
+        start_round(root, cfg, slug, today=today, over_budget=True, sha=sha)
+    return close_round(root, cfg, slug, WAIVED, reason=reason, today=today, sha=sha).path
 
 
-def reviewer_brief(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+def reviewer_brief(
+    root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False
+) -> str:
     """The brief for the reviewer of the open round: one set of rules every round.
 
     Carries the round's scope (the whole branch, or the delta range and the
     earlier items to check), what each severity means, what is not a finding,
     how to record, that the CLI sets the verdict, and to run only the tests
-    in scope. Raises ``SpecfloError`` when no round is open.
+    in scope. ``hosted`` says a daemon holds the project, where follow-ups
+    are not recorded, so the brief asks for such problems in the reply.
+    Raises ``SpecfloError`` when no round is open.
     """
     scope = review_scope(root, cfg, slug)
     name = scope["file"]
@@ -884,13 +924,19 @@ def reviewer_brief(root: Path, cfg: SpecfloConfig, slug: str) -> str:
         " (skills, prompts, messages an agent reads) is a nit unless it tells the"
         " agent to do the wrong thing.",
         "",
-        "A blocker or should-fix finding asks for changes. A nit never blocks: it goes"
-        " to a follow-up when the round closes.",
+        "A blocker or should-fix finding asks for changes. A nit never blocks: it"
+        + (" stays listed in the round." if hosted else " goes to a follow-up when the round closes."),
         "",
         "## What is not a finding",
         "",
-        f"{outside} Record it with `specflo followup add \"<title>\" --do \"<what to"
-        f" do>\" --from \"{name}\"` instead, so it never blocks this round.",
+        (
+            f"{outside} Follow-ups work only for projects in a checkout, and a"
+            " daemon holds this one: name such a problem in your reply instead,"
+            " so it never blocks this round."
+            if hosted else
+            f"{outside} Record it with `specflo followup add \"<title>\" --do \"<what"
+            f" to do>\" --from \"{name}\"` instead, so it never blocks this round."
+        ),
         "",
         "## How to record",
         "",

@@ -365,3 +365,33 @@ def test_done_refuses_a_malformed_earlier_findings_line(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "- F-02 was fixed" in result.output
     assert path.read_text() == before
+
+
+# --- a round opened before the review restamps when the review begins ---------
+
+
+def test_start_restamps_an_untouched_open_round_with_head(tmp_path, monkeypatch):
+    # A ladder opens the full level's round when it climbs, long before the
+    # review; the reviewer reads the commit HEAD names when it begins.
+    project_dir = _project(tmp_path, monkeypatch)
+    opened_at = _repo(tmp_path)
+    _start()
+    later = _commit(tmp_path, "work.txt")
+
+    again = _start()
+
+    assert "(already open)" in again.output
+    assert _fields(project_dir / "review-1.md")["sha"] == later
+    assert later != opened_at
+
+
+def test_start_keeps_the_sha_of_a_round_already_under_review(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    opened_at = _repo(tmp_path)
+    _start()
+    runner.invoke(app, ["review", "finding", "add", "--severity", "nit", "--text", "Begun"])
+    _commit(tmp_path, "work.txt")
+
+    _start()
+
+    assert _fields(project_dir / "review-1.md")["sha"] == opened_at
