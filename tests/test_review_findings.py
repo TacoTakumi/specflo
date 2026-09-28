@@ -308,3 +308,47 @@ def test_done_derives_the_verdict_from_an_ingested_report(tmp_path, monkeypatch)
     assert result.exit_code == 0, result.output
     assert _verdict(path) == "changes-requested"
     assert review.body_of(path) == report.read_text()
+
+
+# --- nits go to one follow-up per round --------------------------------------
+
+
+def _open_followups(root):
+    from specflo import followup
+
+    return followup.list_followups(root, config.load_config(root))
+
+
+def test_a_round_with_nits_adds_one_followup_naming_them(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _closed_round(project_dir, 1, ["- F-01 (blocker) One"])
+    _open(project_dir, ["- F-02 (nit) A name", "- F-03 (should-fix) Two", "- F-04 (nit) A typo"])
+
+    assert runner.invoke(app, ["review", "done"]).exit_code == 0
+
+    entries = _open_followups(tmp_path)
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry.title == "Nits from review round 2"
+    assert entry.do == "Decide which of F-02, F-04 to fix"
+    assert entry.source == "review-2.md"
+    assert entry.project == "thing"
+    listed = runner.invoke(app, ["followup", "list"]).output
+    assert "Nits from review round 2" in listed
+
+
+@pytest.mark.parametrize(
+    "findings, extra",
+    [
+        (["- none"], []),
+        (["- F-01 (blocker) One"], []),
+        (["- F-01 (nit) One"], ["--verdict", "waived", "--reason", "x"]),
+    ],
+)
+def test_a_round_without_nits_or_a_waived_one_adds_no_followup(tmp_path, monkeypatch, findings, extra):
+    project_dir = _project(tmp_path, monkeypatch)
+    _open(project_dir, findings)
+
+    assert runner.invoke(app, ["review", "done", *extra]).exit_code == 0
+
+    assert _open_followups(tmp_path) == []

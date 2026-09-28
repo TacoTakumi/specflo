@@ -20,7 +20,7 @@ from pathlib import Path
 
 import yaml
 
-from . import markdown
+from . import followup, markdown
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
@@ -416,6 +416,9 @@ def close_round(
     ``verdict`` is accepted only when it is the derived one, except
     ``waived``, which closes the round without reading its findings.
 
+    A round with nits adds one follow-up naming their IDs, so the nits stay
+    listed after the project completes without blocking it.
+
     The date and sha stamp the close, overwriting the mint-time date: what
     matters is when the review was decided, not when its file appeared.
 
@@ -471,6 +474,17 @@ def close_round(
                     " --reason <why>`."
                 )
             verdict = derived
+            nits = [f for f, severity, _ in findings if severity == "nit"]
+            if nits:
+                # Before the round is written: a follow-up that cannot be
+                # added refuses the close rather than losing the nits.
+                followup.add_followup(
+                    root, cfg, slug,
+                    f"Nits from review round {fields['round']}",
+                    f"Decide which of {', '.join(nits)} to fix",
+                    source=path.name,
+                    today=today,
+                )
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
         fields["sha"] = head_sha(root)
