@@ -4,7 +4,9 @@ A task names what it is for with ``--from REQ-NN`` (the requirements it
 implements), with ``--fixes F-NN`` (the findings it fixes), or with both.
 The findings go in the task's ``- Fixes:`` field; ``task show`` and ``task
 list`` print them. A task with neither is refused, and the refusal changes
-no file. A hosted add writes the same plan.md as a local one.
+no file. A hosted add writes the same plan.md as a local one. ``validate
+plan`` passes a fix task that implements no requirement, but the fix task
+covers none either.
 """
 
 import json
@@ -127,6 +129,47 @@ def test_the_brief_carries_the_fixes(planned):
     lines = plan.render_task_brief(plan.task_brief(root, cfg, slug, plain.id)).splitlines()
     assert "  Implements: REQ-01" in lines
     assert not any(line.startswith("  Fixes:") for line in lines)
+
+
+# --- plan validation ----------------------------------------------------------
+
+
+def _build_and_fix(root, cfg, slug):
+    """T-01 implements the one requirement; T-02 only fixes F-02."""
+    plan.add_task(root, cfg, slug, "Build help", "help prints", "uv run pytest",
+                  implements=["REQ-01"])
+    plan.add_task(root, cfg, slug, "Fix the close", "the sha is kept", "uv run pytest",
+                  implements=[], fixes=["F-02"])
+
+
+def test_a_fix_task_passes_plan_validation(planned, monkeypatch):
+    root, cfg, slug = planned
+    _build_and_fix(root, cfg, slug)
+    assert plan.validate_plan(root, cfg, slug) == []
+    projects.switch_project(root, cfg, slug)
+    monkeypatch.chdir(root)
+    result = runner.invoke(app, ["validate", "plan"])
+    assert result.exit_code == 0, result.output
+
+
+def test_a_fix_task_covers_no_requirement(planned):
+    root, cfg, slug = planned
+    _build_and_fix(root, cfg, slug)
+    path = plan.plan_path(root, cfg, slug)
+    path.write_text(re.sub(r"### T-01 .*?\n\n", "", path.read_text(), flags=re.DOTALL))
+    assert [t.id for t in plan.list_tasks(root, cfg, slug)] == ["T-02"]
+    assert plan.validate_plan(root, cfg, slug) == ["REQ-01 is not implemented by any task."]
+
+
+def test_a_task_that_neither_implements_nor_fixes_fails_plan_validation(planned):
+    root, cfg, slug = planned
+    _build_and_fix(root, cfg, slug)
+    path = plan.plan_path(root, cfg, slug)
+    path.write_text(path.read_text().replace("- Fixes: F-02\n", ""))
+    assert plan.validate_plan(root, cfg, slug) == [
+        "T-02 implements no requirement and fixes no finding "
+        "(needs Implements: REQ-NN or Fixes: F-NN)."
+    ]
 
 
 # --- the CLI, local and hosted ------------------------------------------------

@@ -432,8 +432,12 @@ def validate_plan(
         smap = spec_mod.supersession_map(spec_doc)
         covered: set[str] = set()
         for t in active:
-            if not t.implements:
-                issues.append(f"{t.id} implements no requirement (needs Implements: REQ-NN).")
+            # A fix task names the findings it fixes instead; it covers no requirement.
+            if not t.implements and not t.fixes:
+                issues.append(
+                    f"{t.id} implements no requirement and fixes no finding "
+                    f"(needs Implements: REQ-NN or Fixes: F-NN)."
+                )
             for req in t.implements:
                 resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
                 if resolved is None:
