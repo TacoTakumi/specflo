@@ -7,24 +7,15 @@ import os
 import signal
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.client import connect
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def pid_alive(pid: int) -> bool:

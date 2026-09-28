@@ -11,17 +11,9 @@ import pytest
 
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import AgentPaths, read_status
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=5.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def read_events(path):
@@ -99,7 +91,7 @@ def test_working_state_visible_during_open_run(make_host):
     host.send({"id": "p1", "type": "prompt", "message": "go"})
     assert wait_until(lambda: read_status(host.paths.status)["state"] == "working")
     # stays working: the run never settles
-    time.sleep(0.2)
+    settle(0.2)
     assert read_status(host.paths.status)["state"] == "working"
 
 

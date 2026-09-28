@@ -20,7 +20,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,18 +27,10 @@ import pytest
 
 from specflo.agent.client import HostUnreachableError, connect
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 RUNNER = Path(__file__).parent / "harness_runner.mjs"
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def _connectable(name: str, base: Path) -> bool:
@@ -108,7 +99,9 @@ class ContractRig:
                 text=True,
             )
             self._v2_procs.append(proc)
-            if not wait_until(lambda: _connectable(name, self.base)):
+            try:
+                wait_until(lambda: _connectable(name, self.base))
+            except AssertionError:
                 proc.terminate()
                 raise AssertionError(
                     f"runner never served: {proc.stderr.read() if proc.stderr else ''}"

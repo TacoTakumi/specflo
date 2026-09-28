@@ -16,17 +16,9 @@ import pytest
 
 from specflo.agent.client import connect
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture
@@ -179,7 +171,7 @@ def test_no_wait_then_wait_then_last_recover_the_reply(rig):
     assert wait_until(lambda: agent_state(base, "a1") == "working")
 
     waiter = spawn_cli("wait", "a1", "--timeout", "20")
-    time.sleep(0.3)
+    settle(0.3)
     assert waiter.poll() is None  # still blocked: the run has not settled
 
     # the dialog request predates our connection; recover its id from the log

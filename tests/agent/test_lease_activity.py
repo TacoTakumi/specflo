@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -17,6 +16,7 @@ from specflo.agent import host as host_module
 from specflo.agent.client import connect
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import read_status
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
@@ -47,15 +47,6 @@ class FakeClock:
 
     def __call__(self) -> str:
         return self.at(self.minute)
-
-
-def wait_until(cond, timeout=5.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture

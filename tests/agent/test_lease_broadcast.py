@@ -24,6 +24,7 @@ from specflo.agent.cli import agent_app
 from specflo.agent.client import AgentClient, connect
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import ENV_STATE_DIR, read_status
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
@@ -31,15 +32,6 @@ POOL = "pool-secret"
 HOLDER = "holder-secret"
 PROMPT = "the holder's prompt text"
 REPLY = "the member's reply"
-
-
-def wait_until(cond, timeout=5.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture
@@ -323,8 +315,9 @@ def test_the_holders_wait_still_streams_to_the_settle(cli_rig):
         wait_until(
             lambda: read_status(host.paths.status)["last_activity"] != stamped,
             timeout=10,
+            message="the holder's wait never moved the stamp",
         )
-        time.sleep(0.3)
+        settle(0.3)
         with connect("b11", base_dir=base) as daemon:
             daemon.request({"type": "abort", "pool_token": POOL})
 

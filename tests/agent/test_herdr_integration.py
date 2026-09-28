@@ -8,12 +8,12 @@ import signal
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
@@ -58,15 +58,6 @@ else:
 '''
 
 VENV_BIN = str(Path(sys.executable).parent)
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 class Rig:

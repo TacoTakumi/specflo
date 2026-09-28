@@ -19,6 +19,7 @@ from specflo.agent.cli import agent_app
 from specflo.agent.client import connect
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import ENV_STATE_DIR, read_status
+from waits import scaled, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
@@ -344,7 +345,7 @@ def test_the_holders_stop_on_a_console_is_refused_and_the_host_runs_on(make_host
         turn(holder, "go on")
 
     assert host.proc.poll() is None
-    assert not host.wait_stopped(timeout=0.2)
+    assert not host.wait_stopped(timeout=scaled(0.2))
     assert read_status(host.paths.status)["state"] == "idle"
     assert [f["type"] for f in captured(capture)] == ["get_last_assistant_text", "prompt"]
     log = host.paths.events.read_text()
@@ -563,9 +564,11 @@ def test_the_hosts_pi_is_told_to_serve_no_socket_of_its_own(tmp_path, monkeypatc
         base_dir=tmp_path / "state",
     ).start()
     try:
-        deadline = time.monotonic() + 10
-        while not seen_file.exists() and time.monotonic() < deadline:
-            time.sleep(0.02)
+        wait_until(
+            seen_file.exists,
+            timeout=10,
+            message="the stand-in pi never wrote down its environment",
+        )
         seen = json.loads(seen_file.read_text(encoding="utf-8"))
     finally:
         host.close()
