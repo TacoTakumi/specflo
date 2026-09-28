@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 import yaml
 
+import reviewhelp
 from conftest import live_keys
 from specflo import config
 from specflo.cli import app
@@ -1140,7 +1141,7 @@ def _review_passed(runner, app):
     that gate, so they satisfy it here rather than restating it each time.
     """
     runner.invoke(app, ["review", "start"])
-    runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    reviewhelp.review_done(runner, app, "ready-to-merge")
 
 
 def _project_at_plan_phase(runner, app, tmp_path):
@@ -3626,7 +3627,7 @@ def test_advance_review_gate_completes_on_a_passing_round(tmp_path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     _at_execute_all_done(runner, app, tmp_path)
     runner.invoke(app, ["review", "start"])
-    runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    reviewhelp.review_done(runner, app, "ready-to-merge")
 
     result = runner.invoke(app, ["advance"])
 
@@ -3665,9 +3666,7 @@ def test_review_checkpoint_refreshed_after_a_changes_requested_close(tmp_path, m
     assert "review-1.md" not in _checkpoint_text(tmp_path)      # precondition
 
     runner.invoke(app, ["review", "start"])
-    assert runner.invoke(
-        app, ["review", "done", "--verdict", "changes-requested"]
-    ).exit_code == 0
+    assert reviewhelp.review_done(runner, app, "changes-requested").exit_code == 0
 
     text = _checkpoint_text(tmp_path)
     read_first, do_next = text.split("## Do next", 1)
@@ -3705,7 +3704,7 @@ def test_review_checkpoint_refresh_failure_never_fails_the_command(tmp_path, mon
 
     monkeypatch.setattr(checkpoint_module, "write_checkpoint", _boom)
     assert runner.invoke(app, ["review", "start"]).exit_code == 0
-    r = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    r = reviewhelp.review_done(runner, app, "ready-to-merge")
     assert r.exit_code == 0
     round_file = tmp_path / "docs" / "projects" / "thing" / "review-1.md"
     assert "verdict: ready-to-merge" in round_file.read_text()   # the round landed

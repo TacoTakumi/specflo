@@ -327,12 +327,13 @@ def test_artifact_filename_accepts_a_review_round_by_number():
 
 
 def test_doc_show_prints_a_review_round_by_its_number(tmp_path, monkeypatch):
+    import reviewhelp
     from specflo import review
 
     project_dir = _project(tmp_path, monkeypatch)
     cfg = config.load_config(tmp_path)
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
-    review.close_round(tmp_path, cfg, "thing", "changes-requested", today="2026-08-02")
+    reviewhelp.close_round(tmp_path, cfg, "thing", "changes-requested", today="2026-08-02")
 
     result = runner.invoke(app, ["doc", "show", "review-1"])
 

@@ -286,9 +286,10 @@ def test_render_status_ignores_the_auto_run_block(tmp_path):
 
 
 def _close_review(tmp_path, cfg, verdict, reason=None):
+    import reviewhelp
     from specflo import review
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
-    return review.close_round(
+    return reviewhelp.close_round(
         tmp_path, cfg, "thing", verdict, reason=reason, today="2026-08-02"
     )
 

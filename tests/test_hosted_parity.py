@@ -101,7 +101,7 @@ def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list
     results = []
     # The review report a step ingests with --file: a file of the checkout,
     # read by the client wherever the round itself lives.
-    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- one nit.\n")
+    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- none\n")
     result = runner.invoke(app, ["new", "Parity Thing", "--summary", "One line", *new_args])
     results.append((result.exit_code, _normalize(result.stdout, project_dirs)))
     if raw is not None:

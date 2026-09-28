@@ -275,7 +275,7 @@ def test_close_round_takes_the_report_text_and_never_a_path(root, client):
     )
     assert by_path.status_code == 422 and "report" in by_path.text
 
-    text = "# Round 1\n\n## Findings\n\n- one nit.\n"
+    text = "# Round 1\n\n## Findings\n\n- none\n"
     path = call(client, "close_round", slug="thing", verdict="ready-to-merge", report_text=text)
 
     assert path == Path(daemon.PROJECTS_DIRNAME) / "thing" / "review-1.md"

@@ -7,7 +7,7 @@ the project's state, until a pass says stop.
 import json
 
 from specflo import auto, config, projects
-from test_ladder import _ok, _work, git, repo  # noqa: F401  (repo is a fixture)
+from test_ladder import _ok, _pass_review, _work, git, repo  # noqa: F401  (repo is a fixture)
 
 
 def _act(root, done):
@@ -36,7 +36,7 @@ def _act(root, done):
         if level not in done:
             _work(root, f"{level}.txt")
             _ok(["review", "start"])
-            _ok(["review", "done", "--verdict", "ready-to-merge"])
+            _pass_review()
             done.add(level)
         _ok(["advance"])
 

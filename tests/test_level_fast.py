@@ -2,6 +2,7 @@
 
 from typer.testing import CliRunner
 
+import reviewhelp
 from specflo import config, projects
 from specflo.cli import app
 from test_level import _fast_project_at_execute
@@ -36,7 +37,7 @@ def test_fast_advance_completes_after_a_passing_review_round(tmp_path, monkeypat
     monkeypatch.chdir(tmp_path)
     _fast_project_at_execute(tmp_path)
     runner.invoke(app, ["review", "start"])
-    runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    reviewhelp.review_done(runner, app, "ready-to-merge")
 
     result = runner.invoke(app, ["advance"])
 

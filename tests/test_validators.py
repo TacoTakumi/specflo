@@ -87,10 +87,11 @@ def _execute_ready(tmp_path):
 
 
 def _close(tmp_path, cfg, verdict, reason=None):
+    import reviewhelp
     from specflo import review
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
-    review.close_round(tmp_path, cfg, "thing", verdict, reason=reason,
-                       today="2026-08-02")
+    reviewhelp.close_round(tmp_path, cfg, "thing", verdict, reason=reason,
+                           today="2026-08-02")
 
 
 def test_execute_review_gate_blocks_when_no_round_exists(tmp_path):

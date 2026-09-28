@@ -4,6 +4,7 @@ import json
 import subprocess
 
 import pytest
+import reviewhelp
 from typer.testing import CliRunner
 
 from specflo import auto, config, projects
@@ -15,6 +16,13 @@ runner = CliRunner()
 def _ok(args, stdin=None):
     result = runner.invoke(app, args, input=stdin)
     assert result.exit_code == 0, (args, result.output)
+    return result
+
+
+def _pass_review():
+    """Close the open round ready-to-merge, with '- none' under its Findings."""
+    result = reviewhelp.review_done(runner, app, "ready-to-merge")
+    assert result.exit_code == 0, result.output
     return result
 
 
@@ -170,7 +178,7 @@ def _finish_fast(repo):
     _ok(["advance"])
     _work(repo, "fast.txt")
     _ok(["review", "start"])
-    _ok(["review", "done", "--verdict", "ready-to-merge"])
+    _pass_review()
     _ok(["advance"])
 
 
@@ -287,7 +295,7 @@ def test_the_ladder_ends_when_full_completes(repo):
     _ok(["advance"])
     _ok(["advance"])
     _work(repo, "full.txt")
-    _ok(["review", "done", "--verdict", "ready-to-merge"])
+    _pass_review()
     _ok(["advance"])
 
     result = json.loads(_ok(["auto", "--json"]).output)
@@ -481,7 +489,7 @@ def _full_level_done(repo):
     _ok(["advance"])
     _ok(["advance"])
     _work(repo, "full.txt")
-    _ok(["review", "done", "--verdict", "ready-to-merge"])
+    _pass_review()
     return _ok(["advance"]).output
 
 

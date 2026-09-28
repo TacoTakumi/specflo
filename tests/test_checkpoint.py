@@ -418,11 +418,12 @@ def test_checkpoint_omits_the_rule_line_without_completed_projects(tmp_path):
 
 def _round(tmp_path, cfg, verdict=None, reason=None):
     """Mint a round, closing it with ``verdict`` unless it should stay open."""
+    import reviewhelp
     from specflo import review
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
     if verdict is not None:
-        review.close_round(tmp_path, cfg, "thing", verdict, reason=reason,
-                           today="2026-08-02")
+        reviewhelp.close_round(tmp_path, cfg, "thing", verdict, reason=reason,
+                               today="2026-08-02")
 
 
 def _read_first(tmp_path, cfg, project):

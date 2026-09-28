@@ -226,6 +226,7 @@ def test_next_step_offers_advance_only_for_passing_verdicts():
 def test_review_state_marks_passing_verdicts_for_every_reader(tmp_path):
     # The hint cannot import review (review -> projects -> workflow), so the
     # judgement travels in the payload rather than being re-derived downstream.
+    import reviewhelp
     from specflo import config, projects, review
 
     cfg = config.init_config(tmp_path)
@@ -233,7 +234,7 @@ def test_review_state_marks_passing_verdicts_for_every_reader(tmp_path):
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
     assert review.review_state(tmp_path, cfg, "thing")["passing"] is False  # open
 
-    review.close_round(tmp_path, cfg, "thing", "ready-to-merge", today="2026-08-02")
+    reviewhelp.close_round(tmp_path, cfg, "thing", "ready-to-merge", today="2026-08-02")
     assert review.review_state(tmp_path, cfg, "thing")["passing"] is True
 
 

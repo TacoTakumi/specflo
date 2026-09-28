@@ -8,6 +8,7 @@ deleted round leaves a permanent gap (REQ-02).
 import yaml
 from typer.testing import CliRunner
 
+from reviewhelp import review_done
 from specflo import config, projects
 from specflo.cli import app
 
@@ -136,7 +137,7 @@ def test_close_writes_the_verdict_into_the_open_round(tmp_path, monkeypatch):
     runner.invoke(app, ["review", "start"])
     minted = project_dir / "review-1.md"
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     assert _frontmatter(minted)["verdict"] == "ready-to-merge"
@@ -167,10 +168,8 @@ def test_close_accepts_each_of_the_three_verdicts(tmp_path, monkeypatch):
         ("ready-to-merge", "changes-requested", "waived"), start=1
     ):
         runner.invoke(app, ["review", "start"])
-        args = ["review", "done", "--verdict", verdict]
-        if verdict == "waived":
-            args += ["--reason", "not reviewing this one"]
-        result = runner.invoke(app, args)
+        extra = ["--reason", "not reviewing this one"] if verdict == "waived" else []
+        result = review_done(runner, app, verdict, *extra)
         assert result.exit_code == 0, result.output
         assert _frontmatter(project_dir / f"review-{number}.md")["verdict"] == verdict
 
@@ -232,7 +231,7 @@ def test_waived_reason_is_not_required_by_the_other_verdicts(tmp_path, monkeypat
     project_dir = _project(tmp_path, monkeypatch)
     runner.invoke(app, ["review", "start"])
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     assert not _frontmatter(project_dir / "review-1.md")["reason"]
@@ -263,7 +262,7 @@ def test_stamp_records_todays_date_over_the_start_date(tmp_path, monkeypatch):
     cfg = config.load_config(tmp_path)
     review.start_round(tmp_path, cfg, "thing", today="2020-01-01")
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     stamped = str(_frontmatter(project_dir / "review-1.md")["date"])
@@ -275,7 +274,7 @@ def test_stamp_records_the_short_head_sha_inside_a_git_repo(tmp_path, monkeypatc
     sha = _git_repo(tmp_path)
     runner.invoke(app, ["review", "start"])
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     assert _frontmatter(project_dir / "review-1.md")["sha"] == sha
@@ -290,7 +289,7 @@ def test_stamp_is_empty_outside_git_and_the_close_still_succeeds(
     project_dir = _project(tmp_path, monkeypatch)
     runner.invoke(app, ["review", "start"])
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     fields = _frontmatter(project_dir / "review-1.md")
@@ -305,7 +304,7 @@ def test_ingest_replaces_an_untouched_skeleton_body_with_the_report(
     project_dir = _project(tmp_path, monkeypatch)
     runner.invoke(app, ["review", "start"])
     report = tmp_path / "report.md"
-    report.write_text("# Round 1\n\n## Findings\n\n- one nit.\n")
+    report.write_text("# Round 1\n\n## Findings\n\n- none\n")
 
     result = runner.invoke(
         app,
@@ -392,13 +391,14 @@ def _derived(root, cfg):
 def test_a_later_commit_leaves_a_closed_round_stale_free(tmp_path, monkeypatch):
     # REQ-08: the stamp is evidence for a human judgement call, never a derived
     # verdict. Committing after the review changes HEAD, and nothing else.
+    import reviewhelp
     from specflo import review
 
     monkeypatch.chdir(tmp_path)
     _git_repo(tmp_path)
     cfg = _execute_all_done(tmp_path)
     review.start_round(tmp_path, cfg, "thing", today="2026-08-01")
-    round_file = review.close_round(
+    round_file = reviewhelp.close_round(
         tmp_path, cfg, "thing", "ready-to-merge", today="2026-08-02"
     )
     before = _derived(tmp_path, cfg)
@@ -530,7 +530,7 @@ def test_malformed_close_of_a_file_without_frontmatter_keeps_its_own_number(
 ):
     _malformed_project(tmp_path, monkeypatch, "review-1.md", "no frontmatter here\n")
 
-    result = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
+    result = review_done(runner, app, "ready-to-merge")
 
     assert result.exit_code == 0, result.output
     fields = _frontmatter(tmp_path / "docs" / "projects" / "thing" / "review-1.md")
@@ -583,9 +583,7 @@ def test_latest_open_round_closing_it_frees_the_next_mint(tmp_path, monkeypatch)
     project_dir = _project(tmp_path, monkeypatch)
     _open_file(project_dir, 1)
     _open_file(project_dir, 2)
-    assert runner.invoke(
-        app, ["review", "done", "--verdict", "ready-to-merge"]
-    ).exit_code == 0
+    assert review_done(runner, app, "ready-to-merge").exit_code == 0
     assert _frontmatter(project_dir / "review-2.md")["verdict"] == "ready-to-merge"
 
     result = runner.invoke(app, ["review", "start"])
@@ -719,7 +717,7 @@ def test_directory_option_ingests_a_report_relative_to_dir(tmp_path, monkeypatch
     project_dir = _project(repo, monkeypatch)
     assert runner.invoke(app, ["review", "start"]).exit_code == 0
     report = repo / "report.md"
-    report.write_text("# Round 1\n\n## Findings\n\n- ingested via -C.\n")
+    report.write_text("# Round 1\n\n## Findings\n\n- none\n")
 
     outside = tmp_path / "outside"
     outside.mkdir()

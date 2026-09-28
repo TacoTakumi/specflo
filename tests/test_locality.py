@@ -10,6 +10,7 @@ project's locality through one resolver.
 import json
 
 import pytest
+import reviewhelp
 from typer.testing import CliRunner
 
 from specflo import config, daemon
@@ -388,7 +389,7 @@ def test_switch_to_a_hosted_project_reports_the_remote_error_not_no_project(chec
 def test_review_done_file_reads_the_report_in_the_checkout_not_on_the_daemon(checkout, live_daemon):
     runner.invoke(app, ["new", "Hosted Thing", "--remote", "home"])
     assert runner.invoke(app, ["review", "start"]).exit_code == 0
-    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- one nit, from the checkout.\n")
+    (checkout / "report.md").write_text("# Round 1\n\n## Findings\n\n- none\n")
     # A file that exists only beside the daemon is not the client's to read.
     (live_daemon["root"] / "secret.txt").write_text("the daemon's own file\n")
     daemon_only = str(live_daemon["root"] / "secret.txt")
@@ -424,6 +425,10 @@ def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, li
         (["review", "done", "--verdict", "ready-to-merge"], "hosted-thing/review-1",
          {"verdict": "ready-to-merge"}),
     ):
+        if args[:2] == ["review", "done"]:
+            reviewhelp.write_none(
+                live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing" / "review-1.md"
+            )
         result = runner.invoke(app, [*args, "--json"])
         assert result.exit_code == 0, (args, result.output)
         data = json.loads(result.output)
@@ -435,7 +440,7 @@ def test_doc_show_checkpoint_of_a_hosted_project_is_what_checkpoint_prints(check
     _hosted_in_spec()
     daemon_dir = str(live_daemon["root"] / daemon.PROJECTS_DIRNAME / "hosted-thing")
     assert runner.invoke(app, ["review", "start"]).exit_code == 0
-    assert runner.invoke(app, ["review", "done", "--verdict", "changes-requested"]).exit_code == 0
+    assert reviewhelp.review_done(runner, app, "changes-requested").exit_code == 0
 
     stored = runner.invoke(app, ["doc", "show", "checkpoint"]).output
     printed = runner.invoke(app, ["checkpoint"]).output
