@@ -80,6 +80,7 @@ path = "hatch_build.py"
 [dependency-groups]
 dev = [
     "pytest>=8.0",
+    "pytest-xdist>=3.8.0",
     # The serve extra, so a plain `uv run pytest` exercises the daemon too.
     "fastapi>=0.141.1",
     "uvicorn>=0.52.4",
@@ -93,4 +94,6 @@ markers = [
 ]
 # Rig tests create panes in the live herdr session; a plain pytest run must
 # never do that. `pytest -m rig` overrides (the command-line -m wins).
-addopts = "-m 'not rig' -rs"
+# -n 8 runs the suite on 8 pytest-xdist workers. `pytest -n 0` turns that
+# off (the command-line -n wins), for -s output or pdb.
+addopts = "-m 'not rig' -rs -n 8"
