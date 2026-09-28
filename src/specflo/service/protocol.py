@@ -332,7 +332,9 @@ class ProjectService(Protocol):
         ...
 
     def review_scope(self, slug: str) -> dict:
-        """The open round's scope, range and the earlier items it must check."""
+        """The open round's scope, range and the earlier items it must check,
+        with its sha and the sha of the project's first reviewed round (None
+        when no earlier round was reviewed)."""
         ...
 
     def review_prompt(self, slug: str, test_command: str | None = None) -> str:
@@ -360,12 +362,14 @@ class ProjectService(Protocol):
 
     def add_finding(
         self, slug: str, severity: str, text: str, location: str | None = None,
+        regression: bool = False,
     ) -> tuple[str, Path]:
         """Record one finding in the open round; ``(F-NN, round path)``.
         ``location``, ``file:line`` or ``file:a-b``, is needed for a blocker or
         should-fix. It is data: the caller checks it against the round's sha
         in its own checkout, where the code lives; a daemon holds only the
-        documents."""
+        documents. ``regression`` marks the finding a regression, data too:
+        the caller blames the location's lines in its checkout."""
         ...
 
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:

@@ -378,6 +378,6 @@ def test_an_add_with_at_is_the_same_for_a_local_and_a_hosted_project(
     assert not (live_daemon["root"] / ".git").exists()
     assert sent[0] == {
         "slug": SLUG, "severity": "blocker", "text": "The close drops the sha",
-        "location": "src/x.py:3",
+        "location": "src/x.py:3", "regression": False,
     }
     assert sent[2]["location"] is None

@@ -71,6 +71,10 @@ _WAYS_ON = (
 LOCATED = ("blocker", "should-fix")
 # How `review finding add --at` spells a location, named in its refusals.
 AT_FORM = "<file>:<line> or <file>:<line>-<line>"
+# The line `git blame --porcelain` starts each blamed line with: the commit
+# that last changed it, then the line's numbers. A content line starts with a
+# tab, so it never matches.
+_BLAME_COMMIT = re.compile(r"^([0-9a-f]{40,64}) \d+ \d+(?: \d+)?$", re.MULTILINE)
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
 # completion gate; changes-requested blocks it.
 READY = "ready-to-merge"
@@ -187,6 +191,20 @@ def _reviewed_sha(rounds: list[tuple[int, Path]]) -> str:
         if fields.get("verdict") in (READY, CHANGES_REQUESTED):
             return str(fields.get("sha", "") or "")
     return ""
+
+
+def _first_reviewed_sha(rounds: list[tuple[int, Path]]) -> str | None:
+    """The sha of the earliest of ``rounds`` that was reviewed; None when none was.
+
+    A finding on a line changed after it is a regression. A waived round
+    reviewed nothing, so it is never the first reviewed round. A reviewed
+    round that records no sha gives "", which marks nothing.
+    """
+    for _, path in rounds:
+        fields = frontmatter(path)
+        if fields.get("verdict") in (READY, CHANGES_REQUESTED):
+            return str(fields.get("sha", "") or "")
+    return None
 
 
 def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
@@ -877,20 +895,23 @@ def parse_location(at: str) -> tuple[str, int, int | None]:
 
 
 def validate_finding(
-    severity: str, text: str, location: str | None
+    severity: str, text: str, location: str | None, regression: bool = False,
 ) -> tuple[str, int, int | None] | None:
     """Refuse a finding :func:`add_finding` would refuse before it reads a file.
 
     Returns the parsed location, or None for a finding with none. Raises
-    ``SpecfloError`` on a severity outside :data:`SEVERITIES`, an empty or
-    multi-line text, a blocker or should-fix with no location, and a location
-    :func:`parse_location` refuses. The CLI asks first, so a bad argument is
-    named before it checks the location in its checkout.
+    ``SpecfloError`` on a severity outside :data:`SEVERITIES`, a nit marked
+    as a regression, an empty or multi-line text, a blocker or should-fix
+    with no location, and a location :func:`parse_location` refuses. The CLI
+    asks first, so a bad argument is named before it checks the location in
+    its checkout.
     """
     if severity not in SEVERITIES:
         raise SpecfloError(
             f"Unknown severity {severity!r}. Valid values: " + ", ".join(SEVERITIES) + "."
         )
+    if regression and severity not in LOCATED:
+        raise SpecfloError(f"A {severity} is never marked as a regression.")
     if not text.strip():
         raise SpecfloError("A finding needs a non-empty --text.")
     # Any line break the round file is later split on, not only \n and \r.
@@ -959,9 +980,67 @@ def check_location(
     return None
 
 
+def regression_mark(
+    root: Path, sha: str, first: str | None, severity: str,
+    path: str | None, start: int | None, end: int | None,
+) -> tuple[bool, str | None]:
+    """Whether a finding is a regression, and why that could not be told.
+
+    A blocker or should-fix finding is one when a line of its location,
+    blamed at ``sha`` (the round's), was last changed by a commit that
+    ``first`` - the sha of the project's first reviewed round - does not
+    contain: the commit is neither ``first`` nor an ancestor of it. ``first``
+    is None when no earlier round was reviewed. Such a finding, a nit and a
+    finding with no location are never marked, and git does not run.
+
+    Runs git in the checkout at ``root``, which must be the caller's, as
+    :func:`check_location` does. Returns ``(marked, None)`` once told, or
+    ``(False, why)`` when it could not be: a sha missing or not a commit id,
+    or git here unable to read a commit or blame the file. Such a finding
+    is not marked.
+    """
+    if severity not in LOCATED or first is None or path is None:
+        return False, None
+    for name, value in (("the round", sha), ("the first reviewed round", first)):
+        if not value:
+            return False, f"{name} records no sha"
+        # A sha may come from a daemon: only a commit id goes into git's argv.
+        if not re.fullmatch(r"[0-9a-f]{4,64}", value):
+            return False, f"{name}'s sha {value!r} is not a commit id"
+    lines = f"{start},{start if end is None else end}"
+    try:
+        for commit in (sha, first):
+            found = subprocess.run(
+                ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
+                cwd=root, capture_output=True, timeout=30,
+            )
+            if found.returncode != 0:
+                return False, f"this checkout has no commit {commit}"
+        blame = subprocess.run(
+            ["git", "blame", "--porcelain", "-L", lines, sha, "--", path],
+            cwd=root, capture_output=True, text=True, timeout=30,
+        )
+        if blame.returncode != 0:
+            return False, f"git cannot blame {path} at {sha} here"
+        unknown = None
+        for commit in sorted(set(_BLAME_COMMIT.findall(blame.stdout))):
+            # Exit 0: contained in first; 1: not, so changed after it.
+            ancestor = subprocess.run(
+                ["git", "merge-base", "--is-ancestor", commit, first],
+                cwd=root, capture_output=True, timeout=30,
+            )
+            if ancestor.returncode == 1:
+                return True, None
+            if ancestor.returncode != 0:
+                unknown = f"git cannot tell whether commit {commit} is in {first}"
+    except (OSError, subprocess.TimeoutExpired):
+        return False, f"git cannot blame {path} at {sha} here"
+    return False, unknown
+
+
 def add_finding(
     root: Path, cfg: SpecfloConfig, slug: str, severity: str, text: str,
-    location: str | None = None,
+    location: str | None = None, regression: bool = False,
 ) -> tuple[str, Path]:
     """Append ``- F-NN (severity) [location] text`` to the open round's Findings section.
 
@@ -972,18 +1051,27 @@ def add_finding(
     ``location`` is ``file:line`` or ``file:a-b``, written as sent: the caller
     checks it against the round's sha in its own checkout (see
     :func:`check_location`), since a daemon holds no code. A nit may have none.
+    ``regression`` marks the finding a regression, also as sent: the caller
+    blames its lines there (see :func:`regression_mark`).
 
     Raises ``SpecfloError`` - leaving every file untouched - on anything
-    :func:`validate_finding` refuses, no open round, or an open round with no
-    Findings section.
+    :func:`validate_finding` refuses, no open round, a regression mark with
+    no reviewed round before the open one, or an open round with no Findings
+    section.
     """
-    where = validate_finding(severity, text, location)
+    where = validate_finding(severity, text, location, regression)
     path_, start, end = where or (None, None, None)
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
         if path is None:
             raise SpecfloError(
                 "No review is open. Start one with `specflo review start`."
+            )
+        earlier = [(n, p) for n, p in round_files(root, cfg, slug) if p != path]
+        if regression and _first_reviewed_sha(earlier) is None:
+            raise SpecfloError(
+                "A finding is marked as a regression only after a reviewed round,"
+                f" and no round before {path.name} was reviewed."
             )
         doc = path.read_text()
         body = markdown.section_body(doc, FINDINGS_HEADER)
@@ -993,7 +1081,9 @@ def add_finding(
                 " by hand, then add the finding again."
             )
         finding_id = _next_finding_id(root, cfg, slug)
-        line = render_finding_line(Finding(finding_id, severity, text.strip(), path_, start, end))
+        line = render_finding_line(
+            Finding(finding_id, severity, text.strip(), path_, start, end, regression)
+        )
         kept = body.strip("\n")
         path.write_text(
             markdown.replace_section_body(
@@ -1019,6 +1109,9 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     A round with a base reviews the delta ``<base>..HEAD``; one without
     reviews the whole branch. ``sha`` is the commit the round opened at,
     which a caller checks a finding's location against in its own checkout.
+    ``first_reviewed_sha`` is the sha of the project's first reviewed round,
+    None when no earlier round was reviewed: a caller marks a finding on a
+    line changed after it a regression (see :func:`regression_mark`).
     Reads the round files and changes nothing. Raises ``SpecfloError`` when
     no round is open.
     """
@@ -1028,10 +1121,12 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     fields = frontmatter(path)
     number = _round_number(path, fields.get("round"))
     base = str(fields.get("base", "") or "")
+    earlier = [(n, p) for n, p in round_files(root, cfg, slug) if p != path]
     return {
         "round": number,
         "file": path.name,
         "sha": str(fields.get("sha", "") or ""),
+        "first_reviewed_sha": _first_reviewed_sha(earlier),
         "scope": DELTA if base else WHOLE_BRANCH,
         "base": base,
         "range": f"{base}..HEAD" if base else None,
