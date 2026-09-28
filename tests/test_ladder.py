@@ -500,6 +500,7 @@ def test_full_level_in_a_ladder_has_its_own_review_and_work(repo):
 
     assert "no user to interview" in payload and "D-01" in payload
     assert "Out of scope / Deferred" in payload
+    assert "take it back with `specflo review start`" in payload
     assert (repo / "docs" / "projects" / "thing" / "review-2.md").is_file()
     _ok(["advance"])
     _ok(["advance"])

@@ -1,7 +1,9 @@
 """Review rounds: the ``review-N.md`` artifacts a project accrues.
 
-A round is one end-of-execute whole-branch review, minted from a skeleton by
-``specflo review start`` and closed by ``specflo review done``. Every piece of
+A round is one end-of-execute review, minted from a skeleton by
+``specflo review start`` and closed by ``specflo review done``. Round 1 reviews
+the whole branch; a later round reviews only the diff since the latest reviewed
+round's sha, unless ``--full`` asks for the whole branch again. Every piece of
 review state - the round number, whether a round is open, its verdict, date and
 sha - lives in these files and nowhere else (D-03), so the read path is a glob
 over the project directory plus a frontmatter parse.
@@ -261,6 +263,8 @@ def start_round(
 def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
     """Stamp an open round nobody has written into with HEAD, if it moved."""
     fields = frontmatter(path)
+    if not fields:
+        return  # no frontmatter to read: rewriting it would empty round, base and level
     try:
         number = _round_number(path, fields.get("round"))
     except SpecfloError:
@@ -291,7 +295,7 @@ def _render(fields: dict, body: str) -> str:
     """A round file from its frontmatter mapping and body.
 
     Keys keep their minted order; any key a human added survives after them,
-    since the CLI reads only the five it wrote.
+    since the CLI reads only the ones in ``_FIELDS``.
     """
     ordered = {key: fields.get(key, "") or "" for key in _FIELDS}
     ordered.update({k: v for k, v in fields.items() if k not in _FIELDS})

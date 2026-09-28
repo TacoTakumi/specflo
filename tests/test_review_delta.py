@@ -395,3 +395,22 @@ def test_start_keeps_the_sha_of_a_round_already_under_review(tmp_path, monkeypat
     _start()
 
     assert _fields(project_dir / "review-1.md")["sha"] == opened_at
+
+
+def test_start_leaves_an_untouched_round_whose_frontmatter_does_not_parse(
+    tmp_path, monkeypatch
+):
+    # A hand-mangled round is its author's to fix: a restamp would write round,
+    # base and level back empty.
+    project_dir = _project(tmp_path, monkeypatch)
+    _repo(tmp_path)
+    _start()
+    path = project_dir / "review-1.md"
+    path.write_text(path.read_text().replace("round: 1", "round: [1", 1))
+    before = path.read_text()
+    _commit(tmp_path, "work.txt")
+
+    again = _start()
+
+    assert "(already open)" in again.output
+    assert path.read_text() == before

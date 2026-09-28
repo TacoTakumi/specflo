@@ -176,6 +176,7 @@ def test_next_step_review_hint_with_an_open_round_names_that_file():
                   "file": "review-3.md"}
     hint = _hint(open_round)
     assert "review-3.md" in hint
+    assert "specflo review start" in hint     # restamps a round a ladder opened early
     assert "review done" in hint
     assert "specflo advance" not in hint
 

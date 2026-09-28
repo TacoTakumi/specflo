@@ -102,9 +102,11 @@ def _review_hint(review: dict | None) -> str:
         )
     if review["open"]:
         return (
-            f"All tasks done - finish the open review round {review['file']}: the "
-            "reviewer works from `specflo review prompt` and records findings "
-            "through the CLI; then close it with `specflo review done`."
+            f"All tasks done - finish the open review round {review['file']}: run "
+            "`specflo review start` to take it back (a round nobody wrote into yet "
+            "takes HEAD), hand a fresh-context "
+            "reviewer the brief `specflo review prompt` prints and have it record "
+            "findings through the CLI; then close it with `specflo review done`."
         )
     if review["passing"]:
         if review.get("after_changes"):

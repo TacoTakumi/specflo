@@ -852,6 +852,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   generated directory cannot be removed, the release through the API, a
   team release and the pool page's control all end the lease, write the
   audit line and answer success; the failure is logged.
+- **An open review round takes the commit its reviewer reads.** The
+  open-round hint and the ladder's full-level payload now tell the agent to
+  run `specflo review start` before the review, which stamps an untouched
+  round with HEAD. Before, a round a ladder opened at the climb kept the
+  climb's sha when the agent followed the hint.
+- **`review start` leaves a round with broken frontmatter alone.** An
+  untouched open round whose frontmatter does not parse is handed back as it
+  is. Before, `review start` rewrote it with round, base and level empty.
 
 ## [0.14.0]
 

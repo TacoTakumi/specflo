@@ -640,7 +640,9 @@ def _ladder_clause(project, record: dict) -> str:
             " it or supersede it with `specflo decision add --supersedes`, take up every"
             " item in the brainstorm's Out of scope / Deferred section, extend the"
             " spec and plan to match, and close the open review round with a"
-            " fresh-context review before you complete the level."
+            " fresh-context review before you complete the level: take it back with"
+            " `specflo review start` when the work is committed, so a round nobody"
+            " wrote into yet takes the commit its reviewer reads."
         )
     return clause
 
