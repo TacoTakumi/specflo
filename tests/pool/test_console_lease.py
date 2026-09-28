@@ -41,6 +41,7 @@ from specflo.daemon import pool_routes
 from specflo.daemon.poolstore import ConsoleAttachment, Lease, Resource
 from specflo.pool import console, ledger, runner, service, waiting
 from specflo.pool.config import Member
+from waits import scaled, wait_until
 
 from .test_console_attach import AGENT, SLOT, asks, console_member, console_rows, start_host
 from .test_console_attach import console_daemon, short_interval  # noqa: F401  (fixtures)
@@ -48,7 +49,7 @@ from .test_expiry import prompt, real_time
 from .test_lease_request import checkout, pool_daemon  # noqa: F401  (fixtures)
 from .test_preempt import stamped
 from .test_preempt import stamps  # noqa: F401  (fixture)
-from .test_runner import POOL_TOKEN, pid_alive, wait_until
+from .test_runner import POOL_TOKEN, pid_alive
 
 cli = CliRunner()
 
@@ -401,8 +402,13 @@ def test_the_holders_stop_on_a_member_the_pool_starts_works_as_before(pool_rig):
     svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
     grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
     running = pool_rig.status(grant.agent)
+    # the member's pi runs, so its sandbox is made: a stop that comes while
+    # bwrap is still making it can end bwrap's outer process alone, and the
+    # pi inside then runs on until the host has waited twice for its output
+    # to end, some 10 s
+    pool_rig.recorded()
 
-    stopped = holder_verb(grant, "stop")
+    stopped = holder_verb(grant, "stop", "--timeout", str(scaled(30)))
 
     assert stopped.exit_code == 0, stopped.output
     assert wait_until(lambda: not pid_alive(running["host_pid"]))
