@@ -181,9 +181,6 @@ def waiting_ids(pool_rig) -> list[str]:
         return [row.id for row in store.list_waiting()]
 
 
-@pytest.mark.skip(
-    reason="Removed: this test is flaky and causes long waits. A future project will deal with it."
-)
 @pytest.mark.parametrize("projects", ["one project", "two projects"])
 def test_a_lease_in_one_pool_makes_a_request_to_the_other_wait_for_the_shared_member(
     pool_rig, projects
@@ -194,6 +191,12 @@ def test_a_lease_in_one_pool_makes_a_request_to_the_other_wait_for_the_shared_me
         other = pool_rig.tmp_path / "another-project"
         other.mkdir()
     first = svc.grant("rebasers", holder_label="orchestrator-a", cwd=pool_rig.work)
+    # A grant returns before its pi writes down how it was launched, so the
+    # first lease's record would still be the newest after the second grant.
+    # It is waited for and forgotten: the record read at the end is the
+    # launch of the request that waited.
+    assert pool_rig.recorded()["cwd"] == str(pool_rig.work)
+    pool_rig.forget_records()
     asked = waiting.Waiting(
         svc, "critics", holder_label="orchestrator-b", cwd=other, wait=3600,
         mint_id=lambda: "request-b",
