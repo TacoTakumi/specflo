@@ -371,16 +371,18 @@ class ProjectService(Protocol):
 
     # --- checkpoint and status ---------------------------------------------
 
-    def build_checkpoint(self, slug: str) -> dict:
-        """The resume-prompt payload derived from current state."""
+    def build_checkpoint(self, slug: str, test_command: str | None = None) -> dict:
+        """The resume-prompt payload derived from current state. ``test_command``
+        is the caller's checkout command: a daemon holds only the documents."""
         ...
 
     def write_checkpoint(self, slug: str) -> Path:
         """Render the checkpoint and write it into the project."""
         ...
 
-    def build_status(self, slug: str) -> dict:
-        """The status payload derived from current state."""
+    def build_status(self, slug: str, test_command: str | None = None) -> dict:
+        """The status payload derived from current state. ``test_command`` is
+        the caller's checkout command: a daemon holds only the documents."""
         ...
 
     # --- documents ---------------------------------------------------------

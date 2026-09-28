@@ -46,6 +46,7 @@ def build_checkpoint(
     today: str | None = None,
     *,
     locators: bool = False,
+    test_command: str | None = None,
 ) -> dict:
     """Derive the resume-prompt payload for ``project`` from current state.
 
@@ -59,6 +60,10 @@ def build_checkpoint(
     locator every command prints, instead of its path under ``root``. A daemon
     asks for that: its paths name nothing on the clients it serves, and the
     locator is what ``doc show`` resolves wherever the file lives.
+
+    ``test_command`` is the caller's checkout command, named where Do next
+    calls for the whole suite; None reads ``cfg``'s, which is only right where
+    ``root`` is that checkout, never on a daemon.
     """
     directory = project.path
 
@@ -106,10 +111,12 @@ def build_checkpoint(
         # while the recorded phase below is preserved so resume returns to it.
         do_next = workflow.next_step(project.phase, shelved=True)
     elif project.phase == "execute":
+        if test_command is None and cfg is not None:
+            test_command = cfg.test_command
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
             review=review_info, level=project.level,
-            test_command=cfg.test_command if cfg is not None else None,
+            test_command=test_command,
         )
         if cfg is not None:
             # auto imports this module, so it is read here, at call time.

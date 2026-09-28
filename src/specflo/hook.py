@@ -153,14 +153,14 @@ def _resume(cwd: Path, *, direct: bool, directory_source: str | None) -> tuple:
         return _unreachable_note(cwd, exc), None
     if found is None:
         return "", None
-    root, _cfg, service, project = found
+    root, cfg, service, project = found
     # A ladder level that completed is a pause between levels: it reseeds.
     if project.status == SHELVED_STATUS or (
         project.status == COMPLETE_STATUS
-        and auto.ladder_step(root, _cfg, project) is None
+        and auto.ladder_step(root, cfg, project) is None
     ):
         return "", None
-    payload = service.build_checkpoint(project.slug)
+    payload = service.build_checkpoint(project.slug, test_command=cfg.test_command)
     if config.hosting_remote(root, project.slug) is not None:
         payload = checkpoint.hosted_view(payload)
     body = checkpoint.render_checkpoint(payload)
@@ -191,7 +191,7 @@ def _directory_override_line(root: Path, directory_source: str | None = None) ->
     return f"Directory override: specflo commands act on {root} (via {via}).\n"
 
 
-def _user_message(root: Path, service, project) -> str:
+def _user_message(root: Path, cfg: config.SpecfloConfig, service, project) -> str:
     """The user-visible session-start message: the ``specflo status`` block + a prompt.
 
     A SessionStart hook can re-ground the *agent* (via injected context) but
@@ -200,9 +200,10 @@ def _user_message(root: Path, service, project) -> str:
     *is* status) and closes with the concrete next move: ``continue`` to resume
     the project in flight. Only in-flight projects reach here; a complete or
     shelved one is silent upstream in :func:`reseed_text`. Harness-neutral
-    wording.
+    wording. The next step names this checkout's ``test_command``: a daemon
+    holds only the documents.
     """
-    info = service.build_status(project.slug)
+    info = service.build_status(project.slug, test_command=cfg.test_command)
     remote = config.hosting_remote(root, project.slug)
     if remote is not None:
         info = status.hosted_view(info, remote)
@@ -239,8 +240,8 @@ def claude_session_start_output(
             # the human gets the same line, since there is no status to show.
             message = context.strip()
         else:
-            root, _cfg, service, project = found
-            message = _user_message(root, service, project)
+            root, cfg, service, project = found
+            message = _user_message(root, cfg, service, project)
         payload = {
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",

@@ -11,6 +11,7 @@ hosted fixture asserts each is really there before it is folded. Everything
 else is identical.
 """
 
+import json
 import re
 from pathlib import Path
 
@@ -78,6 +79,10 @@ def _recorded_id(output: str) -> str:
     return output.split()[1].rstrip(".")
 
 
+# The one line of the status block that says where the project lives.
+_WHERE_LINE = r"^(Dir:     .*|Remote:  .*)$"
+
+
 def _normalize(text: str, project_dirs: list[str]) -> str:
     """Fold what may differ by locality and nothing else.
 
@@ -89,7 +94,7 @@ def _normalize(text: str, project_dirs: list[str]) -> str:
     """
     spellings = "|".join(re.escape(d) for d in sorted(project_dirs, key=len, reverse=True))
     text = re.sub(rf"(?:{spellings})/([A-Za-z0-9_-]+)\.md", rf"{SLUG}/\1", text)
-    text = re.sub(r"^(Dir:     .*|Remote:  .*)$", "<where>", text, flags=re.MULTILINE)
+    text = re.sub(_WHERE_LINE, "<where>", text, flags=re.MULTILINE)
     return re.sub(r"^- Actor: .*\n", "", text, flags=re.MULTILINE)
 
 
@@ -409,3 +414,68 @@ def test_a_set_test_command_gives_a_hosted_reviewer_the_same_brief(
         assert f"`{TEST_COMMAND}`" in brief.split("\n## Tests\n", 1)[1], brief
         briefs.append(_without_follow_up_lines(brief))
     assert briefs[0] == briefs[1], f"local:\n{briefs[0]}\nhosted:\n{briefs[1]}"
+
+
+# The surfaces that print the next-step hint, the session-start ones included.
+_HINT_SURFACES = [
+    ["status"],
+    ["checkpoint"],
+    ["hook", "reseed"],
+    ["hook", "reseed", "--format", "claude"],
+]
+
+
+def _whole_suite_steps():
+    """Set test_command in the checkout, finish every task, and read the hint
+    on each surface where it calls for the whole suite: before the first
+    round, and once a round that asked for changes passes."""
+    pipeline = _pipeline()
+    last = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "done"])
+    surfaces = [(args, None) for args in _HINT_SURFACES]
+    return [
+        (["config", "set", "test_command", TEST_COMMAND], None),
+        *pipeline[: last + 1],
+        *surfaces,
+        (["review", "start"], None),
+        (["review", "finding", "add", "--severity", "blocker", "--text", "One"], None),
+        (["review", "done"], None),
+        (["review", "start"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A typo"], None),
+        (["review", "done"], None),
+        *surfaces,
+    ]
+
+
+def _session_start(text: str) -> str:
+    """The Claude session-start JSON as its two texts, the status block's
+    where line folded as the plain status output's is."""
+    payload = json.loads(text)
+    message = re.sub(_WHERE_LINE, "<where>", payload["systemMessage"], flags=re.MULTILINE)
+    return f"{message}\n{payload['hookSpecificOutput']['additionalContext']}"
+
+
+def test_a_set_test_command_names_the_whole_suite_alike_on_every_hosted_surface(
+    tmp_path, monkeypatch, live_daemon
+):
+    local, _ = _local_steps(tmp_path, monkeypatch, _whole_suite_steps())
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, _whole_suite_steps())
+    assert len(local) == len(hosted) == len(_whole_suite_steps()) + 1
+    hint = f"whole test suite (`{TEST_COMMAND}`)"
+    named = 0
+    for mine, theirs in zip(local[1:], hosted[1:]):
+        args = mine[0]
+        claude = args[-2:] == ["--format", "claude"]
+        if claude:
+            mine = (args, mine[1], _session_start(mine[2]))
+            theirs = (args, theirs[1], _session_start(theirs[2]))
+        assert mine[1:] == theirs[1:], f"{' '.join(args)}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+        if args in _HINT_SURFACES or args[:2] == ["task", "done"]:
+            # The session-start JSON names it twice: in the status block and
+            # in the checkpoint.
+            assert mine[1] == 0, mine[2]
+            assert mine[2].count(hint) == (2 if claude else 1), f"{' '.join(args)}:\n{mine[2]}"
+            named += 1
+    # The last task done, then each surface before the first round and after
+    # the fixes.
+    assert named == 1 + 2 * len(_HINT_SURFACES)

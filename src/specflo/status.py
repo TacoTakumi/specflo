@@ -17,12 +17,16 @@ from . import auto, checkpoint, plan, projects, review, validators, workflow
 from .config import SpecfloConfig, display_path
 
 
-def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> dict:
+def build_status(
+    root: Path, cfg: SpecfloConfig, project: projects.Project, test_command: str | None = None
+) -> dict:
     """Derive the status payload for the active ``project`` (read-only).
 
     This is the dict emitted by ``specflo status --json``; ``dir`` is kept
     absolute for machine consumers, while :func:`render_status` relativizes it
-    for humans.
+    for humans. ``test_command`` is the caller's checkout command, named where
+    the next step calls for the whole suite; None reads ``cfg``'s, which is
+    only right where ``root`` is that checkout, never on a daemon.
     """
     progress = None
     milestone = None
@@ -58,7 +62,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         project.phase, progress=progress, complete=complete, shelved=shelved,
         validates=validates, review=review_info, level=project.level,
         unattended=auto.run_under_way(root, cfg, project),
-        test_command=cfg.test_command,
+        test_command=cfg.test_command if test_command is None else test_command,
     )
     ladder_next = auto.ladder_step(root, cfg, project) or auto.ladder_full_step(
         root, cfg, project

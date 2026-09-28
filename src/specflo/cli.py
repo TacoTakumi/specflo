@@ -303,17 +303,27 @@ def _service(root: Path, cfg: config.SpecfloConfig, slug: str | None = None) -> 
         raise _die(str(exc))
 
 
-def _client_checkpoint(svc: ProjectService, root: Path, slug: str) -> dict:
-    """The checkpoint payload as this checkout reports it: locators for a hosted project."""
-    payload = svc.build_checkpoint(slug)
+def _client_checkpoint(
+    svc: ProjectService, root: Path, cfg: config.SpecfloConfig, slug: str
+) -> dict:
+    """The checkpoint payload as this checkout reports it: locators for a hosted project.
+
+    Do next names this checkout's ``test_command``: a daemon holds only the documents.
+    """
+    payload = svc.build_checkpoint(slug, test_command=cfg.test_command)
     if config.hosting_remote(root, slug) is not None:
         return checkpoint.hosted_view(payload)
     return payload
 
 
-def _client_status(svc: ProjectService, root: Path, slug: str) -> dict:
-    """The status payload as this checkout reports it: the remote, not a directory, for a hosted project."""
-    info = svc.build_status(slug)
+def _client_status(
+    svc: ProjectService, root: Path, cfg: config.SpecfloConfig, slug: str
+) -> dict:
+    """The status payload as this checkout reports it: the remote, not a directory, for a hosted project.
+
+    The next step names this checkout's ``test_command``: a daemon holds only the documents.
+    """
+    info = svc.build_status(slug, test_command=cfg.test_command)
     remote = config.hosting_remote(root, slug)
     if remote is not None:
         return status_view.hosted_view(info, remote)
@@ -972,7 +982,7 @@ def status(
 
     svc = _service(root, cfg)
     try:
-        info = _client_status(svc, root, cfg.active_project)
+        info = _client_status(svc, root, cfg, cfg.active_project)
     except SpecfloError as exc:
         if json_output:
             typer.echo(
@@ -1116,7 +1126,7 @@ def checkpoint_(
     svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
-        payload = _client_checkpoint(svc, root, slug)
+        payload = _client_checkpoint(svc, root, cfg, slug)
         svc.write_checkpoint(slug)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -1709,7 +1719,7 @@ def reopen(
         # copy of the wording (REQ-04, D-06). The clear-point stays unconditional,
         # as it was before that rewiring: if the next step can't be derived, fall
         # back to the clear-point alone rather than emitting nothing (REQ-10).
-        cont = _seam_continuation(svc, slug, root)
+        cont = _seam_continuation(svc, slug, root, cfg)
         typer.echo(cont["continuation"] or continuation.clear_point_only())
 
 
@@ -2033,7 +2043,9 @@ def task_note(
 _CONTINUATION_KEYS = ("next_step", "checkpoint", "checkpoint_locator", "continuation")
 
 
-def _seam_continuation(svc: ProjectService, slug: str, root: Path) -> dict:
+def _seam_continuation(
+    svc: ProjectService, slug: str, root: Path, cfg: config.SpecfloConfig
+) -> dict:
     """The continuation fields for a seam that has already mutated state.
 
     Used by `task done` and `reopen` — the seams whose next step is best derived
@@ -2060,7 +2072,7 @@ def _seam_continuation(svc: ProjectService, slug: str, root: Path) -> dict:
     project that simply had nothing to say.
     """
     try:
-        payload = _client_checkpoint(svc, root, slug)
+        payload = _client_checkpoint(svc, root, cfg, slug)
         # Inside the guard: reading the payload and rendering must be covered too,
         # or the "never fail the caller" guarantee would be narrower than stated.
         return {
@@ -2179,7 +2191,7 @@ def task_done(
     written = _refresh_checkpoint(svc, slug)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
-    cont = _seam_continuation(svc, slug, root)
+    cont = _seam_continuation(svc, slug, root, cfg)
     if not written:
         # The continuation derives from the project's state, not from the file,
         # so it stands; the checkpoint location does not.

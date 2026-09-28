@@ -473,10 +473,10 @@ class LocalProjectService:
 
     # --- checkpoint and status ---------------------------------------------
 
-    def build_checkpoint(self, slug: str) -> dict:
+    def build_checkpoint(self, slug: str, test_command: str | None = None) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
         return checkpoint.build_checkpoint(
-            self.root, project, cfg=self.cfg, locators=self.hosted
+            self.root, project, cfg=self.cfg, locators=self.hosted, test_command=test_command
         )
 
     def write_checkpoint(self, slug: str) -> Path:
@@ -485,9 +485,9 @@ class LocalProjectService:
             self.root, project, cfg=self.cfg, locators=self.hosted
         )
 
-    def build_status(self, slug: str) -> dict:
+    def build_status(self, slug: str, test_command: str | None = None) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
-        info = status.build_status(self.root, self.cfg, project)
+        info = status.build_status(self.root, self.cfg, project, test_command=test_command)
         if self.hosted:
             # The one path the payload carries as text: relative, like the
             # paths the wire encodes, so the host's layout never leaves.
