@@ -111,11 +111,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   round that asked for changes passes) name it in backticks, in `status`,
   `checkpoint`, `guide` and `advance`. `specflo review prompt` tells the
   reviewer to run it each round, in place of "Run only the tests for the
-  files in scope"; a hosted project gets the same brief, since the client
-  passes its checkout's command. The `specflo-quick` and `specflo-execute`
-  skills tell the agent to run the command `specflo config get test_command`
-  prints at each step that runs the whole suite. Unset, the hints, the brief
-  and the skills read as before.
+  files in scope". A hosted project gets the same hints and brief, since the
+  client passes its checkout's command. A daemon never names the command set
+  in its own root, and the `checkpoint.md` it writes names none. The
+  `specflo-quick` and `specflo-execute` skills tell the agent to run the
+  command `specflo config get test_command` prints at each step that runs the
+  whole suite. Unset, the hints, the brief and the skills read as before.
 - **Level caps in auto runs** - a cap never stops a run or moves the project
   up: a quick brief with two checks is told to keep one, and a fast project
   past its caps only warns. The checkpoint says so. The `outgrew-level` stop
