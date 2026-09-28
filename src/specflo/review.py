@@ -63,13 +63,24 @@ CHECK_STATES = ("closed", "open")
 _CHECK_LINE = re.compile(r"^- (F-(\d+)) (closed|open)$")
 _CHECK_HOW = "`specflo review finding check F-NN closed|open`"
 # Where the round that recorded a finding says it was settled without a fix,
-# one line per finding: '- F-NN rejected: <reason>'. A settled finding leaves
-# the ledger. The section is appended to a closed round, so a round file with
-# none reads as it always did.
+# one line per finding: '- F-NN rejected: <reason>', or '- F-NN deferred FU-NN'
+# naming the follow-up a later project picks it up from. A settled finding
+# leaves the ledger. The section is appended to a closed round, so a round
+# file with none reads as it always did.
 SETTLED_HEADER = "## Settled"
 REJECTED = "rejected"
+DEFERRED = "deferred"
 _SETTLED_LINE = re.compile(
-    r"^- (?P<id>F-(?P<number>\d+)) (?P<kind>" + REJECTED + r"): (?P<detail>\S.*)$"
+    r"^- (?P<id>F-(?P<number>\d+)) (?:" + REJECTED + r": (?P<reason>\S.*)"
+    r"|" + DEFERRED + r" (?P<followup>FU-\d+))$"
+)
+# Why a daemon-held project's finding is never deferred: follow-ups work only
+# for projects in a checkout, and the refusal names the follow-up that will
+# route a hosted project's.
+_HOSTED_DEFER = (
+    "Deferring a finding files a follow-up, and follow-ups for a hosted project"
+    " are not routed yet (FU-90). Fix the finding with a task that names it in"
+    " --fixes, or reject it with `specflo review finding reject F-NN --reason <why>`."
 )
 # What a refused close can do next, named in every refusal of its findings.
 _WAYS_ON = (
@@ -799,13 +810,17 @@ def derive_verdict(
 
 def parse_settled(doc: str) -> dict[int, tuple[str, str]]:
     """Each finding a document's Settled section settles, keyed by its number:
-    how it was settled and the rest of its line, such as a rejection's reason.
+    how it was settled and the rest of its line, a rejection's reason or a
+    deferral's FU-NN.
 
     A line in another form settles nothing: this reads a closed round and
     never refuses it.
     """
     return {
-        int(match.group("number")): (match.group("kind"), match.group("detail"))
+        int(match.group("number")): (
+            (REJECTED, match.group("reason")) if match.group("reason") is not None
+            else (DEFERRED, match.group("followup"))
+        )
         for line in _section_lines(doc, SETTLED_HEADER) or []
         if (match := _SETTLED_LINE.match(line))
     }
@@ -1450,7 +1465,7 @@ def _settled_why(finding_id: str, settled: tuple[str, str]) -> str:
 
 def settle_finding(
     root: Path, cfg: SpecfloConfig, slug: str, finding_id: str, kind: str,
-    line: Callable[[str], str],
+    line: Callable[[Finding, Path], str],
 ) -> tuple[str, Path]:
     """Write a line under Settled in the round that recorded ``finding_id``.
 
@@ -1458,9 +1473,10 @@ def settle_finding(
     Only an open item is settled: a blocker or should-fix finding of a
     closed round that no reviewed round has checked closed and none has
     settled. ``kind`` is how it is settled, named in the refusals. ``line``
-    is called with the F-NN only once every refusal has passed, under the
-    lock, and gives the whole line to write, so whatever it records beside
-    the line is recorded only for a finding that settles.
+    is called with the finding, as that round records it, and the round's
+    path only once every refusal has passed, under the lock, and gives the
+    whole line to write, so whatever it records beside the line is recorded
+    only for a finding that settles. A refusal it raises writes no line.
 
     The round's first settled finding appends the Settled section to its
     file. Every byte before the section stays: the round is closed, and its
@@ -1514,11 +1530,12 @@ def settle_finding(
             raise SpecfloError(f"{why} Open items: {listed}.")
         finding_id = items[key]
         # The round whose finding the ledger reads: the last that records it.
-        path = next(
-            path for n, path in reversed(rounds)
-            if n < upto and key in _defined_numbers(path.read_text())
+        path, finding = next(
+            (path, finding) for n, path in reversed(rounds) if n < upto
+            for text in _findings_lines(path.read_text()) or []
+            if (finding := parse_finding_line(text)) and finding.number == key
         )
-        entry = line(finding_id)
+        entry = line(finding, path)
         text = path.read_text()
         body = markdown.section_body(text, SETTLED_HEADER)
         if body is None:
@@ -1554,8 +1571,53 @@ def reject_finding(
     require_one_line("A rejection's --reason", reason)
     reason = reason.strip()
     return settle_finding(
-        root, cfg, slug, finding_id, REJECTED, lambda found: f"- {found} {REJECTED}: {reason}"
+        root, cfg, slug, finding_id, REJECTED,
+        lambda finding, _: f"- {finding.id} {REJECTED}: {reason}",
     )
+
+
+def defer_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, finding_id: str, do: str,
+    hosted: bool = False,
+) -> tuple[str, Path, str]:
+    """Settle an open item as deferred: file a follow-up for it and write
+    '- F-NN deferred FU-NN' under Settled in the round that recorded it (see
+    :func:`settle_finding`).
+
+    Returns ``(F-NN, that round's path, FU-NN)``. The follow-up's title is
+    the finding's text, its Do line ``do``, what a later project should do,
+    and its From line the round file and the F-NN, such as 'review-1.md
+    F-01'. It is filed only once every refusal has passed, before the round
+    is written, so a follow-up that cannot be added refuses the deferral and
+    neither is written.
+
+    ``hosted`` says a daemon holds the project. Follow-ups work only for
+    projects in a checkout, so a hosted deferral is refused, naming the
+    follow-up that will route them, before anything else is checked.
+
+    Raises ``SpecfloError``, leaving every file untouched, on that, on an
+    empty or multi-line ``do``, before any file is read, and on anything
+    :func:`settle_finding` refuses.
+    """
+    if hosted:
+        raise SpecfloError(_HOSTED_DEFER)
+    if not (do or "").strip():
+        raise SpecfloError(
+            "A deferral needs a non-empty --do, so the follow-up says what a later"
+            " project should do."
+        )
+    require_one_line("A deferral's --do", do)
+    filed: list[str] = []
+
+    def line(finding: Finding, path: Path) -> str:
+        entry = followup.add_followup(
+            root, cfg, slug, finding.text, do, source=f"{path.name} {finding.id}"
+        )
+        filed.append(entry.id)
+        return f"- {finding.id} {DEFERRED} {entry.id}"
+
+    deferred, path = settle_finding(root, cfg, slug, finding_id, DEFERRED, line)
+    return deferred, path, filed[0]
 
 
 def waive_round(

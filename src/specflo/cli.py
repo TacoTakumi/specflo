@@ -2727,6 +2727,45 @@ def review_finding_reject(
         typer.echo(f"Rejected {rejected} in {locator}.")
 
 
+@finding_app.command(
+    "defer",
+    epilog='Example: specflo review finding defer F-02 --do "Name the command in every refusal"',
+)
+def review_finding_defer(
+    finding_id: str = typer.Argument(..., metavar="<F-NN>", help="An open blocker or should-fix item."),
+    do: str = typer.Option(
+        ..., "--do", help="What a later project should do about it (one line)."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Defer an open finding to a follow-up (FU-NN): no round checks it and no task fixes it."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    # Refused before any request goes out; the daemon refuses a direct call too.
+    remote = config.hosting_remote(root, slug)
+    if remote is not None:
+        raise _die(
+            f"Project {slug!r} is hosted on remote {remote!r}; deferring a finding files"
+            " a follow-up, and follow-ups for a hosted project are not routed yet"
+            " (FU-90). Fix the finding with a task that names it in --fixes, or reject"
+            " it with `specflo review finding reject F-NN --reason <why>`."
+        )
+    svc = _service(root, cfg)
+    try:
+        deferred, path, followup_id = svc.defer_finding(slug, finding_id, do)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    # The item has left the ledger, which the next-step hint names.
+    _refresh_checkpoint(svc, slug)
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps({
+            "id": deferred, "followup": followup_id, "do": do.strip(),
+            "locator": locator, "path": reported,
+        }))
+    else:
+        typer.echo(f"Deferred {deferred} in {locator} to {followup_id} in {slug}/followup.")
+
+
 @doc_app.command("show", epilog="Example: specflo doc show brainstorm")
 def doc_show(
     artifact: str = typer.Argument(

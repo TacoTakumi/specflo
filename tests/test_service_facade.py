@@ -213,6 +213,12 @@ def _drive_every_operation(service, projects_root, reported=None):
         svc.check_finding(slug, "F-01", "closed")
     with pytest.raises(SpecfloError, match="finding of the open round review-1.md"):
         svc.reject_finding(slug, "F-01", "Style only")
+    # A daemon refuses every deferral: its follow-ups are not routed yet.
+    hosted = isinstance(service, RemoteProjectService)
+    with pytest.raises(
+        SpecfloError, match="FU-90" if hosted else "finding of the open round review-1.md"
+    ):
+        svc.defer_finding(slug, "F-01", "Rename it later")
     assert svc.validate_artifact(slug, "execute") != []
     closed = svc.close_round(slug, "ready-to-merge")
     assert (closed.path, closed.verdict) == (round_path, "ready-to-merge")

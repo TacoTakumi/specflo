@@ -487,6 +487,13 @@ class LocalProjectService:
     def reject_finding(self, slug: str, finding_id: str, reason: str) -> tuple[str, Path]:
         return review.reject_finding(self.root, self.cfg, slug, finding_id, reason)
 
+    def defer_finding(self, slug: str, finding_id: str, do: str) -> tuple[str, Path, str]:
+        # Refused on a daemon, so a direct protocol call cannot defer a hosted
+        # project's finding either: follow-ups work only in a checkout.
+        return review.defer_finding(
+            self.root, self.cfg, slug, finding_id, do, hosted=self.hosted
+        )
+
     def waive_round(self, slug: str, reason: str, sha: str | None = None) -> Path:
         return review.waive_round(self.root, self.cfg, slug, reason, sha=sha)
 
