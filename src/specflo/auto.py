@@ -27,6 +27,7 @@ from . import (
     ladder as ladder_module,
     plan as plan_module,
     projects,
+    review as review_module,
     spec as spec_module,
     validators,
 )
@@ -116,6 +117,9 @@ STOP_OUTGREW_LEVEL = "outgrew-level"
 # A ladder level completed but the ladder cannot climb (its next branch
 # exists, or the level was changed by hand); the payload says why.
 STOP_LADDER_BLOCKED = "ladder-blocked"
+# The latest review round asks for changes and the level has used its round
+# budget: one more round or a waive is the user's call, so the run hands off.
+STOP_REVIEW_BUDGET = "review-budget"
 # Not a run condition but a caller-side one: no specflo root, no active project,
 # or an unreadable project. The payload is empty, so there is nothing to continue.
 STOP_UNAVAILABLE = "unavailable"
@@ -126,6 +130,7 @@ STOP_REASONS = (
     STOP_PROJECT_COMPLETE,
     STOP_OUTGREW_LEVEL,
     STOP_LADDER_BLOCKED,
+    STOP_REVIEW_BUDGET,
     STOP_UNAVAILABLE,
 )
 
@@ -836,6 +841,16 @@ def auto_pass_result(
             state["ladder"] = ladder
             save_run_state(root, cfg, project.slug, state)
             project = projects.load_project(root, cfg, project.slug)
+        # The review budget is spent: the next round, or a waive, is the
+        # user's choice, so the pass hands off without counting.
+        if ladder is None and project.phase == "execute":
+            budget = review_module.budget(root, cfg, project.slug)
+            if budget["spent"]:
+                _mark_run_ended(root, cfg, project.slug)
+                return _pass_result(
+                    escalation_message(review_module.budget_message(budget)),
+                    STOP_REVIEW_BUDGET,
+                )
         # Over the level's cap (a fact of the documents): the run never stops
         # or moves up for it. Quick cuts down to one check; fast only warns.
         extra = None

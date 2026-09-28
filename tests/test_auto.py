@@ -13,7 +13,7 @@ from pathlib import Path
 from typer.testing import CliRunner
 
 from conftest import live_keys
-from specflo import auto, brainstorm, checkpoint, config, hook, projects, spec, workflow
+from specflo import auto, brainstorm, checkpoint, config, hook, projects, review, spec, workflow
 from specflo.cli import app
 
 runner = CliRunner()
@@ -861,7 +861,7 @@ def test_no_module_duplicates_the_continuation_wording():
 def test_stop_reasons_are_distinct_named_constants():
     reasons = (auto.STOP_KILL_SWITCH, auto.STOP_PASS_CAP, auto.STOP_STALL,
                auto.STOP_PROJECT_COMPLETE, auto.STOP_OUTGREW_LEVEL,
-               auto.STOP_LADDER_BLOCKED, auto.STOP_UNAVAILABLE)
+               auto.STOP_LADDER_BLOCKED, auto.STOP_REVIEW_BUDGET, auto.STOP_UNAVAILABLE)
     assert all(isinstance(r, str) and r for r in reasons)
     assert len(set(reasons)) == len(reasons)
     assert set(auto.STOP_REASONS) == set(reasons)
@@ -1162,3 +1162,58 @@ def test_a_quick_project_over_its_cap_leaves_the_line_in_checkpoint_md(tmp_path,
     assert "Over quick level's cap" in checkpoint_md.read_text()
 
 
+
+
+# --- the review round budget -----------------------------------------------------
+
+
+def _changes_requested_rounds(tmp_path, count, slug="my-thing"):
+    """``count`` closed changes-requested rounds at the project's full level."""
+    project_dir = tmp_path / "docs" / "projects" / slug
+    for number in range(1, count + 1):
+        (project_dir / f"review-{number}.md").write_text(
+            f"---\nround: {number}\nverdict: changes-requested\ndate: '2026-08-22'\n"
+            f"sha: ''\nlevel: full\nreason: ''\n---\n\n# Review round {number}\n\n"
+            f"## Findings\n\n- F-0{number} (blocker) One\n"
+        )
+
+
+def test_review_budget_is_a_stop_reason():
+    assert auto.STOP_REVIEW_BUDGET == "review-budget"
+    assert "review-budget" in auto.STOP_REASONS
+
+
+def test_auto_stops_with_review_budget_when_the_level_has_used_it(tmp_path, monkeypatch):
+    import json as _json
+
+    _active_at(tmp_path, "execute")
+    _changes_requested_rounds(tmp_path, 2)
+    monkeypatch.chdir(tmp_path)
+
+    data = _json.loads(runner.invoke(app, ["auto", "--json"]).stdout)
+
+    assert data["stop"] is True
+    assert data["reason"] == "review-budget"
+    assert "review start --over-budget" in data["payload"]
+    assert "review waive --reason" in data["payload"]
+    assert auto.ESCALATION_MARKER in data["payload"]
+
+
+def test_auto_does_not_stop_within_the_budget(tmp_path):
+    _active_at(tmp_path, "execute")
+    _changes_requested_rounds(tmp_path, 1)
+
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+
+    assert result["stop"] is False
+    assert result["reason"] is None
+
+
+def test_auto_does_not_stop_after_the_user_chose_a_waive(tmp_path):
+    _active_at(tmp_path, "execute")
+    _changes_requested_rounds(tmp_path, 2)
+    review.waive_round(tmp_path, config.load_config(tmp_path), "my-thing", "enough rounds")
+
+    result = auto.auto_pass_result(tmp_path, max_passes=1000)
+
+    assert result["reason"] != "review-budget"
