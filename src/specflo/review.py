@@ -36,10 +36,20 @@ FINDINGS_HEADER = "## Findings"
 # Any F-NN in any round file counts for numbering, so a new ID can never
 # repeat one a round already names, in a finding line or in its prose.
 _ANY_FINDING_ID = re.compile(r"\bF-(\d+)\b")
+# Where a finding's defect is: a file and a line, or a range of lines. A line
+# number has no leading zero, so a parsed location renders back as written.
+_LOCATION = r"(?P<path>[^\s\[\]]+):(?P<start>[1-9][0-9]*)(?:-(?P<end>[1-9][0-9]*))?"
+# The mark a finding that breaks what once worked carries after its severity.
+REGRESSION = "regression"
 # One finding line, as `review finding add` writes it and as a reviewer with
-# no shell may write it by hand.
+# no shell may write it by hand: '- F-NN (severity) text', with an optional
+# ', regression' inside the parentheses and an optional '[file:line]' or
+# '[file:a-b]' before the text. A line with no location reads as it always did.
 _FINDING_LINE = re.compile(
-    r"^- (F-(\d+)) \((" + "|".join(map(re.escape, SEVERITIES)) + r")\) (\S.*)$"
+    r"^- (?P<id>F-(?P<number>\d+))"
+    r" \((?P<severity>" + "|".join(map(re.escape, SEVERITIES)) + r")"
+    r"(?P<regression>, " + REGRESSION + r")?\)"
+    r" (?:\[" + _LOCATION + r"\] )?(?P<text>\S.*)$"
 )
 # The whole Findings section of a round that found nothing. A section with
 # neither this nor a finding is refused, so a free-form report never passes
@@ -499,6 +509,61 @@ class ClosedRound:
     still_open: list[str] = dataclasses.field(default_factory=list)
 
 
+@dataclasses.dataclass(frozen=True)
+class Finding:
+    """One finding line: its ID, severity and text, where it is, and its mark.
+
+    ``path``, ``start`` and ``end`` are None for a line with no location;
+    ``end`` is None too for a location of one line. ``regression`` is True
+    when the severity carries the regression mark.
+    """
+
+    id: str
+    severity: str
+    text: str
+    path: str | None = None
+    start: int | None = None
+    end: int | None = None
+    regression: bool = False
+
+    @property
+    def number(self) -> int:
+        """The NN of the finding's F-NN."""
+        return int(self.id.split("-", 1)[1])
+
+    @property
+    def location(self) -> str | None:
+        """``file:line`` or ``file:a-b``, or None for a line with no location."""
+        if self.path is None:
+            return None
+        lines = f"{self.start}" if self.end is None else f"{self.start}-{self.end}"
+        return f"{self.path}:{lines}"
+
+
+def parse_finding_line(line: str) -> Finding | None:
+    """The finding a line records, or None when it is not a finding line."""
+    match = _FINDING_LINE.match(line)
+    if match is None:
+        return None
+    start, end = match.group("start"), match.group("end")
+    return Finding(
+        id=match.group("id"),
+        severity=match.group("severity"),
+        text=match.group("text"),
+        path=match.group("path"),
+        start=int(start) if start else None,
+        end=int(end) if end else None,
+        regression=match.group("regression") is not None,
+    )
+
+
+def render_finding_line(finding: Finding) -> str:
+    """The line that records ``finding``: what it was parsed from, byte for byte."""
+    mark = f", {REGRESSION}" if finding.regression else ""
+    where = f"[{finding.location}] " if finding.location else ""
+    return f"- {finding.id} ({finding.severity}{mark}) {where}{finding.text}"
+
+
 def _section_lines(doc: str, header: str) -> list[str] | None:
     """The non-blank lines under ``header``, comments dropped.
 
@@ -522,16 +587,16 @@ def _findings_lines(doc: str) -> list[str] | None:
 def _defined_numbers(doc: str) -> set[int]:
     """The number of each F-NN a finding line under the Findings heading defines."""
     return {
-        int(match.group(2))
+        finding.number
         for line in _findings_lines(doc) or []
-        if (match := _FINDING_LINE.match(line))
+        if (finding := parse_finding_line(line))
     }
 
 
 def parse_findings(
     root: Path, cfg: SpecfloConfig, slug: str, path: Path, body: str
-) -> list[tuple[str, str, str]]:
-    """The round's findings as ``(F-NN, severity, text)``, or a refusal.
+) -> list[Finding]:
+    """The round's findings, each with its location and mark, or a refusal.
 
     Every line under Findings is a finding line, or the section is exactly
     ``- none``. Refused: a line in neither form, an F-NN that this round or
@@ -561,29 +626,28 @@ def parse_findings(
     seen: set[int] = set()
     findings = []
     for line in lines:
-        match = _FINDING_LINE.match(line)
-        if match is None:
+        finding = parse_finding_line(line)
+        if finding is None:
             raise SpecfloError(
                 f"{path.name} has a line under '{FINDINGS_HEADER}' that is not a"
                 f" finding: {line!r}." + _WAYS_ON
             )
-        finding_id, number, severity, text = match.groups()
-        if int(number) in seen or int(number) in elsewhere:
+        if finding.number in seen or finding.number in elsewhere:
             where = (
-                "earlier in this round" if int(number) in seen
+                "earlier in this round" if finding.number in seen
                 else "in another round of the project"
             )
             raise SpecfloError(
-                f"{path.name} records {finding_id}, an ID already used {where}."
+                f"{path.name} records {finding.id}, an ID already used {where}."
                 + _WAYS_ON
             )
-        seen.add(int(number))
-        findings.append((finding_id, severity, text))
+        seen.add(finding.number)
+        findings.append(finding)
     return findings
 
 
 def derive_verdict(
-    findings: list[tuple[str, str, str]], still_open: list[str] | None = None
+    findings: list[Finding], still_open: list[str] | None = None
 ) -> tuple[str, dict[str, int]]:
     """The verdict a round gives, and how many findings it has per severity.
 
@@ -591,8 +655,8 @@ def derive_verdict(
     for changes; nits never do.
     """
     counts = {severity: 0 for severity in SEVERITIES}
-    for _, severity, _ in findings:
-        counts[severity] += 1
+    for finding in findings:
+        counts[finding.severity] += 1
     blocking = counts["blocker"] + counts["should-fix"] + len(still_open or [])
     return (CHANGES_REQUESTED if blocking else READY), counts
 
@@ -622,11 +686,11 @@ def _ledger(
                     items.pop(int(match.group(2)), None)
                     closed[int(match.group(2))] = path.name
         for line in _findings_lines(doc) or []:
-            match = _FINDING_LINE.match(line)
-            if match:
-                known[int(match.group(2))] = (match.group(1), match.group(3))
-                if match.group(3) != "nit":
-                    items[int(match.group(2))] = match.group(1)
+            finding = parse_finding_line(line)
+            if finding:
+                known[finding.number] = (finding.id, finding.severity)
+                if finding.severity != "nit":
+                    items[finding.number] = finding.id
     return items, known, closed
 
 
@@ -740,7 +804,7 @@ def close_round(
             still_open = parse_checks(root, cfg, slug, path, body, fields["round"])
             derived, counts = derive_verdict(findings, still_open)
             if verdict is not None and verdict != derived:
-                blocking = [f for f, severity, _ in findings if severity != "nit"]
+                blocking = [f.id for f in findings if f.severity != "nit"]
                 blocking += still_open
                 raise SpecfloError(
                     f"The findings in {path.name} make it {derived}"
@@ -750,7 +814,7 @@ def close_round(
                     " --reason <why>`."
                 )
             verdict = derived
-            nits = [f for f, severity, _ in findings if severity == "nit"]
+            nits = [f.id for f in findings if f.severity == "nit"]
             if nits and nits_followup:
                 # Before the round is written: a follow-up that cannot be
                 # added refuses the close rather than losing the nits.
@@ -819,7 +883,7 @@ def add_finding(
                 " by hand, then add the finding again."
             )
         finding_id = _next_finding_id(root, cfg, slug)
-        line = f"- {finding_id} ({severity}) {text.strip()}"
+        line = render_finding_line(Finding(finding_id, severity, text.strip()))
         kept = body.strip("\n")
         path.write_text(
             markdown.replace_section_body(

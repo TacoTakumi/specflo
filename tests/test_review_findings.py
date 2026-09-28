@@ -356,3 +356,136 @@ def test_a_round_without_nits_or_a_waived_one_adds_no_followup(tmp_path, monkeyp
     assert runner.invoke(app, ["review", "done", *extra]).exit_code == 0
 
     assert _open_followups(tmp_path) == []
+
+
+# --- a finding line may name where the defect is and mark a regression -------
+
+
+@pytest.mark.parametrize(
+    "line, fields",
+    [
+        (
+            "- F-03 (should-fix) [src/x.py:10] text of the finding",
+            ("F-03", "should-fix", "text of the finding", "src/x.py", 10, None, False),
+        ),
+        (
+            "- F-03 (blocker) [src/x.py:9-12] text",
+            ("F-03", "blocker", "text", "src/x.py", 9, 12, False),
+        ),
+        (
+            "- F-03 (should-fix, regression) [src/x.py:10] text",
+            ("F-03", "should-fix", "text", "src/x.py", 10, None, True),
+        ),
+        (
+            "- F-03 (nit) text",
+            ("F-03", "nit", "text", None, None, None, False),
+        ),
+        (
+            "- F-03 (nit) [docs/a b.md:4] a path with a space is text",
+            ("F-03", "nit", "[docs/a b.md:4] a path with a space is text", None, None, None, False),
+        ),
+    ],
+)
+def test_a_finding_line_parses_to_its_location_and_mark(line, fields):
+    finding = review.parse_finding_line(line)
+
+    assert (
+        finding.id, finding.severity, finding.text,
+        finding.path, finding.start, finding.end, finding.regression,
+    ) == fields
+    assert finding.number == 3
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- F-03 (should-fix) [src/x.py:10] text of the finding",
+        "- F-03 (blocker) [src/x.py:9-12] text",
+        "- F-03 (should-fix, regression) [src/x.py:10] text",
+        "- F-03 (nit) text",
+        "- F-03 (blocker) [src/x.py:7-7] a one-line range",
+        # Lines rounds already hold: a location in prose is part of the text.
+        "- F-01 (should-fix) src/specflo/status.py:61 and src/specflo/checkpoint.py:112 read it",
+        "- F-02 (nit) [draft] a bracket that is not a location",
+        "- F-04 (nit) [src/x.py:010] a line number with a leading zero",
+        "- F-05 (nit) [src/x.py:10]",
+        "- F-06 (blocker) [src/x.py:3] [src/y.py:4] a second location stays text",
+    ],
+)
+def test_a_finding_line_renders_back_byte_identical(line):
+    assert review.render_finding_line(review.parse_finding_line(line)) == line
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "- F-01 (major) [src/x.py:10] Not a severity",
+        "- F-01 (should-fix,regression) [src/x.py:10] No space after the comma",
+        "- F-01 (regression) [src/x.py:10] A mark with no severity",
+        "- F-01 (nit) ",
+        "- one nit, free-form",
+    ],
+)
+def test_a_line_not_in_the_finding_form_does_not_parse(line):
+    assert review.parse_finding_line(line) is None
+
+
+def test_done_derives_the_verdict_from_findings_with_locations_and_marks(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    path = _open(project_dir, [
+        "- F-01 (blocker) [src/x.py:9-12] One",
+        "- F-02 (should-fix, regression) [src/y.py:3] Two",
+        "- F-03 (nit) Three",
+    ])
+    findings = _findings(path)
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert _verdict(path) == "changes-requested"
+    assert "1 blocker, 1 should-fix, 1 nit" in result.output
+    assert _findings(path) == findings
+
+
+def test_done_refuses_an_id_used_in_either_form(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _closed_round(project_dir, 1, ["- F-01 (nit) [src/x.py:1] One", "- F-02 (nit, regression) [src/x.py:2] Two"])
+    path = _open(project_dir, ["- F-02 (should-fix) Again"])
+    before = path.read_text()
+
+    _refused(runner.invoke(app, ["review", "done"]), path, before, "F-02")
+
+
+def test_the_ledger_and_the_check_verbs_read_both_forms(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    first = _closed_round(project_dir, 1, [
+        "- F-01 (blocker, regression) [src/x.py:10] One",
+        "- F-02 (should-fix) Two",
+        "- F-03 (nit) [src/y.py:1-2] Three",
+    ])
+    before = first.read_text()
+    cfg = config.load_config(tmp_path)
+
+    assert review.items_to_check(tmp_path, cfg, "thing", 2) == ["F-01", "F-02"]
+    assert set(review.unfixed_items(tmp_path, cfg, "thing")) == {"F-01", "F-02"}
+    assert review.check_fixes(tmp_path, cfg, "thing", ["F-01, F-02"]) == ["F-01", "F-02"]
+    with pytest.raises(review.SpecfloError, match="nit"):
+        review.check_fixes(tmp_path, cfg, "thing", ["F-03"])
+
+    path = _open(project_dir, ["- F-04 (should-fix) [src/z.py:5] Four"])
+
+    assert runner.invoke(app, ["review", "finding", "check", "F-01", "closed"]).exit_code == 0
+    assert runner.invoke(app, ["review", "finding", "check", "F-02", "open"]).exit_code == 0
+    nit = runner.invoke(app, ["review", "finding", "check", "F-03", "closed"])
+    assert nit.exit_code != 0 and "nit" in nit.output
+    own = runner.invoke(app, ["review", "finding", "check", "F-04", "closed"])
+    assert own.exit_code != 0 and "this round" in own.output
+
+    result = runner.invoke(app, ["review", "done", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["still_open"] == ["F-02"]
+    assert review.items_to_check(tmp_path, cfg, "thing", 3) == ["F-02", "F-04"]
+    # A closed round is read, never rewritten.
+    assert first.read_text() == before
+    assert "- F-04 (should-fix) [src/z.py:5] Four" in path.read_text()
