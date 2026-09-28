@@ -129,3 +129,54 @@ def test_an_open_round_is_handed_back_whatever_the_budget(tmp_path, monkeypatch)
 
     assert again.exit_code == 0, again.output
     assert "(already open)" in again.output
+
+
+# --- review waive ----------------------------------------------------------------
+
+
+def _review_issues(tmp_path):
+    """The review gate's half of `validate execute`."""
+    return review.completion_issues(tmp_path, config.load_config(tmp_path), "thing")
+
+
+def test_waive_with_no_round_open_creates_one_closed_waived(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested")
+    _round(project_dir, 2, "changes-requested")
+    assert _review_issues(tmp_path)
+
+    result = runner.invoke(app, ["review", "waive", "--reason", "x"])
+
+    assert result.exit_code == 0, result.output
+    assert "thing/review-3" in result.output
+    fields = review.frontmatter(project_dir / "review-3.md")
+    assert (fields["verdict"], fields["reason"]) == ("waived", "x")
+    assert _review_issues(tmp_path) == []
+
+
+def test_waive_with_a_round_open_closes_that_round(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    assert _start().exit_code == 0
+
+    result = runner.invoke(app, ["review", "waive", "--reason", "not reviewing this one"])
+
+    assert result.exit_code == 0, result.output
+    fields = review.frontmatter(project_dir / "review-1.md")
+    assert (fields["verdict"], fields["reason"]) == ("waived", "not reviewing this one")
+    assert not (project_dir / "review-2.md").exists()
+
+
+def test_waive_refuses_an_empty_reason_and_writes_nothing(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested")
+
+    for reason in ("", "  "):
+        result = runner.invoke(app, ["review", "waive", "--reason", reason])
+        assert result.exit_code != 0
+        assert "reason" in result.output.lower()
+    assert not (project_dir / "review-2.md").exists()
+
+    assert _start().exit_code == 0
+    before = (project_dir / "review-2.md").read_text()
+    assert runner.invoke(app, ["review", "waive", "--reason", ""]).exit_code != 0
+    assert (project_dir / "review-2.md").read_text() == before

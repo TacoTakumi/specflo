@@ -215,6 +215,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert (closed.path, closed.verdict) == (round_path, "ready-to-merge")
     assert closed.findings == {"blocker": 0, "should-fix": 0, "nit": 1}
     assert svc.validate_artifact(slug, "execute") == []
+    assert svc.waive_round(slug, "Round 1 covered it").name == "review-2.md"
+    assert svc.validate_artifact(slug, "execute") == []
 
     # checkpoint and status are derived from the artifacts
     assert svc.build_checkpoint(slug)["phase"] == "execute"

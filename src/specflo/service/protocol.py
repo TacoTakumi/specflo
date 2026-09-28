@@ -355,6 +355,10 @@ class ProjectService(Protocol):
         """Record an earlier item closed or open in the open round; ``(F-NN, round path)``."""
         ...
 
+    def waive_round(self, slug: str, reason: str) -> Path:
+        """Close the open round waived, or mint one and close it waived."""
+        ...
+
     # --- checkpoint and status ---------------------------------------------
 
     def build_checkpoint(self, slug: str) -> dict:

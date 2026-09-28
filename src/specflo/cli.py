@@ -2522,6 +2522,29 @@ def review_done(
         typer.echo(f"{locator} closed {closed.verdict} ({counts})")
 
 
+@review_app.command(
+    "waive",
+    epilog='Example: specflo review waive --reason "Reviewed by hand before the upgrade"',
+)
+def review_waive(
+    reason: str = typer.Option(..., "--reason", help="Why the review is waived (one line)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Close the open review round waived, or record a waived round when none is open."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        path = svc.waive_round(slug, reason)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps({"locator": locator, "path": reported, "verdict": "waived"}))
+    else:
+        typer.echo(f"{locator} closed waived")
+
+
 @finding_app.command(
     "add",
     epilog='Example: specflo review finding add --severity blocker --text "The close drops the sha"',

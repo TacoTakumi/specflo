@@ -803,3 +803,22 @@ def check_finding(
             lines.append(line)
         path.write_text(markdown.replace_section_body(doc, EARLIER_HEADER, "\n".join(lines)))
     return finding_id, path
+
+
+def waive_round(
+    root: Path, cfg: SpecfloConfig, slug: str, reason: str, today: str | None = None
+) -> Path:
+    """Close the open round waived with ``reason``, or mint one and close it so.
+
+    Works at any time, and past the level's round budget: a waive is the
+    user's choice not to review, so it never needs ``--over-budget``. An
+    empty reason is refused before anything is written.
+    """
+    if not (reason or "").strip():
+        raise SpecfloError(
+            "A waive needs a non-empty --reason, so a project that skipped review"
+            " records why."
+        )
+    if open_round(root, cfg, slug) is None:
+        start_round(root, cfg, slug, today=today, over_budget=True)
+    return close_round(root, cfg, slug, WAIVED, reason=reason, today=today).path

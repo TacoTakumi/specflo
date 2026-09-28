@@ -458,6 +458,9 @@ class LocalProjectService:
     def check_finding(self, slug: str, finding_id: str, state: str) -> tuple[str, Path]:
         return review.check_finding(self.root, self.cfg, slug, finding_id, state)
 
+    def waive_round(self, slug: str, reason: str) -> Path:
+        return review.waive_round(self.root, self.cfg, slug, reason)
+
     # --- checkpoint and status ---------------------------------------------
 
     def build_checkpoint(self, slug: str) -> dict:
