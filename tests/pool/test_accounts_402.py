@@ -340,7 +340,7 @@ def test_an_in_flight_402_leaves_the_account_open_and_the_turn_is_sent_again_aft
     assert sleeps.delays == [2.0, 1.0, 2.0]
     assert sleeps.saw == [1, 1, 2]
     assert member.prompts_received() == [MESSAGE, MESSAGE]
-    assert wait_until(lambda: member.replies_logged() == 1), "the retried turn did not succeed"
+    wait_until(lambda: member.replies_logged() == 1, message="the retried turn did not succeed")
     last = CliRunner().invoke(
         agent_app, ["last", member.grant.agent, "--lease-token", member.grant.token]
     )
@@ -491,6 +491,12 @@ def turn(agent: str, message: str = MESSAGE, *, token: str | None = None):
     return CliRunner().invoke(agent_app, ["prompt", agent, message, *wall])
 
 
+def answers(agent: str, token: str) -> bool:
+    """Does the pi of *agent* answer the holder's question for its last text?
+    The stub pi reads its scenario before it reads a question."""
+    return CliRunner().invoke(agent_app, ["last", agent, "--lease-token", token]).exit_code == 0
+
+
 @pytest.fixture
 def resent(monkeypatch):
     """The agent of every prompt the watcher has sent again; each one is still sent."""
@@ -532,6 +538,12 @@ class Shared:
         )
         grant = self.service.grant("rebasers", holder_label="orchestrator-a", cwd=self.rig.work)
         self.captures[grant.agent] = capture
+        # The grant is back before its pi has read the scenario, and the next
+        # lease writes the scenario again: a pi that answers has read it.
+        wait_until(
+            lambda: answers(grant.agent, grant.token),
+            message=f"the pi of {grant.agent} did not answer",
+        )
         return grant
 
     def prompts_received(self, grant) -> list[str]:
@@ -568,9 +580,7 @@ def test_a_402_for_the_key_limit_at_a_members_second_agent_closes_the_account(sh
 
 
 @pytest.mark.parametrize("refused", [
-    # Fails on main as of 2026-09-25: the watcher's poll returns None, not the
-    # retry delay. Skipped until the pool watcher is looked at.
-    pytest.param(0, id="the first agent", marks=pytest.mark.skip(reason="fails on main: poll returns None")),
+    pytest.param(0, id="the first agent"),
     pytest.param(1, id="the second agent"),
 ])
 def test_an_in_flight_402_at_one_of_a_members_agents_is_sent_again_once_and_to_that_agent(
