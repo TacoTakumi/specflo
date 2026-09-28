@@ -96,8 +96,10 @@ class PoolRig(Rig):
             self._bridge_served = True
 
     def cleanup(self) -> None:
-        super().cleanup()
-        self._bridge.close()
+        try:
+            super().cleanup()
+        finally:
+            self._bridge.close()
 
     def scenario(self, **keys) -> None:
         """What the stub pi of the members started from now on does."""

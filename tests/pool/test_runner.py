@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import signal
 import socket
 import stat
@@ -33,11 +34,11 @@ from specflo.agent import lease
 from specflo.agent.client import connect
 from specflo.agent.statefiles import ENV_STATE_DIR, AgentPaths, read_status
 from specflo.errors import SpecfloError
-from specflo.pool import launch, piconfig, runner
+from specflo.pool import launch, piconfig, runner, sandbox
 from specflo.pool.config import Account, Member
 from specflo.pool.definitions import AgentDefinition
 # The other pool test modules import wait_until from here.
-from waits import settle, wait_until
+from waits import scaled, settle, wait_until
 
 STUB = Path(__file__).resolve().parents[1] / "agent" / "stub_pi.py"
 
@@ -191,6 +192,23 @@ def pid_alive(pid: int) -> bool:
     except OSError:
         return False
     return True
+
+
+def live_groups() -> set[int]:
+    """The process groups that hold a process which has not exited."""
+    groups = set()
+    for name in os.listdir("/proc"):
+        if not name.isdigit():
+            continue
+        try:
+            stat = Path(f"/proc/{name}/stat").read_text()
+        except OSError:
+            continue
+        # the fields after the command name, which is in brackets and may hold spaces
+        state, _, group = stat[stat.rindex(")") + 2:].split()[:3]
+        if state not in ("Z", "X"):
+            groups.add(int(group))
+    return groups
 
 
 class Rig:
@@ -350,7 +368,84 @@ class Rig:
         held = {pane["tab_id"] for pane in herdr("pane", "list")["panes"]}
         return [tab["label"] for tab in herdr("tab", "list")["tabs"] if tab["tab_id"] in held]
 
+    def carries(self, text: bytes) -> bool:
+        """Whether *text* names this rig's tmp path.
+
+        pytest makes each directory name of word characters only, so a path
+        that runs on into one is another test's (``test_x1`` and ``test_x10``).
+        """
+        path = re.escape(os.fsencode(str(self.tmp_path)))
+        return re.search(path + rb"(?![\w\x80-\xff])", text) is not None
+
+    def runs_here(self, pid: int) -> bool:
+        """Whether *pid* is a process whose command line carries this rig's path."""
+        try:
+            return self.carries(Path(f"/proc/{pid}/cmdline").read_bytes())
+        except OSError:
+            return False
+
+    def member_scopes(self) -> list[str]:
+        """The active member scopes that carry this rig's path, by unit name.
+
+        A scope carries it when a process in it does, or its description,
+        which is the command line it was started for: a scope whose start was
+        cut short holds no process, and the user manager keeps it active.
+        Other tests and the operator run members of their own meanwhile, and
+        a scope of theirs carries another path. There is none to find where
+        the user manager cannot be reached: no member starts in a scope there.
+        """
+        try:
+            listed = subprocess.run(
+                ["systemctl", "--user", "show", "--state=active", "-p", "Id",
+                 "-p", "ControlGroup", "-p", "Description", f"{sandbox.SCOPE_PREFIX}*.scope"],
+                capture_output=True, timeout=scaled(10),
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return []
+        found = []
+        for block in listed.stdout.split(b"\n\n"):
+            fields = dict(line.split(b"=", 1) for line in block.splitlines() if b"=" in line)
+            unit = fields.get(b"Id", b"").decode()
+            if not unit.startswith(sandbox.SCOPE_PREFIX):
+                continue
+            group = fields.get(b"ControlGroup", b"").decode().strip("/")
+            pids: list[str] = []
+            if group:
+                try:
+                    pids = Path("/sys/fs/cgroup", group, "cgroup.procs").read_text().split()
+                except OSError:
+                    pass
+            if self.carries(fields.get(b"Description", b"")) or any(
+                self.runs_here(int(pid)) for pid in pids
+            ):
+                found.append(unit)
+        return found
+
+    def stop_member_scopes(self) -> bool:
+        """Stop each member scope that carries this rig's path; True when there was none."""
+        left = self.member_scopes()
+        for unit in left:
+            # A stop sends SIGTERM, which the sandbox's first process does not
+            # take from outside its namespace. SIGKILL ends every process in
+            # the scope, and the stop then ends the scope, also an empty one.
+            for verb in (["kill", "--signal=SIGKILL"], ["stop"]):
+                subprocess.run(
+                    ["systemctl", "--user", *verb, unit], capture_output=True, timeout=scaled(30)
+                )
+        return not left
+
     def cleanup(self) -> None:
+        """End every member this rig started, also one whose lease the test left running.
+
+        A test may end while a member it was granted is still starting, and a
+        kill of the host and pi pids misses what has left them by then: the
+        sandbox runs in a session of its own, and a sandbox whose first
+        process lost its parent before bwrap tied it to that parent lives on,
+        the forwarder in it. So the process group of each host is killed,
+        which takes the host and what it started that is still in the group,
+        and then each member scope that carries this rig's path is stopped,
+        which takes all that is in it.
+        """
         pids = []
         if self.herdr_state.is_file():
             pids += [tab["pid"] for tab in json.loads(self.herdr_state.read_text())]
@@ -359,12 +454,26 @@ class Rig:
                 if (agent_dir / "status.json").is_file():
                     snapshot = read_status(agent_dir / "status.json")
                     pids += [snapshot.get("pi_pid"), snapshot.get("host_pid")]
+        # A pane and a headless host each start a session of their own, and a
+        # host's pi is in its group, the host gone or not. A pid that another
+        # process has taken since carries no path of this rig's.
+        groups = set()
         for pid in pids:
-            if pid:
+            if pid and self.runs_here(pid):
                 try:
-                    os.kill(pid, signal.SIGKILL)
+                    groups.add(os.getpgid(pid))
                 except OSError:
                     pass
+        groups.discard(os.getpgrp())  # never the test run's own
+        for group in groups:
+            try:
+                os.killpg(group, signal.SIGKILL)
+            except OSError:
+                pass
+        wait_until(
+            lambda: not groups & live_groups(), message="a member host of this rig did not end"
+        )
+        wait_until(self.stop_member_scopes, message="a member scope of this rig did not stop")
 
 
 @pytest.fixture
