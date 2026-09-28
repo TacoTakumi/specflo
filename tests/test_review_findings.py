@@ -323,6 +323,7 @@ def test_a_round_with_nits_adds_one_followup_naming_them(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     _closed_round(project_dir, 1, ["- F-01 (blocker) One"])
     _open(project_dir, ["- F-02 (nit) A name", "- F-03 (should-fix) Two", "- F-04 (nit) A typo"])
+    assert runner.invoke(app, ["review", "finding", "check", "F-01", "closed"]).exit_code == 0
 
     assert runner.invoke(app, ["review", "done"]).exit_code == 0
 

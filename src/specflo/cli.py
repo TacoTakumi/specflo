@@ -2507,12 +2507,14 @@ def review_done(
     if json_output:
         typer.echo(json.dumps({
             "locator": locator, "path": reported, "verdict": closed.verdict,
-            "findings": closed.findings,
+            "findings": closed.findings, "still_open": closed.still_open,
         }))
     elif closed.findings is None:
         typer.echo(f"{locator} closed {closed.verdict}")
     else:
         counts = ", ".join(f"{n} {severity}" for severity, n in closed.findings.items())
+        if closed.still_open:
+            counts += "; still open: " + ", ".join(closed.still_open)
         typer.echo(f"{locator} closed {closed.verdict} ({counts})")
 
 
@@ -2541,6 +2543,31 @@ def review_finding_add(
         ))
     else:
         typer.echo(f"Recorded {finding_id} in {locator}.")
+
+
+@finding_app.command(
+    "check",
+    epilog="Example: specflo review finding check F-01 closed",
+)
+def review_finding_check(
+    finding_id: str = typer.Argument(..., metavar="<F-NN>", help="An earlier blocker or should-fix item."),
+    state: str = typer.Argument(..., metavar="<closed|open>", help="Whether the item is fixed."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Record whether an earlier finding is closed or still open in the open round."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        checked, path = svc.check_finding(slug, finding_id, state)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps(
+            {"id": checked, "state": state, "locator": locator, "path": reported}
+        ))
+    else:
+        typer.echo(f"Checked {checked} {state} in {locator}.")
 
 
 @doc_app.command("show", epilog="Example: specflo doc show brainstorm")

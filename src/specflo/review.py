@@ -43,6 +43,12 @@ _FINDING_LINE = re.compile(
 # neither this nor a finding is refused, so a free-form report never passes
 # as a clean one.
 NONE_LINE = "- none"
+# Where a round records whether each earlier blocker and should-fix item is
+# closed, one '- F-NN closed' or '- F-NN open' line per item.
+EARLIER_HEADER = "## Earlier findings"
+CHECK_STATES = ("closed", "open")
+_CHECK_LINE = re.compile(r"^- (F-(\d+)) (closed|open)$")
+_CHECK_HOW = "`specflo review finding check F-NN closed|open`"
 # What a refused close can do next, named in every refusal of its findings.
 _WAYS_ON = (
     " To go on: rewrite the line in the '- F-NN (severity) text' form, re-add"
@@ -336,19 +342,21 @@ class ClosedRound:
     """What a close decided: the round, its verdict, and its findings per severity.
 
     ``findings`` is None for a waived round, whose findings are never read.
+    ``still_open`` names the earlier items the round checked open.
     """
 
     path: Path
     verdict: str
     findings: dict[str, int] | None
+    still_open: list[str] = dataclasses.field(default_factory=list)
 
 
-def _findings_lines(doc: str) -> list[str] | None:
-    """The non-blank lines under a document's Findings heading, comments dropped.
+def _section_lines(doc: str, header: str) -> list[str] | None:
+    """The non-blank lines under ``header``, comments dropped.
 
-    None when the document has no Findings heading at all.
+    None when the document has no such heading at all.
     """
-    section = markdown.section_body(doc, FINDINGS_HEADER)
+    section = markdown.section_body(doc, header)
     if section is None:
         return None
     return [
@@ -356,6 +364,11 @@ def _findings_lines(doc: str) -> list[str] | None:
         for line in markdown.strip_comments(section).splitlines()
         if line.strip()
     ]
+
+
+def _findings_lines(doc: str) -> list[str] | None:
+    """The non-blank lines under a document's Findings heading, comments dropped."""
+    return _section_lines(doc, FINDINGS_HEADER)
 
 
 def _defined_numbers(doc: str) -> set[int]:
@@ -421,16 +434,87 @@ def parse_findings(
     return findings
 
 
-def derive_verdict(findings: list[tuple[str, str, str]]) -> tuple[str, dict[str, int]]:
-    """The verdict a round's findings give, and how many there are per severity.
+def derive_verdict(
+    findings: list[tuple[str, str, str]], still_open: list[str] | None = None
+) -> tuple[str, dict[str, int]]:
+    """The verdict a round gives, and how many findings it has per severity.
 
-    Any blocker or should-fix finding asks for changes; nits never do.
+    Any blocker or should-fix finding, or any earlier item checked open, asks
+    for changes; nits never do.
     """
     counts = {severity: 0 for severity in SEVERITIES}
     for _, severity, _ in findings:
         counts[severity] += 1
-    blocking = counts["blocker"] + counts["should-fix"]
+    blocking = counts["blocker"] + counts["should-fix"] + len(still_open or [])
     return (CHANGES_REQUESTED if blocking else READY), counts
+
+
+def _ledger(
+    root: Path, cfg: SpecfloConfig, slug: str, number: int
+) -> tuple[dict[int, str], dict[int, tuple[str, str]], dict[int, str]]:
+    """What the rounds before round ``number`` leave for it to check.
+
+    Returns ``(items, known, closed)``, each keyed by the finding's number:
+    the blocker and should-fix items no reviewed round has checked closed,
+    every finding recorded (ID and severity), and the round file where each
+    closed item was checked closed. A waived round's checks do not close an
+    item: a waive reviewed nothing.
+    """
+    items: dict[int, str] = {}
+    known: dict[int, tuple[str, str]] = {}
+    closed: dict[int, str] = {}
+    for n, path in round_files(root, cfg, slug):
+        if n >= number:
+            break
+        doc = path.read_text()
+        if frontmatter(path).get("verdict") in (READY, CHANGES_REQUESTED):
+            for line in _section_lines(doc, EARLIER_HEADER) or []:
+                match = _CHECK_LINE.match(line)
+                if match and match.group(3) == "closed":
+                    items.pop(int(match.group(2)), None)
+                    closed[int(match.group(2))] = path.name
+        for line in _findings_lines(doc) or []:
+            match = _FINDING_LINE.match(line)
+            if match:
+                known[int(match.group(2))] = (match.group(1), match.group(3))
+                if match.group(3) != "nit":
+                    items[int(match.group(2))] = match.group(1)
+    return items, known, closed
+
+
+def parse_checks(
+    root: Path, cfg: SpecfloConfig, slug: str, path: Path, body: str, number: int
+) -> list[str]:
+    """The earlier items the round checked open, or a refusal.
+
+    Every line under Earlier findings is a check of an item the round must
+    check, and every such item has one. Refused: a line not in the
+    '- F-NN closed|open' form, a check of anything else, and an item with
+    no check. Each refusal names the line or the IDs.
+    """
+    items, _, _ = _ledger(root, cfg, slug, number)
+    states: dict[int, str] = {}
+    for line in _section_lines(body, EARLIER_HEADER) or []:
+        match = _CHECK_LINE.match(line)
+        if match is None:
+            raise SpecfloError(
+                f"{path.name} has a line under '{EARLIER_HEADER}' that is not a"
+                f" check: {line!r}. Write it as '- F-NN closed' or '- F-NN open',"
+                f" or record it with {_CHECK_HOW}."
+            )
+        if int(match.group(2)) not in items:
+            raise SpecfloError(
+                f"{path.name} checks {match.group(1)}, which is not an item this"
+                " round checks. Items: " + (", ".join(items.values()) or "none") + "."
+            )
+        states[int(match.group(2))] = match.group(3)
+    missing = [finding_id for key, finding_id in items.items() if key not in states]
+    if missing:
+        raise SpecfloError(
+            f"{path.name} has not checked {', '.join(missing)}. Check each earlier"
+            f" item with {_CHECK_HOW} before closing the round."
+        )
+    return [items[key] for key, state in states.items() if state == "open"]
 
 
 def close_round(
@@ -495,11 +579,14 @@ def close_round(
                 )
             body = report_text
         counts = None
+        still_open: list[str] = []
         if verdict != WAIVED:
             findings = parse_findings(root, cfg, slug, path, body)
-            derived, counts = derive_verdict(findings)
+            still_open = parse_checks(root, cfg, slug, path, body, fields["round"])
+            derived, counts = derive_verdict(findings, still_open)
             if verdict is not None and verdict != derived:
                 blocking = [f for f, severity, _ in findings if severity != "nit"]
+                blocking += still_open
                 raise SpecfloError(
                     f"The findings in {path.name} make it {derived}"
                     + (f" ({', '.join(blocking)})" if blocking else "")
@@ -528,7 +615,7 @@ def close_round(
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body))
-    return ClosedRound(path=path, verdict=verdict, findings=counts)
+    return ClosedRound(path=path, verdict=verdict, findings=counts, still_open=still_open)
 
 
 def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:
@@ -592,16 +679,9 @@ DELTA = "delta"
 
 
 def items_to_check(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> list[str]:
-    """The blocker and should-fix F-NN that rounds before round ``number`` recorded."""
-    items: dict[str, None] = {}
-    for n, path in round_files(root, cfg, slug):
-        if n >= number:
-            break
-        for line in _findings_lines(path.read_text()) or []:
-            match = _FINDING_LINE.match(line)
-            if match and match.group(3) != "nit":
-                items[match.group(1)] = None
-    return list(items)
+    """The blocker and should-fix F-NN round ``number`` must check: those the
+    rounds before it recorded and no reviewed round has checked closed."""
+    return list(_ledger(root, cfg, slug, number)[0].values())
 
 
 def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
@@ -625,3 +705,63 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
         "range": f"{base}..HEAD" if base else None,
         "items": items_to_check(root, cfg, slug, number),
     }
+
+
+def check_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, finding_id: str, state: str
+) -> tuple[str, Path]:
+    """Write '- F-NN closed|open' under the open round's Earlier findings.
+
+    Returns ``(F-NN, round path)``. Only an item the round checks is
+    accepted: a blocker or should-fix finding of an earlier round that no
+    reviewed round has checked closed. A second check of an item replaces
+    the first. Raises ``SpecfloError``, leaving the file untouched, on
+    anything else.
+    """
+    if state not in CHECK_STATES:
+        raise SpecfloError(
+            f"Unknown state {state!r}. Valid values: " + ", ".join(CHECK_STATES) + "."
+        )
+    match = re.fullmatch(r"F-(\d+)", finding_id)
+    if match is None:
+        raise SpecfloError(f"{finding_id!r} is not a finding ID; one looks like F-01.")
+    key = int(match.group(1))
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        path = open_round(root, cfg, slug)
+        if path is None:
+            raise SpecfloError(
+                "No review is open. Start one with `specflo review start`."
+            )
+        doc = path.read_text()
+        number = _round_number(path, frontmatter(path).get("round"))
+        items, known, closed = _ledger(root, cfg, slug, number)
+        if key not in items:
+            if key in _defined_numbers(doc):
+                why = f"{finding_id} is a finding of this round; a round checks only earlier items."
+            elif key not in known:
+                why = f"No earlier round records a finding {finding_id}."
+            elif known[key][1] == "nit":
+                why = f"{known[key][0]} is a nit, and a nit is never checked."
+            else:
+                why = f"{known[key][0]} was already checked closed in {closed[key]}."
+            listed = ", ".join(items.values()) or "none"
+            raise SpecfloError(f"{why} Items this round checks: {listed}.")
+        finding_id = items[key]
+        line = f"- {finding_id} {state}"
+        body = markdown.section_body(doc, EARLIER_HEADER)
+        if body is None:
+            if markdown.section_body(doc, FINDINGS_HEADER) is not None:
+                doc = markdown.ensure_section_before(doc, EARLIER_HEADER, FINDINGS_HEADER)
+            else:
+                doc = doc.rstrip("\n") + f"\n\n{EARLIER_HEADER}\n"
+            body = ""
+        lines = body.strip("\n").splitlines() if body.strip() else []
+        for index, existing in enumerate(lines):
+            found = _CHECK_LINE.match(existing.strip())
+            if found and int(found.group(2)) == key:
+                lines[index] = line
+                break
+        else:
+            lines.append(line)
+        path.write_text(markdown.replace_section_body(doc, EARLIER_HEADER, "\n".join(lines)))
+    return finding_id, path

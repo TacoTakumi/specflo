@@ -426,7 +426,8 @@ def test_hosted_start_and_review_json_carry_the_locator_and_no_path(checkout, li
         (["review", "start"], "hosted-thing/review-1",
          {"created": True, "scope": "whole-branch", "range": None, "items": []}),
         (["review", "done", "--verdict", "ready-to-merge"], "hosted-thing/review-1",
-         {"verdict": "ready-to-merge", "findings": {"blocker": 0, "should-fix": 0, "nit": 0}}),
+         {"verdict": "ready-to-merge", "findings": {"blocker": 0, "should-fix": 0, "nit": 0},
+          "still_open": []}),
     ):
         if args[:2] == ["review", "done"]:
             reviewhelp.write_none(

@@ -197,3 +197,171 @@ def test_the_scope_is_a_read_only_service_operation(tmp_path, monkeypatch):
 
     assert (scope["scope"], scope["range"], scope["items"]) == ("delta", "abc1234..HEAD", ["F-01"])
     assert path.read_text() == before
+
+
+# --- checking earlier items ------------------------------------------------------
+
+
+def _check(finding_id, state):
+    return runner.invoke(app, ["review", "finding", "check", finding_id, state])
+
+
+def _earlier(path):
+    from specflo import markdown
+
+    body = markdown.section_body(path.read_text(), "## Earlier findings")
+    return None if body is None else body.strip().splitlines()
+
+
+def _delta(project_dir):
+    """Round 1 closed with blocker F-01, should-fix F-02 and nit F-03; round 2 open."""
+    _round(project_dir, 1, "changes-requested", "abc1234",
+           ["- F-01 (blocker) One", "- F-02 (should-fix) Two", "- F-03 (nit) Three"])
+    _start()
+    return project_dir / "review-2.md"
+
+
+def test_check_writes_the_line_into_earlier_findings(tmp_path, monkeypatch):
+    path = _delta(_project(tmp_path, monkeypatch))
+
+    result = _check("F-01", "closed")
+
+    assert result.exit_code == 0, result.output
+    assert _earlier(path) == ["- F-01 closed"]
+    # The section sits above Findings, which is still there and still empty.
+    text = path.read_text()
+    assert text.index("## Earlier findings") < text.index("## Findings")
+
+
+def test_a_second_check_of_an_item_replaces_the_first(tmp_path, monkeypatch):
+    path = _delta(_project(tmp_path, monkeypatch))
+
+    _check("F-01", "open")
+    _check("F-02", "closed")
+    _check("F-01", "closed")
+
+    assert _earlier(path) == ["- F-01 closed", "- F-02 closed"]
+
+
+def test_check_refuses_what_is_not_an_item_and_leaves_the_file(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    path = _delta(project_dir)
+    added = runner.invoke(app, ["review", "finding", "add", "--severity", "blocker", "--text", "New"])
+    assert "F-04" in added.output
+    before = path.read_text()
+
+    for finding_id, state, why in (
+        ("F-03", "closed", "nit"),                  # a nit is never checked
+        ("F-04", "closed", "this round"),           # a finding of the round itself
+        ("F-09", "closed", "F-09"),                 # nobody recorded it
+        ("F-01", "fixed", "closed"),                # not a state
+    ):
+        result = _check(finding_id, state)
+        assert result.exit_code != 0, (finding_id, state)
+        assert why in result.output, (finding_id, result.output)
+        assert path.read_text() == before, finding_id
+
+
+def test_check_refuses_an_item_an_earlier_round_checked_closed(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested", "abc1234",
+           ["- F-01 (blocker) One", "- F-02 (should-fix) Two"])
+    (project_dir / "review-2.md").write_text(
+        "---\nround: 2\nverdict: changes-requested\ndate: '2026-08-22'\nsha: 'bcd2345'\n"
+        "reason: ''\n---\n\n# Review round 2\n\n## Earlier findings\n\n- F-01 closed\n- F-02 open\n\n"
+        "## Findings\n\n- F-03 (blocker) Three\n"
+    )
+    result = _start()
+    assert "F-01" not in result.output.split("Items to check:")[1]
+    path = project_dir / "review-3.md"
+    before = path.read_text()
+
+    refused = _check("F-01", "closed")
+
+    assert refused.exit_code != 0
+    assert "checked closed" in refused.output
+    assert path.read_text() == before
+    assert _check("F-02", "closed").exit_code == 0
+    assert _check("F-03", "closed").exit_code == 0
+
+
+def test_check_with_no_open_round_refuses(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested", "abc1234", ["- F-01 (blocker) One"])
+
+    result = _check("F-01", "closed")
+
+    assert result.exit_code != 0
+    assert "specflo review start" in result.output
+
+
+# --- review done waits for every item ----------------------------------------------
+
+
+def _none(path):
+    path.write_text(path.read_text().replace("## Findings\n", "## Findings\n\n- none\n"))
+
+
+def test_done_refuses_until_every_item_is_checked(tmp_path, monkeypatch):
+    path = _delta(_project(tmp_path, monkeypatch))
+    _none(path)
+    _check("F-01", "closed")
+    before = path.read_text()
+
+    refused = runner.invoke(app, ["review", "done"])
+
+    assert refused.exit_code != 0
+    assert "F-02" in refused.output
+    assert "specflo review finding check" in refused.output
+    assert path.read_text() == before
+    assert not _fields(path)["verdict"]
+
+    _check("F-02", "closed")
+    closed = runner.invoke(app, ["review", "done"])
+
+    assert closed.exit_code == 0, closed.output
+    assert _fields(path)["verdict"] == "ready-to-merge"
+
+
+def test_a_full_round_checks_the_items_too(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested", "abc1234", ["- F-01 (blocker) One"])
+    _start("--full")
+    path = project_dir / "review-2.md"
+    _none(path)
+
+    assert runner.invoke(app, ["review", "done"]).exit_code != 0
+    _check("F-01", "closed")
+    assert runner.invoke(app, ["review", "done"]).exit_code == 0
+
+
+def test_an_item_checked_open_asks_for_changes_even_with_none(tmp_path, monkeypatch):
+    path = _delta(_project(tmp_path, monkeypatch))
+    _none(path)
+    _check("F-01", "open")
+    _check("F-02", "closed")
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert _fields(path)["verdict"] == "changes-requested"
+    assert "F-01" in result.output
+    # The next round still has F-01 to check, and not F-02.
+    nxt = _start()
+    items = nxt.output.split("Items to check:")[1]
+    assert "F-01" in items and "F-02" not in items
+
+
+def test_done_refuses_a_malformed_earlier_findings_line(tmp_path, monkeypatch):
+    path = _delta(_project(tmp_path, monkeypatch))
+    _none(path)
+    _check("F-01", "closed")
+    _check("F-02", "closed")
+    path.write_text(path.read_text().replace("- F-02 closed", "- F-02 was fixed"))
+    before = path.read_text()
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code != 0
+    assert "- F-02 was fixed" in result.output
+    assert path.read_text() == before

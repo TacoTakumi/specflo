@@ -208,6 +208,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert (scope["scope"], scope["range"], scope["items"]) == ("whole-branch", None, [])
     finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
     assert (finding_id, finding_round) == ("F-01", round_path)
+    with pytest.raises(SpecfloError, match="finding of this round"):
+        svc.check_finding(slug, "F-01", "closed")
     assert svc.validate_artifact(slug, "execute") != []
     closed = svc.close_round(slug, "ready-to-merge")
     assert (closed.path, closed.verdict) == (round_path, "ready-to-merge")
