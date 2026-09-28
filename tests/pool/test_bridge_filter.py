@@ -29,6 +29,7 @@ from starlette.routing import Route
 from starlette.testclient import TestClient
 
 from specflo.pool import bridge
+from waits import wait_until
 
 # Every path the stub answers, with the method llama-swap answers it on.
 SERVED = (
@@ -313,10 +314,10 @@ def slow_client():
     ))
     thread = threading.Thread(target=server.run, kwargs={"sockets": [listener]}, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started:
-        assert time.monotonic() < deadline, "the slow upstream did not start"
-        time.sleep(0.01)
+    wait_until(
+        lambda: server.started, timeout=10, interval=0.01,
+        message="the slow upstream did not start",
+    )
     try:
         with TestClient(bridge.filter_app(f"http://127.0.0.1:{port}")) as client:
             yield client

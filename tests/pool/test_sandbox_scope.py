@@ -14,13 +14,13 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.pool import launch, sandbox
 from specflo.pool.config import Member
+from waits import wait_until
 
 from .test_runner import DEFINITION
 from .test_sandbox_checkout_secrets import skip_without_a_sandbox
@@ -135,10 +135,8 @@ def test_a_started_member_runs_in_a_scope_of_its_own_with_the_limit(tmp_path, en
     # started process is the member's sandbox, and its cgroup is read from here.
     member = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
     try:
-        deadline = time.monotonic() + 30
-        while not out.exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        path = Path(f"/proc/{member.pid}/cgroup").read_text().strip().split(":", 2)[2]
+        wait_until(out.exists, timeout=30, interval=0.1, message="the member never came up")
+        path =Path(f"/proc/{member.pid}/cgroup").read_text().strip().split(":", 2)[2]
         limit = Path(f"/sys/fs/cgroup{path}/pids.max").read_text().strip()
     finally:
         member.kill()
@@ -180,10 +178,9 @@ def test_a_fork_loop_in_one_member_stops_at_its_limit_and_another_member_still_f
     other, other_out = member_command(tmp_path, environ, "hosted-2", FORK_ONCE)
     first = subprocess.Popen(loop, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     try:
-        deadline = time.monotonic() + 30
-        while not loop_out.exists() and time.monotonic() < deadline:
-            time.sleep(0.1)
-        assert loop_out.exists(), "the fork loop never stopped"
+        wait_until(
+            loop_out.exists, timeout=30, interval=0.1, message="the fork loop never stopped"
+        )
         assert int(loop_out.read_text(encoding="utf-8")) < LIMIT
 
         done = subprocess.run(other, capture_output=True, text=True, timeout=60)

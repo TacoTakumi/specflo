@@ -39,9 +39,9 @@ from specflo.errors import SpecfloError
 from specflo.pool import waiting
 from specflo.pool.runner import RunnerError
 from specflo.service.pool_remote import LEASES_PATH, WAITING_MEDIA_TYPE, RemotePool
+from waits import settle, wait_until
 
 from .test_lease_request import checkout, pool_daemon, runner  # noqa: F401  (fixtures)
-from .test_runner import wait_until
 
 VERB = "from specflo.cli import main; main()"
 
@@ -270,7 +270,7 @@ def test_a_client_that_goes_away_after_the_notice_leaves_no_waiting_record(
     assert wait_until(lambda: waiting_rows(pool_rig) == [], timeout=5)
     # and what frees later is not granted to it
     holder.release(first.lease_id, token=first.token)
-    time.sleep(0.3)
+    settle(0.3)
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []
 
@@ -457,6 +457,6 @@ def test_an_interrupted_verb_exits_non_zero_says_cancelled_and_waits_no_longer(
     assert not (checkout / ".specflo" / "leases" / "local-1.token").exists()
     # and what frees later is not granted to it
     holder.release(first.lease_id, token=first.token)
-    time.sleep(0.3)
+    settle(0.3)
     with pool_rig.store() as store:
         assert store.list_leases(state="active") == []

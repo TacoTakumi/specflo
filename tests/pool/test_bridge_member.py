@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -32,6 +31,7 @@ from starlette.responses import JSONResponse
 
 from specflo.pool import bridge, launch, runner, sandbox
 from specflo.pool.service import PoolService
+from waits import wait_until
 
 from .conftest import bridge_served
 from .test_runner import DEFINITION, OPERATOR_MODELS, POOL_TOKEN, Rig  # noqa: F401
@@ -112,13 +112,15 @@ def served(path: Path):
 
 
 def written(path: Path, timeout: float = 10.0) -> dict:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    def found() -> dict | None:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            time.sleep(0.02)
-    raise AssertionError(f"the probe wrote nothing to {path}")
+            return None
+
+    return wait_until(
+        found, timeout, interval=0.02, message=f"the probe wrote nothing to {path}"
+    )
 
 
 @pytest.fixture
