@@ -705,3 +705,40 @@ def test_test_command_is_unset_by_default_and_round_trips(tmp_path, monkeypatch)
 
     assert runner.invoke(app, ["config", "unset", "test_command"]).exit_code == 0
     assert config.load_config(tmp_path).test_command is None
+
+
+# --- review_max_rounds: the review rounds a level may take ----------------------------
+
+
+def test_review_max_rounds_defaults_to_2_and_round_trips(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    assert config.load_config(tmp_path).review_max_rounds == 2
+    assert runner.invoke(app, ["config", "get", "review_max_rounds"]).output.strip() == "2"
+
+    assert runner.invoke(app, ["config", "set", "review_max_rounds", "3"]).exit_code == 0
+    assert runner.invoke(app, ["config", "get", "review_max_rounds"]).output.strip() == "3"
+    listed = runner.invoke(app, ["config", "list"]).output
+    assert "review_max_rounds: 3" in listed
+
+    assert runner.invoke(app, ["config", "unset", "review_max_rounds"]).exit_code == 0
+    assert config.load_config(tmp_path).review_max_rounds == 2
+
+
+@pytest.mark.parametrize("bad", ["0", "x", "1.5"])
+def test_review_max_rounds_refuses_anything_but_a_whole_number_of_1_or_more(tmp_path, monkeypatch, bad):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    runner = CliRunner()
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["init"]).exit_code == 0
+    before = config.config_path(tmp_path).read_text()
+
+    result = runner.invoke(app, ["config", "set", "review_max_rounds", bad])
+
+    assert result.exit_code != 0
+    assert "1 or greater" in result.output
+    assert config.config_path(tmp_path).read_text() == before

@@ -51,6 +51,9 @@ DEFAULT_MAX_PASSES = 50
 # entirely; arming early costs one bounded reseed. Hence 25 (D-01). A percent,
 # never an absolute token count, so it holds across window sizes.
 DEFAULT_CONTEXT_THRESHOLD_PERCENT = 25
+# Review rounds one level may take before `review start` hands the choice to
+# the user: one more round, or a waive.
+DEFAULT_REVIEW_MAX_ROUNDS = 2
 # The usable percent range. 100 is allowed (arm only at a full window, in effect
 # disabling the trigger); 0 and below would arm every turn from the start.
 CONTEXT_THRESHOLD_RANGE = (1, 100)
@@ -220,6 +223,13 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         None,
         "Shell command a ladder run tests each level's branch with; unset means not run.",
         Text(optional=True),
+    ),
+    ConfigField(
+        "review_max_rounds",
+        int,
+        DEFAULT_REVIEW_MAX_ROUNDS,
+        "Review rounds a level may take before `review start` asks for --over-budget or a waive.",
+        WholeNumber(1),
     ),
 )
 
