@@ -318,7 +318,7 @@ def test_status_review_line_reports_an_open_round_as_open(tmp_path):
     cfg, project = _plan_at_execute(tmp_path)
     _close_review(tmp_path, cfg, "ready-to-merge")
     _close_review(tmp_path, cfg, "changes-requested")
-    review.start_round(tmp_path, cfg, "thing", today="2026-08-09")
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-09", over_budget=True)
 
     info = status.build_status(tmp_path, cfg, project)
     line = next(ln for ln in status.render_status(tmp_path, info).splitlines()

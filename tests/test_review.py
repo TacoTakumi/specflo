@@ -84,7 +84,7 @@ def test_mint_numbers_past_the_highest_round_and_never_fills_a_gap(
     # REQ-02: review-2.md was deleted; the next round is 4, not 2.
     project_dir = _project(tmp_path, monkeypatch)
     _closed_round(project_dir, 1)
-    _closed_round(project_dir, 3, verdict="changes-requested")
+    _closed_round(project_dir, 3, verdict="waived")
 
     result = runner.invoke(app, ["review", "start"])
 
@@ -169,7 +169,7 @@ def test_close_json_carries_the_locator_and_the_local_path(tmp_path, monkeypatch
 def test_close_accepts_each_of_the_three_verdicts(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     for number, verdict in enumerate(
-        ("ready-to-merge", "changes-requested", "waived"), start=1
+        ("changes-requested", "ready-to-merge", "waived"), start=1
     ):
         runner.invoke(app, ["review", "start"])
         extra = ["--reason", "not reviewing this one"] if verdict == "waived" else []

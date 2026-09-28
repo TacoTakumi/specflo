@@ -2441,13 +2441,17 @@ def review_start(
     full: bool = typer.Option(
         False, "--full", help="Review the whole branch, not only the diff since the last round."
     ),
+    over_budget: bool = typer.Option(
+        False, "--over-budget",
+        help="Open one more round when the level has used its review budget.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mint the active project's next review round and print its locator and scope."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        path, created = svc.start_round(slug, full=full)
+        path, created = svc.start_round(slug, full=full, over_budget=over_budget)
         scope = svc.review_scope(slug)
     except SpecfloError as exc:
         raise _die(str(exc))

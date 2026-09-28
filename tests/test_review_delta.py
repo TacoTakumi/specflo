@@ -271,7 +271,7 @@ def test_check_refuses_an_item_an_earlier_round_checked_closed(tmp_path, monkeyp
         "reason: ''\n---\n\n# Review round 2\n\n## Earlier findings\n\n- F-01 closed\n- F-02 open\n\n"
         "## Findings\n\n- F-03 (blocker) Three\n"
     )
-    result = _start()
+    result = _start("--over-budget")
     assert "F-01" not in result.output.split("Items to check:")[1]
     path = project_dir / "review-3.md"
     before = path.read_text()
@@ -347,7 +347,7 @@ def test_an_item_checked_open_asks_for_changes_even_with_none(tmp_path, monkeypa
     assert _fields(path)["verdict"] == "changes-requested"
     assert "F-01" in result.output
     # The next round still has F-01 to check, and not F-02.
-    nxt = _start()
+    nxt = _start("--over-budget")
     items = nxt.output.split("Items to check:")[1]
     assert "F-01" in items and "F-02" not in items
 

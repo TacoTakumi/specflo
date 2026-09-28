@@ -173,12 +173,44 @@ def _reviewed_sha(rounds: list[tuple[int, Path]]) -> str:
     return ""
 
 
+def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
+    """The current level's review budget, read from the round files.
+
+    ``used`` counts the rounds whose level is the project's current level; a
+    round with no level recorded counts toward it too. ``spent`` is True when
+    the latest round asks for changes and the level has used every round
+    ``review_max_rounds`` allows: the next round needs the user's say.
+    """
+    level = load_project(root, cfg, slug).level
+    rounds = [frontmatter(path) for _, path in round_files(root, cfg, slug)]
+    used = sum(1 for fields in rounds if (fields.get("level") or level) == level)
+    latest = str(rounds[-1].get("verdict", "") or "") if rounds else ""
+    limit = cfg.review_max_rounds
+    return {
+        "level": level,
+        "used": used,
+        "max": limit,
+        "spent": latest == CHANGES_REQUESTED and used >= limit,
+    }
+
+
+def budget_message(state: dict) -> str:
+    """What to tell the user when the level's review budget is spent."""
+    return (
+        f"The {state['level']} level has used its review budget ({state['used']} of"
+        f" {state['max']} rounds) and the latest round asks for changes. Run one more"
+        " round with `specflo review start --over-budget`, or waive the review with"
+        " `specflo review waive --reason <why>`."
+    )
+
+
 def start_round(
     root: Path,
     cfg: SpecfloConfig,
     slug: str,
     today: str | None = None,
     full: bool = False,
+    over_budget: bool = False,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
@@ -191,6 +223,9 @@ def start_round(
     level, and its base: the sha of the latest reviewed round, from which it
     reviews only the diff. ``full``, or no reviewed round with a sha, leaves
     the base empty and the round reviews the whole branch.
+
+    When the level's budget is spent (see :func:`budget`), no round opens
+    unless ``over_budget`` says the user chose one more.
     """
     today = today or datetime.date.today().isoformat()
     directory = project_dir(root, cfg, slug)
@@ -198,6 +233,9 @@ def start_round(
         existing = open_round(root, cfg, slug)
         if existing is not None:
             return existing, False
+        state = budget(root, cfg, slug)
+        if state["spent"] and not over_budget:
+            raise SpecfloError(budget_message(state))
         rounds = round_files(root, cfg, slug)
         number = max((n for n, _ in rounds), default=0) + 1
         path = directory / f"review-{number}.md"
