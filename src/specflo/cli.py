@@ -2534,13 +2534,31 @@ def review_done(
             raise _die(f"No report file at {file}.")
         except (OSError, UnicodeDecodeError) as exc:
             raise _die(f"Cannot read {file} as text: {exc}")
+    marks: list[str] = []
+    untold = []
     try:
+        if verdict != "waived":
+            # A finding line written by hand, in the round or in the report,
+            # is blamed here as `review finding add` blames one: in the
+            # checkout that holds the code. The service takes the IDs as data.
+            scope = svc.review_scope(slug)
+            body = report_text if report_text is not None else svc.show_document(
+                slug, scope["file"].removesuffix(".md")
+            )
+            marks, untold = review_module.regression_marks(
+                root, scope["sha"], scope["first_reviewed_sha"], body
+            )
         closed = svc.close_round(
             slug, verdict, reason=reason, report_text=report_text,
-            sha=review_module.head_sha(root),
+            sha=review_module.head_sha(root), regressions=marks,
         )
     except SpecfloError as exc:
         raise _die(str(exc))
+    for finding, why in untold:
+        typer.secho(
+            f"note: {finding.id} [{finding.location}] was not checked for a regression: {why}.",
+            fg=typer.colors.YELLOW, err=True,
+        )
     _refresh_checkpoint(svc, slug)
     locator, reported = _artifact_report(root, slug, closed.path)
     if json_output:

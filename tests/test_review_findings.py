@@ -194,8 +194,8 @@ def _verdict(path):
 @pytest.mark.parametrize(
     "findings, verdict, counts",
     [
-        (["- F-01 (blocker) The close drops the sha"], "changes-requested", "1 blocker, 0 should-fix, 0 nit"),
-        (["- F-01 (should-fix) A message names the wrong command"], "changes-requested", "0 blocker, 1 should-fix, 0 nit"),
+        (["- F-01 (blocker) [src/app.py:3] The close drops the sha"], "changes-requested", "1 blocker, 0 should-fix, 0 nit"),
+        (["- F-01 (should-fix) [src/app.py:5] A message names the wrong command"], "changes-requested", "0 blocker, 1 should-fix, 0 nit"),
         (["- F-01 (nit) A name reads oddly", "- F-02 (nit) A typo"], "ready-to-merge", "0 blocker, 0 should-fix, 2 nit"),
         (["- none"], "ready-to-merge", "0 blocker, 0 should-fix, 0 nit"),
     ],
@@ -278,7 +278,7 @@ def test_done_refuses_a_round_with_no_findings_section(tmp_path, monkeypatch):
 
 def test_done_accepts_an_explicit_verdict_only_when_it_is_the_derived_one(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
-    path = _open(project_dir, ["- F-01 (blocker) One", "- F-02 (nit) Two"])
+    path = _open(project_dir, ["- F-01 (blocker) [src/app.py:1] One", "- F-02 (nit) Two"])
     before = path.read_text()
 
     refused = runner.invoke(app, ["review", "done", "--verdict", "ready-to-merge"])
@@ -309,7 +309,7 @@ def test_done_derives_the_verdict_from_an_ingested_report(tmp_path, monkeypatch)
     project_dir = _project(tmp_path, monkeypatch)
     path = _open(project_dir)
     report = tmp_path / "report.md"
-    report.write_text("# Round 1\n\n## Scope reviewed\n\n- the branch\n\n## Findings\n\n- F-01 (should-fix) One\n")
+    report.write_text("# Round 1\n\n## Scope reviewed\n\n- the branch\n\n## Findings\n\n- F-01 (should-fix) [src/app.py:1] One\n")
 
     result = runner.invoke(app, ["review", "done", "--file", str(report)])
 
@@ -330,7 +330,7 @@ def _open_followups(root):
 def test_a_round_with_nits_adds_one_followup_naming_them(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
     _closed_round(project_dir, 1, ["- F-01 (blocker) One"])
-    _open(project_dir, ["- F-02 (nit) A name", "- F-03 (should-fix) Two", "- F-04 (nit) A typo"])
+    _open(project_dir, ["- F-02 (nit) A name", "- F-03 (should-fix) [src/app.py:2] Two", "- F-04 (nit) A typo"])
     assert runner.invoke(app, ["review", "finding", "check", "F-01", "closed"]).exit_code == 0
 
     assert runner.invoke(app, ["review", "done"]).exit_code == 0
@@ -350,7 +350,7 @@ def test_a_round_with_nits_adds_one_followup_naming_them(tmp_path, monkeypatch):
     "findings, extra",
     [
         (["- none"], []),
-        (["- F-01 (blocker) One"], []),
+        (["- F-01 (blocker) [src/app.py:1] One"], []),
         (["- F-01 (nit) One"], ["--verdict", "waived", "--reason", "x"]),
     ],
 )
@@ -489,7 +489,7 @@ def test_the_ledger_and_the_check_verbs_read_both_forms(tmp_path, monkeypatch):
     result = runner.invoke(app, ["review", "done", "--json"])
 
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["still_open"] == ["F-02"]
+    assert json.loads(result.stdout)["still_open"] == ["F-02"]
     assert review.items_to_check(tmp_path, cfg, "thing", 3) == ["F-02", "F-04"]
     # A closed round is read, never rewritten.
     assert first.read_text() == before

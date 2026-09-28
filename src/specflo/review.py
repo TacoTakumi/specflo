@@ -668,6 +668,69 @@ def parse_findings(
     return findings
 
 
+def _check_locations(path: Path, findings: list[Finding]) -> None:
+    """Refuse a blocker or should-fix finding with no location, naming its line.
+
+    Asked only as the open round closes: a round closed before a finding
+    named its location is never refused for lacking one.
+    """
+    for finding in findings:
+        if finding.severity in LOCATED and finding.path is None:
+            raise SpecfloError(
+                f"{path.name} records a {finding.severity} with no location:"
+                f" {render_finding_line(finding)!r}. A blocker or should-fix names"
+                " where its defect is, as the file is at the round's sha." + _WAYS_ON
+            )
+
+
+def _mark_regressions(
+    path: Path, body: str, findings: list[Finding], ids: list[str], first: str | None
+) -> str:
+    """``body`` with each finding ``ids`` names marked a regression, or a refusal.
+
+    The caller told the marks in its own checkout; the round is trusted for
+    the rest. Refused: an ID that is not a finding of the round, a nit, and
+    any mark when no round before this one was reviewed (``first`` None). A
+    blocker or should-fix with no location never gets here: the close
+    refuses it first. A line already marked keeps its mark, and every byte
+    outside the marked lines is kept.
+    """
+    if first is None:
+        raise SpecfloError(
+            "A finding is marked as a regression only after a reviewed round,"
+            f" and no round before {path.name} was reviewed."
+        )
+    recorded = {finding.id: finding for finding in findings}
+    for finding_id in ids:
+        if finding_id not in recorded:
+            raise SpecfloError(
+                f"{finding_id} is not a finding of {path.name}, so it cannot be"
+                " marked as a regression."
+            )
+        if recorded[finding_id].severity not in LOCATED:
+            raise SpecfloError(
+                f"A {recorded[finding_id].severity} is never marked as a regression."
+            )
+    lines = body.splitlines(keepends=True)
+    start = next(
+        index for index, line, in_fence in markdown.iter_lines_with_fence(body)
+        if not in_fence and line.strip() == FINDINGS_HEADER
+    )
+    section = markdown.section_body(body, FINDINGS_HEADER) or ""
+    for index in range(start + 1, start + 1 + len(section.splitlines(keepends=True))):
+        written = lines[index].strip()
+        finding = parse_finding_line(written)
+        if finding is None or finding.regression or finding.id not in ids:
+            continue
+        # The line the close parsed, not a stale copy of its ID in a comment.
+        target = recorded[finding.id]
+        if (finding.severity, finding.location) == (target.severity, target.location):
+            lines[index] = lines[index].replace(
+                written, render_finding_line(dataclasses.replace(finding, regression=True)), 1
+            )
+    return "".join(lines)
+
+
 def derive_verdict(
     findings: list[Finding], still_open: list[str] | None = None
 ) -> tuple[str, dict[str, int]]:
@@ -761,6 +824,7 @@ def close_round(
     report_text: str | None = None,
     sha: str | None = None,
     nits_followup: bool = True,
+    regressions: list[str] | None = None,
 ) -> ClosedRound:
     """Close the open round with the verdict its findings give, date and sha.
 
@@ -768,6 +832,13 @@ def close_round(
     :func:`parse_findings` and :func:`derive_verdict`). An explicit
     ``verdict`` is accepted only when it is the derived one, except
     ``waived``, which closes the round without reading its findings.
+
+    Every blocker and should-fix finding names its location, whether
+    ``review finding add`` wrote the line or a reviewer did by hand.
+    ``regressions`` names the findings to mark as regressions as the round
+    closes: the caller blames their lines in its own checkout (see
+    :func:`regression_marks`), since a daemon holds no code, and the marks
+    are written as sent. A line already marked keeps its mark.
 
     A round with nits adds one follow-up naming their IDs, so the nits stay
     listed after the project completes without blocking it. ``nits_followup``
@@ -791,8 +862,9 @@ def close_round(
     Raises ``SpecfloError`` - leaving every file untouched - when the verdict is
     not one of :data:`VERDICTS`, when ``waived`` comes without a reason
     (REQ-06), when the body is already written, when no round is open, when
-    the findings are malformed, or when an explicit verdict is not the
-    derived one.
+    the findings are malformed, when a blocker or should-fix names no
+    location, when an explicit verdict is not the derived one, or on a mark
+    :func:`_mark_regressions` refuses.
     """
     if verdict is not None and verdict not in VERDICTS:
         raise SpecfloError(
@@ -802,6 +874,11 @@ def close_round(
         raise SpecfloError(
             "Verdict 'waived' needs a --reason, so a project that skipped review"
             " records why."
+        )
+    if verdict == WAIVED and regressions:
+        raise SpecfloError(
+            "A waived round closes without reading its findings, so none of them"
+            " is marked as a regression."
         )
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         path = open_round(root, cfg, slug)
@@ -823,6 +900,12 @@ def close_round(
         still_open: list[str] = []
         if verdict != WAIVED:
             findings = parse_findings(root, cfg, slug, path, body)
+            _check_locations(path, findings)
+            if regressions:
+                earlier = [(n, p) for n, p in round_files(root, cfg, slug) if p != path]
+                body = _mark_regressions(
+                    path, body, findings, regressions, _first_reviewed_sha(earlier)
+                )
             still_open = parse_checks(root, cfg, slug, path, body, fields["round"])
             derived, counts = derive_verdict(findings, still_open)
             if verdict is not None and verdict != derived:
@@ -1036,6 +1119,35 @@ def regression_mark(
     except (OSError, subprocess.TimeoutExpired):
         return False, f"git cannot blame {path} at {sha} here"
     return False, unknown
+
+
+def regression_marks(
+    root: Path, sha: str, first: str | None, body: str
+) -> tuple[list[str], list[tuple[Finding, str]]]:
+    """The findings of a round's text to mark as regressions, and those not told.
+
+    ``body`` is what the round closes with: the round file, or the report
+    ``review done --file`` ingests. Each finding line under its Findings
+    heading with no mark yet is told as :func:`regression_mark` tells one,
+    in the caller's checkout at ``root``; a line already marked keeps its
+    mark and is not blamed. A line that is not a finding is the close's to
+    refuse. Returns the IDs to mark, and each finding the checkout could not
+    tell with why.
+    """
+    marks: list[str] = []
+    untold: list[tuple[Finding, str]] = []
+    for line in _findings_lines(body) or []:
+        finding = parse_finding_line(line)
+        if finding is None or finding.regression:
+            continue
+        marked, why = regression_mark(
+            root, sha, first, finding.severity, finding.path, finding.start, finding.end
+        )
+        if marked:
+            marks.append(finding.id)
+        elif why:
+            untold.append((finding, why))
+    return marks, untold
 
 
 def add_finding(

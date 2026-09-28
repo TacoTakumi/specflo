@@ -463,12 +463,14 @@ class LocalProjectService:
         reason: str | None = None,
         report_text: str | None = None,
         sha: str | None = None,
+        regressions: list[str] | None = None,
     ) -> ClosedRound:
         # Follow-ups work only for projects in a checkout: a daemon's round
         # keeps its nits in the round file.
         return review.close_round(
             self.root, self.cfg, slug, verdict, reason=reason,
             report_text=report_text, sha=sha, nits_followup=not self.hosted,
+            regressions=regressions,
         )
 
     def add_finding(

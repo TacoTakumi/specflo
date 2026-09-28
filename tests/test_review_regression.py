@@ -11,6 +11,11 @@ mark with the add; the review scope carries the first reviewed round's sha to
 it. The service takes the mark as data and runs no git. A finding with no
 reviewed round before it is never marked, a nit never is, and a mark the
 checkout cannot compute is left off with a note.
+
+``review done`` applies the same rules to lines written by hand, in the round
+file or in a report ingested with ``--file``: a blocker or should-fix line
+with no location refuses the close, and the CLI marks a located line that
+carries no mark yet, sending the IDs with the close. A mark is never removed.
 """
 
 import json
@@ -444,3 +449,330 @@ def test_a_regression_mark_is_the_same_for_a_local_and_a_hosted_project(
     # The daemon holds no git repository; the mark reached it as data.
     assert not (live_daemon["root"] / ".git").exists()
     assert [body["regression"] for body in sent] == [False, True, True, False, False]
+
+
+# --- review done applies the rules to hand-written lines ---------------------
+
+
+def _write_findings(path, lines):
+    """Write ``lines`` by hand as the Findings section of the round at ``path``."""
+    path.write_text(
+        markdown.replace_section_body(path.read_text(), review.FINDINGS_HEADER, "\n".join(lines))
+    )
+
+
+def _check_round_one_closed():
+    for item in ("F-01", "F-02"):
+        _run("review", "finding", "check", item, "closed")
+
+
+def _docs(root):
+    """Every file under ``root``'s docs directory, with its bytes."""
+    return {path: path.read_bytes() for path in (root / "docs").rglob("*") if path.is_file()}
+
+
+# Round 2's report, as a reviewer with no shell returns it: round 1's items
+# checked, and the findings under it.
+_REPORT = (
+    "# Review round 2\n\n## Scope reviewed\n\n- the fix\n\n"
+    "## Earlier findings\n\n- F-01 closed\n- F-02 closed\n\n"
+    "## Findings\n\n{findings}\n\n## Verdict\n"
+)
+
+
+@pytest.mark.parametrize("severity", ["blocker", "should-fix"])
+def test_done_marks_a_hand_written_line_on_a_line_a_fix_changed(tmp_path, monkeypatch, severity):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    path = project_dir / "review-2.md"
+    _check_round_one_closed()
+    _write_findings(path, [
+        f"- F-03 ({severity}) [src/x.py:9-10] Hand-written on B's line",
+        "- F-04 (should-fix) [src/x.py:30] Hand-written on a line no fix changed",
+        "- F-05 (nit) [src/x.py:10] A nit is never marked",
+    ])
+    before = review.body_of(path)
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout.startswith("thing/review-2 closed changes-requested (")
+    assert result.stderr == ""
+    assert _findings(path) == [
+        f"- F-03 ({severity}, regression) [src/x.py:9-10] Hand-written on B's line",
+        "- F-04 (should-fix) [src/x.py:30] Hand-written on a line no fix changed",
+        "- F-05 (nit) [src/x.py:10] A nit is never marked",
+    ]
+    # The mark is the one change the close makes to the body.
+    assert review.body_of(path) == before.replace(
+        f"({severity}) [src/x.py:9-10]", f"({severity}, regression) [src/x.py:9-10]"
+    )
+
+
+def test_done_marks_a_line_that_arrives_in_an_ingested_report(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    report = tmp_path / "report.md"
+    report.write_text(_REPORT.format(findings=(
+        "- F-03 (should-fix) [src/x.py:10] The fix broke it\n"
+        "- F-04 (blocker) [src/x.py:30] Not a regression"
+    )))
+
+    result = runner.invoke(app, ["review", "done", "--file", str(report)])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert review.body_of(project_dir / "review-2.md") == report.read_text().replace(
+        "(should-fix) [src/x.py:10]", "(should-fix, regression) [src/x.py:10]"
+    )
+
+
+def test_done_keeps_a_mark_a_line_already_carries(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _check_round_one_closed()
+    lines = [
+        "- F-03 (should-fix, regression) [src/x.py:10] Marked by hand on B's line",
+        "- F-04 (blocker, regression) [src/x.py:30] Marked by hand on a line no fix changed",
+    ]
+    _write_findings(project_dir / "review-2.md", lines)
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert _findings(project_dir / "review-2.md") == lines
+
+
+@pytest.mark.parametrize("how", ["round file", "--file"])
+@pytest.mark.parametrize("severity", ["blocker", "should-fix"])
+def test_done_refuses_a_hand_written_line_with_no_location_and_changes_no_file(
+    tmp_path, monkeypatch, severity, how
+):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    # The nit comes first: a close that went on would write its follow-up.
+    lines = [
+        "- F-03 (nit) A name reads oddly",
+        f"- F-04 ({severity}) Where is it",
+        "- F-05 (should-fix) [src/x.py:10] The fix broke it",
+    ]
+    args = ["review", "done"]
+    if how == "--file":
+        report = tmp_path / "report.md"
+        report.write_text(_REPORT.format(findings="\n".join(lines)))
+        args += ["--file", str(report)]
+    else:
+        _check_round_one_closed()
+        _write_findings(project_dir / "review-2.md", lines)
+    before = _docs(tmp_path)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 1, result.output
+    assert f"'- F-04 ({severity}) Where is it'" in result.stderr
+    assert "specflo review finding add" in result.stderr
+    assert "specflo review waive" in result.stderr
+    assert "note:" not in result.stderr
+    assert _docs(tmp_path) == before
+
+
+def test_done_leaves_a_mark_it_cannot_compute_off_with_a_note(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _set_sha(project_dir / "review-1.md", "deadbee")
+    _check_round_one_closed()
+    _write_findings(project_dir / "review-2.md", [
+        "- F-03 (blocker) [src/x.py:10] The fix broke it",
+        "- F-04 (nit) [src/x.py:10] A nit gets no note",
+    ])
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == (
+        "note: F-03 [src/x.py:10] was not checked for a regression:"
+        " this checkout has no commit deadbee.\n"
+    )
+    assert _findings(project_dir / "review-2.md")[0] == "- F-03 (blocker) [src/x.py:10] The fix broke it"
+
+
+def test_a_closed_round_with_no_locations_is_never_refused_or_rewritten(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    old = project_dir / "review-1.md"
+    old.write_text(
+        "---\nround: 1\nverdict: changes-requested\ndate: '2026-08-22'\nsha: ''\nbase: ''\n"
+        "level: ''\nreason: ''\n---\n\n# Review round 1\n\n## Scope reviewed\n\n"
+        "## Findings\n\n- F-01 (blocker) Written before a line named its location\n\n## Verdict\n"
+    )
+    before = old.read_bytes()
+    _change(tmp_path, 10, "line 10 in B")
+    _start()
+    _run("review", "finding", "check", "F-01", "closed")
+    _write_findings(project_dir / "review-2.md", ["- F-02 (should-fix) [src/x.py:10] New"])
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert old.read_bytes() == before
+
+
+def _no_git(*args, **kwargs):
+    raise AssertionError(f"the service ran {args[0] if args else kwargs}")
+
+
+def test_the_service_writes_the_marks_it_is_sent_at_close_and_runs_no_git(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _check_round_one_closed()
+    _write_findings(project_dir / "review-2.md", [
+        "- F-03 (blocker) [src/x.py:30] One",
+        "- F-04 (should-fix, regression) [src/x.py:31] Two",
+        "- F-05 (should-fix) [src/x.py:32] Three",
+    ])
+    svc = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    monkeypatch.setattr(subprocess, "run", _no_git)
+
+    # Lines 30 to 32 were never changed: the service does not look.
+    closed = svc.close_round(SLUG, regressions=["F-03", "F-04"])
+
+    assert closed.verdict == "changes-requested"
+    assert _findings(project_dir / "review-2.md") == [
+        "- F-03 (blocker, regression) [src/x.py:30] One",
+        "- F-04 (should-fix, regression) [src/x.py:31] Two",
+        "- F-05 (should-fix) [src/x.py:32] Three",
+    ]
+
+
+@pytest.mark.parametrize(
+    "line, marks, refusal",
+    [
+        ("- F-03 (nit) [src/x.py:10] One", ["F-03"], "A nit is never marked as a regression"),
+        ("- F-03 (nit) One", ["F-03"], "A nit is never marked as a regression"),
+        ("- F-03 (blocker) [src/x.py:10] One", ["F-09"], "F-09 is not a finding of review-2.md"),
+        ("- F-03 (blocker) One", [], "- F-03 (blocker) One"),
+    ],
+)
+def test_the_service_refuses_an_untrusted_close_and_changes_no_file(
+    tmp_path, monkeypatch, line, marks, refusal
+):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _check_round_one_closed()
+    _write_findings(project_dir / "review-2.md", [line])
+    svc = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    before = _docs(tmp_path)
+
+    with pytest.raises(SpecfloError, match=re.escape(refusal)):
+        svc.close_round(SLUG, regressions=marks)
+
+    assert _docs(tmp_path) == before
+
+
+def test_the_service_refuses_a_mark_at_close_with_no_reviewed_round_before(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _run("review", "waive", "--reason", "Reviewed by hand")
+    _run("review", "start")
+    _write_findings(project_dir / "review-2.md", ["- F-01 (blocker) [src/x.py:10] One"])
+    svc = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    before = _docs(tmp_path)
+
+    with pytest.raises(SpecfloError, match="no round before review-2.md was reviewed"):
+        svc.close_round(SLUG, regressions=["F-01"])
+
+    assert _docs(tmp_path) == before
+
+
+def test_the_service_refuses_a_mark_on_a_waived_close(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _write_findings(project_dir / "review-2.md", ["- F-03 (blocker) [src/x.py:10] One"])
+    svc = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    before = _docs(tmp_path)
+
+    with pytest.raises(SpecfloError, match="A waived round"):
+        svc.close_round(SLUG, "waived", reason="Reviewed by hand", regressions=["F-03"])
+
+    assert _docs(tmp_path) == before
+
+
+def _hand_written_run(tmp_path, monkeypatch, name, new_args, rounds, register=None):
+    """Three rounds in a fresh git checkout ``name``, with a fix before each
+    later one: round 2's lines written by hand into the round file in
+    ``rounds`` (a function of the checkout), round 3's ingested with --file.
+    Each step's ``(args, exit code, stdout, stderr)``, the regression marks
+    each close_round request sent, and the round directory."""
+    checkout = tmp_path / name
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _commit(checkout, "src/x.py", X_PY)
+    config.init_config(checkout)
+    monkeypatch.chdir(checkout)
+    if register is not None:
+        registered = runner.invoke(app, ["remote", "add", "home", *register])
+        assert registered.exit_code == 0, registered.output
+    created = runner.invoke(app, ["new", "Thing", "--summary", "One line", *new_args])
+    assert created.exit_code == 0, created.output
+    sent = []
+    real_send = httpx.Client.send
+
+    def recording_send(self, request, **kwargs):
+        if request.url.path.endswith("/close_round"):
+            sent.append(json.loads(request.content).get("regressions"))
+        return real_send(self, request, **kwargs)
+
+    monkeypatch.setattr(httpx.Client, "send", recording_send)
+    results = []
+
+    def step(*args):
+        result = runner.invoke(app, list(args))
+        results.append((args, result.exit_code, result.stdout, result.stderr))
+
+    step("review", "start")
+    step("review", "finding", "add", "--severity", "should-fix", "--at", "src/x.py:10", "--text", "One")
+    step("review", "done")
+    _change(checkout, 10, "line 10 fixed")
+    fix_by_cli(runner, app, "F-01")
+    step("review", "start")
+    step("review", "finding", "check", "F-01", "closed")
+    _write_findings(rounds(checkout) / "review-2.md", [
+        "- F-02 (blocker) [src/x.py:10] The fix broke it",
+        "- F-03 (should-fix, regression) [src/x.py:30] Marked by hand",
+        "- F-04 (should-fix) [src/x.py:30] Not a regression",
+    ])
+    step("review", "done")
+    _change(checkout, 20, "line 20 fixed")
+    fix_by_cli(runner, app, "F-02", "F-03", "F-04")
+    step("review", "start", "--over-budget")
+    (checkout / "report.md").write_text(
+        "# Review round 3\n\n## Earlier findings\n\n- F-02 closed\n- F-03 closed\n- F-04 closed\n\n"
+        "## Findings\n\n- F-05 (should-fix) [src/x.py:19-20] And here\n"
+        "- F-06 (blocker) [src/x.py:1] Not a regression\n"
+    )
+    step("review", "done", "--file", "report.md")
+    step("doc", "show", "review-2")
+    step("doc", "show", "review-3")
+    monkeypatch.setattr(httpx.Client, "send", real_send)
+    return results, sent, rounds(checkout)
+
+
+def test_a_hand_written_line_is_marked_the_same_for_a_local_and_a_hosted_project(
+    tmp_path, monkeypatch, live_daemon
+):
+    local, _, local_rounds = _hand_written_run(
+        tmp_path, monkeypatch, "local", [], lambda checkout: checkout / "docs" / "projects" / SLUG,
+    )
+    hosted, sent, hosted_rounds = _hand_written_run(
+        tmp_path, monkeypatch, "hosted", ["--remote", "home"],
+        lambda _: live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG,
+        register=[live_daemon["url"], "--token", live_daemon["token"]],
+    )
+
+    for mine, theirs in zip(local, hosted, strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal: {mine[1:]}\nhosted: {theirs[1:]}"
+    assert [code for _, code, _, _ in local] == [0] * len(local)
+    for name in ("review-2.md", "review-3.md"):
+        assert (local_rounds / name).read_text() == (hosted_rounds / name).read_text()
+    assert _findings(hosted_rounds / "review-2.md") == [
+        "- F-02 (blocker, regression) [src/x.py:10] The fix broke it",
+        "- F-03 (should-fix, regression) [src/x.py:30] Marked by hand",
+        "- F-04 (should-fix) [src/x.py:30] Not a regression",
+    ]
+    assert _findings(hosted_rounds / "review-3.md") == [
+        "- F-05 (should-fix, regression) [src/x.py:19-20] And here",
+        "- F-06 (blocker) [src/x.py:1] Not a regression",
+    ]
+    # The CLI blamed the lines in the checkout; the daemon got the IDs as data.
+    assert not (live_daemon["root"] / ".git").exists()
+    assert sent == [[], ["F-02"], ["F-05"]]

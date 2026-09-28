@@ -350,6 +350,7 @@ class ProjectService(Protocol):
         reason: str | None = None,
         report_text: str | None = None,
         sha: str | None = None,
+        regressions: list[str] | None = None,
     ) -> ClosedRound:
         """Close the open round with the verdict its findings give; ``report_text``
         becomes its body. An explicit verdict must be the derived one, or waived.
@@ -357,6 +358,10 @@ class ProjectService(Protocol):
 
         The text, never a path: the caller reads its own report file, so the
         service opens nothing the caller did not send.
+
+        ``regressions`` names the round's findings to mark as regressions,
+        written as the round closes. It is data: the caller blames each
+        finding's lines in its own checkout; a daemon holds only the documents.
         """
         ...
 
