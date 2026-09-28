@@ -12,14 +12,14 @@ from __future__ import annotations
 
 import logging
 import os
-import random
 import secrets
+import shutil
 import subprocess
 
 import pytest
 
 from specflo.pool import sandbox
-from waits import settle, wait_until
+from waits import scaled, wait_until
 
 from .test_sandbox_scope import skip_without_a_scope
 
@@ -40,42 +40,73 @@ def scope(name: str) -> list[str]:
     ]
 
 
-@pytest.fixture
-def run_id() -> str:
-    return secrets.token_hex(4)
+def stop_scope(unit: str) -> None:
+    """Stop *unit*, if it is still there."""
+    subprocess.run(["systemctl", "--user", "stop", unit], capture_output=True, timeout=scaled(30))
 
 
 @pytest.fixture
-def leaked(run_id) -> str:
-    """A member scope with nothing in it, made the way it happens: its process
-    is killed while systemd-run is still making the scope."""
+def prefix(monkeypatch) -> str:
+    """A scope prefix of this test's own, which the sweep looks for instead.
+
+    The pool service of each test that runs meanwhile sweeps every empty
+    member scope of the user, and would stop this test's before its own sweep
+    could. A name under this prefix is not a member scope to them.
+    """
+    own = f"specflo-membertest{secrets.token_hex(4)}-"
+    monkeypatch.setattr(sandbox, "SCOPE_PREFIX", own)
+    return own
+
+
+@pytest.fixture
+def leaked(prefix):
+    """A member scope with nothing in it, as a member killed while systemd-run
+    is still making its scope leaves one: systemd starts the scope for a
+    process that has exited and is not yet reaped. The kernel moves no exited
+    process into a cgroup, so the scope never holds a task, no cgroup-empty
+    event comes, and systemd keeps it active after the process is reaped."""
     skip_without_a_scope()
-    for attempt in range(300):
-        name = f"specflo-member-leak{run_id}-{attempt}"
-        started = subprocess.Popen(scope(name))
-        # a random pause races the kill against systemd-run making the scope,
-        # so that some tries kill it midway and leave the scope behind
-        settle(random.uniform(0, 0.03))
+    if shutil.which("busctl") is None:
+        pytest.skip("busctl is not on PATH")
+    unit = f"{prefix}leak.scope"
+    exited = subprocess.Popen(["true"])
+    try:
+        # WNOWAIT: the process has exited, and stays unreaped
+        os.waitid(os.P_PID, exited.pid, os.WEXITED | os.WNOWAIT)
+        started = subprocess.run(
+            ["busctl", "--user", "call", "org.freedesktop.systemd1", "/org/freedesktop/systemd1",
+             "org.freedesktop.systemd1.Manager", "StartTransientUnit", "ssa(sv)a(sa(sv))",
+             unit, "fail", "3", "PIDs", "au", "1", str(exited.pid), "TasksMax", "t", "8",
+             "CollectMode", "s", "inactive-or-failed", "0"],
+            capture_output=True, text=True, timeout=scaled(10),
+        )
+        assert started.returncode == 0, f"the leaked scope was not started: {started.stderr}"
+        wait_until(
+            lambda: units(unit).get(unit) == "active",
+            timeout=5, message="the leaked scope never came up",
+        )
+        exited.wait()
+        yield unit
+    finally:
+        exited.wait()
+        stop_scope(unit)
+
+
+@pytest.fixture
+def live(prefix):
+    skip_without_a_scope()
+    name = f"{prefix}live"
+    started = subprocess.Popen(scope(name))
+    try:
+        wait_until(
+            lambda: units(f"{name}.scope").get(f"{name}.scope") == "active",
+            timeout=5, message="the live scope never came up",
+        )
+        yield f"{name}.scope"
+    finally:
         started.kill()
         started.wait()
-        settle(0.2)  # a scope that was left behind is active by now
-        if units(f"{name}.scope").get(f"{name}.scope") == "active":
-            return f"{name}.scope"
-    pytest.skip("no scope was left behind in 300 tries")
-
-
-@pytest.fixture
-def live(run_id):
-    skip_without_a_scope()
-    name = f"specflo-member-live{run_id}-0"
-    started = subprocess.Popen(scope(name))
-    wait_until(
-        lambda: units(f"{name}.scope").get(f"{name}.scope") == "active",
-        timeout=5, message="the live scope never came up",
-    )
-    yield f"{name}.scope"
-    started.kill()
-    started.wait()
+        stop_scope(f"{name}.scope")
 
 
 def test_the_scope_is_named_for_the_member_and_fresh_at_each_start():
@@ -89,10 +120,10 @@ def test_the_scope_is_named_for_the_member_and_fresh_at_each_start():
     assert "--unit=specflo-member-a_b_c-" in " ".join(odd)
 
 
-# The leaked fixture makes up to 300 real systemd scopes, 0.2s or more each;
-# under load it runs past a minute and holds up the whole suite.
-@pytest.mark.skip(reason="slow: leaked fixture can run past a minute under load")
 def test_the_sweep_stops_an_empty_member_scope_and_leaves_a_running_one(leaked, live):
+    found = sandbox.member_scopes(os.environ)
+    assert found[leaked] == 0 and found[live] > 0
+
     sandbox.stop_empty_scopes(os.environ)
 
     assert units(leaked).get(leaked) in (None, "inactive")
