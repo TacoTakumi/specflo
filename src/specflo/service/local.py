@@ -444,6 +444,9 @@ class LocalProjectService:
             self.root, self.cfg, slug, verdict, reason=reason, report_text=report_text
         )
 
+    def add_finding(self, slug: str, severity: str, text: str) -> tuple[str, Path]:
+        return review.add_finding(self.root, self.cfg, slug, severity, text)
+
     # --- checkpoint and status ---------------------------------------------
 
     def build_checkpoint(self, slug: str) -> dict:

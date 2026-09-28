@@ -90,6 +90,7 @@ def test_local_service_protocol_names_every_operation_group():
         "add_pool",
         "start_round",
         "close_round",
+        "add_finding",
         "build_checkpoint",
         "write_checkpoint",
         "build_status",
@@ -203,6 +204,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     # review: the execute gate reads the round
     round_path, created = svc.start_round(slug)
     assert created and round_path.name == "review-1.md"
+    finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
+    assert (finding_id, finding_round) == ("F-01", round_path)
     assert svc.validate_artifact(slug, "execute") != []
     assert svc.close_round(slug, "ready-to-merge") == round_path
     assert svc.validate_artifact(slug, "execute") == []

@@ -19,12 +19,20 @@ from pathlib import Path
 
 import yaml
 
+from . import markdown
 from .config import SpecfloConfig
 from .errors import SpecfloError
 from .locking import lock_path_for, locked
 from .projects import project_dir
 
 _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
+# A finding's severity. A blocker or a should-fix item asks for changes; a
+# nit never does.
+SEVERITIES = ("blocker", "should-fix", "nit")
+FINDINGS_HEADER = "## Findings"
+# Any F-NN in any round file counts for numbering, so a new ID can never
+# repeat one a round already names, in a finding line or in its prose.
+_ANY_FINDING_ID = re.compile(r"\bF-(\d+)\b")
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
 # completion gate; changes-requested blocks it.
 READY = "ready-to-merge"
@@ -331,3 +339,59 @@ def close_round(
             fields["reason"] = reason
         path.write_text(_render(fields, body))
     return path
+
+
+def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """One above the highest F-NN any round file of the project names."""
+    numbers = [
+        int(match.group(1))
+        for _, path in round_files(root, cfg, slug)
+        for match in _ANY_FINDING_ID.finditer(path.read_text())
+    ]
+    return f"F-{max(numbers, default=0) + 1:02d}"
+
+
+def add_finding(
+    root: Path, cfg: SpecfloConfig, slug: str, severity: str, text: str
+) -> tuple[str, Path]:
+    """Append ``- F-NN (severity) text`` to the open round's Findings section.
+
+    Returns ``(F-NN, round path)``. The ID is numbered across every round of
+    the project, and the lock spans the read that picks it and the write that
+    records it, so two adds at once never share an ID.
+
+    Raises ``SpecfloError`` - leaving every file untouched - on a severity
+    outside :data:`SEVERITIES`, an empty or multi-line text, no open round,
+    or an open round with no Findings section.
+    """
+    if severity not in SEVERITIES:
+        raise SpecfloError(
+            f"Unknown severity {severity!r}. Valid values: " + ", ".join(SEVERITIES) + "."
+        )
+    if not text.strip():
+        raise SpecfloError("A finding needs a non-empty --text.")
+    # Any line break the round file is later split on, not only \n and \r.
+    if text.splitlines() != [text]:
+        raise SpecfloError("A finding's --text must be one line.")
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        path = open_round(root, cfg, slug)
+        if path is None:
+            raise SpecfloError(
+                "No review is open. Start one with `specflo review start`."
+            )
+        doc = path.read_text()
+        body = markdown.section_body(doc, FINDINGS_HEADER)
+        if body is None:
+            raise SpecfloError(
+                f"{path.name} has no '{FINDINGS_HEADER}' section. Add the heading"
+                " by hand, then add the finding again."
+            )
+        finding_id = _next_finding_id(root, cfg, slug)
+        line = f"- {finding_id} ({severity}) {text.strip()}"
+        kept = body.strip("\n")
+        path.write_text(
+            markdown.replace_section_body(
+                doc, FINDINGS_HEADER, f"{kept}\n{line}" if kept else line
+            )
+        )
+    return finding_id, path

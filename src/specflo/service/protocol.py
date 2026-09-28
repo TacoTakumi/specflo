@@ -337,6 +337,10 @@ class ProjectService(Protocol):
         """
         ...
 
+    def add_finding(self, slug: str, severity: str, text: str) -> tuple[str, Path]:
+        """Record one finding in the open round; ``(F-NN, round path)``."""
+        ...
+
     # --- checkpoint and status ---------------------------------------------
 
     def build_checkpoint(self, slug: str) -> dict:

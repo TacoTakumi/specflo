@@ -199,6 +199,8 @@ app.add_typer(pool_app, name="pool")
 
 review_app = typer.Typer(help="Record end-of-execute review rounds.")
 app.add_typer(review_app, name="review")
+finding_app = typer.Typer(help="Record review findings (F-NN) in the open round.")
+review_app.add_typer(finding_app, name="finding")
 
 gate_app = typer.Typer(help="Hand the active project to a role and record who takes it.")
 app.add_typer(gate_app, name="gate")
@@ -2496,6 +2498,33 @@ def review_done(
         typer.echo(json.dumps({"locator": locator, "path": reported, "verdict": verdict}))
     else:
         typer.echo(f"{locator} closed {verdict}")
+
+
+@finding_app.command(
+    "add",
+    epilog='Example: specflo review finding add --severity blocker --text "The close drops the sha"',
+)
+def review_finding_add(
+    severity: str = typer.Option(
+        ..., "--severity", metavar="<s>", help="blocker | should-fix | nit."
+    ),
+    text: str = typer.Option(..., "--text", metavar="<t>", help="The finding (one line)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Record one finding (F-NN) in the active project's open review round."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        finding_id, path = svc.add_finding(slug, severity, text)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps(
+            {"id": finding_id, "severity": severity, "locator": locator, "path": reported}
+        ))
+    else:
+        typer.echo(f"Recorded {finding_id} in {locator}.")
 
 
 @doc_app.command("show", epilog="Example: specflo doc show brainstorm")
