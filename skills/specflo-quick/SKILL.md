@@ -48,8 +48,10 @@ Before `specflo new`, propose a level and let the user confirm it:
    it printed, not a claim that it passed.
 5. **Validate.** `specflo validate brief` must pass: a goal, exactly one check,
    and proof.
-6. **Commit once.** Run the full suite once, before the commit. One commit for
-   the whole change; stage only the files you touched, never `git add -A`.
+6. **Commit once.** Run the full suite once, before the commit: the command
+   `specflo config get test_command` prints, or the project's usual full test
+   command when it prints nothing. One commit for the whole change; stage only
+   the files you touched, never `git add -A`.
 7. **Complete.** First add a follow-up for each item still in Deferred:
    `specflo followup add "<title>" --do "<what to do>"`. Nothing reads the
    brief after completion. In a ladder run, skip this: the next level picks

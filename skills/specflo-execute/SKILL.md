@@ -74,8 +74,10 @@ superseding requirement — never silently mutate a task or drift off its
    lives *inside* that validator, so it keeps reporting the missing review
    **until the round is closed** — a failing validate here is the reminder to
    review, not a reason to hold off:
-   - Run the whole test suite once, before round 1. Review rounds run only the
-     tests for the files in scope.
+   - Run the whole test suite once, before round 1: the command
+     `specflo config get test_command` prints, or the project's usual full test
+     command when it prints nothing. Review rounds run only the tests for the
+     files in scope.
    - Open the round: `specflo review start` mints `review-N.md` and prints its
      scope. Round 1 reviews the whole branch. Every later round is a delta
      round: it reviews only the diff since the last reviewed round and checks
@@ -101,7 +103,8 @@ superseding requirement — never silently mutate a task or drift off its
      `specflo review start --over-budget`, or `specflo review waive --reason
      <why>`. Ask; do not pick for them.
    - When any round was changes-requested, run the whole test suite again
-     before completion.
+     before completion (`specflo config get test_command`, or the usual full
+     test command when it prints nothing).
    On ready-to-merge, **pause before completing — don't auto-complete**: the work
    is done and reviewed and the **checkpoint is saved** (the project's
    `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
@@ -230,8 +233,9 @@ one. At fast level this loop runs as written, with two additions.
 task, not the whole suite. If a Verify runs the whole suite (a bare
 `uv run pytest`), correct it before you start the task with
 `specflo task edit T-NN --verify "<the tests the task touches>"`. Run the full
-suite once, when `specflo task show` reports no actionable task, before the
-review round.
+suite once (`specflo config get test_command`, or the usual full test command
+when it prints nothing), when `specflo task show` reports no actionable task,
+before the review round.
 
 **Uncovered work stops the loop.** At quick or fast level, when you find work
 the goal needs that the brief or the plan does not cover, stop. Do not add
