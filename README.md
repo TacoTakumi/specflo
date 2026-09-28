@@ -195,6 +195,12 @@ up is your choice, with `specflo level`.
 
 ### The ladder run
 
+The ladder shows what each level adds on one task: quick first, then fast
+built on quick, then full built on fast, each on its own branch, with one row
+of numbers per level so you can see whether the extra process was worth it.
+It is a tool for evaluation, not for day-to-day work. Use it to learn which
+level a kind of task needs, or how much process a model needs.
+
 `specflo auto --ladder` on a quick project runs all three levels in one
 unattended run, each on its own local branch:
 
@@ -223,6 +229,14 @@ level's branch; unset, the row says `not run`. Review the three branches and
 merge the one you like best. The ladder needs a clean tree (specflo's own
 documents excepted), never pushes, and never deletes, renames or resets a
 branch.
+
+To compare models, set `test_command`, run the same task as a ladder on two
+or three models of different sizes, and add one quick run on a large model as
+a reference. If a small model at full comes close to the large model at quick,
+the process makes up for model size on that task. Each level starts from the
+one below it, so a good full branch does not show that full alone would beat
+quick alone. `ladder.md` does not record the model or the harness, so note
+them yourself.
 
 ## Command reference
 
