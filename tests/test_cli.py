@@ -3795,6 +3795,16 @@ def _unbox(text: str) -> str:
     return " ".join(text.replace("\u2502", " ").split())
 
 
+def _squash(text: str) -> str:
+    """Drop all whitespace and rich's box side bars.
+
+    Rich folds a word longer than the box (a long tmp path, a narrow
+    COLUMNS) across lines, so only a squashed compare is independent of
+    the path length and the terminal width.
+    """
+    return "".join(text.replace("\u2502", "").split())
+
+
 def test_directory_invalid_missing_dir_is_rejected_before_the_subcommand(monkeypatch, tmp_path):
     """A DIR that does not exist exits 2 naming the option and the path; no status output (REQ-05)."""
     monkeypatch.chdir(tmp_path)
@@ -3802,10 +3812,10 @@ def test_directory_invalid_missing_dir_is_rejected_before_the_subcommand(monkeyp
     missing = tmp_path / "no" / "such" / "dir"
     r = runner.invoke(app, ["-C", str(missing), "status"])
     assert r.exit_code == 2
-    err = _unbox(r.stderr)
-    assert "--directory" in err
-    assert "does not exist" in err
-    assert str(missing) in err
+    err = _squash(r.stderr)
+    assert _squash("--directory") in err
+    assert _squash("does not exist") in err
+    assert _squash(str(missing)) in err
     assert "Not a specflo project" not in r.stdout
     assert "Project:" not in r.stdout
     assert os.getcwd() == before
