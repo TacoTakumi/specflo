@@ -93,10 +93,14 @@ def _normalize(text: str, project_dirs: list[str]) -> str:
     return re.sub(r"^- Actor: .*\n", "", text, flags=re.MULTILINE)
 
 
-def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list | None = None):
-    """Create the project with ``new_args`` and drive the pipeline; returns the
-    exit code and normalized stdout of every step, the creation first.
-    ``raw`` collects each step's stdout before normalization when given."""
+def _run(
+    checkout: Path, project_dirs: list[str], new_args: list[str], raw: list | None = None,
+    steps: list | None = None,
+):
+    """Create the project with ``new_args`` and drive ``steps`` (the pipeline by
+    default); returns the exit code and normalized stdout of every step, the
+    creation first. ``raw`` collects each step's stdout before normalization
+    when given."""
     ids = {}
     results = []
     # The review report a step ingests with --file: a file of the checkout,
@@ -106,7 +110,7 @@ def _run(checkout: Path, project_dirs: list[str], new_args: list[str], raw: list
     results.append((result.exit_code, _normalize(result.stdout, project_dirs)))
     if raw is not None:
         raw.append((["new"], result.stdout))
-    for args, stdin in _pipeline():
+    for args, stdin in (_pipeline() if steps is None else steps):
         resolved = [arg(ids) if callable(arg) else arg for arg in args]
         result = runner.invoke(app, resolved, input=stdin)
         if resolved[:2] == ["decision", "add"]:
@@ -252,3 +256,102 @@ def test_an_unknown_egress_class_is_refused_the_same_way_locally_and_hosted(
     assert all(name in refusals[0] for name in ("local", "no-train", "open"))
     record = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG / "project.md"
     assert "\negress: local\n" in record.read_text()
+
+
+# --- the review loop, local and hosted ---------------------------------------------------
+
+
+def _review_steps():
+    """Every review command and flag, refusals included, over four rounds."""
+    return [
+        (["review", "start"], None),
+        (["review", "prompt"], None),
+        (["review", "finding", "add", "--severity", "blocker", "--text", "The close drops the sha"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A name reads oddly"], None),
+        (["review", "finding", "add", "--severity", "major", "--text", "Refused"], None),
+        (["review", "done", "--verdict", "ready-to-merge"], None),
+        (["review", "done"], None),
+        (["review", "start", "--full"], None),
+        (["review", "prompt"], None),
+        (["review", "finding", "check", "F-02", "closed"], None),
+        (["review", "finding", "check", "F-01", "open"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--text", "A message names the wrong command"], None),
+        (["review", "done"], None),
+        (["review", "start"], None),
+        (["review", "start", "--over-budget"], None),
+        (["review", "done"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "check", "F-03", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A typo"], None),
+        (["review", "done"], None),
+        (["review", "waive", "--reason", ""], None),
+        (["review", "waive", "--reason", "Checked by hand"], None),
+        (["review", "prompt"], None),
+        (["doc", "show", "review-1"], None),
+        (["doc", "show", "review-2"], None),
+        (["doc", "show", "review-3"], None),
+        (["doc", "show", "review-4"], None),
+        (["status"], None),
+    ]
+
+
+@pytest.fixture
+def local_review_run(tmp_path, monkeypatch):
+    checkout = tmp_path / "local"
+    checkout.mkdir()
+    config.init_config(checkout)
+    monkeypatch.chdir(checkout)
+    project_dir = checkout / "docs" / "projects" / SLUG
+    dirs = [str(project_dir), f"docs/projects/{SLUG}"]
+    return _run(checkout, dirs, [], steps=_review_steps()), project_dir
+
+
+@pytest.fixture
+def hosted_review_run(tmp_path, monkeypatch, live_daemon):
+    checkout = tmp_path / "hosted"
+    checkout.mkdir()
+    config.init_config(checkout)
+    monkeypatch.chdir(checkout)
+    registered = runner.invoke(
+        app, ["remote", "add", "home", live_daemon["url"], "--token", live_daemon["token"]]
+    )
+    assert registered.exit_code == 0, registered.output
+    project_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / SLUG
+    dirs = [str(project_dir), f"projects/{SLUG}"]
+    return _run(checkout, dirs, ["--remote", "home"], steps=_review_steps()), project_dir
+
+
+def test_the_review_loop_is_identical_for_a_local_and_a_hosted_project(
+    local_review_run, hosted_review_run
+):
+    local, local_dir = local_review_run
+    hosted, hosted_dir = hosted_review_run
+    assert len(local) == len(hosted) == len(_review_steps()) + 1
+    for mine, theirs in zip(local[1:], hosted[1:]):
+        args = mine[0]
+        assert mine[1:] == theirs[1:], f"{' '.join(args)}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    # The round files themselves, byte for byte.
+    names = sorted(p.name for p in local_dir.glob("review-*.md"))
+    assert names == ["review-1.md", "review-2.md", "review-3.md", "review-4.md"]
+    for name in names:
+        assert (local_dir / name).read_text() == (hosted_dir / name).read_text(), name
+
+
+def test_the_review_scenario_exercises_each_outcome(local_review_run):
+    results, _ = local_review_run
+    steps = [(tuple(args), code, text) for args, code, text in results[1:]]
+
+    def outcome(args, nth=0):
+        return [(code, text) for step, code, text in steps if step == args][nth]
+
+    assert outcome(("review", "finding", "add", "--severity", "major", "--text", "Refused"))[0] == 1
+    assert outcome(("review", "done", "--verdict", "ready-to-merge"))[0] == 1
+    assert "changes-requested (1 blocker, 0 should-fix, 1 nit)" in outcome(("review", "done"), 0)[1]
+    assert "still open: F-01" in outcome(("review", "done"), 1)[1]
+    assert outcome(("review", "start"), 1)[0] == 1              # the budget refuses round 3
+    assert "Items to check: F-01, F-03" in outcome(("review", "start", "--over-budget"))[1]
+    assert outcome(("review", "done"), 2)[0] == 1                # F-01 and F-03 unchecked
+    assert "ready-to-merge (0 blocker, 0 should-fix, 1 nit)" in outcome(("review", "done"), 3)[1]
+    assert outcome(("review", "waive", "--reason", ""))[0] == 1
+    assert "review-4 closed waived" in outcome(("review", "waive", "--reason", "Checked by hand"))[1]
+    assert outcome(("review", "prompt"), 2)[0] == 1             # no round open after the waive

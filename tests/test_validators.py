@@ -226,3 +226,23 @@ def test_full_level_has_no_caps(tmp_path):
     _tasks(tmp_path, cfg, 8)
     assert not _cap_issues(brainstorm.validate_brainstorm(tmp_path, cfg, "thing"), 4, 3)
     assert plan.validate_plan(tmp_path, cfg, "thing") == []
+
+
+def test_a_project_whose_latest_round_came_from_review_waive_completes(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+
+    from specflo import config, projects
+
+    monkeypatch.chdir(tmp_path)
+    cfg = _execute_ready(tmp_path)
+    runner = CliRunner()
+    _close(tmp_path, cfg, "changes-requested")
+
+    waived = runner.invoke(cli.app, ["review", "waive", "--reason", "Checked by hand"])
+    assert waived.exit_code == 0, waived.output
+    assert validators.execute_issues(tmp_path, cfg, "thing") == []
+
+    result = runner.invoke(cli.app, ["advance"])
+
+    assert result.exit_code == 0, result.output
+    assert projects.load_project(tmp_path, config.load_config(tmp_path), "thing").status == "complete"

@@ -326,3 +326,12 @@ def test_a_bad_element_is_refused_and_a_failure_inside_is_a_500_without_a_traceb
     detail = response.json()["detail"]
     assert "load_project" in detail and "RuntimeError" in detail
     assert "Traceback" not in response.text and "/srv/daemon" not in response.text
+
+
+def test_the_review_reads_are_read_operations_and_its_writes_are_audited():
+    from specflo.daemon import routes
+
+    assert {"review_scope", "review_prompt"} <= routes.READ_OPERATIONS
+    assert {"start_round", "close_round", "add_finding", "check_finding", "waive_round"} <= (
+        routes.AUDITED_OPERATIONS
+    )
