@@ -481,25 +481,25 @@ def test_reload_data_reads_unavailable_until_the_store_is_told_otherwise(store):
 
 
 def test_a_console_attachment_round_trips_and_drains(store):
-    attachment = ConsoleAttachment(slot="robs-console", agent="console-1", attached=T0)
+    attachment = ConsoleAttachment(slot="ops-console", agent="console-1", attached=T0)
     store.attach_console(attachment)
 
-    assert store.get_console("robs-console") == attachment
+    assert store.get_console("ops-console") == attachment
     assert attachment.draining is False
     assert store.list_consoles() == [attachment]
     with pytest.raises(Conflict):
         store.attach_console(dataclasses.replace(attachment, agent="console-2"))
 
-    draining = store.set_console_draining("robs-console")
+    draining = store.set_console_draining("ops-console")
     assert draining == dataclasses.replace(attachment, draining=True)
-    assert store.get_console("robs-console") == draining
+    assert store.get_console("ops-console") == draining
     assert store.set_console_draining("other-console") is None
 
 
 def test_a_detached_console_leaves_no_attachment(store):
-    store.attach_console(ConsoleAttachment(slot="robs-console", agent="console-1", attached=T0))
+    store.attach_console(ConsoleAttachment(slot="ops-console", agent="console-1", attached=T0))
 
-    assert store.detach_console("robs-console") is True
-    assert store.detach_console("robs-console") is False
-    assert store.get_console("robs-console") is None
+    assert store.detach_console("ops-console") is True
+    assert store.detach_console("ops-console") is False
+    assert store.get_console("ops-console") is None
     assert store.list_consoles() == []
