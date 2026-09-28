@@ -138,8 +138,17 @@ Four phases, each gated by a validated artifact:
 hole in the spec stops the line early instead of surfacing mid-execution.
 
 The end-of-execute review is an artifact too. `specflo review start` mints a
-numbered `review-N.md`; `specflo review done --verdict ...` closes it with one of
-`ready-to-merge`, `changes-requested` or `waived`. Completing the project
+numbered `review-N.md` and `specflo review prompt` prints the brief for its
+reviewer. The reviewer records each finding with `specflo review finding add`
+(severity `blocker`, `should-fix` or `nit`, ID `F-NN`), and `specflo review
+done` closes the round with the verdict its findings give: any blocker or
+should-fix item is `changes-requested`, nits alone or `- none` is
+`ready-to-merge`. Nits never block; they go to one follow-up per round. Every
+round after the first reviewed one is a delta round: it reads only the diff
+since that round and checks each earlier blocker and should-fix item with
+`specflo review finding check`. A level may take `review_max_rounds` rounds (2
+by default); past that, the user chooses one more round (`specflo review start
+--over-budget`) or a waive (`specflo review waive`). Completing the project
 requires the latest round to have closed with a passing verdict, so a review that
 happened in some cleared context is no longer something you have to remember.
 
@@ -223,7 +232,9 @@ ladder runs, `specflo level` is refused: the ladder moves the level up itself.
 A level's row counts commits up to its branch tip. `ladder.md` in the project
 directory records the base branch and commit and one row per level: commits, files and
 lines changed against the level's start, tasks, test result, review verdict,
-deferred items and time. The test result comes from the optional `test_command`
+deferred items and time. A level that reaches its review budget is waived by the
+run itself, and its review cell reads `waived (budget)` with the items still
+open, which the next level's first round must check. The test result comes from the optional `test_command`
 config key (`specflo config set test_command "uv run pytest -q"`), run on each
 level's branch; unset, the row says `not run`. Review the three branches and
 merge the one you like best. The ladder needs a clean tree (specflo's own
@@ -298,8 +309,12 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo task note <T-NN> --text ... [--label Note|Design|Resolution|Descoped] [--json]` - append one dated note line to a task entry: `- Note: <YYYY-MM-DD> [<Label>] <text>`. Notes accumulate at the bottom of the entry in the order written and work on a task in any progress state, including a done or superseded one. The label set is closed and `Edit` is reserved for `task edit --force`; the text is written as a single line (runs of whitespace and newlines collapse to single spaces) and empty text is refused. Notes surface in `specflo task show` and nowhere else - `task list`, `status` and `checkpoint` are unaffected - and a hand-written note that does not parse is a non-blocking plan warning, never a validation failure. `--json` emits `{id, note}`.
 - `specflo task list [--json]` - all tasks with their progress state and the deps-aware next-actionable marker. `--json` is the orchestrator's frontier: each task also carries `files`, `needs` and `ready` (true exactly when the task is pending and next-actionable; an in-progress task is never ready, even when the next-actionable marker falls back to it because every pending task is held back), and the payload carries `pools`, a map from pool name to `{size, holders}` where holders are the in-progress tasks needing that pool.
 - `specflo task show [<T-NN>] [--json]` - a task's brief: acceptance criterion, cited requirements, and constraints, plus the execution mode and, when set, `Files:` and `Needs:` lines (a task needing `user` is marked as not delegated). Defaults to the next actionable task.
-- `specflo review start [--json]` - mint the next numbered review round (`review-N.md`) in the project directory and print its path. Numbering only ever goes up, so a deleted round leaves a permanent gap rather than a reused identity. With a round already open, prints that round's path and mints nothing - reusing it is how an abandoned review is resumed.
-- `specflo review done --verdict ready-to-merge|changes-requested|waived [--reason ...] [--file <path>] [--json]` - close the open round by writing the verdict into its frontmatter, stamped with the date and, inside a git repo, the short `HEAD` sha. `waived` requires `--reason`, so a project that skipped review records why. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
+- `specflo review start [--full] [--over-budget] [--json]` - mint the next numbered review round (`review-N.md`) in the project directory and print its locator and scope. The round records `HEAD` (inside a git repo), the project's level and its base. Round 1 reviews the whole branch. After a reviewed round (not a waived one), the next round is a delta round: it prints the range `<sha>..HEAD` from the latest reviewed round's sha and the earlier blocker and should-fix items it must check. `--full` reviews the whole branch again and keeps the items. Numbering only ever goes up, so a deleted round leaves a permanent gap rather than a reused identity. With a round already open, prints that round and mints nothing - reusing it is how an abandoned review is resumed. When the latest round is `changes-requested` and the level has used its `review_max_rounds` rounds, it opens nothing and names the two ways on; `--over-budget` opens one more round, and each further round needs the flag again. Rounds of an earlier level do not count. `--json` adds `scope` (`whole-branch` or `delta`), `range` and `items`.
+- `specflo review prompt` - print the reviewer brief for the open round: its scope and the items to check, what `blocker`, `should-fix` and `nit` mean (wording in agent-facing text is a nit unless it tells the agent to do the wrong thing), that a problem the branch did not introduce or one outside the delta range goes to `specflo followup add`, how to record, that the CLI sets the verdict, and to run only the tests in scope. Refused with no round open.
+- `specflo review finding add --severity blocker|should-fix|nit --text ... [--json]` - append `- F-NN (severity) text` to the open round's Findings section and print the new `F-NN`. IDs run across every round of the project, and two adds at once never share one. A reviewer with no shell may write the same lines by hand. An unknown severity, an empty text or a line break is refused and nothing is written.
+- `specflo review finding check <F-NN> closed|open [--json]` - write `- F-NN closed` or `- F-NN open` under the open round's Earlier findings section. Only a blocker or should-fix finding of an earlier round that no reviewed round has checked closed is accepted; a second check of an item replaces the first.
+- `specflo review done [--verdict ...] [--reason ...] [--file <path>] [--json]` - close the open round with the verdict its findings give, and print the count per severity. Any blocker or should-fix finding, or an earlier item checked open, is `changes-requested`; only nits, or `- none` as the whole Findings section, is `ready-to-merge`. It refuses, leaving the round open, a line under Findings not in the `- F-NN (severity) text` form, an `F-NN` used elsewhere in the project, a section with neither findings nor `- none`, `- none` beside findings, and an earlier item with no check line; the message names the line or ID and the ways on. `--verdict` is accepted only when it equals the derived verdict, except `--verdict waived --reason ...`, which closes the round without reading its findings. A round with nits adds one follow-up, `Nits from review round N`, naming their IDs. The date is stamped at close; the sha stays the one stamped at `review start`. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
+- `specflo review waive --reason ... [--json]` - close the open round `waived` with the reason, or, with no round open, record a round and close it `waived` in one step. Works at any time and past the round budget. An empty reason is refused.
 - `specflo validate execute [--json]` - completion gate: confirms every task is done, then that the latest review round closed `ready-to-merge` or `waived`. The gate keys on the verdict alone and never on the round's findings, so a passing round may still list nits.
 - `specflo advance [--json]` - validate the current phase's artifact, then move the active project to the next phase (`brainstorm -> spec -> plan -> execute`).
 - `specflo reopen [<phase>]` - the inverse of `advance`: move the phase pointer backward (bare `reopen` goes one phase back, `reopen <phase>` jumps to a named earlier phase). A pure pointer move; no artifact is rewritten.
@@ -327,8 +342,9 @@ The work a project leaves for a later one. Each project keeps its entries in its
   - `--autonomy` sets how far it runs unattended: `safe` (the default) and `autonomous` stop and hand off on any irreversible or outbound step; `yolo` permits them. Overrides the `.specflo` config default.
   - `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing. Overrides the config default.
   - `--off` sets the durable kill switch (the next pass halts); `--on` clears it.
+  - When the latest review round is `changes-requested` and the level has used its `review_max_rounds` rounds, the pass stops with the reason `review-budget` and names `specflo review start --over-budget` and `specflo review waive --reason <why>`: the next round, or a waive, is the user's call. A ladder run waives the level instead and goes on.
   - `--ladder` starts a [ladder run](#the-ladder-run) on a quick project; later passes continue it without the flag.
-  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `ladder-blocked`, or `unavailable`; `outgrew-level` is listed but no longer sent; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
+  - `--json` reports the pass as an object - its `payload` text, a boolean `stop`, and the `reason` that stopped it (`kill-switch`, `pass-cap`, `stall`, `project-complete`, `ladder-blocked`, `review-budget`, or `unavailable`; `outgrew-level` is listed but no longer sent; `null` while the run continues) - so a machine caller reads loop control from the CLI instead of deciding it.
 
 ### Harness integration
 
@@ -754,6 +770,9 @@ active_project: my-thing
 
 # Transport a daemon starts a project's agent with: tui (pi in a herdr pane) or rpc.
 # agent_transport: tui
+
+# Review rounds a level may take before `review start` asks for --over-budget or a waive.
+# review_max_rounds: 2
 ```
 
 It is your file, so specflo writes it conservatively:

@@ -11,6 +11,31 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.15.0]
 
 ### Added
+- **Review findings through the CLI.** `specflo review finding add
+  --severity blocker|should-fix|nit --text ...` appends `- F-NN (severity)
+  text` to the open round's Findings section and prints the ID. IDs run
+  across every round of the project, and two adds at once never share one.
+  A reviewer with no shell may write the same lines by hand.
+- **Delta review rounds.** Every round after the first reviewed one reads
+  only the diff since that round: `specflo review start` prints the range
+  `<sha>..HEAD` and the earlier blocker and should-fix items the round must
+  check, and `--full` reviews the whole branch again. `specflo review finding
+  check F-NN closed|open` records each item under an Earlier findings
+  section, and `review done` refuses the round until every item has a check.
+- **A review round budget.** The config key `review_max_rounds` (a whole
+  number of 1 or more, default 2) counts the rounds of the current level.
+  When the latest round asks for changes and the level has used its budget,
+  `review start` opens nothing and names the two ways on: `review start
+  --over-budget` for one more round, or `specflo review waive --reason
+  <why>`, which closes the open round waived or records a waived round when
+  none is open. `specflo auto` stops with the new reason `review-budget`
+  there; a ladder run waives the level instead and goes on, and its
+  `ladder.md` row shows `waived (budget)` with the items still open.
+- **`specflo review prompt`** prints the reviewer brief for the open round:
+  its scope and items, what each severity means (agent-facing wording is a
+  nit unless it tells the agent to do the wrong thing), that a problem the
+  branch did not introduce goes to `specflo followup add`, how to record,
+  and to run only the tests in scope.
 - **`specflo doctor [--json]`** - check the setup on this machine: the
   `specflo` command is on PATH, and each detected agent harness has every
   bundled skill, installed or linked to the same content. A missing, stale
@@ -602,6 +627,28 @@ latter. Release tags are of the form `vX.Y.Z`.
   change. The shipped definitions list none.
 
 ### Changed
+- **`review done` derives the verdict.** Any blocker or should-fix finding,
+  or an earlier item checked open, closes the round `changes-requested`;
+  nits alone, or `- none` as the whole Findings section, close it
+  `ready-to-merge`. `--verdict` is now optional and accepted only when it
+  equals the derived verdict, except `--verdict waived --reason ...`. A
+  Findings line not in the `- F-NN (severity) text` form, a reused ID, a
+  section with neither findings nor `- none`, and `- none` beside findings
+  are refused with the ways on named. A round with nits adds one follow-up
+  naming them, and the output counts the findings per severity. Breaking: a
+  free-form report no longer closes a round, and `--json` adds `findings`
+  and `still_open`.
+- **`review start` stamps the round when it opens.** It records `HEAD`, the
+  project's level and the delta base, prints the round's scope, and `--json`
+  adds `scope`, `range` and `items`. `review done` keeps the sha stamped at
+  open and fills it only when it is empty.
+- **The review hints follow the loop.** `status`, the checkpoint and `guide`
+  say to run the whole suite before round 1, name the open items after a
+  round asks for changes, name the two choices at the round budget, and ask
+  for the whole suite again before `advance` when a round asked for changes.
+  The execute skill hands the reviewer `review prompt` and fixes only
+  blocker and should-fix items; the auto skill names the `review-budget`
+  stop.
 - **Targeted tests at quick and fast level.** At fast level the plan skill
   has each task's Verify run the tests that task adds or changes, not the
   whole suite, and the execute skill runs that Verify per task and the full

@@ -212,3 +212,21 @@ def test_guide_omits_the_rule_line_without_completed_projects(cwd):
     runner.invoke(app, ["new", "My Thing"])
     out = runner.invoke(app, ["guide"]).output
     assert config.rule_text("historical") not in out
+
+
+# --- the review loop in the guide and the README ------------------------------------------
+
+_REVIEW_COMMANDS = ("review finding add", "review finding check", "review waive", "review prompt")
+
+
+def test_guide_lists_the_review_loop_commands(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    for command in _REVIEW_COMMANDS:
+        assert command in out, command
+
+
+def test_readme_documents_the_review_loop():
+    readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
+    for term in (*_REVIEW_COMMANDS, "--full", "--over-budget", "review_max_rounds",
+                 "review-budget"):
+        assert term in readme, term
