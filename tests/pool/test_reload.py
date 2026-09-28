@@ -179,8 +179,8 @@ def break_directory(rig) -> list[str]:
 
 def started_with(rig, name: str) -> dict:
     """What the pi of the member *name* was started with."""
-    assert wait_until(lambda: record_of(rig, name) is not None), (
-        f"the pi of {name} never started"
+    assert wait_until(
+        lambda: record_of(rig, name) is not None, message=f"the pi of {name} never started"
     )
     record = record_of(rig, name)
     assert wait_until(lambda: record.read_text(encoding="utf-8").endswith("}"))
@@ -435,14 +435,16 @@ def test_the_readers_follow_the_pool_a_reload_opens_and_each_configuration_after
         assert response.status_code == 200, response.text
         assert response.json()["result"]["pid"] == os.getpid()
         opened = served.state.pool
-        assert wait_until(lambda: reading.follows(opened)), "a reader kept no pool"
+        assert wait_until(lambda: reading.follows(opened), message="a reader kept no pool")
 
         write_workers(pool_rig, members=[member(pool_rig, "w-1"), member(pool_rig, "w-2"),
                                          member(pool_rig, "w-3")])
         assert served.reload().status_code == 200
         assert served.state.pool is opened
         assert [m.name for m in opened.config.members] == ["w-1", "w-2", "w-3"]
-        assert wait_until(lambda: reading.follows(opened)), "a reader kept the old configuration"
+        assert wait_until(
+            lambda: reading.follows(opened), message="a reader kept the old configuration"
+        )
 
         # a directory that does not stand changes no reader
         in_force = opened.config
