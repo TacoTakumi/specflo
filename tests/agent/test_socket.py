@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import socket
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -13,17 +12,9 @@ import pytest
 from specflo.agent.client import AgentClient, HostUnreachableError, connect
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import read_status
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=5.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture
@@ -196,5 +187,5 @@ def test_idle_client_survives_broadcast_send_timeout(make_host, monkeypatch):
     make("s8", {"reply": "ok"})
     with connect("s8", base_dir=base) as client:
         client.request({"type": "prompt", "message": "go"}, timeout=5)
-        time.sleep(1.0)  # idle well past the send timeout, nothing flowing
+        settle(1.0)  # idle well past the send timeout, nothing flowing
         assert client.status()["status"]["name"] == "s8"

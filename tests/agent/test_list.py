@@ -18,12 +18,12 @@ import signal
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 RUNNER = Path(__file__).parent / "harness_runner.mjs"
@@ -31,15 +31,6 @@ RUNNER = Path(__file__).parent / "harness_runner.mjs"
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node is required to serve v2 sessions"
 )
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -13,17 +12,9 @@ from specflo.agent.client import connect
 from specflo.agent.host import PiHost
 from specflo.agent.policy import DEFAULT_NUDGE, DialogPolicy
 from specflo.agent.statefiles import read_status
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=10.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def read_events(path):
@@ -188,7 +179,7 @@ def test_flood_flips_needs_attention_and_stops_answering(make_host):
         )
     # the first three dialogs were answered; the fourth was skipped and the
     # stub stays blocked on it, so no settle and no further answers
-    time.sleep(0.3)
+    settle(0.3)
     assert len(ui_responses(capture)) == 3
     events = read_events(host.paths.events)
     types = [e["type"] for e in events]
@@ -237,7 +228,7 @@ def test_auto_answer_disabled_leaves_dialogs_alone(make_host):
         request = client.read_until(
             lambda f: f.get("type") == "extension_ui_request", timeout=10
         )
-        time.sleep(0.2)
+        settle(0.2)
         assert ui_responses(capture) == []  # the host stayed out of it
         client.send(
             {"type": "extension_ui_response", "id": request["id"], "confirmed": True}

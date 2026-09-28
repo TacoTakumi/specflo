@@ -15,17 +15,9 @@ import pytest
 from specflo.agent.client import connect
 from specflo.agent.host import PiHost
 from specflo.agent.statefiles import ENV_STATE_DIR, read_status
+from waits import wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
-
-
-def wait_until(cond, timeout=10.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def read_events(path):

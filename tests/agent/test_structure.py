@@ -5,7 +5,6 @@ from __future__ import annotations
 import ast
 import json
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -130,15 +129,6 @@ def test_agent_sources_carry_no_sentinel_literals():
 
 
 # -- verbatim flow: sentinel-looking text changes nothing -------------------
-
-
-def wait_until(cond, timeout=10.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def test_sentinel_looking_reply_flows_verbatim(tmp_path):

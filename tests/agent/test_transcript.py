@@ -7,7 +7,6 @@ import json
 import re
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -15,19 +14,11 @@ import pytest
 from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths, read_status
 from specflo.agent.transcript import TranscriptRenderer
+from waits import settle, wait_until
 
 STUB = Path(__file__).parent / "stub_pi.py"
 
 RAW_FRAME_LINE = re.compile(r'^\s*\{.*"type".*\}\s*$', re.M)
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 # -- unit: renderer over a scripted frame sequence --------------------------
@@ -149,7 +140,7 @@ def test_host_process_renders_feed_and_ignores_stdin(tmp_path):
         # typed pane input reaches the host's stdin; it must change nothing
         host.stdin.write('steer this\n{"type": "prompt", "message": "evil"}\n')
         host.stdin.flush()
-        time.sleep(0.5)
+        settle(0.5)
         assert read_status(paths.status)["state"] == "idle"
 
         with connect("t1", base_dir=base) as client:

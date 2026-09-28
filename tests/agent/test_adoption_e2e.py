@@ -19,13 +19,13 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
-from test_tui_e2e import STUB_MODEL, STUB_PROVIDER, StubProviderHandler, wait_until
+from test_tui_e2e import STUB_MODEL, STUB_PROVIDER, StubProviderHandler
+from waits import settle, wait_until
 
 pytestmark = pytest.mark.rig
 
@@ -159,7 +159,7 @@ def test_adoption_discover_attach_detach(rig):
 
     pi = hand_start_pi()
     record = base / name / "status.json"
-    assert wait_until(lambda: record.exists(), timeout=30), "no discovery record"
+    assert wait_until(lambda: record.exists(), timeout=30, message="no discovery record")
     snapshot = json.loads(record.read_text())
     assert snapshot["ownership"] == "adopted"
     assert snapshot["transport"] == "tui"
@@ -189,7 +189,7 @@ def test_adoption_discover_attach_detach(rig):
     assert "detach" in stop.stdout.lower()
     assert not record.exists()
     assert not (base / name / "sock").exists()
-    time.sleep(0.3)
+    settle(0.3)
     assert pi.poll() is None, "an adopted session must survive stop"
 
     # And a clean pi exit removes nothing it no longer has - but the retained

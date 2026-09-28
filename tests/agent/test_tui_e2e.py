@@ -17,13 +17,13 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import os
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
+from waits import settle, wait_until
 
 pytestmark = pytest.mark.rig
 
@@ -48,15 +48,6 @@ requires_rig = pytest.mark.skipif(
     shutil.which("pi") is None or not _herdr_server_up(),
     reason="a real pi and a running herdr server are required",
 )
-
-
-def wait_until(cond, timeout=30.0, interval=0.1):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 class StubProviderHandler(http.server.BaseHTTPRequestHandler):
@@ -93,7 +84,7 @@ class StubProviderHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.flush()
 
         chunk({"role": "assistant", "content": ""}, None)
-        time.sleep(1.5)  # keep the run visibly 'working'
+        settle(1.5)  # keep the run visibly 'working'
         chunk({"content": text}, None)
         chunk({}, "stop")
         self.wfile.write(b"data: [DONE]\n\n")
@@ -269,15 +260,22 @@ def test_managed_end_to_end_on_the_rig(rig):
 
     # Controller prompt over the socket: blocks to settle, prints final text.
     prompt = spawn_cli("prompt", "rigagent", "hello from the socket")
-    assert wait_until(lambda: herdr_status_of("rigagent") == "working", timeout=30), (
-        "herdr never showed working during the run"
+    # Each check runs the herdr CLI against the live server: poll at 0.1 s.
+    assert wait_until(
+        lambda: herdr_status_of("rigagent") == "working",
+        timeout=30,
+        interval=0.1,
+        message="herdr never showed working during the run",
     )
     stdout, stderr = prompt.communicate(timeout=90)
     assert prompt.returncode == 0, stderr
     assert stdout == "socket reply text\n"
     # herdr renders a reported idle as agent_status "done" (probed live).
-    assert wait_until(lambda: herdr_status_of("rigagent") == "done", timeout=30), (
-        "herdr never returned to idle after settle"
+    assert wait_until(
+        lambda: herdr_status_of("rigagent") == "done",
+        timeout=30,
+        interval=0.1,
+        message="herdr never returned to idle after settle",
     )
 
     # A human at the keyboard: keystrokes into the same TUI.
@@ -289,7 +287,9 @@ def test_managed_end_to_end_on_the_rig(rig):
         ["herdr", "pane", "send-keys", pane, "enter"],
         check=True, capture_output=True, timeout=10,
     )
-    assert wait_until(lambda: herdr_status_of("rigagent") == "working", timeout=30)
+    assert wait_until(
+        lambda: herdr_status_of("rigagent") == "working", timeout=30, interval=0.1
+    )
     assert run_cli("wait", "rigagent", "--timeout", "60").returncode == 0
 
     # One transcript, both messages, in order.
@@ -311,8 +311,11 @@ def test_managed_end_to_end_on_the_rig(rig):
     assert wait_until(lambda: not _pid_alive(pi_pid), timeout=30)
     assert wait_until(lambda: not (base / "rigagent" / "sock").exists(), timeout=15)
     assert not (base / "rigagent" / "status.json").exists()
-    assert wait_until(lambda: herdr_agent_row("rigagent") is None, timeout=15), (
-        "herdr still lists the agent after stop"
+    assert wait_until(
+        lambda: herdr_agent_row("rigagent") is None,
+        timeout=15,
+        interval=0.1,
+        message="herdr still lists the agent after stop",
     )
 
 

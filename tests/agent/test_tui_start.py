@@ -18,13 +18,13 @@ import os
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
 from test_herdr_adapter import FAKE_HERDR
+from waits import wait_until
 
 RUNNER = Path(__file__).parent / "harness_runner.mjs"
 
@@ -32,15 +32,6 @@ pytestmark = pytest.mark.skipif(
     __import__("shutil").which("node") is None,
     reason="node is required to serve the harness socket",
 )
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture

@@ -15,28 +15,19 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.agent.statefiles import ENV_STATE_DIR
 from test_herdr_adapter import FAKE_HERDR
+from waits import settle, wait_until
 
 RUNNER = Path(__file__).parent / "harness_runner.mjs"
 
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None, reason="node is required to serve v2 sessions"
 )
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture
@@ -117,7 +108,7 @@ def test_managed_stop_ends_pi_and_cleans_up(rig):
     result = run_cli("stop", "worker")
     assert result.returncode == 0, result.stderr
     assert "stopped" in result.stdout
-    assert wait_until(lambda: proc.poll() is not None), "pi process must be gone"
+    assert wait_until(lambda: proc.poll() is not None, message="pi process must be gone")
     assert not (base / "worker" / "sock").exists()
     assert not (base / "worker" / "status.json").exists()
 
@@ -204,7 +195,7 @@ def test_adopted_stop_detaches_without_killing(rig):
     assert result.returncode == 13, result.stderr
     assert "detach" in result.stdout.lower()
     assert "stopped" not in result.stdout
-    time.sleep(0.3)
+    settle(0.3)
     assert proc.poll() is None, "an adopted session must never be killed"
     assert not (base / "adopted-proj" / "status.json").exists()
     # The retained event log is not specflo's registration; it stays.
