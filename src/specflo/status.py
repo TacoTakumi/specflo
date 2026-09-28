@@ -58,6 +58,7 @@ def build_status(root: Path, cfg: SpecfloConfig, project: projects.Project) -> d
         project.phase, progress=progress, complete=complete, shelved=shelved,
         validates=validates, review=review_info, level=project.level,
         unattended=auto.run_under_way(root, cfg, project),
+        test_command=cfg.test_command,
     )
     ladder_next = auto.ladder_step(root, cfg, project) or auto.ladder_full_step(
         root, cfg, project

@@ -401,3 +401,107 @@ def test_every_surface_asks_for_the_whole_suite_after_fixes(tmp_path, monkeypatc
     for surface, hint in _surfaces().items():
         assert "whole test suite" in hint, surface
         assert "specflo advance" in hint, surface
+
+
+# --- the whole-suite hints name the configured test_command ------------------------
+
+_SENTINEL = "run-the-suite-sentinel"
+
+# The two hints as they read with no test_command set; they must not change.
+_NO_ROUND_TEXT = (
+    "All tasks done - run the whole test suite once, then open the final review "
+    "round with `specflo review start`, hand a fresh-context reviewer the brief "
+    "`specflo review prompt` prints, and close the round with `specflo review done`."
+)
+_AFTER_CHANGES_TEXT = (
+    "All tasks done and review-2.md is ready-to-merge after a round that asked "
+    "for changes - run the whole test suite once more, then `specflo advance` to "
+    "complete the project."
+)
+
+
+def _whole_suite_hints(**kwargs):
+    after = {**_closed(2, "ready-to-merge"), "after_changes": True}
+    return [
+        workflow.next_step("execute", progress=_ALL_DONE, review=review, **kwargs)
+        for review in (None, after)
+    ]
+
+
+def test_whole_suite_hints_name_the_test_command():
+    for hint in _whole_suite_hints(test_command=_SENTINEL):
+        assert f"`{_SENTINEL}`" in hint
+        assert "whole test suite" in hint
+
+
+def test_whole_suite_hints_are_unchanged_without_a_test_command():
+    expected = [_NO_ROUND_TEXT, _AFTER_CHANGES_TEXT]
+    assert _whole_suite_hints() == expected
+    assert _whole_suite_hints(test_command=None) == expected
+
+
+def test_other_hints_do_not_name_the_test_command():
+    for review in (_closed(1, "ready-to-merge"), _closed(1, "changes-requested")):
+        hint = workflow.next_step(
+            "execute", progress=_ALL_DONE, review=review, test_command=_SENTINEL
+        )
+        assert _SENTINEL not in hint
+
+
+def _set_test_command():
+    _ok(["config", "set", "test_command", _SENTINEL])
+
+
+def test_every_surface_names_the_test_command_before_the_first_round(tmp_path, monkeypatch):
+    _execute_all_done(tmp_path, monkeypatch)
+    _set_test_command()
+
+    for surface, hint in _surfaces().items():
+        assert f"`{_SENTINEL}`" in hint, surface
+        assert "specflo review start" in hint, surface
+
+
+def test_every_surface_names_the_test_command_after_fixes(tmp_path, monkeypatch):
+    project_dir = _execute_all_done(tmp_path, monkeypatch)
+    _write_round(project_dir, 1, "changes-requested", ["- F-01 (blocker) One"])
+    _write_round(project_dir, 2, "ready-to-merge", ["- none"])
+    _set_test_command()
+
+    for surface, hint in _surfaces().items():
+        assert f"`{_SENTINEL}`" in hint, surface
+        assert "specflo advance" in hint, surface
+
+
+def test_every_surface_keeps_the_whole_suite_hints_without_a_test_command(
+    tmp_path, monkeypatch
+):
+    project_dir = _execute_all_done(tmp_path, monkeypatch)
+    for surface, hint in _surfaces().items():
+        assert _NO_ROUND_TEXT in " ".join(hint.split()), surface
+
+    _write_round(project_dir, 1, "changes-requested", ["- F-01 (blocker) One"])
+    _write_round(project_dir, 2, "ready-to-merge", ["- none"])
+    for surface, hint in _surfaces().items():
+        assert _AFTER_CHANGES_TEXT in " ".join(hint.split()), surface
+
+
+def _advance_with_every_task_done(tmp_path, monkeypatch, set_command=False):
+    """Advance into execute with every task done; the JSON next_step it prints."""
+    import json as _json
+
+    _execute_all_done(tmp_path, monkeypatch)
+    _ok(["reopen"])                                  # execute -> plan, tasks stay done
+    if set_command:
+        _set_test_command()
+    return _json.loads(_ok(["advance", "--json"]).stdout)["next_step"]
+
+
+def test_advance_names_the_test_command_when_every_task_is_done(tmp_path, monkeypatch):
+    hint = _advance_with_every_task_done(tmp_path, monkeypatch, set_command=True)
+
+    assert f"`{_SENTINEL}`" in hint
+    assert "specflo review start" in hint
+
+
+def test_advance_keeps_the_no_round_hint_without_a_test_command(tmp_path, monkeypatch):
+    assert _advance_with_every_task_done(tmp_path, monkeypatch) == _NO_ROUND_TEXT

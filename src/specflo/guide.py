@@ -347,6 +347,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
                 if project.phase == "execute" else None
             ),
             review=review.review_state(root, cfg, project.slug),
+            test_command=cfg.test_command,
         )
     )
     payload["next_action"] = project.phase

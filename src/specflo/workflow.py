@@ -82,7 +82,14 @@ def resolve_reopen_target(
     return target
 
 
-def _review_hint(review: dict | None) -> str:
+def _whole_suite(test_command: str | None) -> str:
+    """The words that ask for the whole test suite, naming the command when set."""
+    if test_command:
+        return f"run the whole test suite (`{test_command}`)"
+    return "run the whole test suite"
+
+
+def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     """What to do next once every task is done, given where the review stands.
 
     No round yet, a round left open, a round that passed, and a round that
@@ -92,11 +99,13 @@ def _review_hint(review: dict | None) -> str:
     itself - so the hint and the completion gate can never disagree about
     which verdicts clear it. The later keys (open items, the spent budget,
     earlier changes) are read with defaults, as a state dict may predate them.
+    The two hints that call for the whole suite name ``test_command`` when
+    it is set.
     """
     if review is None:
         return (
-            "All tasks done - run the whole test suite once, then open the final "
-            "review round with `specflo review start`, hand a fresh-context "
+            f"All tasks done - {_whole_suite(test_command)} once, then open the "
+            "final review round with `specflo review start`, hand a fresh-context "
             "reviewer the brief `specflo review prompt` prints, and close the "
             "round with `specflo review done`."
         )
@@ -112,8 +121,8 @@ def _review_hint(review: dict | None) -> str:
         if review.get("after_changes"):
             return (
                 f"All tasks done and {review['file']} is {review['verdict']} after a "
-                "round that asked for changes - run the whole test suite once more, "
-                "then `specflo advance` to complete the project."
+                f"round that asked for changes - {_whole_suite(test_command)} once "
+                "more, then `specflo advance` to complete the project."
             )
         return (
             f"All tasks done and {review['file']} is {review['verdict']} - run "
@@ -183,6 +192,7 @@ def next_step(
     review: dict | None = None,
     level: str = "full",
     unattended: bool = False,
+    test_command: str | None = None,
 ) -> str:
     """Return a human-readable hint for what to do while in ``phase``.
 
@@ -193,7 +203,8 @@ def next_step(
 
     ``review`` is the derived review state (``review.review_state``) or None
     when no round file exists; with every task done it decides which of the four
-    review-aware hints is returned (review-rounds REQ-20).
+    review-aware hints is returned (review-rounds REQ-20). ``test_command`` is
+    the configured one, named where those hints call for the whole suite.
 
     For brainstorm/spec/plan, ``validates=True`` means the phase's artifact
     passed its real validator, so the hint offers ``specflo advance`` and names
@@ -216,7 +227,7 @@ def next_step(
             return "Project complete. Start the next piece of work with `specflo new`."
         if progress is not None and progress.get("total", 0) > 0:
             if progress.get("all_done"):
-                return _review_hint(review)
+                return _review_hint(review, test_command)
             actionable = progress.get("next_actionable") or []
             if actionable:
                 return f"Work the next task: {', '.join(actionable)} (`specflo task show`)."

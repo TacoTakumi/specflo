@@ -109,6 +109,7 @@ def build_checkpoint(
         do_next = workflow.next_step(
             "execute", progress=prog, complete=project.status == COMPLETE_STATUS,
             review=review_info, level=project.level,
+            test_command=cfg.test_command if cfg is not None else None,
         )
         if cfg is not None:
             # auto imports this module, so it is read here, at call time.
