@@ -21,7 +21,6 @@ import shutil
 import stat
 import sys
 import threading
-import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -37,8 +36,9 @@ from specflo.daemon.app import create_app
 from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
 from specflo.service.pool_remote import LEASES_PATH, RemotePool
+from waits import settle, wait_until
 
-from .test_runner import pid_alive, wait_until
+from .test_runner import pid_alive
 
 runner = CliRunner()
 
@@ -91,10 +91,9 @@ def pool_daemon(pool_rig):
     )
     thread = threading.Thread(target=server.run, daemon=True)
     thread.start()
-    deadline = time.monotonic() + 10
-    while not server.started and time.monotonic() < deadline:
-        time.sleep(0.02)
-    assert server.started, "the daemon did not start"
+    assert wait_until(
+        lambda: server.started, timeout=10, interval=0.02, message="the daemon did not start"
+    )
     port = server.servers[0].sockets[0].getsockname()[1]
     yield {
         "root": pool_rig.root,
@@ -510,7 +509,7 @@ class SlowStart:
         assert self.begun.wait(timeout=30), "no member was started"
         connection.close()
         # the daemon hears of the close before the start returns
-        time.sleep(0.2)
+        settle(0.2)
         self.go_on.set()
 
 
@@ -536,7 +535,7 @@ def given_back(pool_rig) -> list:
         with pool_rig.store() as store:
             return store.list_leases() != [] and store.list_leases(state="active") == []
 
-    assert wait_until(none_out, timeout=10), "a lease no one holds is still out"
+    assert wait_until(none_out, timeout=10, message="a lease no one holds is still out")
     with pool_rig.store() as store:
         return store.list_leases()
 
@@ -599,7 +598,7 @@ def test_a_requester_that_stays_while_the_member_starts_slowly_has_its_grant(
         pool_daemon, {"pool": "rebasers", "cwd": str(pool_rig.work)}
     )
     assert slow.begun.wait(timeout=30)
-    time.sleep(0.3)
+    settle(0.3)
     slow.go_on.set()
 
     response = connection.getresponse()

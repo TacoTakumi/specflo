@@ -14,7 +14,6 @@ import shutil
 import stat
 import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
@@ -26,6 +25,7 @@ from specflo.cli import app
 from specflo.daemon import auth, seat
 from specflo.errors import SpecfloError
 from specflo.service.local import LocalProjectService
+from waits import settle, wait_until
 
 runner = CliRunner()
 
@@ -150,15 +150,6 @@ def test_a_cli_run_from_the_seat_resolves_the_project_as_hosted(root, live_daemo
 
 
 # --- starting the agent -------------------------------------------------------
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 @pytest.fixture
@@ -336,7 +327,7 @@ def test_overlapping_starts_for_one_project_run_one_after_the_other(root, monkey
     started = []
 
     def slow_start(root_, slug_, **kwargs):
-        time.sleep(0.3)
+        settle(0.3)
         seat.record_agent(root_, slug_, seat.agent_name(slug_))
         started.append(slug_)
         return seat.agent_name(slug_)

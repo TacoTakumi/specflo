@@ -8,7 +8,6 @@ test emits to every connected client, the way the extension broadcasts.
 import json
 import socket
 import threading
-import time
 
 import pytest
 
@@ -17,15 +16,7 @@ from specflo.agent.protocol import encode_frame, FrameDecoder
 from specflo.agent.statefiles import ENV_STATE_DIR, AgentPaths
 from specflo.daemon import chat, chatlog, seat
 from specflo.daemon.app import create_app
-
-
-def wait_until(cond, timeout=10.0, interval=0.02):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
+from waits import wait_until
 
 
 class FakeAgent:

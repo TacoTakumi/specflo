@@ -60,6 +60,7 @@ from specflo.service.pool_remote import (
     RemotePool,
     release_path,
 )
+from waits import settle
 
 from . import test_lease_request
 from .test_console_attach import AGENT, SLOT, start_host
@@ -447,7 +448,8 @@ def test_the_readers_follow_the_pool_a_reload_opens_and_each_configuration_after
         in_force = opened.config
         break_directory(pool_rig)
         assert served.reload().status_code == 400
-        assert not wait_until(lambda: not reading.follows(opened), timeout=0.3)
+        settle(0.3)
+        assert reading.follows(opened)
         assert opened.config is in_force
 
 

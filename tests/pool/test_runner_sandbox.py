@@ -14,12 +14,12 @@ import ast
 import json
 import os
 import shlex
-import time
 from pathlib import Path
 
 import pytest
 
 from specflo.pool import launch, runner, sandbox
+from waits import settle, wait_until
 
 from .test_runner import DEFINITION, POOL_TOKEN, Rig  # noqa: F401  (Rig for the fixture)
 from .test_runner import rig  # noqa: F401
@@ -75,13 +75,13 @@ def command_in_front(rig, source: str, name: str, first_arg: Path) -> str:
 
 def written(path: Path, timeout: float = 10.0) -> dict[str, str]:
     """What the probe wrote, waited for: a start returns as soon as pi runs."""
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
+    def read() -> dict[str, str] | None:
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
-            time.sleep(0.05)
-    raise AssertionError(f"the member never wrote {path.name}")
+            return None
+
+    return wait_until(read, timeout, message=f"the member never wrote {path.name}")
 
 
 def here() -> dict[str, str]:
@@ -149,16 +149,16 @@ def test_a_member_s_background_process_is_gone_once_the_lease_ends(rig) -> None:
         command=command_in_front(rig, BACKGROUND, "background.py", beat),
     )
     name = rig.start(member)
-    deadline = time.monotonic() + 10.0
-    while not beat.exists() or beat.stat().st_size == 0:
-        assert time.monotonic() < deadline, "the member's background process never ran"
-        time.sleep(0.05)
+    assert wait_until(
+        lambda: beat.exists() and beat.stat().st_size > 0,
+        timeout=10.0, message="the member's background process never ran",
+    )
 
     runner.stop(name, "released", pool_token=POOL_TOKEN)
 
-    time.sleep(0.5)
+    settle(0.5)
     settled = beat.stat().st_size
-    time.sleep(0.5)
+    settle(0.5)
     assert beat.stat().st_size == settled, "the member's background process still runs"
 
 

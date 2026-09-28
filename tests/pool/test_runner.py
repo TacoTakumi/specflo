@@ -24,7 +24,6 @@ import socket
 import stat
 import subprocess
 import sys
-import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -37,6 +36,8 @@ from specflo.errors import SpecfloError
 from specflo.pool import launch, piconfig, runner
 from specflo.pool.config import Account, Member
 from specflo.pool.definitions import AgentDefinition
+# The other pool test modules import wait_until from here.
+from waits import settle, wait_until
 
 STUB = Path(__file__).resolve().parents[1] / "agent" / "stub_pi.py"
 
@@ -182,15 +183,6 @@ LEASE_TOKEN = "lease-token-of-the-holder"
 HOLDER = hashlib.sha256(LEASE_TOKEN.encode()).hexdigest()
 # How long the runner watches a started pi, outside these tests.
 PI_START_WATCH = runner.PI_START_WATCH
-
-
-def wait_until(cond, timeout=10.0, interval=0.05):
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if cond():
-            return True
-        time.sleep(interval)
-    return False
 
 
 def pid_alive(pid: int) -> bool:
@@ -344,7 +336,7 @@ class Rig:
         return read_status(AgentPaths.resolve(name).status)
 
     def recorded(self) -> dict:
-        assert wait_until(lambda: self.records() != []), "the member's pi never started"
+        assert wait_until(lambda: self.records() != [], message="the member's pi never started")
         record = self.records()[-1]
         assert wait_until(lambda: record.read_text(encoding="utf-8").endswith("}"))
         return json.loads(record.read_text(encoding="utf-8"))
@@ -695,7 +687,7 @@ def test_stop_leaves_alone_a_host_that_does_not_take_this_pools_token(rig, bound
 
     runner.stop("local-1", "released", pool_token=POOL_TOKEN, holder=HOLDER)
 
-    time.sleep(0.5)  # a stop that was sent would have landed by now
+    settle(0.5)  # a stop that was sent would have landed by now
     after = read_status(AgentPaths.resolve("local-1").status)
     assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
     assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
