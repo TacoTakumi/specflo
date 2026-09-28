@@ -425,18 +425,23 @@ _HINT_SURFACES = [
 ]
 
 
-def _whole_suite_steps():
-    """Set test_command in the checkout, finish every task, and read the hint
-    on each surface where it calls for the whole suite: before the first
-    round, and once a round that asked for changes passes."""
+def _whole_suite_steps(test_command: str | None = TEST_COMMAND):
+    """Set ``test_command`` in the checkout (None leaves it unset), finish
+    every task, and read the hint on each surface where it calls for the
+    whole suite: before the first round, and once a round that asked for
+    changes passes. The first round's brief is read too."""
     pipeline = _pipeline()
     last = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "done"])
     surfaces = [(args, None) for args in _HINT_SURFACES]
+    setting = [] if test_command is None else [
+        (["config", "set", "test_command", test_command], None)
+    ]
     return [
-        (["config", "set", "test_command", TEST_COMMAND], None),
+        *setting,
         *pipeline[: last + 1],
         *surfaces,
         (["review", "start"], None),
+        (["review", "prompt"], None),
         (["review", "finding", "add", "--severity", "blocker", "--text", "One"], None),
         (["review", "done"], None),
         (["review", "start"], None),
@@ -455,13 +460,9 @@ def _session_start(text: str) -> str:
     return f"{message}\n{payload['hookSpecificOutput']['additionalContext']}"
 
 
-def test_a_set_test_command_names_the_whole_suite_alike_on_every_hosted_surface(
-    tmp_path, monkeypatch, live_daemon
-):
-    local, _ = _local_steps(tmp_path, monkeypatch, _whole_suite_steps())
-    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, _whole_suite_steps())
-    assert len(local) == len(hosted) == len(_whole_suite_steps()) + 1
-    hint = f"whole test suite (`{TEST_COMMAND}`)"
+def _assert_whole_suite_alike(local, hosted, hint: str) -> None:
+    """Every step of a whole-suite run prints alike locally and hosted, and
+    each surface where the hint calls for the whole suite words it as ``hint``."""
     named = 0
     for mine, theirs in zip(local[1:], hosted[1:]):
         args = mine[0]
@@ -469,6 +470,11 @@ def test_a_set_test_command_names_the_whole_suite_alike_on_every_hosted_surface(
         if claude:
             mine = (args, mine[1], _session_start(mine[2]))
             theirs = (args, theirs[1], _session_start(theirs[2]))
+        elif args[:2] == ["review", "prompt"]:
+            # A brief's one documented difference: where follow-ups go.
+            assert mine[1] == 0, mine[2]
+            mine = (args, mine[1], _without_follow_up_lines(mine[2]))
+            theirs = (args, theirs[1], _without_follow_up_lines(theirs[2]))
         assert mine[1:] == theirs[1:], f"{' '.join(args)}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
         if args in _HINT_SURFACES or args[:2] == ["task", "done"]:
             # The session-start JSON names it twice: in the status block and
@@ -479,3 +485,32 @@ def test_a_set_test_command_names_the_whole_suite_alike_on_every_hosted_surface(
     # The last task done, then each surface before the first round and after
     # the fixes.
     assert named == 1 + 2 * len(_HINT_SURFACES)
+
+
+def test_a_set_test_command_names_the_whole_suite_alike_on_every_hosted_surface(
+    tmp_path, monkeypatch, live_daemon
+):
+    steps = _whole_suite_steps()
+    local, _ = _local_steps(tmp_path, monkeypatch, steps)
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+    assert len(local) == len(hosted) == len(steps) + 1
+    _assert_whole_suite_alike(local, hosted, f"whole test suite (`{TEST_COMMAND}`)")
+
+
+DAEMON_TEST_COMMAND = "daemon-root-sentinel"
+
+
+def test_a_test_command_in_the_daemon_root_is_named_on_no_hosted_surface(
+    tmp_path, monkeypatch, live_daemon
+):
+    # The daemon root's config sets one and the checkout's none: the daemon
+    # holds only the documents, so a hosted run reads as a local one with no
+    # command set, on every surface.
+    config.write_value(live_daemon["root"], config.field_for("test_command"), DAEMON_TEST_COMMAND)
+    steps = _whole_suite_steps(None)
+    local, _ = _local_steps(tmp_path, monkeypatch, steps)
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+    assert len(local) == len(hosted) == len(steps) + 1
+    _assert_whole_suite_alike(local, hosted, "whole test suite once")
+    for args, _, text in hosted[1:]:
+        assert DAEMON_TEST_COMMAND not in text, f"{' '.join(args)}:\n{text}"

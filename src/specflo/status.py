@@ -25,8 +25,10 @@ def build_status(
     This is the dict emitted by ``specflo status --json``; ``dir`` is kept
     absolute for machine consumers, while :func:`render_status` relativizes it
     for humans. ``test_command`` is the caller's checkout command, named where
-    the next step calls for the whole suite; None reads ``cfg``'s, which is
-    only right where ``root`` is that checkout, never on a daemon.
+    the next step calls for the whole suite; "" names none. None reads
+    ``cfg``'s, which is only right where ``root`` is that checkout: a hosted
+    service passes "" for a caller that sent none, so a daemon never names
+    its own.
     """
     progress = None
     milestone = None

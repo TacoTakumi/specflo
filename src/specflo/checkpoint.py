@@ -62,8 +62,9 @@ def build_checkpoint(
     locator is what ``doc show`` resolves wherever the file lives.
 
     ``test_command`` is the caller's checkout command, named where Do next
-    calls for the whole suite; None reads ``cfg``'s, which is only right where
-    ``root`` is that checkout, never on a daemon.
+    calls for the whole suite; "" names none. None reads ``cfg``'s, which is
+    only right where ``root`` is that checkout: a hosted service passes ""
+    for a caller that sent none, so a daemon never names its own.
     """
     directory = project.path
 

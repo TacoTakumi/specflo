@@ -473,10 +473,19 @@ class LocalProjectService:
 
     # --- checkpoint and status ---------------------------------------------
 
+    def _suite_command(self, test_command: str | None) -> str | None:
+        """The whole-suite command a hint names: the caller's. On a daemon a
+        caller that sent none gets "", which names none, as its reviewer brief
+        does, never the daemon root's; in a checkout None reads this checkout's."""
+        if self.hosted and test_command is None:
+            return ""
+        return test_command
+
     def build_checkpoint(self, slug: str, test_command: str | None = None) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
         return checkpoint.build_checkpoint(
-            self.root, project, cfg=self.cfg, locators=self.hosted, test_command=test_command
+            self.root, project, cfg=self.cfg, locators=self.hosted,
+            test_command=self._suite_command(test_command),
         )
 
     def write_checkpoint(self, slug: str) -> Path:
@@ -487,7 +496,9 @@ class LocalProjectService:
 
     def build_status(self, slug: str, test_command: str | None = None) -> dict:
         project = projects.load_project(self.root, self.cfg, slug)
-        info = status.build_status(self.root, self.cfg, project, test_command=test_command)
+        info = status.build_status(
+            self.root, self.cfg, project, test_command=self._suite_command(test_command)
+        )
         if self.hosted:
             # The one path the payload carries as text: relative, like the
             # paths the wire encodes, so the host's layout never leaves.
