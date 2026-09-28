@@ -220,21 +220,34 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     items = _ledger(root, cfg, slug, latest + 1)[0]
     if not items:
         return {}
+    return {
+        item: [task.id for task in fixes]
+        for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items()
+        if not any(task.progress == "done" for task in fixes)
+    }
+
+
+def _fix_tasks(
+    root: Path, cfg: SpecfloConfig, slug: str, items: list[str]
+) -> dict[str, list]:
+    """The active tasks that fix each of ``items``, in plan order.
+
+    A task's Fixes field names an item by its number. A superseded task
+    fixes nothing, and a project with no plan has no fix at all. Reads
+    plan.md and changes nothing.
+    """
     try:
         tasks = plan.list_tasks(root, cfg, slug)
     except SpecfloError:
         tasks = []
-    fixing: dict[int, list] = {key: [] for key in items}
+    numbers = {int(item.split("-", 1)[1]): item for item in items}
+    fixing: dict[str, list] = {item: [] for item in items}
     for task in tasks:
         for fix in task.fixes:
             match = re.fullmatch(r"F-(\d+)", fix.strip())
-            if match and int(match.group(1)) in fixing:
-                fixing[int(match.group(1))].append(task)
-    return {
-        items[key]: [task.id for task in fixes]
-        for key, fixes in fixing.items()
-        if not any(task.progress == "done" for task in fixes)
-    }
+            if match and int(match.group(1)) in numbers:
+                fixing[numbers[int(match.group(1))]].append(task)
+    return fixing
 
 
 def unfixed_message(unfixed: dict[str, list[str]]) -> str:
@@ -988,7 +1001,11 @@ def reviewer_brief(
     """The brief for the reviewer of the open round: one set of rules every round.
 
     Carries the round's scope (the whole branch, or the delta range and the
-    earlier items to check), what each severity means, what is not a finding,
+    earlier items to check), each item's fix tasks and the rules for checking
+    an item closed: its pin test fails on the source at the latest reviewed
+    round's sha and passes on HEAD, and the defect is gone on every path that
+    reaches it. A round with no items has none of this. Then what each
+    severity means, what is not a finding,
     how to record, that the CLI sets the verdict, and which tests to run:
     ``test_command`` each round when one is given, else only the tests in
     scope. ``test_command`` is the caller's checkout command: a daemon holds
@@ -1021,12 +1038,37 @@ def reviewer_brief(
         where,
     ]
     if scope["items"]:
+        fixes = _fix_tasks(root, cfg, slug, scope["items"])
         lines += [
             "",
             "Earlier rounds left these blocker and should-fix items. Check each one"
-            " and record whether it is fixed:",
+            " and record whether it is fixed. Under each item are the tasks that fix it:",
             "",
-            *(f"- {item}" for item in scope["items"]),
+        ]
+        for item in scope["items"]:
+            lines.append(f"- {item}")
+            lines += [
+                f"  - {task.id} {task.text.rstrip('.')}. Verify: `{task.verify}`"
+                for task in fixes[item]
+            ] or ["  - No task fixes it."]
+        # The fixes were made after the latest reviewed round, so its sha is
+        # the source a pin test must fail on, in a full round too.
+        numbered = [(n, p) for n, p in round_files(root, cfg, slug) if n < scope["round"]]
+        sha = _reviewed_sha(numbered)
+        before = f"at `{sha}`, the latest reviewed round's sha," if sha else "before its fix"
+        lines += [
+            "",
+            "## Checking an item closed",
+            "",
+            "Check an item closed only after its pin test, the test its fix task's"
+            f" verify step runs, fails on the source {before} and passes on HEAD. A"
+            " pin test that passes before the fix proves nothing about the fix.",
+            "",
+            "Check an item closed only when the defect is gone on every path that"
+            " reaches it, not only the path its finding names: search for the other"
+            " code that reaches the same defect. A path the fix missed keeps the item"
+            " open and is not a new finding: check the item open, and do not record"
+            " the path with `specflo review finding add`.",
         ]
     lines += [
         "",
