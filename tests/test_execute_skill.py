@@ -203,3 +203,45 @@ def test_skill_keeps_record_keywords_out_of_shipped_work():
     assert "write the reason" in low and "leave it out" in low
     assert "specflo task note" in step
     assert "task done --note" in step
+
+
+# --- the converging review loop -------------------------------------------------------
+
+AUTO_SKILL = SKILL.parents[1] / "specflo-auto" / "SKILL.md"
+
+
+def _readiness():
+    return " ".join(SKILL.read_text().split("**Readiness**", 1)[1].split("\n## ", 1)[0].split())
+
+
+def test_readiness_describes_the_converging_review_loop():
+    step = _readiness()
+    for phrase in (
+        "whole test suite once, before round 1",
+        "specflo review start",
+        "specflo review prompt",
+        "specflo review finding add",
+        "specflo review finding check",
+        "specflo review done",
+        "sets the verdict",
+        "never the nits",
+        "delta round",
+        "specflo review start --over-budget",
+        "specflo review waive --reason",
+        "whole test suite again before completion",
+    ):
+        assert phrase in step, phrase
+    # The prompt is handed over after the round opens.
+    assert step.index("specflo review start") < step.index("specflo review prompt")
+
+
+def test_readiness_no_longer_withholds_earlier_findings_from_the_reviewer():
+    text = SKILL.read_text()
+    assert "Hand it the diff alone" not in text
+    assert "not the fresh reviewer's to inherit" not in text
+
+
+def test_auto_skill_names_the_review_budget_stop():
+    text = " ".join(AUTO_SKILL.read_text().split())
+    assert "review-budget" in text
+    assert "--over-budget" in text and "specflo review waive" in text

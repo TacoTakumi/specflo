@@ -69,24 +69,39 @@ superseding requirement — never silently mutate a task or drift off its
    handling, posting/outbound actions, or "anything you can't undo with `git
    revert`": stop and checkpoint with the human before proceeding.
 6. **Readiness** — when `specflo task show` reports no actionable task (every
-   active task done, coverage holding), run a **final whole-branch review in
-   fresh context**. Don't wait for a clean `specflo validate execute`: the review
-   gate lives *inside* that validator, so it keeps reporting the missing review
+   active task done, coverage holding), run the **final review in fresh
+   context**. Don't wait for a clean `specflo validate execute`: the review gate
+   lives *inside* that validator, so it keeps reporting the missing review
    **until the round is closed** — a failing validate here is the reminder to
    review, not a reason to hold off:
-   - Open the round first: `specflo review start` mints `review-N.md` and prints
-     its path. The round is the reviewer's artifact, not a note in the chat.
-   - With subagents: dispatch a reviewer on the most capable model — it verifies
-     the *diff*, not your report (spec compliance + code quality), and returns
-     ready-to-merge / not. Hand it the diff alone; a previous round's findings
-     are yours to act on, not the fresh reviewer's to inherit.
-   - Without subagents: do **not** review inline (it defeats fresh eyes and burns
-     context) — `specflo checkpoint`, then run the review in a fresh session.
-   - Record the outcome: `specflo review done --verdict ready-to-merge |
-     changes-requested | waived` (waived needs `--reason`; `--file <path>` ingests
-     a reviewer's report as the round's body). On `changes-requested`, fix what
-     the round names, then run another round — rounds are numbered, and the
-     latest one is the one that counts.
+   - Run the whole test suite once, before round 1. Review rounds run only the
+     tests for the files in scope.
+   - Open the round: `specflo review start` mints `review-N.md` and prints its
+     scope. Round 1 reviews the whole branch. Every later round is a delta
+     round: it reviews only the diff since the last reviewed round and checks
+     each earlier blocker and should-fix item (`--full` reviews the whole branch
+     again and still checks the items).
+   - Hand the reviewer the brief `specflo review prompt` prints, so every round
+     works to the same rules. With subagents: dispatch a reviewer on the most
+     capable model — it verifies the diff, not your report. Without subagents:
+     do **not** review inline (it defeats fresh eyes and burns context) —
+     `specflo checkpoint`, then run the review in a fresh session.
+   - The reviewer records findings through the CLI: `specflo review finding add
+     --severity blocker|should-fix|nit --text "…"` for each finding,
+     `specflo review finding check F-NN closed|open` for each earlier item, and
+     `- none` as the only line under Findings for a clean round.
+   - Close the round with `specflo review done`. The CLI sets the verdict from
+     the findings: any blocker or should-fix item, or an earlier item still
+     open, is changes-requested; nits never block and go to one follow-up.
+     `--file <path>` ingests a reviewer's report as the round's body.
+   - On changes-requested, fix the blocker and should-fix items, never the nits,
+     commit, then `specflo review start` again for the next round.
+   - At the round budget (`review_max_rounds`, 2 rounds per level by default),
+     `review start` refuses and the choice is the user's: one more round with
+     `specflo review start --over-budget`, or `specflo review waive --reason
+     <why>`. Ask; do not pick for them.
+   - When any round was changes-requested, run the whole test suite again
+     before completion.
    On ready-to-merge, **pause before completing — don't auto-complete**: the work
    is done and reviewed and the **checkpoint is saved** (the project's
    `checkpoint.md`), so this is a safe place to stop. `specflo advance` completes
@@ -280,6 +295,8 @@ worse than an honest "blocked."
 - A commit that stages unrelated files (`git add -A`) instead of the task's own.
 - Editing a task in place instead of superseding it when the plan is wrong.
 - Advancing to completion without a fresh-context whole-branch review.
+- Fixing nits in the project, or choosing between one more round and a waive
+  for the user at the round budget.
 - Loading the whole spec instead of the `task show` brief.
 
 ## Verification
@@ -290,7 +307,9 @@ Before completing the project:
 - [ ] `specflo validate execute` exits 0. It stays red
       **until the round is closed**, so expect it to pass only once the review
       below is recorded — not before it.
-- [ ] A fresh-context final whole-branch review ran under `specflo review start`
-      and was recorded with `specflo review done --verdict …`; the latest round
-      is ready-to-merge (or a reasoned waived).
+- [ ] A fresh-context final review ran under `specflo review start` and was
+      closed with `specflo review done`; the latest round is ready-to-merge (or
+      a reasoned waive).
+- [ ] The whole test suite ran again after the fixes when a round was
+      changes-requested.
 - [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` (project completion) to the user.

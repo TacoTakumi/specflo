@@ -52,14 +52,19 @@ the emitted bootstrap is the source of truth, not this file.
 5. **Run and record the review round.** At the end of execute the run performs
    the final whole-branch review itself — in fresh context, per the execute skill,
    never as inline self-review — and records it with `specflo review start` and
-   `specflo review done --verdict …`. Completing the project is not part of that:
+   `specflo review done`. Completing the project is not part of that:
    the run halts on the completion directive and `specflo advance` stays the
-   user's call, which is where auto already stopped.
+   user's call, which is where auto already stopped. When the latest round asks
+   for changes and the level has used its round budget, the pass stops with the
+   `review-budget` reason: one more round (`specflo review start --over-budget`)
+   or a waive (`specflo review waive --reason <why>`) is the user's call.
    **Ladder run exception** (`specflo auto --ladder`): the run advances each
    level itself. At quick, fast and full, run `specflo advance` once the level's
    work and review are done: it ends only that level, not the run. Then run
    `specflo auto` again; that pass cuts the next level's branch, or at full
-   closes the ladder. The payload's ladder clause says this on every pass. The
+   closes the ladder. The payload's ladder clause says this on every pass. At
+   the round budget a ladder waives the level's review itself and goes on; its
+   row shows `waived (budget)` with the open items. The
    ladder never merges, pushes or deletes a branch: picking a branch stays the
    user's call.
 6. **Stop when the payload says stop.** When `specflo auto` emits an escalation,
