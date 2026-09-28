@@ -23,7 +23,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 from dataclasses import replace
 
 import pytest
@@ -40,12 +39,13 @@ from specflo.pool import cli_admin, console, ledger, service, waiting
 from specflo.pool import config as pool_config
 from specflo.pool.config import Member
 from specflo.service.pool_remote import RemotePool
+from waits import scaled, settle, wait_until
 
 from . import test_lease_request
 from .test_config_roster import HOSTED, LOCAL, _changed, _refused, _write
 from .test_lease_request import FIXTURES, REBASER, audit_records
 from .test_lease_request import checkout, pool_daemon  # noqa: F401  (fixtures)
-from .test_runner import pid_alive, wait_until
+from .test_runner import pid_alive
 
 runner = CliRunner()
 
@@ -79,7 +79,7 @@ def start_host(rig, name: str = AGENT) -> dict:
             "agent", "start", name, "--cwd", str(rig.work), "--pi-cmd", rig.command,
             "--no-herdr",
         ],
-        capture_output=True, text=True, timeout=60,
+        capture_output=True, text=True, timeout=scaled(60),
     )
     assert done.returncode == 0, done.stderr
     return rig.status(name)
@@ -408,7 +408,7 @@ def test_a_grant_on_a_member_under_the_attached_agents_name_leaves_the_host_runn
 
     with pool_rig.store() as store:
         assert store.list_leases(state=ledger.ACTIVE) == []
-    time.sleep(0.5)  # a stop that was sent would have landed by now
+    settle(0.5)  # a stop that was sent would have landed by now
     after = pool_rig.status(AGENT)
     assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
     assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
@@ -477,11 +477,11 @@ def test_attach_as_the_developer_binds_the_host_and_the_waiting_request_is_grant
             with pool_rig.store() as store:
                 return bool(store.list_waiting())
 
-        assert wait_until(waits), "the request did not wait"
+        assert wait_until(waits, message="the request did not wait")
 
         result = runner.invoke(app, ["console", "attach", SLOT, AGENT])
     finally:
-        asked.join(timeout=30)
+        asked.join(timeout=scaled(30))
 
     assert result.exit_code == 0, result.output
     assert SLOT in result.stdout and AGENT in result.stdout

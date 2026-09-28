@@ -15,11 +15,11 @@ import os
 import random
 import secrets
 import subprocess
-import time
 
 import pytest
 
 from specflo.pool import sandbox
+from waits import settle, wait_until
 
 from .test_sandbox_scope import skip_without_a_scope
 
@@ -53,10 +53,12 @@ def leaked(run_id) -> str:
     for attempt in range(300):
         name = f"specflo-member-leak{run_id}-{attempt}"
         started = subprocess.Popen(scope(name))
-        time.sleep(random.uniform(0, 0.03))
+        # a random pause races the kill against systemd-run making the scope,
+        # so that some tries kill it midway and leave the scope behind
+        settle(random.uniform(0, 0.03))
         started.kill()
         started.wait()
-        time.sleep(0.2)
+        settle(0.2)  # a scope that was left behind is active by now
         if units(f"{name}.scope").get(f"{name}.scope") == "active":
             return f"{name}.scope"
     pytest.skip("no scope was left behind in 300 tries")
@@ -67,10 +69,10 @@ def live(run_id):
     skip_without_a_scope()
     name = f"specflo-member-live{run_id}-0"
     started = subprocess.Popen(scope(name))
-    deadline = time.monotonic() + 5
-    while units(f"{name}.scope").get(f"{name}.scope") != "active":
-        assert time.monotonic() < deadline, "the live scope never came up"
-        time.sleep(0.05)
+    wait_until(
+        lambda: units(f"{name}.scope").get(f"{name}.scope") == "active",
+        timeout=5, message="the live scope never came up",
+    )
     yield f"{name}.scope"
     started.kill()
     started.wait()

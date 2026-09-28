@@ -27,7 +27,6 @@ import dataclasses
 import json
 import shutil
 import threading
-import time
 from pathlib import Path
 
 import pytest
@@ -42,6 +41,7 @@ from specflo.pool import cli_admin, launch, service, teamlease, waiting
 from specflo.pool import config as pool_config
 from specflo.pool.teams import TEAMS_DIR, Role, Team
 from specflo.service.pool_remote import LEASES_PATH, RemotePool
+from waits import scaled, settle, wait_until
 
 from . import test_lease_request
 from .test_lease_request import (  # noqa: F401  (fixtures)
@@ -53,7 +53,7 @@ from .test_lease_request import (  # noqa: F401  (fixtures)
 )
 from .test_lease_request import pool_daemon as plain_daemon  # noqa: F401  (fixture)
 from .test_lease_release_list import other_checkout, token_file
-from .test_runner import pid_alive, wait_until
+from .test_runner import pid_alive
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "specflo"
 
@@ -538,11 +538,11 @@ def test_with_the_critics_full_the_team_waits_and_a_request_to_the_workers_is_st
         assert [lease.id for lease in active(pool_rig)] == [critic.lease_id]
         separate = holder.request("workers", cwd=str(pool_rig.work))
         assert separate.agent == "local-1"
-        time.sleep(0.3)
+        settle(0.3)
         assert thread.is_alive() and not box
 
         holder.release(critic.lease_id, token=critic.token)
-        thread.join(timeout=30)
+        thread.join(timeout=scaled(30))
 
         assert not thread.is_alive()
         grant = box["grant"]

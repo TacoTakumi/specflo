@@ -18,7 +18,6 @@ import hashlib
 import json
 import sqlite3
 import threading
-import time
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -34,12 +33,13 @@ from specflo.daemon import STATE_STORE_FILENAME
 from specflo.errors import SpecfloError
 from specflo.pool import launch, service
 from specflo.pool.service import Ended, Grant
+from waits import scaled, settle, wait_until
 
 from .test_reload import STATUS_PATH, Served, write_workers
 from .test_reload import console as roster_console
 from .test_reload import member as roster_member
 from .test_reload import pool as roster_pool
-from .test_runner import pid_alive, wait_until
+from .test_runner import pid_alive
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "specflo"
 MARKER = "heron"
@@ -206,7 +206,7 @@ def test_an_agent_the_pool_did_not_start_is_left_alone_by_a_refused_grant(pool_r
     assert "agent 'local-1' already runs" in ended.cause
     # the host and its pi are the ones the developer started, and nothing
     # in their state directory says a lease ended there
-    time.sleep(0.5)  # a stop that was sent would have landed by now
+    settle(0.5)  # a stop that was sent would have landed by now
     after = pool_rig.status("local-1")
     assert (after["host_pid"], after["pi_pid"]) == (before["host_pid"], before["pi_pid"])
     assert pid_alive(before["host_pid"]) and pid_alive(before["pi_pid"])
@@ -394,7 +394,7 @@ def test_of_two_callers_ending_one_lease_one_stops_the_member(pool_rig, monkeypa
     for caller in callers:
         caller.start()
     for caller in callers:
-        caller.join(timeout=60)
+        caller.join(timeout=scaled(60))
 
     assert len(stops) == 1
     assert results["released"] == results["expired"]
