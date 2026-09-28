@@ -2,10 +2,11 @@
 
 Each project gets a single ``plan.md`` next to ``spec.md``. The CLI owns the
 structured, stateful parts — scaffolding, the append-only Tasks section (stable
-``T-NN`` ids, supersede-as-event, required ``Implements: REQ-NN`` traceability,
-dependency ordering), the per-task progress field, and read-only linting. The
-plan skill writes the prose sections (Approach, Global constraints, Open
-questions, Canonical refs) directly.
+``T-NN`` ids, supersede-as-event, required ``Implements: REQ-NN`` traceability
+or the ``Fixes: F-NN`` a fix task records, dependency ordering), the per-task
+progress field, and read-only linting. The plan skill writes the prose
+sections (Approach, Global constraints, Open questions, Canonical refs)
+directly.
 """
 
 from __future__ import annotations
@@ -146,6 +147,7 @@ class Task:
     blocked: str | None = None
     milestone: str | None = None
     needs: list[str] = field(default_factory=list)
+    fixes: list[str] = field(default_factory=list)
     notes: list[dict] = field(default_factory=list)
     notes_malformed: list[str] = field(default_factory=list)
 
@@ -277,6 +279,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             superseded_by=superseded_by,
             blocked=fields.get("Blocked"),
             needs=parse_needs(fields.get("Needs")),
+            fixes=_split_refs(fields.get("Fixes", "")),
             milestone=fields.get("Milestone"),
             notes=notes,
             notes_malformed=notes_malformed,
@@ -710,14 +713,17 @@ def add_task(
     supersedes: str | None = None,
     milestone: str | None = None,
     needs: list[str] | None = None,
+    fixes: list[str] | None = None,
     today: str | None = None,
     actor: str | None = None,
 ) -> Task:
     """Append a task to the Tasks section and return it.
 
     Mints the next ``T-NN``. ``acceptance``/``verify`` are mandatory; ``implements``
-    must name ≥1 active requirement in ``spec.md``. ``depends_on`` and
-    ``supersedes`` must reference existing tasks. ``milestone``, when given, must
+    must name ≥1 active requirement in ``spec.md`` unless ``fixes`` names ≥1
+    review finding the task fixes, written as its ``- Fixes:`` field; a task
+    with neither is refused. ``depends_on`` and ``supersedes`` must reference
+    existing tasks. ``milestone``, when given, must
     name a milestone present in ``## Milestones`` and is written as the task's
     single ``- Milestone:`` field. ``actor`` names the identity adding it,
     written as an ``Actor`` line; a local add passes none and writes none.
@@ -727,6 +733,10 @@ def add_task(
         ("files", files), ("scope", scope),
     ):
         require_one_line(f"A task's {label}", value)
+    for fix in fixes or []:
+        require_one_line("A task's fixes", fix)
+    # Normalized to what the parser reads back from the written line.
+    fixes = _split_refs(", ".join(fixes or []))
     needs = [validate_pool_name(n) for n in (needs or [])]
     path = plan_path(root, cfg, slug)
     if not path.is_file():
@@ -737,10 +747,14 @@ def add_task(
             raise SpecfloError("Malformed plan.md: no '## Tasks' section.")
 
         depends_on = depends_on or []
-        if not implements:
-            raise SpecfloError("A task must implement at least one requirement (--from REQ-NN).")
+        if not implements and not fixes:
+            raise SpecfloError(
+                "A task must implement at least one requirement (--from REQ-NN) "
+                "or fix at least one finding (--fixes F-NN)."
+            )
 
-        check_implements(root, cfg, slug, implements)
+        if implements:
+            check_implements(root, cfg, slug, implements)
 
         for dep in depends_on:
             if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
@@ -772,8 +786,11 @@ def add_task(
             f"### {new_id} — {text}",
             f"- Acceptance: {acceptance}",
             f"- Verify: {verify}",
-            f"- Implements: {', '.join(implements)}",
         ]
+        if implements:
+            entry_lines.append(f"- Implements: {', '.join(implements)}")
+        if fixes:
+            entry_lines.append(f"- Fixes: {', '.join(fixes)}")
         if depends_on:
             entry_lines.append(f"- Depends on: {', '.join(depends_on)}")
         if files:
@@ -799,7 +816,7 @@ def add_task(
         id=new_id, text=text, acceptance=acceptance, verify=verify,
         implements=implements, depends_on=depends_on, files=files, scope=scope,
         progress="pending", status="active", supersedes=supersedes,
-        milestone=milestone, needs=needs,
+        milestone=milestone, needs=needs, fixes=fixes,
     )
 
 
@@ -1893,8 +1910,13 @@ def render_task_brief(brief: dict) -> str:
         execution_line,
         f"  Acceptance: {t['acceptance']}",
         f"  Verify:     {t['verify']}",
-        f"  Implements: {', '.join(implements)}",
     ]
+    # A fix task may cite no requirement: its Fixes line stands in for the
+    # Implements line, so a task without Fixes renders exactly as before.
+    if implements or not t.get("fixes"):
+        lines.append(f"  Implements: {', '.join(implements)}")
+    if t.get("fixes"):
+        lines.append(f"  Fixes:      {', '.join(t['fixes'])}")
     if t["depends_on"]:
         lines.append(f"  Depends on: {', '.join(t['depends_on'])}")
     # Ownership and resources (fan-out-plans REQ-11): each line only when the
@@ -2003,6 +2025,7 @@ def task_brief(
         "task": {
             "id": task.id, "text": task.text, "acceptance": task.acceptance,
             "verify": task.verify, "implements": task.implements,
+            "fixes": task.fixes,
             "depends_on": task.depends_on, "files": task.file_list,
             "needs": task.needs,
             "scope": task.scope, "progress": task.progress,

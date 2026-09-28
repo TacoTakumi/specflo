@@ -333,12 +333,13 @@ class LocalProjectService:
         supersedes: str | None = None,
         milestone: str | None = None,
         needs: list[str] | None = None,
+        fixes: list[str] | None = None,
     ) -> Task:
         return plan.add_task(
             self.root, self.cfg, slug, text, acceptance, verify,
             implements=implements, depends_on=depends_on, files=files,
             scope=scope, supersedes=supersedes, milestone=milestone, needs=needs,
-            actor=self.actor,
+            fixes=fixes, actor=self.actor,
         )
 
     def active_dependents(self, slug: str, task_id: str) -> list[str]:

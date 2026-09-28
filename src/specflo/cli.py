@@ -1857,7 +1857,11 @@ def task_add(
     acceptance: str = typer.Option(..., "--acceptance", help="Pass/fail acceptance criterion (required)."),
     verify: str = typer.Option(..., "--verify", help="Verification command or step (required)."),
     from_: list[str] = typer.Option(
-        ..., "--from", metavar="REQ-NN", help="Requirement(s) this task implements (repeatable; >=1)."
+        None, "--from", metavar="REQ-NN",
+        help="Requirement(s) this task implements (repeatable; >=1 unless --fixes).",
+    ),
+    fixes: list[str] = typer.Option(
+        None, "--fixes", metavar="F-NN", help="A review finding this task fixes (repeatable)."
     ),
     depends_on: list[str] = typer.Option(
         None, "--depends-on", metavar="T-NN", help="Task(s) this depends on (repeatable)."
@@ -1881,9 +1885,10 @@ def task_add(
     slug = _require_active(cfg)
     try:
         task = svc.add_task(
-            slug, text, acceptance, verify, list(from_),
+            slug, text, acceptance, verify, list(from_ or []),
             depends_on=list(depends_on or []), files=files, scope=scope,
             supersedes=supersedes, milestone=milestone, needs=list(needs or []),
+            fixes=list(fixes or []),
         )
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -1896,12 +1901,17 @@ def task_add(
     )
     if json_output:
         typer.echo(json.dumps({
-            "id": task.id, "implements": task.implements,
+            "id": task.id, "implements": task.implements, "fixes": task.fixes,
             "depends_on": task.depends_on, "supersedes": task.supersedes,
             "milestone": task.milestone, "dependents": dependents,
         }))
     else:
-        message = f"Recorded {task.id} (implements {', '.join(task.implements)})."
+        cites = []
+        if task.implements:
+            cites.append(f"implements {', '.join(task.implements)}")
+        if task.fixes:
+            cites.append(f"fixes {', '.join(task.fixes)}")
+        message = f"Recorded {task.id} ({'; '.join(cites)})."
         if task.supersedes:
             message += f" Supersedes {task.supersedes}."
         typer.echo(message)
@@ -2271,7 +2281,8 @@ def task_list(
         typer.echo(json.dumps({
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
-                 "implements": t.implements, "depends_on": t.depends_on, "next": t.id in nexts,
+                 "implements": t.implements, "fixes": t.fixes,
+                 "depends_on": t.depends_on, "next": t.id in nexts,
                  "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
                 for t in tasks
             ],
@@ -2286,7 +2297,8 @@ def task_list(
         marker = ">" if t.id in nexts else " "
         sup = "  (superseded)" if t.status != "active" else ""
         deps = f"  deps: {', '.join(t.depends_on)}" if t.depends_on else ""
-        typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{sup}")
+        fixes = f"  fixes: {', '.join(t.fixes)}" if t.fixes else ""
+        typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{fixes}{sup}")
     tail = ""
     if progress["next_actionable"]:
         tail = " | next: " + ", ".join(progress["next_actionable"])

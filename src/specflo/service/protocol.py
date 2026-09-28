@@ -216,6 +216,7 @@ class ProjectService(Protocol):
         supersedes: str | None = None,
         milestone: str | None = None,
         needs: list[str] | None = None,
+        fixes: list[str] | None = None,
     ) -> Task:
         """Append a task with the next id."""
         ...
