@@ -1158,7 +1158,7 @@ def auto_(
         "--json",
         help="Emit the pass as JSON: its payload text, a boolean stop, and the "
         "stop reason (kill-switch, pass-cap, stall, project-complete, "
-        "ladder-blocked, or "
+        "ladder-blocked, review-budget, or "
         "unavailable; null while the run continues).",
     ),
     ladder: bool = typer.Option(
