@@ -60,18 +60,18 @@ def keys_in(path: Path) -> list[str]:
 
 
 def test_the_file_holds_the_operators_name_and_email_and_no_other_key(tmp_path, operator_git):
-    operator_git(name="Rob Operator", email="rob@example.com")
+    operator_git(name="Test Operator", email="operator@example.com")
 
     path = generated(tmp_path) / launch.GITCONFIG_FILE
 
-    assert keys_in(path) == ["user.name=Rob Operator", "user.email=rob@example.com"]
+    assert keys_in(path) == ["user.name=Test Operator", "user.email=operator@example.com"]
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 def test_the_identity_is_the_one_reported_outside_any_repository(
     tmp_path, operator_git, monkeypatch
 ):
-    operator_git(name="Rob Operator", email="rob@example.com")
+    operator_git(name="Test Operator", email="operator@example.com")
     repository = tmp_path / "repository"
     repository.mkdir()
     git("init", "-q", cwd=repository)
@@ -80,15 +80,15 @@ def test_the_identity_is_the_one_reported_outside_any_repository(
 
     path = generated(tmp_path) / launch.GITCONFIG_FILE
 
-    assert keys_in(path) == ["user.name=Rob Operator", "user.email=rob@example.com"]
+    assert keys_in(path) == ["user.name=Test Operator", "user.email=operator@example.com"]
 
 
 def test_with_one_key_reported_the_file_holds_that_one(tmp_path, operator_git):
-    operator_git(email="rob@example.com")
+    operator_git(email="operator@example.com")
 
     path = generated(tmp_path) / launch.GITCONFIG_FILE
 
-    assert keys_in(path) == ["user.email=rob@example.com"]
+    assert keys_in(path) == ["user.email=operator@example.com"]
 
 
 def test_with_no_identity_no_file_is_written(tmp_path, operator_git):
@@ -98,7 +98,7 @@ def test_with_no_identity_no_file_is_written(tmp_path, operator_git):
 
 
 def test_a_value_git_would_read_as_syntax_comes_back_as_it_was(tmp_path, operator_git):
-    name = 'Rob "the Op" O\'Hara \\ #1; ok'
+    name = 'Tester "the Op" O\'Hara \\ #1; ok'
     operator_git(name=name)
 
     path = generated(tmp_path) / launch.GITCONFIG_FILE

@@ -71,7 +71,7 @@ def test_a_member_commits_rebases_and_keeps_a_repositorys_own_identity(
     tmp_path, environ, operator_git  # noqa: F811
 ) -> None:
     skip_without_a_sandbox()
-    operator_git(name="Rob Operator", email="rob@example.com")
+    operator_git(name="Test Operator", email="operator@example.com")
     work = tmp_path / "work"
     work.mkdir()
     script = work / "probe.py"
@@ -94,11 +94,11 @@ def test_a_member_commits_rebases_and_keeps_a_repositorys_own_identity(
     assert done.returncode == 0, done.stderr
     found = json.loads(out.read_text(encoding="utf-8"))
     assert found["global"]["out"].splitlines() == [
-        "user.name=Rob Operator", "user.email=rob@example.com",
+        "user.name=Test Operator", "user.email=operator@example.com",
     ]
     assert found["commit"]["code"] == 0, found["commit"]["err"]
     assert found["who"]["out"].strip() == (
-        "Rob Operator <rob@example.com>|Rob Operator <rob@example.com>"
+        "Test Operator <operator@example.com>|Test Operator <operator@example.com>"
     )
     assert found["rebase"]["code"] == 0, found["rebase"]["err"]
     assert found["history"]["out"].split() == ["two", "three", "one"]

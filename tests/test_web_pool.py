@@ -331,9 +331,9 @@ def test_a_console_is_offline_idle_leased_or_draining(pool_rig, stamps):
     assert state() == "offline"
     with pool_rig.store() as store:
         store.attach_console(
-            ConsoleAttachment(slot=slot.name, agent="rob-pi", attached=text(at(0)))
+            ConsoleAttachment(slot=slot.name, agent="dev-pi", attached=text(at(0)))
         )
-    stamps["rob-pi"] = {"state": "idle", "last_activity": text(at(0))}
+    stamps["dev-pi"] = {"state": "idle", "last_activity": text(at(0))}
     assert state() == "idle"
     with pool_rig.store() as store:
         lease_on(store, slot.name)
@@ -342,7 +342,7 @@ def test_a_console_is_offline_idle_leased_or_draining(pool_rig, stamps):
         store.set_console_draining(slot.name)
     assert state() == "draining"
     # a host that is gone serves no one, whatever its row says
-    del stamps["rob-pi"]
+    del stamps["dev-pi"]
     assert state() == "offline"
 
 

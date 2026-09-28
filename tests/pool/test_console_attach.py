@@ -50,7 +50,7 @@ from .test_runner import pid_alive, wait_until
 runner = CliRunner()
 
 SLOT = "desk-1"
-AGENT = "rob-pi"
+AGENT = "dev-pi"
 
 CONSOLE = {
     "name": SLOT, "kind": "console", "backing": "local", "model": "model-a",
@@ -310,10 +310,10 @@ def test_an_agent_that_does_not_run_is_refused(pool_rig):
 
 def test_an_agent_on_the_tui_transport_is_refused(pool_rig):
     svc = pool_rig.service(pool_rig.config(console_member()))
-    tui_record(pool_rig, "rob-tui")
+    tui_record(pool_rig, "dev-tui")
 
     with pytest.raises(console.ConsoleRefused, match="TUI transport"):
-        console.attach(svc, SLOT, "rob-tui")
+        console.attach(svc, SLOT, "dev-tui")
 
     assert console_rows(pool_rig) == []
 
@@ -542,9 +542,9 @@ def test_attach_to_an_undeclared_slot_exits_non_zero(console_daemon, pool_rig):
 
 
 def test_attach_of_a_tui_agent_exits_non_zero(console_daemon, pool_rig):
-    tui_record(pool_rig, "rob-tui")
+    tui_record(pool_rig, "dev-tui")
 
-    result = runner.invoke(app, ["console", "attach", SLOT, "rob-tui"])
+    result = runner.invoke(app, ["console", "attach", SLOT, "dev-tui"])
 
     assert result.exit_code != 0
     assert "TUI transport" in " ".join(result.output.split())
