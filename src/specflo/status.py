@@ -140,14 +140,17 @@ def _review_line(state: dict) -> str:
 
     An open round is reported as open with the date it started (REQ-12) - it
     has no verdict to report yet. A closed one carries its verdict, its close
-    date, and the sha when git could supply one.
+    date, and the sha when git could supply one. The latest round's regressions
+    follow when it has any; a view from a daemon older than the count has none.
     """
     plural = "round" if state["rounds"] == 1 else "rounds"
     head = f"Reviews: {state['rounds']} {plural}; latest round {state['latest']}"
+    count = state.get("regressions")
+    marked = f"; {review.regressions_text(count)}" if count else ""
     if state["open"]:
-        return f"{head} open (started {state['date']})"
+        return f"{head} open (started {state['date']}){marked}"
     stamp = ", ".join(part for part in (state["date"], state["sha"]) if part)
-    return f"{head} {state['verdict']}" + (f" ({stamp})" if stamp else "")
+    return f"{head} {state['verdict']}" + (f" ({stamp})" if stamp else "") + marked
 
 
 def hosted_view(info: dict, remote: str) -> dict:

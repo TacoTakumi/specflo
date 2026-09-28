@@ -16,8 +16,13 @@ checkout cannot compute is left off with a note.
 file or in a report ingested with ``--file``: a blocker or should-fix line
 with no location refuses the close, and the CLI marks a located line that
 carries no mark yet, sending the IDs with the close. A mark is never removed.
+
+A mark shows and counts and changes nothing else: ``review done``, status and
+the budget message name the round's regressions when it has any, and the
+verdict and the round budget are what they would be with no mark.
 """
 
+import datetime
 import json
 import re
 import subprocess
@@ -776,3 +781,149 @@ def test_a_hand_written_line_is_marked_the_same_for_a_local_and_a_hosted_project
     # The CLI blamed the lines in the checkout; the daemon got the IDs as data.
     assert not (live_daemon["root"] / ".git").exists()
     assert sent == [[], ["F-02"], ["F-05"]]
+
+
+# --- a mark shows and counts, and changes nothing else -----------------------
+
+
+def _counted(checkout, monkeypatch, at):
+    """Round 2 closed with round 1's items checked closed and one should-fix at
+    ``at``, then ``review start`` refused at the level's budget: what each
+    surface says, the budget, the finding line and B's short sha."""
+    checkout.mkdir()
+    project_dir, _, b = _second_round(checkout, monkeypatch)
+    _check_round_one_closed()
+    assert _add("should-fix", "The fix broke it", at).exit_code == 0
+    done = _run("review", "done").stdout
+    fix_active_open_items()
+    refused = runner.invoke(app, ["review", "start"])
+    assert refused.exit_code == 1, refused.output
+    status = _run("status").stdout
+    return {
+        "done": done,
+        "refused": refused.stderr,
+        "status": status,
+        "reviews": next(line for line in status.splitlines() if line.startswith("Reviews:")),
+        "review": json.loads(_run("status", "--json").stdout)["review"],
+        "budget": review.budget(checkout, config.load_config(checkout), SLUG),
+        "line": _findings(project_dir / "review-2.md")[0],
+        "b": b,
+    }
+
+
+def test_a_regression_is_counted_and_changes_nothing_else(tmp_path, monkeypatch):
+    marked = _counted(tmp_path / "marked", monkeypatch, "src/x.py:10")
+    unmarked = _counted(tmp_path / "unmarked", monkeypatch, "src/x.py:30")
+    today = datetime.date.today().isoformat()
+    b = marked["b"]
+
+    assert marked["line"] == "- F-03 (should-fix, regression) [src/x.py:10] The fix broke it"
+    assert unmarked["line"] == "- F-03 (should-fix) [src/x.py:30] The fix broke it"
+    # review done: the same verdict and counts, and the round's regressions.
+    assert marked["done"] == "thing/review-2 closed changes-requested (0 blocker, 1 should-fix, 0 nit; 1 regression)\n"
+    assert unmarked["done"] == "thing/review-2 closed changes-requested (0 blocker, 1 should-fix, 0 nit)\n"
+    # status names the latest round, and now its regressions.
+    assert marked["reviews"] == f"Reviews: 2 rounds; latest round 2 changes-requested ({today}, {b}); 1 regression"
+    assert unmarked["reviews"] == f"Reviews: 2 rounds; latest round 2 changes-requested ({today}, {b})"
+    assert marked["status"].replace("; 1 regression", "") == unmarked["status"]
+    assert marked["review"] == {**unmarked["review"], "regressions": 1}
+    assert unmarked["review"]["regressions"] == 0
+    # The budget: the same rounds used, the same refusal, which names the count.
+    assert marked["budget"]["used"] == unmarked["budget"]["used"] == 2
+    assert marked["budget"] == {**unmarked["budget"], "regressions": 1}
+    assert "(2 of 2 rounds) and the latest round asks for changes (1 regression). Run" in marked["refused"]
+    assert "(2 of 2 rounds) and the latest round asks for changes. Run" in unmarked["refused"]
+    assert marked["refused"].replace(" (1 regression)", "") == unmarked["refused"]
+
+
+@pytest.mark.parametrize("at, count", [("src/x.py:10", 1), ("src/x.py:30", 0)])
+def test_review_done_json_carries_the_rounds_regression_count(tmp_path, monkeypatch, at, count):
+    _second_round(tmp_path, monkeypatch)
+    _check_round_one_closed()
+    assert _add("should-fix", "The fix broke it", at).exit_code == 0
+
+    data = json.loads(_run("review", "done", "--json").stdout)
+
+    assert data["verdict"] == "changes-requested"
+    assert data["findings"] == {"blocker": 0, "should-fix": 1, "nit": 0}
+    assert data["regressions"] == count
+
+
+def test_done_counts_the_marks_it_writes_and_those_already_written(tmp_path, monkeypatch):
+    project_dir, _, _ = _second_round(tmp_path, monkeypatch)
+    _check_round_one_closed()
+    _write_findings(project_dir / "review-2.md", [
+        "- F-03 (should-fix) [src/x.py:10] Marked as the round closes",
+        "- F-04 (blocker, regression) [src/x.py:30] Marked by hand",
+        "- F-05 (should-fix) [src/x.py:31] Not a regression",
+    ])
+
+    result = runner.invoke(app, ["review", "done"])
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == (
+        "thing/review-2 closed changes-requested (1 blocker, 2 should-fix, 0 nit; 2 regressions)\n"
+    )
+
+
+def test_a_waived_round_counts_no_regression(tmp_path, monkeypatch):
+    # A waive reads no findings, so a marked line in it counts nothing.
+    _second_round(tmp_path, monkeypatch)
+    assert _add("should-fix", "The fix broke it", "src/x.py:10").exit_code == 0
+
+    data = json.loads(
+        _run("review", "done", "--verdict", "waived", "--reason", "By hand", "--json").stdout
+    )
+
+    assert data["verdict"] == "waived"
+    assert data["regressions"] is None
+    assert json.loads(_run("status", "--json").stdout)["review"]["regressions"] is None
+    assert "regression" not in _run("status").stdout
+
+
+def _counted_run(tmp_path, monkeypatch, name, new_args, register=None):
+    """Two rounds in a fresh git checkout ``name``, round 2 closed with one
+    should-fix regression, then ``review start`` refused at the budget: what
+    review done, the status Reviews line, status --json's review and the
+    refusal say."""
+    checkout = tmp_path / name
+    checkout.mkdir()
+    _git(checkout, "init", "-q")
+    _commit(checkout, "src/x.py", X_PY)
+    config.init_config(checkout)
+    monkeypatch.chdir(checkout)
+    if register is not None:
+        _run("remote", "add", "home", *register)
+    _run("new", "Thing", "--summary", "One line", *new_args)
+    _run("review", "start")
+    assert _add("should-fix", "Two", "src/x.py:10").exit_code == 0
+    _run("review", "done")
+    _change(checkout, 10, "line 10 fixed")
+    fix_by_cli(runner, app, "F-01")
+    _run("review", "start")
+    _run("review", "finding", "check", "F-01", "closed")
+    assert _add("should-fix", "The fix broke it", "src/x.py:10").exit_code == 0
+    done = _run("review", "done").stdout
+    fix_by_cli(runner, app, "F-02")
+    refused = runner.invoke(app, ["review", "start"])
+    reviews = [line for line in _run("status").stdout.splitlines() if line.startswith("Reviews:")]
+    state = json.loads(_run("status", "--json").stdout)["review"]
+    return done, refused.exit_code, refused.stderr, reviews, state
+
+
+def test_a_regression_is_counted_the_same_for_a_local_and_a_hosted_project(
+    tmp_path, monkeypatch, live_daemon
+):
+    local = _counted_run(tmp_path, monkeypatch, "local", [])
+    hosted = _counted_run(
+        tmp_path, monkeypatch, "hosted", ["--remote", "home"],
+        register=[live_daemon["url"], "--token", live_daemon["token"]],
+    )
+
+    assert local == hosted
+    done, code, refused, reviews, state = hosted
+    assert done.endswith("(0 blocker, 1 should-fix, 0 nit; 1 regression)\n")
+    assert code == 1
+    assert "the latest round asks for changes (1 regression)." in refused
+    assert reviews[0].endswith("; 1 regression")
+    assert state["regressions"] == 1

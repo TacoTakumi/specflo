@@ -214,9 +214,12 @@ def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     round with no level recorded counts toward it too. ``spent`` is True when
     the latest round asks for changes and the level has used every round
     ``review_max_rounds`` allows: the next round needs the user's say.
+    ``regressions`` is the latest round's count (see :func:`regression_count`),
+    None with no round; it changes neither ``used`` nor ``spent``.
     """
     level = load_project(root, cfg, slug).level
-    rounds = [frontmatter(path) for _, path in round_files(root, cfg, slug)]
+    files = round_files(root, cfg, slug)
+    rounds = [frontmatter(path) for _, path in files]
     used = sum(1 for fields in rounds if (fields.get("level") or level) == level)
     latest = str(rounds[-1].get("verdict", "") or "") if rounds else ""
     limit = cfg.review_max_rounds
@@ -225,16 +228,47 @@ def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
         "used": used,
         "max": limit,
         "spent": latest == CHANGES_REQUESTED and used >= limit,
+        "regressions": regression_count(files[-1][1]) if files else None,
     }
 
 
 def budget_message(state: dict) -> str:
-    """What to tell the user when the level's review budget is spent."""
+    """What to tell the user when the level's review budget is spent.
+
+    The latest round's regressions are named when it has any.
+    """
+    count = state.get("regressions")
+    marked = f" ({regressions_text(count)})" if count else ""
     return (
         f"The {state['level']} level has used its review budget ({state['used']} of"
-        f" {state['max']} rounds) and the latest round asks for changes. Run one more"
-        " round with `specflo review start --over-budget`, or waive the review with"
+        f" {state['max']} rounds) and the latest round asks for changes{marked}. Run one"
+        " more round with `specflo review start --over-budget`, or waive the review with"
         " `specflo review waive --reason <why>`."
+    )
+
+
+def regressions_text(count: int) -> str:
+    """``count`` regressions as a surface names them: '1 regression', '2 regressions'."""
+    return f"{count} regression" + ("" if count == 1 else "s")
+
+
+def regression_count(path: Path) -> int | None:
+    """How many findings of the round at ``path`` carry the regression mark.
+
+    None for a waived round, whose findings are never read. An open round
+    counts the marks written so far. A line that is not a finding counts
+    nothing: this reads the round and never refuses it.
+    """
+    if frontmatter(path).get("verdict") == WAIVED:
+        return None
+    return _marked_in(path.read_text())
+
+
+def _marked_in(doc: str) -> int:
+    """How many finding lines under a document's Findings heading carry the mark."""
+    return sum(
+        1 for line in _findings_lines(doc) or []
+        if (finding := parse_finding_line(line)) and finding.regression
     )
 
 
@@ -436,6 +470,9 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         "sha": str(fields.get("sha", "") or ""),
         "reason": str(fields.get("reason", "") or ""),
         "file": path.name,
+        # How many of the round's findings carry the regression mark; None
+        # for a waived round. A count only: the verdict never reads it.
+        "regressions": regression_count(path),
         # What the next-step hint turns on after a close: the items the next
         # round must check, whether the level's round budget is spent, and
         # whether any earlier round asked for changes (fixes were made, so the
@@ -523,12 +560,15 @@ class ClosedRound:
 
     ``findings`` is None for a waived round, whose findings are never read.
     ``still_open`` names the earlier items the round checked open.
+    ``regressions`` counts the findings that carry the regression mark once
+    the round is closed; None for a waived round.
     """
 
     path: Path
     verdict: str
     findings: dict[str, int] | None
     still_open: list[str] = dataclasses.field(default_factory=list)
+    regressions: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -838,7 +878,9 @@ def close_round(
     ``regressions`` names the findings to mark as regressions as the round
     closes: the caller blames their lines in its own checkout (see
     :func:`regression_marks`), since a daemon holds no code, and the marks
-    are written as sent. A line already marked keeps its mark.
+    are written as sent. A line already marked keeps its mark. The closed
+    round counts its marked findings, and the verdict is the one it would be
+    with no mark.
 
     A round with nits adds one follow-up naming their IDs, so the nits stay
     listed after the project completes without blocking it. ``nits_followup``
@@ -897,6 +939,7 @@ def close_round(
                 )
             body = report_text
         counts = None
+        marked = None
         still_open: list[str] = []
         if verdict != WAIVED:
             findings = parse_findings(root, cfg, slug, path, body)
@@ -906,6 +949,8 @@ def close_round(
                 body = _mark_regressions(
                     path, body, findings, regressions, _first_reviewed_sha(earlier)
                 )
+            # Counted once the marks are written; the verdict never reads them.
+            marked = _marked_in(body)
             still_open = parse_checks(root, cfg, slug, path, body, fields["round"])
             derived, counts = derive_verdict(findings, still_open)
             if verdict is not None and verdict != derived:
@@ -939,7 +984,9 @@ def close_round(
         if reason is not None:
             fields["reason"] = reason
         path.write_text(_render(fields, body))
-    return ClosedRound(path=path, verdict=verdict, findings=counts, still_open=still_open)
+    return ClosedRound(
+        path=path, verdict=verdict, findings=counts, still_open=still_open, regressions=marked
+    )
 
 
 def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:

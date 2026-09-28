@@ -331,6 +331,86 @@ def test_status_review_line_reports_an_open_round_as_open(tmp_path):
     assert "ready-to-merge" not in line            # round 1's verdict is not current
 
 
+def _round_two_with_a_regression(tmp_path, cfg):
+    """Round 1 closed asking for changes, round 2 open with one should-fix
+    marked a regression and round 1's item checked closed."""
+    from specflo import review
+    _close_review(tmp_path, cfg, "changes-requested")
+    review.start_round(tmp_path, cfg, "thing", today="2026-08-03", over_budget=True)
+    review.check_finding(tmp_path, cfg, "thing", "F-01", "closed")
+    review.add_finding(
+        tmp_path, cfg, "thing", "should-fix", "The fix broke it", "src/app.py:2", regression=True
+    )
+
+
+def _reviews_line(tmp_path, info):
+    return next(ln for ln in status.render_status(tmp_path, info).splitlines()
+                if ln.startswith("Reviews:"))
+
+
+def test_status_review_line_names_the_latest_rounds_regressions(tmp_path):
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _round_two_with_a_regression(tmp_path, cfg)
+    review.close_round(tmp_path, cfg, "thing", today="2026-08-04")
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"]["regressions"] == 1
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 2 rounds; latest round 2 changes-requested (2026-08-04); 1 regression"
+    )
+
+
+def test_status_review_line_names_an_open_rounds_regressions_so_far(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _round_two_with_a_regression(tmp_path, cfg)
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"]["regressions"] == 1
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 2 rounds; latest round 2 open (started 2026-08-03); 1 regression"
+    )
+
+
+def test_status_review_line_names_no_regressions_for_a_round_with_none(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "changes-requested")
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"]["regressions"] == 0
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 1 round; latest round 1 changes-requested (2026-08-02)"
+    )
+
+
+def test_status_review_line_counts_nothing_in_a_waived_round(tmp_path):
+    # A waive reads no findings, so a marked line in it counts nothing.
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _round_two_with_a_regression(tmp_path, cfg)
+    review.close_round(tmp_path, cfg, "thing", "waived", reason="By hand", today="2026-08-04")
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"]["regressions"] is None
+    assert "regression" not in _reviews_line(tmp_path, info)
+
+
+def test_render_status_reads_a_review_without_a_regression_count(tmp_path):
+    # A view from a daemon older than regression marks carries no count.
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "changes-requested")
+    info = status.build_status(tmp_path, cfg, project)
+    del info["review"]["regressions"]
+
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 1 round; latest round 1 changes-requested (2026-08-02)"
+    )
+
+
 def test_status_has_no_review_line_before_any_round_exists(tmp_path):
     cfg, project = _plan_at_execute(tmp_path)
     info = status.build_status(tmp_path, cfg, project)

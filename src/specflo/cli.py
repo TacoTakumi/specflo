@@ -2565,11 +2565,16 @@ def review_done(
         typer.echo(json.dumps({
             "locator": locator, "path": reported, "verdict": closed.verdict,
             "findings": closed.findings, "still_open": closed.still_open,
+            "regressions": closed.regressions,
         }))
     elif closed.findings is None:
         typer.echo(f"{locator} closed {closed.verdict}")
     else:
         counts = ", ".join(f"{n} {severity}" for severity, n in closed.findings.items())
+        # Named only when the round has any, so a round with none reads as before.
+        if closed.regressions:
+            plural = "" if closed.regressions == 1 else "s"
+            counts += f"; {closed.regressions} regression{plural}"
         if closed.still_open:
             counts += "; still open: " + ", ".join(closed.still_open)
         typer.echo(f"{locator} closed {closed.verdict} ({counts})")
