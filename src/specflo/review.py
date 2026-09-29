@@ -967,6 +967,13 @@ def parse_checks(
     return [items[key] for key, state in states.items() if state == "open"]
 
 
+def _nits_title(number: int) -> str:
+    """The title of the follow-up round ``number`` files for its nits as it
+    closes. With the round file alone as its From line, it tells that
+    follow-up from one a reviewer recorded from the round."""
+    return f"Nits from review round {number}"
+
+
 def close_round(
     root: Path,
     cfg: SpecfloConfig,
@@ -1083,7 +1090,7 @@ def close_round(
                 # added refuses the close rather than losing the nits.
                 followup.add_followup(
                     root, cfg, slug,
-                    f"Nits from review round {fields['round']}",
+                    _nits_title(fields["round"]),
                     f"Decide which of {', '.join(nits)} to fix",
                     source=path.name,
                     today=today,
@@ -1709,6 +1716,81 @@ def waive_round(
     return close_round(root, cfg, slug, WAIVED, reason=reason, today=today, sha=sha).path
 
 
+ALREADY_SETTLED_HEADER = "## Already settled"
+# The round file a follow-up recorded from a round names first in its From
+# line: 'review-1.md' as the brief asks, 'review-1.md F-01' for a deferral.
+_ROUND_SOURCE = re.compile(r"(review-\d+\.md)\b")
+
+
+def _settled_entries(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> list[str]:
+    """What the rounds before round ``number`` settled, one brief line each.
+
+    Each nit as its round records it, and each deferred or rejected finding
+    so, with its follow-up or its reason; then each follow-up of the project
+    whose From line names one of those rounds, except the one a round files
+    for its nits and the one a deferral files, which its finding names. An
+    item checked closed and an open item are not settled, so neither is here.
+    """
+    findings: dict[int, Finding] = {}
+    settled: dict[int, tuple[str, str]] = {}
+    earlier: dict[str, int] = {}
+    for n, path in round_files(root, cfg, slug):
+        if n >= number:
+            break
+        earlier[path.name] = n
+        doc = path.read_text()
+        for line in _findings_lines(doc) or []:
+            finding = parse_finding_line(line)
+            if finding:
+                findings[finding.number] = finding
+        settled.update(parse_settled(doc))
+    lines = []
+    for key, finding in sorted(findings.items()):
+        if key in settled:
+            kind, detail = settled[key]
+            how = f"deferred to {detail}" if kind == DEFERRED else f"{REJECTED}: {detail}"
+            lines.append(f"{render_finding_line(finding)} - {how}")
+        elif finding.severity == "nit":
+            lines.append(render_finding_line(finding))
+    deferrals = {detail for kind, detail in settled.values() if kind == DEFERRED}
+    # Read where the project lives: a daemon's project has a followup
+    # document only if one was written there.
+    for entry in followup.list_followups(root, cfg, include_closed=True):
+        match = _ROUND_SOURCE.match(entry.source or "")
+        if entry.project != slug or entry.id in deferrals or match is None:
+            continue
+        name = match.group(1)
+        if name not in earlier or (
+            entry.source == name and entry.title == _nits_title(earlier[name])
+        ):
+            continue
+        lines.append(f"- {entry.id} {entry.title} - a follow-up recorded from {entry.source}")
+    return lines
+
+
+def settled_section(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> list[str]:
+    """The Already settled section of round ``number``'s brief, a blank line
+    first, or no lines when the rounds before it settled nothing.
+
+    It holds only settled items, so the reviewer reads new code with fresh
+    eyes and does not anchor on open problems, and it says to raise one
+    again only with new evidence that it is worse than recorded.
+    """
+    entries = _settled_entries(root, cfg, slug, number)
+    if not entries:
+        return []
+    return [
+        "",
+        ALREADY_SETTLED_HEADER,
+        "",
+        "Earlier rounds settled these, so they are not findings again. Raise one"
+        " again only with new evidence that it is worse than recorded, and say in"
+        " the finding's text what that evidence is.",
+        "",
+        *entries,
+    ]
+
+
 def reviewer_brief(
     root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False,
     test_command: str | None = None,
@@ -1719,8 +1801,9 @@ def reviewer_brief(
     earlier items to check), each item's fix tasks and the rules for checking
     an item closed: its pin test fails on the source at the latest reviewed
     round's sha and passes on HEAD, and the defect is gone on every path that
-    reaches it. A round with no items has none of this. Then what each
-    severity means, what is not a finding,
+    reaches it. A round with no items has none of this. Then what earlier
+    rounds settled, when they settled anything (see :func:`settled_section`),
+    what each severity means, what is not a finding,
     how to record, that the CLI sets the verdict, and which tests to run:
     ``test_command`` each round when one is given, else only the tests in
     scope. ``test_command`` is the caller's checkout command: a daemon holds
@@ -1785,6 +1868,7 @@ def reviewer_brief(
             " open and is not a new finding: check the item open, and do not record"
             " the path with `specflo review finding add`.",
         ]
+    lines += settled_section(root, cfg, slug, scope["round"])
     lines += [
         "",
         "## Severity",

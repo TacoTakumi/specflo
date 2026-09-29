@@ -689,7 +689,7 @@ def test_review_finding_reject_settles_the_item_for_the_next_round(tmp_path, mon
     # No fix task: the next round opens, and it checks nothing.
     assert out[("review", "start")][1] == f"{PARITY_SLUG}/review-2\nScope: whole branch\n"
     assert "No earlier items to check this round." in out[("review", "prompt")][1]
-    assert "- F-01" not in out[("review", "prompt")][1]
+    assert "- F-01" not in out[("review", "prompt")][1].splitlines()  # no item to check
     assert "F-01" not in out[("status",)][1]
 
     for (args, refusal), (code, output) in zip(_CLI_REFUSED, _cli_refusals(directory)):
@@ -790,7 +790,7 @@ def test_review_finding_defer_files_a_follow_up_and_settles_the_item(tmp_path, m
     # No fix task: the next round opens, and it checks nothing.
     assert out[("review", "start")][1] == f"{PARITY_SLUG}/review-2\nScope: whole branch\n"
     assert "No earlier items to check this round." in out[("review", "prompt")][1]
-    assert "- F-01" not in out[("review", "prompt")][1]
+    assert "- F-01" not in out[("review", "prompt")][1].splitlines()  # no item to check
     listed = runner.invoke(app, ["followup", "list"])
     assert "FU-01" in listed.output and "A message names the wrong command" in listed.output
 

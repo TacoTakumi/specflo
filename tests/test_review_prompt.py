@@ -6,15 +6,20 @@ that the CLI sets the verdict, and which tests to run: the configured
 test_command each round when one is set, else only the tests in scope. A
 round with items to check lists the tasks that fix each one and the rules for
 checking an item closed: the pin test fails at the latest reviewed round's sha
-and passes on HEAD, and the defect is gone on every path that reaches it.
+and passes on HEAD, and the defect is gone on every path that reaches it. A
+round after one that settled something lists it under Already settled: each
+nit, each deferred finding with its follow-up, each rejected finding with its
+reason and each follow-up a reviewer recorded from an earlier round, with the
+rule to raise one again only with new evidence that it is worse than recorded.
 """
 
 import pytest
 from typer.testing import CliRunner
 
 from reviewhelp import fix_active_open_items
-from specflo import config, plan, projects, spec
+from specflo import config, followup, plan, projects, review, spec
 from specflo.cli import app
+from test_hosted_parity import _hosted_steps, _local_steps, _pipeline
 
 runner = CliRunner()
 
@@ -77,7 +82,8 @@ def test_a_delta_round_gets_its_range_and_every_item_to_check(tmp_path, monkeypa
     assert "outside" in text                     # the range bounds what is a finding
     for item in ("F-01", "F-02"):
         assert item in text
-    assert "F-03" not in text
+    # The nit is no item to check: it is listed only as settled.
+    assert "F-03" not in text.split("\n## Already settled\n", 1)[0]
     for element in _ELEMENTS:
         assert element in text, element
 
@@ -220,3 +226,145 @@ def test_the_prompt_is_read_only_on_the_daemon():
     from specflo.daemon import routes
 
     assert "review_prompt" in routes.READ_OPERATIONS
+
+
+# --- what earlier rounds settled ------------------------------------------------------
+
+_SETTLED_HEADER = "\n## Already settled\n"
+_REVIEWER_TITLE = "Tidy the help text"
+_REJECTED_WHY = "The caller names the ID itself"
+
+
+def _settled_part(text):
+    """The brief's Already settled section: everything under its heading up to
+    the next one."""
+    assert _SETTLED_HEADER in text, text
+    return text.split(_SETTLED_HEADER, 1)[1].split("\n## ", 1)[0]
+
+
+def _settled_rounds(tmp_path, monkeypatch):
+    """Two closed rounds and the follow-ups filed from them; no round open.
+
+    Round 1 asked for changes: blocker F-01, should-fix F-02, nit F-03,
+    should-fix F-04, deferred to FU-120 once the round closed, and blocker
+    F-05, rejected. Its reviewer recorded FU-118 from it, and its close filed
+    FU-119 for its nits. Round 2 checked F-01 and F-02 closed and asked for
+    changes for should-fix F-06, which is open. Another project's FU-117
+    comes from a review-1.md of its own. Every open item has a done fix task.
+    """
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Other", created="2026-08-22")
+    projects.switch_project(tmp_path, cfg, "Thing")
+    (project_dir.parent / "other" / "followup.md").write_text(
+        "# Follow-ups: other\n\n## Follow-ups\n\n"
+        "### FU-117 - Another project's note\n- Do: Look again\n"
+        "- From: review-1.md\n- Status: open\n"
+    )
+    review.start_round(tmp_path, cfg, "thing", sha="abc1234")
+    for severity, text, at in (
+        ("blocker", "The close drops the sha", "src/app.py:3"),
+        ("should-fix", "The lock is dropped early", "src/app.py:5"),
+        ("nit", "A name reads oddly", None),
+        ("should-fix", "A message names the wrong command", "src/app.py:9-12"),
+        ("blocker", "The refusal loses the ID", "src/app.py:20"),
+    ):
+        review.add_finding(tmp_path, cfg, "thing", severity, text, at)
+    reviewer = followup.add_followup(
+        tmp_path, cfg, "thing", _REVIEWER_TITLE, "Reword the help", source="review-1.md"
+    )
+    review.close_round(tmp_path, cfg, "thing")
+    deferred = review.defer_finding(tmp_path, cfg, "thing", "F-04", "Name the command")[2]
+    review.reject_finding(tmp_path, cfg, "thing", "F-05", _REJECTED_WHY)
+    nits = [e for e in followup.list_followups(tmp_path, cfg) if e.title.startswith("Nits")]
+    assert (reviewer.id, [e.id for e in nits], deferred) == ("FU-118", ["FU-119"], "FU-120")
+    fix_active_open_items()
+    review.start_round(tmp_path, cfg, "thing", sha="def5678")
+    review.check_finding(tmp_path, cfg, "thing", "F-01", "closed")
+    review.check_finding(tmp_path, cfg, "thing", "F-02", "closed")
+    review.add_finding(tmp_path, cfg, "thing", "should-fix", "A refusal names no ID",
+                       "src/app.py:30")
+    review.close_round(tmp_path, cfg, "thing")
+    fix_active_open_items()
+    return project_dir
+
+
+@pytest.mark.parametrize("start", [
+    ["review", "start", "--over-budget"], ["review", "start", "--full", "--over-budget"],
+])
+def test_a_later_round_lists_what_earlier_rounds_settled(tmp_path, monkeypatch, start):
+    _settled_rounds(tmp_path, monkeypatch)
+    started = runner.invoke(app, start)
+    assert started.exit_code == 0, started.output
+
+    text = _prompt()
+
+    settled = _settled_part(text)
+    assert "- F-03 (nit) A name reads oddly" in settled.splitlines()
+    assert "FU-120" in _line_with(settled, "F-04")
+    assert _REJECTED_WHY in _line_with(settled, "F-05")
+    assert _REVIEWER_TITLE in _line_with(settled, "FU-118")
+    assert "new evidence" in settled and "worse than recorded" in settled
+    # Not an item checked closed, not an open item, not the round's nits
+    # follow-up, not another project's follow-up.
+    for absent in ("F-01", "F-02", "F-06", "FU-119", "FU-117"):
+        assert absent not in settled, absent
+    # A deferral's follow-up is listed through its finding, not a second time.
+    assert settled.count("FU-120") == 1
+    # The open item is still one to check, and no settled finding is.
+    lines = text.splitlines()
+    assert "- F-06" in lines
+    for finding_id in ("F-03", "F-04", "F-05"):
+        assert f"- {finding_id}" not in lines, finding_id
+
+
+@pytest.mark.parametrize("earlier", [None, "closed"])
+def test_a_round_with_nothing_settled_has_no_settled_section(tmp_path, monkeypatch, earlier):
+    project_dir = _project(tmp_path, monkeypatch)
+    if earlier:
+        # Round 1's only item, checked closed by round 2: nothing is settled.
+        (project_dir / "review-1.md").write_text(_ROUND_1.replace("- F-03 (nit) Three\n", ""))
+        (project_dir / "review-2.md").write_text(
+            "---\nround: 2\nverdict: ready-to-merge\ndate: '2026-08-23'\nsha: 'def5678'\n"
+            "reason: ''\n---\n\n# Review round 2\n\n## Earlier findings\n\n- F-01 closed\n"
+            "- F-02 closed\n\n## Findings\n\n- none\n"
+        )
+    assert runner.invoke(app, ["review", "start", "--over-budget"]).exit_code == 0
+
+    text = _prompt()
+
+    assert "Already settled" not in text
+    assert "new evidence" not in text
+
+
+def test_a_hosted_brief_lists_the_same_settled_nits_and_rejects(
+    tmp_path, monkeypatch, live_daemon
+):
+    """A daemon files no follow-up, so a hosted round's nits stay in its file:
+    the settled list holds them and the rejected finding all the same."""
+    pipeline = _pipeline()
+    done = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "done"])
+    steps = [
+        *pipeline[: done + 1],
+        (["review", "start"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:9-12",
+          "--text", "A message names the wrong command"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A name reads oddly"], None),
+        (["review", "done"], None),
+        (["review", "finding", "reject", "F-01", "--reason", _REJECTED_WHY], None),
+        (["review", "start"], None),
+        (["review", "prompt"], None),
+    ]
+    briefs = []
+    for run in (lambda: _local_steps(tmp_path, monkeypatch, steps),
+                lambda: _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)):
+        results = run()[0]
+        # Each review step passes; the pipeline's first validate is meant to fail.
+        review_steps = results[done + 2:]
+        assert all(code == 0 for _, code, _ in review_steps), review_steps
+        briefs.append(_settled_part(results[-1][2]))
+    local, hosted = briefs
+
+    assert "- F-02 (nit) A name reads oddly" in hosted.splitlines()
+    assert _REJECTED_WHY in _line_with(hosted, "F-01")
+    assert hosted == local
