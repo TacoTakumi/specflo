@@ -125,6 +125,9 @@ _FIELDS = ("round", "verdict", "date", "sha", "base", "level", "reason")
 # checked open, the fix tasks that were done then and so did not hold. Only
 # written when there is one, after the pinned fields.
 FAILED_FIXES = "failed_fixes"
+# The key an opening round records, for each earlier item it checks, the fix
+# tasks done by then: what the round reviews, and so all a close may fail.
+FIXES_AT_OPEN = "fixes_at_open"
 # Minting reads every round file then writes one; the lock covers that whole
 # critical section so two processes cannot mint the same number. It is named
 # for the series, not for a file, because the file's name is what is being
@@ -540,7 +543,7 @@ def start_round(
         if existing is not None:
             if harden and round_kind(frontmatter(existing)) != HARDEN:
                 raise SpecfloError(_open_gate_message(existing.name))
-            _restamp_untouched(root, existing, sha)
+            _restamp_untouched(root, cfg, slug, existing, sha)
             return existing, False
         # Before the budget: --over-budget cannot open a round while an item
         # is unfixed, so the budget's choice is asked only once it could.
@@ -553,13 +556,15 @@ def start_round(
         rounds = round_files(root, cfg, slug)
         number = max((n for n, _ in rounds), default=0) + 1
         path = directory / f"review-{number}.md"
+        seen = _done_fixes(root, cfg, slug, number)
         path.write_text(_TEMPLATE.format(
             number=number,
             today=today,
             sha=head_sha(root) if sha is None else sha,
             base="" if full or harden else _reviewed_sha(rounds),
             level=load_project(root, cfg, slug).level,
-            kind=f"kind: {HARDEN}\n" if harden else "",
+            kind=(f"kind: {HARDEN}\n" if harden else "")
+            + (yaml.safe_dump({FIXES_AT_OPEN: seen}, sort_keys=False) if seen else ""),
         ))
     return path, True
 
@@ -574,8 +579,22 @@ def _open_gate_message(name: str) -> str:
     )
 
 
-def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
-    """Stamp an open round nobody has written into with HEAD, if it moved."""
+def _done_fixes(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> dict[str, list[str]]:
+    """The done fix tasks of each earlier item round ``number`` checks, for
+    the items that have one."""
+    items = _ledger(root, cfg, slug, number)[0]
+    done = {
+        item: [task.id for task in fixes if task.progress == "done"]
+        for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items()
+    }
+    return {item: tasks for item, tasks in done.items() if tasks}
+
+
+def _restamp_untouched(
+    root: Path, cfg: SpecfloConfig, slug: str, path: Path, sha: str | None
+) -> None:
+    """Stamp an open round nobody has written into with HEAD, if it moved,
+    and with the fix tasks done by now, which is what its reviewer reads."""
     fields = frontmatter(path)
     if not fields:
         return  # no frontmatter to read: rewriting it would empty round, base and level
@@ -586,8 +605,17 @@ def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
     if body_of(path).strip() != skeleton_body(number).strip():
         return
     head = head_sha(root) if sha is None else sha
+    changed = False
     if head and head != str(fields.get("sha", "") or ""):
         fields["sha"] = head
+        changed = True
+    seen = _done_fixes(root, cfg, slug, number)
+    if seen != (fields.get(FIXES_AT_OPEN) or {}):
+        fields.pop(FIXES_AT_OPEN, None)
+        if seen:
+            fields[FIXES_AT_OPEN] = seen
+        changed = True
+    if changed:
         path.write_text(_render(fields, body_of(path)))
 
 
@@ -1490,12 +1518,9 @@ def close_round(
                 )
         fields.pop(FAILED_FIXES, None)
         if verdict != WAIVED:
-            # A fix done before this round checked its item open did not hold.
-            failed = {
-                item: [task.id for task in fixes if task.progress == "done"]
-                for item, fixes in _fix_tasks(root, cfg, slug, still_open).items()
-            }
-            if failed := {item: tasks for item, tasks in failed.items() if tasks}:
+            # A fix the round reviewed and still checked its item open for
+            # did not hold; one done after the round opened was not reviewed.
+            if failed := _failed_at_close(fields.get(FIXES_AT_OPEN), still_open):
                 fields[FAILED_FIXES] = failed
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
@@ -1510,6 +1535,21 @@ def close_round(
         path=path, verdict=verdict, findings=counts, still_open=still_open,
         regressions=marked, new_finds=new_finds,
     )
+
+
+def _failed_at_close(seen, still_open: list[str]) -> dict[str, list[str]]:
+    """Of ``seen``, the round's saved fix tasks, those of the items it checked
+    open. A round with no saved list - one opened before rounds saved it -
+    fails none."""
+    if not isinstance(seen, dict):
+        return {}
+    by_number = {_item_number(item): tasks for item, tasks in seen.items()}
+    failed = {}
+    for item in still_open:
+        tasks = by_number.get(_item_number(item))
+        if isinstance(tasks, list) and tasks:
+            failed[item] = [str(task) for task in tasks]
+    return failed
 
 
 def _next_finding_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:

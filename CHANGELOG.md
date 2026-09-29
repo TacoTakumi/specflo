@@ -745,10 +745,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   `--full`, `--over-budget` or `--harden`, while an open blocker or
   should-fix item has no fix task that is done. The refusal names each such
   item with its fix tasks, if any, and points at `specflo task add --fixes`
-  and `specflo review waive`. A reviewed round that checks an item open
-  records, as `failed_fixes` in its frontmatter, the fix tasks that were
-  done then; they no longer count for that item, so it needs a new done
-  fix task, added fresh or superseding the failed one. The refusal, and a
+  and `specflo review waive`. A round saves, as `fixes_at_open`, the fix
+  tasks done when it opens (or when `review start` hands it back
+  untouched). When it closes after checking an item open, it records those
+  tasks as `failed_fixes`; they no longer count for that item, so it needs
+  a new done fix task, added fresh or superseding the failed one. The refusal, and a
   harden project's next-step hint, name that round. A waived round records
   none. `review waive`
   and the ladder's climb are not gated. Before, a round opened whether or

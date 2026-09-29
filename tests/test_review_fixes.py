@@ -404,3 +404,63 @@ def test_a_round_that_checks_nothing_open_records_no_failed_fix(reviewed):
 
     assert "failed_fixes" not in review.frontmatter(path)
     assert "failed_fixes" not in path.read_text()
+
+
+def test_a_fix_done_while_a_round_is_open_is_not_failed_by_its_close(reviewed):
+    root, cfg, slug, service = reviewed
+    # The ladder's climb opens a round without the fix check; the fix lands
+    # while the round is open, so the round never reviewed it.
+    path, _ = review.start_round(root, cfg, slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    _done_fix(root, cfg, slug, "F-01")
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert "failed_fixes" not in review.frontmatter(path)
+    path, created = service.start_round(slug, sha="", over_budget=True)
+    assert (path.name, created) == ("review-3.md", True)
+
+
+def test_a_superseding_fix_done_while_a_round_is_open_is_not_failed(reviewed):
+    root, cfg, slug, service = reviewed
+    failed = _done_fix(root, cfg, slug, "F-01")
+    path, _ = service.start_round(slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    task = plan.add_task(root, cfg, slug, "Keep the sha on every path", "kept", "uv run pytest",
+                         implements=[], fixes=["F-01"], supersedes=failed)
+    plan.start_task(root, cfg, slug, task.id)
+    plan.done_task(root, cfg, slug, task.id)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert review.frontmatter(path)["failed_fixes"] == {"F-01": [failed]}
+    assert review.unfixed_items(root, cfg, slug) == {}
+
+
+def test_a_round_handed_back_untouched_takes_the_fixes_done_by_then(reviewed):
+    root, cfg, slug, service = reviewed
+    path, _ = review.start_round(root, cfg, slug, sha="")
+    fix = _done_fix(root, cfg, slug, "F-01")
+    # Nobody wrote into the round, so handing it back re-reads what it reviews.
+    assert service.start_round(slug, sha="") == (path, False)
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert review.frontmatter(path)["failed_fixes"] == {"F-01": [fix]}
+    assert review.reopened_items(root, cfg, slug) == {"F-01": "review-2.md"}
+
+
+def test_a_round_opened_with_no_saved_fixes_fails_nothing(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    path, _ = service.start_round(slug, sha="")
+    # A round opened before rounds saved their fixes carries no list.
+    fields = review.frontmatter(path)
+    fields.pop("fixes_at_open", None)
+    path.write_text(review._render(fields, review.body_of(path)))
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert "failed_fixes" not in review.frontmatter(path)
