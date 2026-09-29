@@ -2095,8 +2095,11 @@ def _seam_continuation(
             "next_step": payload["do_next"],
             "checkpoint": payload["path"],
             "checkpoint_locator": payload["locator"],
+            # `specflo auto` refuses a harden project, so its continuation
+            # does not offer it. A payload from an older daemon names no level.
             "continuation": continuation.build_continuation(
-                payload["phase"], payload["do_next"]
+                payload["phase"], payload["do_next"],
+                offer_auto=payload.get("level") != projects.HARDEN_LEVEL,
             ),
         }
     except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
@@ -2106,6 +2109,16 @@ def _seam_continuation(
             err=True,
         )
         return dict.fromkeys(_CONTINUATION_KEYS)
+
+
+def _offers_auto(svc: ProjectService, slug: str) -> bool:
+    """Whether a continuation may offer `specflo auto`: not for a harden
+    project, which auto refuses. True when the project cannot be read, as
+    before the project's level was consulted."""
+    try:
+        return svc.load_project(slug).level != projects.HARDEN_LEVEL
+    except Exception:  # noqa: BLE001 - a fallback line must never fail the caller
+        return True
 
 
 def _report_transition(
@@ -2222,7 +2235,7 @@ def task_done(
             # Same fallback reopen takes: a seam that is a clear-point stays one
             # even when the next step is underivable, so a harness grepping the
             # prose for the marker never silently stops resuming (REQ-01).
-            typer.echo(continuation.clear_point_only())
+            typer.echo(continuation.clear_point_only(offer_auto=_offers_auto(svc, slug)))
         else:
             if written:
                 typer.echo(f"Checkpoint saved: {cont['checkpoint_locator']}")

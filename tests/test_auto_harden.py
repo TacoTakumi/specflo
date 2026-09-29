@@ -121,3 +121,58 @@ def test_after_the_refusals_no_auto_run_is_under_way(repo):
     info = json.loads(_ok(["status", "--json"]).output)
 
     assert info["auto_run"] == {"under_way": False}
+
+
+# --- the continuation never offers auto on a harden project ------------------
+
+
+def _done_fix_output(*flags):
+    """Raise a blocker in a harden round, then add, start and finish a task
+    fixing it; the output of `task done` with ``flags``."""
+    _ok(["review", "start", "--harden"])
+    _ok(["review", "finding", "add", "--severity", "blocker", "--at", "app.txt:1",
+         "--text", "The greeting is wrong"])
+    _ok(["review", "done"])
+    _ok(["task", "add", "--text", "Fix the greeting", "--acceptance", "fixed",
+         "--verify", "uv run pytest", "--fixes", "F-01"])
+    _ok(["task", "start", "T-01"])
+    return _ok(["task", "done", "T-01", *flags]).output
+
+
+def test_task_done_on_a_harden_project_resumes_with_the_checkpoint_alone(repo):
+    output = _done_fix_output()
+
+    assert "You may clear context now - resume with `specflo checkpoint`." in output
+    assert "specflo auto" not in output
+
+
+def test_task_done_json_on_a_harden_project_resumes_with_the_checkpoint_alone(repo):
+    data = json.loads(_done_fix_output("--json"))
+
+    assert "You may clear context now" in data["continuation"]
+    assert "specflo auto" not in data["continuation"]
+
+
+def test_task_done_on_a_full_project_still_offers_auto(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _ok(["init"])
+    _ok(["new", "Thing"])
+    _ok(["spec", "start"])
+    _ok(["requirement", "add", "--text", "It builds", "--acceptance", "built"])
+    _ok(["plan", "start"])
+    _ok(["task", "add", "--text", "Build it", "--acceptance", "built", "--verify", "true",
+         "--from", "REQ-01"])
+    _ok(["task", "start", "T-01"])
+
+    assert "(or `specflo auto` in an auto run)" in _ok(["task", "done", "T-01"]).output
+
+
+def test_task_done_fallback_on_a_harden_project_does_not_offer_auto(repo, monkeypatch):
+    def fail(*args, **kwargs):
+        raise RuntimeError("no checkpoint")
+
+    monkeypatch.setattr(cli, "_client_checkpoint", fail)
+    output = _done_fix_output()
+
+    assert "You may clear context now - resume with `specflo checkpoint`." in output
+    assert "specflo auto" not in output
