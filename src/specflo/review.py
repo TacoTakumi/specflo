@@ -97,11 +97,16 @@ AT_FORM = "<file>:<line> or <file>:<line>-<line>"
 # tab, so it never matches.
 _BLAME_COMMIT = re.compile(r"^([0-9a-f]{40,64}) \d+ \d+(?: \d+)?$", re.MULTILINE)
 # The whole verdict vocabulary (D-06). ready-to-merge and waived pass the
-# completion gate; changes-requested blocks it.
+# completion gate; changes-requested blocks it. hardened closes a harden
+# round, whatever it found.
 READY = "ready-to-merge"
 CHANGES_REQUESTED = "changes-requested"
 WAIVED = "waived"
-VERDICTS = (READY, CHANGES_REQUESTED, WAIVED)
+HARDENED = "hardened"
+VERDICTS = (READY, CHANGES_REQUESTED, WAIVED, HARDENED)
+# The verdicts of a round that reviewed the code: a waived round reviewed
+# nothing, so its sha starts no range and its checks close no item.
+REVIEWED = (READY, CHANGES_REQUESTED, HARDENED)
 # The verdicts that clear the completion gate (D-08). ``waived`` is a
 # deliberate, reasoned way past it, not an accident.
 PASSING = (READY, WAIVED)
@@ -217,20 +222,22 @@ def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
 
 
 def _reviewed_sha(rounds: list[tuple[int, Path]]) -> str:
-    """The sha of the latest of ``rounds`` that was reviewed; "" when none was.
+    """The sha of the latest of ``rounds`` that was reviewed, gate or harden;
+    "" when none was.
 
     A waived round reviewed nothing, so a range never starts at its sha: that
     would skip the fixes made before the waive.
     """
     for _, path in reversed(rounds):
         fields = frontmatter(path)
-        if fields.get("verdict") in (READY, CHANGES_REQUESTED):
+        if fields.get("verdict") in REVIEWED:
             return str(fields.get("sha", "") or "")
     return ""
 
 
 def _first_reviewed_sha(rounds: list[tuple[int, Path]]) -> str | None:
-    """The sha of the earliest of ``rounds`` that was reviewed; None when none was.
+    """The sha of the earliest of ``rounds`` that was reviewed, gate or harden;
+    None when none was.
 
     A finding on a line changed after it is a regression. A waived round
     reviewed nothing, so it is never the first reviewed round. A reviewed
@@ -238,7 +245,7 @@ def _first_reviewed_sha(rounds: list[tuple[int, Path]]) -> str | None:
     """
     for _, path in rounds:
         fields = frontmatter(path)
-        if fields.get("verdict") in (READY, CHANGES_REQUESTED):
+        if fields.get("verdict") in REVIEWED:
             return str(fields.get("sha", "") or "")
     return None
 
@@ -910,8 +917,9 @@ def _ledger(
     number: the blocker and should-fix items no reviewed round has checked
     closed and none has settled, every finding recorded (ID and severity),
     the round file where each closed item was checked closed, and how each
-    settled finding was settled and the round file that says so. A waived
-    round's checks do not close an item: a waive reviewed nothing.
+    settled finding was settled and the round file that says so. A harden
+    round's checks close an item as a gate round's do; a waived round's do
+    not: a waive reviewed nothing.
     """
     items: dict[int, str] = {}
     known: dict[int, tuple[str, str]] = {}
@@ -921,7 +929,7 @@ def _ledger(
         if n >= number:
             break
         doc = path.read_text()
-        if frontmatter(path).get("verdict") in (READY, CHANGES_REQUESTED):
+        if frontmatter(path).get("verdict") in REVIEWED:
             for line in _section_lines(doc, EARLIER_HEADER) or []:
                 match = _CHECK_LINE.match(line)
                 if match and match.group(3) == "closed":
@@ -1034,7 +1042,8 @@ def close_round(
     The verdict is derived from the round's Findings section (see
     :func:`parse_findings` and :func:`derive_verdict`). An explicit
     ``verdict`` is accepted only when it is the derived one, except
-    ``waived``, which closes the round without reading its findings.
+    ``waived``, which closes the round without reading its findings. A
+    harden round's derived verdict is ``hardened``, whatever it found.
 
     Every blocker and should-fix finding names its location, whether
     ``review finding add`` wrote the line or a reviewer did by hand.
@@ -1048,7 +1057,8 @@ def close_round(
     A round with nits adds one follow-up naming their IDs, so the nits stay
     listed after the project completes without blocking it. ``nits_followup``
     False keeps them in the round file only: follow-ups work only for
-    projects in a checkout, so a daemon-held round adds none.
+    projects in a checkout, so a daemon-held round adds none. A harden round
+    adds none either: its nits stay in its file.
 
     ``sha`` is HEAD as the caller's checkout names it, used only when the
     round has no sha yet; None reads it from ``root``.
@@ -1116,7 +1126,18 @@ def close_round(
             marked = _marked_in(body)
             still_open = parse_checks(root, cfg, slug, path, body, fields["round"])
             derived, counts = derive_verdict(findings, still_open)
+            harden = round_kind(fields) == HARDEN
+            if harden:
+                # Not a gate round: whatever it found, it closes hardened, and
+                # its blocker and should-fix findings are items later rounds check.
+                derived = HARDENED
             if verdict is not None and verdict != derived:
+                if harden:
+                    raise SpecfloError(
+                        f"{path.name} is a harden round, so it closes {HARDENED}, not"
+                        f" {verdict}. Run `specflo review done` without --verdict, or"
+                        " waive the round with `--verdict waived --reason <why>`."
+                    )
                 blocking = [f.id for f in findings if f.severity != "nit"]
                 blocking += still_open
                 raise SpecfloError(
@@ -1128,7 +1149,7 @@ def close_round(
                 )
             verdict = derived
             nits = [f.id for f in findings if f.severity == "nit"]
-            if nits and nits_followup:
+            if nits and nits_followup and not harden:
                 # Before the round is written: a follow-up that cannot be
                 # added refuses the close rather than losing the nits.
                 followup.add_followup(
