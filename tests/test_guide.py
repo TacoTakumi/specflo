@@ -3,11 +3,10 @@ import re
 from pathlib import Path
 
 import pytest
-from typer.main import get_command
 from typer.testing import CliRunner
 
 from specflo import config, guide, projects
-from specflo.cli import app
+from specflo.cli import app, build_cli
 
 runner = CliRunner()
 
@@ -74,7 +73,8 @@ def _leaf_paths(command, prefix=()):
 
 
 def test_guide_table_covers_every_cli_command():
-    cli = get_command(app)
+    # build_cli, not the Typer app: it mounts the `skills` group too.
+    cli = build_cli()
     covered = {entry["name"] for entry in guide.COMMANDS}
     for path in _leaf_paths(cli):
         name = " ".join(path)
@@ -275,6 +275,22 @@ def test_guide_moves_the_daemon_commands_to_their_own_topic(cwd):
     for prefix in ("serve", "remote", "promote", "product", "workitem", "gate", "lease",
                    "console"):
         assert any(n.split()[0] == prefix for n in names), prefix
+
+
+def test_guide_lists_the_commands_in_workflow_order(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    headings = ["Setup", "Projects", "Brainstorm", "Spec", "Plan", "Execute", "Review",
+                "Any phase", "Agents"]
+    at = [out.index(f"\n  {h}\n") for h in headings]
+    assert at == sorted(at)
+    commands = ["init", "skills install", "hook install", "config get", "new", "status",
+                "brainstorm start", "decision add", "spec start", "requirement add",
+                "plan start", "task add", "plan graph", "task list", "task start", "task done",
+                "review start", "review done", "validate", "advance", "followup add",
+                "agent start"]
+    at = [out.index(f"\n    {c} ") for c in commands]
+    assert at == sorted(at)
+    assert "FU-\n" not in out
 
 
 def test_guide_json_keeps_every_command(cwd):

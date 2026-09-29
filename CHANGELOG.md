@@ -21,6 +21,16 @@ latter. Release tags are of the form `vX.Y.Z`.
   characters: a longer label takes its own line and summaries wrap, so one
   long label no longer pads every row to about 140 columns. The default
   output drops from 23.6 KB to about 11 KB.
+- **`specflo guide` lists the commands in workflow order.** The groups are
+  Setup, Projects, Brainstorm, Spec, Plan, Execute, Review, Any phase and
+  Agents, and the commands in each group come in the order they are used. In
+  `--json` each command's `group` names its new group.
+
+### Fixed
+- **`specflo guide` lists the `skills` commands.** `skills install`,
+  `status`, `update` and `uninstall` were missing, because the check that the
+  guide covers every command read only the Typer app and not the `skills`
+  group mounted on it. The check now reads the full command line.
 
 ## [0.15.0]
 

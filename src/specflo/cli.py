@@ -1043,8 +1043,14 @@ _GUIDE_LINE_WIDTH = 100
 
 # The groups `specflo guide` shows by default, and the topics it shows on request.
 _GUIDE_GROUPS = [
-    ("setup", "Setup & navigation"),
-    ("workflow", "Workflow"),
+    ("setup", "Setup"),
+    ("projects", "Projects"),
+    ("brainstorm", "Brainstorm"),
+    ("spec", "Spec"),
+    ("plan", "Plan"),
+    ("execute", "Execute"),
+    ("review", "Review"),
+    ("any", "Any phase"),
     ("agents", "Agents"),
 ]
 _GUIDE_TOPICS = {"daemon": ("daemon", "Daemon & team")}
@@ -1059,7 +1065,9 @@ def _render_commands(data: dict, groups: list[tuple[str, str]]) -> list[str]:
             if c["group"] != key:
                 continue
             label = f"{c['name']} {c['args']}".strip()
-            summary = textwrap.wrap(c["summary"], _GUIDE_LINE_WIDTH - len(indent))
+            summary = textwrap.wrap(
+                c["summary"], _GUIDE_LINE_WIDTH - len(indent), break_on_hyphens=False
+            )
             if len(label) > _GUIDE_LABEL_WIDTH:
                 lines.extend(textwrap.wrap(
                     label, _GUIDE_LINE_WIDTH, initial_indent="    ",
