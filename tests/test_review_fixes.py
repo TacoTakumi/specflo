@@ -303,8 +303,15 @@ def test_an_item_checked_open_again_needs_one_more_done_fix_task(reviewed):
 
     # The fix done before round 2 did not hold, so it no longer counts.
     assert list(review.unfixed_items(root, cfg, slug)) == ["F-01"]
-    with pytest.raises(SpecfloError, match="F-01"):
+    assert review.reopened_items(root, cfg, slug) == {"F-01": "review-2.md"}
+    with pytest.raises(SpecfloError) as refused:
         service.start_round(slug, sha="", over_budget=True)
+    assert str(refused.value).startswith(
+        "No review round opens while an open item waits for a fix: F-01 (review-2.md checked"
+        " it open after its fix; it needs a new fix task). Each needs a task that fixes it,"
+        " added with `specflo task add --fixes F-01`"
+    )
+    assert "no fix task" not in str(refused.value)
     assert [path.name for _, path in review.round_files(root, cfg, slug)] == [
         "review-1.md", "review-2.md"]
 

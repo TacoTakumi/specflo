@@ -302,7 +302,11 @@ def _harden_step(
             " reviewer the brief `specflo review prompt` prints and have it record findings"
             " through the CLI; then close it with `specflo review done`."
         )
-    untasked = [item for item, tasks in (review.get("unfixed") or {}).items() if not tasks]
+    reopened = review.get("reopened") or {}
+    untasked = [
+        item for item, tasks in (review.get("unfixed") or {}).items()
+        if not tasks and item not in reopened
+    ]
     if untasked:
         one = len(untasked) == 1
         return (
@@ -335,6 +339,17 @@ def _harden_step(
                 " open item (`specflo validate execute` names what is left)"
             )
         return _harden_stop(quiet[-2:], test_command, finish, lead="The")
+    if reopened:
+        one = len(reopened) == 1
+        named = ", ".join(f"{item} ({name})" for item, name in reopened.items())
+        return (
+            f"A round checked {named} open after {'its fix' if one else 'their fixes'}:"
+            f" {'it needs' if one else 'each needs'} a new fix task. Add"
+            f" {'one' if one else 'one for each'} with `specflo task add --fixes"
+            f" {next(iter(reopened)) if one else 'F-NN'}`, work {'it' if one else 'each'} to"
+            " done and commit, then open the next harden round with `specflo review start"
+            f" --harden` to check {'it' if one else 'them'}."
+        )
     if items:
         return (
             "Every open item has a done fix task - with the fixes committed, open the next"

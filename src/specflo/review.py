@@ -367,17 +367,44 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     needs more done fix tasks than the rounds that checked it open. Reads the
     round files and plan.md and changes nothing.
     """
+    return {item: pending for item, (pending, _) in _unfixed(root, cfg, slug).items()}
+
+
+def reopened_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, str]:
+    """The open items whose fix tasks are all done but did not hold, each with
+    the round file that last checked it open.
+
+    Each is an item of :func:`unfixed_items` with at least one done fix task
+    and none left to finish: it needs a new fix task. Reads the round files
+    and plan.md and changes nothing.
+    """
+    return {
+        item: reopened_by
+        for item, (pending, reopened_by) in _unfixed(root, cfg, slug).items()
+        if reopened_by and not pending
+    }
+
+
+def _unfixed(
+    root: Path, cfg: SpecfloConfig, slug: str
+) -> dict[str, tuple[list[str], str | None]]:
+    """Each open item no done task fixes: its fix tasks not done, and the
+    round file that last checked it open when a done fix task did not hold."""
     rounds = round_files(root, cfg, slug)
     latest = rounds[-1][0] if rounds else 0
     items = _ledger(root, cfg, slug, latest + 1)[0]
     if not items:
         return {}
-    reopened = _open_checks(rounds)
-    return {
-        item: [task.id for task in fixes if task.progress != "done"]
-        for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items()
-        if sum(task.progress == "done" for task in fixes) <= len(reopened.get(item, []))
-    }
+    checks = _open_checks(rounds)
+    unfixed = {}
+    for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items():
+        done = sum(task.progress == "done" for task in fixes)
+        if done <= len(checks.get(item, [])):
+            unfixed[item] = (
+                [task.id for task in fixes if task.progress != "done"],
+                checks[item][-1] if done else None,
+            )
+    return unfixed
 
 
 def _open_checks(rounds: list[tuple[int, Path]]) -> dict[str, list[str]]:
@@ -420,18 +447,25 @@ def _fix_tasks(
     return fixing
 
 
-def unfixed_message(unfixed: dict[str, list[str]]) -> str:
-    """What to tell the user when an open item has no done fix task."""
-    named = ", ".join(
-        f"{item} ("
-        + (f"{', '.join(tasks)} {'is' if len(tasks) == 1 else 'are'} not done" if tasks
-           else "no fix task")
-        + ")"
-        for item, tasks in unfixed.items()
-    )
+def unfixed_message(
+    unfixed: dict[str, list[str]], reopened: dict[str, str] | None = None
+) -> str:
+    """What to tell the user when an open item has no done fix task, or none
+    since a round checked it open (``reopened``, see :func:`reopened_items`)."""
+    reopened = reopened or {}
+
+    def why(item: str, tasks: list[str]) -> str:
+        if tasks:
+            return f"{', '.join(tasks)} {'is' if len(tasks) == 1 else 'are'} not done"
+        if item in reopened:
+            return f"{reopened[item]} checked it open after its fix; it needs a new fix task"
+        return "no fix task"
+
+    named = ", ".join(f"{item} ({why(item, tasks)})" for item, tasks in unfixed.items())
     fixes = next(iter(unfixed)) if len(unfixed) == 1 else "F-NN"
+    waits = "waits for a fix" if reopened else "has no done fix task"
     return (
-        f"No review round opens while an open item has no done fix task: {named}."
+        f"No review round opens while an open item {waits}: {named}."
         f" Each needs a task that fixes it, added with `specflo task add --fixes {fixes}`"
         " and finished with `specflo task done`; then run `specflo review start` again."
         " Or waive the review with `specflo review waive --reason <why>`."
@@ -496,7 +530,7 @@ def start_round(
         # Before the budget: --over-budget cannot open a round while an item
         # is unfixed, so the budget's choice is asked only once it could.
         if need_fixes and (unfixed := unfixed_items(root, cfg, slug)):
-            raise SpecfloError(unfixed_message(unfixed))
+            raise SpecfloError(unfixed_message(unfixed, reopened_items(root, cfg, slug)))
         if not harden:
             state = budget(root, cfg, slug)
             if state["spent"] and not over_budget:
@@ -711,9 +745,11 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         state["gate"] = gate
         state["quiet_rounds"] = _quiet_rounds(files)
     # Only carried in a harden project, whose hint turns on each open item's
-    # fix: none yet, one not done, or a done one the next round checks.
+    # fix: none yet, one not done, a done one the next round checks, or done
+    # ones a round checked open, which need a new one.
     if harden:
         state["unfixed"] = unfixed_items(root, cfg, slug)
+        state["reopened"] = reopened_items(root, cfg, slug)
     return state
 
 

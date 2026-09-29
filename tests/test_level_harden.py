@@ -272,9 +272,9 @@ def _finding(severity="blocker", line=1):
     return json.loads(added.stdout)["id"]
 
 
-def _fix(finding):
+def _fix(finding, text=None):
     """Add, start and finish a task fixing ``finding``; the task's ID."""
-    task_id = _ok(["task", "add", "--text", f"Fix {finding}", "--acceptance", "fixed",
+    task_id = _ok(["task", "add", "--text", text or f"Fix {finding}", "--acceptance", "fixed",
                    "--verify", "uv run pytest", "--fixes", finding]).output.split()[1]
     _ok(["task", "start", task_id])
     _ok(["task", "done", task_id])
@@ -797,8 +797,9 @@ def test_the_stop_suggestion_names_an_item_two_quiet_harden_rounds_left_open(
     _harden_checkout(tmp_path, monkeypatch)
     _fill()
     (finding,) = _harden_round(1)
-    _fix(finding)
-    for _ in range(2):
+    # Each round that checks the item open needs a new done fix task first.
+    for attempt in range(2):
+        _fix(finding, f"Fix {finding}, try {attempt + 1}")
         _ok(["review", "start", "--harden"])
         _ok(["review", "finding", "check", finding, "open"])
         _finding("nit")
@@ -810,6 +811,27 @@ def test_the_stop_suggestion_names_an_item_two_quiet_harden_rounds_left_open(
         " start` check it closed, or reject or defer it; completion needs no open item"
         " (`specflo validate execute` names what is left)",
     )
+
+
+def test_an_item_a_harden_round_checked_open_after_its_fix_asks_for_a_new_fix_task(
+    tmp_path, monkeypatch
+):
+    _harden_checkout(tmp_path, monkeypatch)
+    _fill()
+    (finding,) = _harden_round(1)
+    _fix(finding)
+    _ok(["review", "start", "--harden"])
+    _ok(["review", "finding", "check", finding, "open"])
+    _finding("nit")
+    assert "closed hardened" in _ok(["review", "done"]).output
+
+    hint = _next_hint()
+    assert "review-2.md" in hint and f"specflo task add --fixes {finding}" in hint, hint
+    assert "no fix task" not in hint
+    refused = runner.invoke(app, ["review", "start", "--harden"])
+    assert refused.exit_code == 1
+    assert "review-2.md checked it open after its fix" in refused.output
+    assert "no fix task" not in refused.output
 
 
 @pytest.mark.parametrize("rounds", ["gate", "waived harden"])
