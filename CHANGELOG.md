@@ -36,6 +36,81 @@ latter. Release tags are of the form `vX.Y.Z`.
   nit unless it tells the agent to do the wrong thing), that a problem the
   branch did not introduce goes to `specflo followup add`, how to record,
   and to run only the tests in scope.
+- **Fix tasks: `specflo task add --fixes F-NN`** (repeatable) records the
+  review findings a task fixes on a `- Fixes:` line, which `task show` and
+  `task list` print and `--json` carries as `fixes`. With `--fixes`, `--from`
+  is optional, and `validate plan` accepts a task that fixes a finding and
+  implements no requirement. Only an open item is accepted: a blocker or
+  should-fix finding of a closed round that no round has checked closed and
+  that is not deferred or rejected. A nit, a finding of the open round, an
+  item checked closed and a settled finding are refused, and the message
+  lists the open items.
+- **The fix proof in the reviewer brief.** Under each item a round must
+  check, `specflo review prompt` lists the tasks that fix it, each with its
+  ID, title and verify step. It tells the reviewer to check an item closed
+  only when its pin test fails on the source at the latest reviewed round's
+  sha and passes on HEAD, and only when the defect is gone on every path
+  that reaches it. A path the fix missed keeps the item open; it is not a
+  new finding.
+- **Finding locations: `specflo review finding add --at
+  <file>:<line>[-<line>]`** names where the defect is, as the file is at the
+  round's sha, and writes `- F-NN (should-fix) [src/x.py:10] text`. A
+  reviewer may write the same form by hand. The CLI checks that the file
+  has those lines at the round's sha in the caller's checkout; when git
+  there cannot read that commit, a note on stderr says so and the finding
+  is recorded. `--json` adds `location`.
+- **Regression marks.** A blocker or should-fix finding with a line of its
+  location changed after the project's first reviewed round, as git blame
+  shows it, is marked `(should-fix, regression)`. `review finding add` marks
+  the findings it records, and `review done` marks the lines a reviewer
+  wrote by hand. `review done`, `status` and the round budget message count
+  the regressions (`regressions` in `review done --json`); a mark changes
+  neither the verdict nor the budget. For a project on a daemon the client
+  runs git in its checkout and the daemon never does.
+- **`specflo review finding defer F-NN --do "<what>"` and `review finding
+  reject F-NN --reason "<why>"`** - settle an open blocker or should-fix
+  item without a fix. `defer` files a follow-up for it, with the finding's
+  text as the title and the round and finding as its From line; `reject`
+  says it is not a defect. Each writes a line under a `## Settled` section
+  of the round that recorded the finding. A settled item leaves the ledger:
+  no round checks it and no task fixes it. A changes-requested round whose
+  blocking items are all settled passes the completion gate with no further
+  round, and `status` says `passes: every item settled`. `defer` is refused
+  for a project hosted on a daemon. The execute skill defers or rejects only
+  on the user's say.
+- **The settled list in the reviewer brief.** Every brief lists under
+  `## Already settled` what earlier rounds settled: their nits, their
+  deferred and rejected findings, and the follow-ups reviewers recorded
+  from them. It tells the reviewer to raise one again only with new
+  evidence that it is worse than recorded.
+- **Harden rounds: `specflo review start --harden`** opens a harden round
+  in the same `review-N.md` series: a fresh review of the whole branch,
+  outside the round budget, that still checks each open item. Its brief asks
+  for evidence (a repro, a failing test or a trace) in the text of every
+  blocker and should-fix, says that wording in agent-facing text and docs is
+  not a finding unless it tells an agent or user to do the wrong thing,
+  keeps nits in the round with no follow-up, and runs only the tests that
+  reproduce a finding, with the whole suite once when hardening stops.
+  `review done` closes it `hardened`, whatever it found, and prints its new
+  finds (`new_finds` in `--json`). Its blocker and should-fix findings
+  become items that need fix tasks, and it counts as a reviewed round, so
+  the next delta round starts at its sha. The completion gate reads the
+  latest gate round's verdict, never a harden round's, and fails while an
+  item raised after that round is open. After two harden rounds in a row
+  with no new find, the next-step hint suggests stopping; that is the
+  user's call. Once a harden round exists, `status` and the checkpoint
+  name each round's kind (`kinds` in `status --json`).
+- **The harden level: `specflo new <name> --level harden`**, also with
+  `--remote`, for code that already exists. The project starts at `execute`
+  with a `brief.md` of Scope, Focus and Stop when, which `validate brief`
+  checks, and an empty plan that takes only fix tasks. It has no task cap
+  and no round budget. Its harden rounds review the Scope the brief names,
+  where a problem already present is a finding. It completes on a valid
+  brief, a harden round closed `hardened`, no open round, every fix task
+  done and an empty ledger. `specflo auto` and `specflo level` refuse it.
+- **`specflo-harden` skill** - works a harden project: start it, write the
+  brief, run harden rounds, turn their findings into fix tasks, and stop on
+  the user's say, with the whole suite run once.
 - **`specflo doctor [--json]`** - check the setup on this machine: the
   `specflo` command is on PATH, and each detected agent harness has every
   bundled skill, installed or linked to the same content. A missing, stale
@@ -665,6 +740,24 @@ latter. Release tags are of the form `vX.Y.Z`.
   The execute skill hands the reviewer `review prompt` and fixes only
   blocker and should-fix items; the auto skill names the `review-budget`
   stop.
+- **`review start` waits for the fixes.** No round opens, plain or with
+  `--full`, `--over-budget` or `--harden`, while an open blocker or
+  should-fix item has no fix task that is done. The refusal names each such
+  item with its fix tasks, if any, and points at `specflo task add --fixes`
+  and `specflo review waive`. `review waive` and the ladder's climb are not
+  gated. Before, a round opened whether or not the items had a fix.
+- **`review finding add` needs `--at` for a blocker or should-fix.** Only a
+  nit may leave its location out. A location whose file or lines the round's
+  sha does not have is refused.
+- **`review done` refuses an unlocated blocker or should-fix line.** A
+  finding line written by hand needs its `[file:line]` too, and the refusal
+  names the line and the ways on. Only the open round is checked: a round
+  file closed before, with no locations, no kind and no Settled section,
+  reads as it did.
+- **The execute skill teaches the new review verbs:** a fix task with
+  `--fixes` for each blocker and should-fix item, `--at` on every finding
+  that needs it, defer and reject only on the user's say, and harden rounds
+  for a deeper look.
 - **Targeted tests at quick and fast level.** At fast level the plan skill
   has each task's Verify run the tests that task adds or changes, not the
   whole suite, and the execute skill runs that Verify per task and the full
