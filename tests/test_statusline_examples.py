@@ -1,0 +1,179 @@
+"""The example statusline scripts under examples/statusline/.
+
+The segment script must read specflo's real files the way the pi extension's
+status segment does, so every repo here is built with specflo's own writers,
+not hand-written markdown.
+"""
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+from specflo import config, plan, projects, spec
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "statusline"
+SEGMENT = EXAMPLES / "specflo_segment.py"
+
+ESC = "\x1b"
+
+
+def _env(**extra):
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SPECFLO_DIRECTORY", "NO_COLOR")}
+    env.update(extra)
+    return env
+
+
+def run_segment(*args, cwd, **env):
+    return subprocess.run(
+        [sys.executable, str(SEGMENT), *args],
+        cwd=cwd, env=_env(**env), capture_output=True, text=True, timeout=30,
+    )
+
+
+def make_repo(root: Path, name="demo", phase="brainstorm", tasks=0,
+              started=None, done=(), superseded=None, status=None) -> Path:
+    """A specflo repo whose active project `name` is in `phase`.
+
+    `tasks` pending tasks are added in plan; `started` and `done` name tasks to
+    move once in execute; `superseded` names a task a new one replaces.
+    """
+    config.init_config(root)
+    cfg = config.load_config(root)
+    project = projects.create_project(root, cfg, name, created="2026-09-29")
+    slug = project.slug
+    projects.switch_project(root, cfg, slug)
+    cfg = config.load_config(root)
+    order = ["brainstorm", "spec", "plan", "execute"]
+    for _ in range(order.index(phase)):
+        project = projects.advance_project(root, cfg, slug)
+        if project.phase == "spec":
+            spec.start_spec(root, cfg, slug, today="2026-09-29")
+            spec.add_requirement(root, cfg, slug, "a behaviour", acceptance="ok",
+                                 today="2026-09-29")
+        if project.phase == "plan":
+            plan.start_plan(root, cfg, slug, today="2026-09-29")
+            for i in range(tasks):
+                plan.add_task(root, cfg, slug, f"task {i + 1}", acceptance="ok",
+                              verify="true", implements=["REQ-01"], today="2026-09-29")
+            if superseded:
+                plan.add_task(root, cfg, slug, "replacement", acceptance="ok",
+                              verify="true", implements=["REQ-01"],
+                              supersedes=superseded, today="2026-09-29")
+    for task_id in done:
+        plan.start_task(root, cfg, slug, task_id, today="2026-09-29")
+        plan.done_task(root, cfg, slug, task_id, today="2026-09-29")
+    if started:
+        plan.start_task(root, cfg, slug, started, today="2026-09-29")
+    if status == "complete":
+        projects.complete_project(root, cfg, slug)
+    elif status == "shelved":
+        projects.shelve_project(root, cfg, slug)
+    return root
+
+
+def plain(root, *args, **env):
+    result = run_segment(*args, cwd=root, NO_COLOR="1", **env)
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+# --- the segment for each project state -----------------------------------
+
+def test_segment_brainstorm_shows_slug_and_phase(tmp_path):
+    assert plain(make_repo(tmp_path)) == "demo:brainstorm\n"
+
+
+def test_segment_spec_shows_slug_and_phase(tmp_path):
+    assert plain(make_repo(tmp_path, phase="spec")) == "demo:spec\n"
+
+
+def test_segment_plan_shows_the_tally(tmp_path):
+    assert plain(make_repo(tmp_path, phase="plan", tasks=3)) == "demo:plan 0/3\n"
+
+
+def test_segment_execute_drops_the_phase_and_names_the_task_in_progress(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=4, done=["T-01"], started="T-02")
+    assert plain(root) == "demo T-02 1/4\n"
+
+
+def test_segment_execute_with_no_task_in_progress(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=2, done=["T-01"])
+    assert plain(root) == "demo 1/2\n"
+
+
+def test_segment_does_not_count_a_superseded_task(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=3, superseded="T-03")
+    assert plain(root) == "demo 0/3\n"
+
+
+def test_segment_complete_project(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=1, done=["T-01"], status="complete")
+    assert plain(root) == "demo done\n"
+
+
+def test_segment_shelved_project(tmp_path):
+    assert plain(make_repo(tmp_path, status="shelved")) == "demo shelved\n"
+
+
+def test_segment_cuts_a_long_slug(tmp_path):
+    root = make_repo(tmp_path, name="a very long project name")
+    assert plain(root) == "a-very-long-proj…:brainstorm\n"
+
+
+def test_segment_prints_nothing_without_a_specflo_config(tmp_path):
+    assert plain(tmp_path) == ""
+
+
+def test_segment_prints_nothing_without_an_active_project(tmp_path):
+    config.init_config(tmp_path)
+    assert plain(tmp_path) == ""
+
+
+def test_segment_prints_nothing_for_an_unreadable_project(tmp_path):
+    root = make_repo(tmp_path)
+    (root / "docs" / "projects" / "demo" / "project.md").write_text("no front matter\n")
+    assert plain(root) == ""
+
+
+def test_segment_prints_nothing_for_a_missing_directory(tmp_path):
+    assert plain(tmp_path, str(tmp_path / "gone")) == ""
+
+
+# --- where it looks, and colour --------------------------------------------
+
+def test_segment_takes_the_directory_as_its_argument(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert plain(elsewhere, str(root)) == "demo:brainstorm\n"
+
+
+def test_segment_walks_up_from_a_subdirectory(tmp_path):
+    root = make_repo(tmp_path)
+    sub = root / "src" / "deep"
+    sub.mkdir(parents=True)
+    assert plain(sub) == "demo:brainstorm\n"
+
+
+def test_segment_honours_specflo_directory(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    assert plain(elsewhere, str(elsewhere), SPECFLO_DIRECTORY=str(root)) == "demo:brainstorm\n"
+
+
+@pytest.mark.parametrize("status, code", [(None, "35"), ("complete", "2"), ("shelved", "2")])
+def test_segment_colours_without_no_color(tmp_path, status, code):
+    root = make_repo(tmp_path, status=status)
+    result = run_segment(cwd=root)
+    assert result.returncode == 0
+    assert result.stdout.startswith(f"{ESC}[{code}m")
+    assert result.stdout.endswith(f"{ESC}[0m\n")
+
+
+def test_segment_prints_no_escape_byte_with_no_color(tmp_path):
+    assert ESC not in plain(make_repo(tmp_path))
