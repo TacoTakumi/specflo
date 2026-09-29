@@ -1017,3 +1017,19 @@ def test_a_hosted_stop_after_two_quiet_harden_rounds_reads_as_a_local_one(
     assert "the last two harden rounds, review-3.md and review-4.md," in stop
     assert "run the whole test suite (`uv run pytest -q`) once" in stop
     _assert_the_daemon_ran_no_git(git, live_daemon["root"])
+
+
+# --- the start line names the scope the harden round reviews ------------------
+
+
+def test_a_harden_start_in_a_harden_project_names_the_briefs_scope(tmp_path, monkeypatch):
+    from test_level_harden import _checkout, _fill
+
+    _checkout(tmp_path / "local", monkeypatch)
+    runner.invoke(app, ["new", "Thing", "--level", "harden"])
+    _fill()
+
+    result = runner.invoke(app, ["review", "start", "--harden"])
+
+    assert result.exit_code == 0, result.output
+    assert result.output.splitlines()[1:] == ["Kind: harden", "Scope: the brief's Scope"]

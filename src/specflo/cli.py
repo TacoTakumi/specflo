@@ -2511,7 +2511,11 @@ def review_start(
     # Only a harden round names its kind: a gate round prints as it always did.
     if scope["kind"] == "harden":
         typer.echo("Kind: harden")
-    typer.echo(f"Scope: {scope['range'] or 'whole branch'}")
+    # A harden project's harden round reviews the Scope its brief names, not a branch.
+    if scope["kind"] == "harden" and svc.load_project(slug).level == projects.HARDEN_LEVEL:
+        typer.echo("Scope: the brief's Scope")
+    else:
+        typer.echo(f"Scope: {scope['range'] or 'whole branch'}")
     if scope["items"]:
         typer.echo("Items to check: " + ", ".join(scope["items"]))
 
