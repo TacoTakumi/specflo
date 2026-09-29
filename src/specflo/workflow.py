@@ -97,10 +97,10 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     Only a passing round offers ``specflo advance``, and it reads the
     ``passing`` flag the review state carries rather than naming verdicts
     itself - so the hint and the completion gate can never disagree about
-    which verdicts clear it. The later keys (open items, the spent budget,
-    earlier changes) are read with defaults, as a state dict may predate them.
-    The two hints that call for the whole suite name ``test_command`` when
-    it is set.
+    which rounds clear it. The verdict only picks the words. The later keys
+    (open items, the spent budget, earlier changes) are read with defaults, as
+    a state dict may predate them. The three hints that call for the whole
+    suite name ``test_command`` when it is set.
     """
     if review is None:
         return (
@@ -118,6 +118,15 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
             "findings through the CLI; then close it with `specflo review done`."
         )
     if review["passing"]:
+        # A round that asked for changes passes once every item it asks them
+        # on is settled. It keeps its verdict, so the hint names the settling,
+        # and the whole suite runs once more as after any such round.
+        if review["verdict"] == "changes-requested":
+            return (
+                f"All tasks done and every item {review['file']} asks for changes on is "
+                f"settled - {_whole_suite(test_command)} once more, then "
+                "`specflo advance` to complete the project."
+            )
         if review.get("after_changes"):
             return (
                 f"All tasks done and {review['file']} is {review['verdict']} after a "

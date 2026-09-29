@@ -469,8 +469,10 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     The latest round is the highest-numbered one, open or closed (REQ-19); its
     verdict is what every surface reports, so an open round after a passing one
     reads as open rather than as that earlier pass. ``passing`` says whether that
-    verdict clears the completion gate, so every reader shares one judgement. Read fresh from the files on
-    every call - nothing is cached and nothing is mirrored (REQ-09).
+    round clears the completion gate - a passing verdict, or changes-requested
+    with every item it asks them on settled (see :func:`_left_to_settle`) - so
+    every reader shares one judgement. Read fresh from the files on every call -
+    nothing is cached and nothing is mirrored (REQ-09).
     """
     files = round_files(root, cfg, slug)
     if not files:
@@ -478,6 +480,12 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     latest, path = files[-1]
     fields = frontmatter(path)
     verdict = str(fields.get("verdict", "") or "")
+    passing = verdict in PASSING
+    if verdict == CHANGES_REQUESTED:
+        # The latest round is the gate round: it passes once every item it
+        # asks for changes on is settled.
+        blocking, left = _left_to_settle(root, cfg, slug, latest, path)
+        passing = bool(blocking) and not left
     return {
         "rounds": len(files),
         "latest": latest,
@@ -487,7 +495,7 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         # next-step hint does not re-derive it. `workflow` cannot import this
         # module (review -> projects -> workflow would close a cycle), and two
         # copies of the rule are two chances to disagree.
-        "passing": verdict in PASSING,
+        "passing": passing,
         "date": str(fields.get("date", "") or ""),
         "sha": str(fields.get("sha", "") or ""),
         "reason": str(fields.get("reason", "") or ""),
@@ -511,10 +519,12 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
 def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """What the review still owes before the project may complete (REQ-21).
 
-    Empty means the latest round is closed with a passing verdict. The gate
-    reads that verdict and nothing else - never the round's findings (REQ-16),
-    and never how old the round is (REQ-08). A reviewer that weighed some nits
-    and still said ready-to-merge is not second-guessed here.
+    Empty means the latest round is closed and passing, as
+    :func:`review_state` decides it: a passing verdict, or asked for changes
+    and every item it asks them on is settled, so settling the last items
+    needs no further round. Past that the gate reads the verdict and nothing
+    else, and never how old the round is (REQ-08). A reviewer that weighed
+    some nits and still said ready-to-merge is not second-guessed here.
     """
     state = review_state(root, cfg, slug)
     if state is None:
@@ -527,13 +537,33 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
             f"review round {state['latest']} is still open ({state['file']}):"
             " close it with `specflo review done`."
         ]
-    if state["verdict"] not in PASSING:
+    if not state["passing"]:
+        if state["verdict"] == CHANGES_REQUESTED:
+            # Name what still blocks once some of the round's items are settled.
+            path = project_dir(root, cfg, slug) / state["file"]
+            blocking, left = _left_to_settle(root, cfg, slug, state["latest"], path)
+            if left != blocking:
+                return [_still_blocks_message(state["file"], left)]
         return [
             f"the latest review round ({state['file']}) is {state['verdict']}:"
             " address the findings, then run another round with"
             " `specflo review start`."
         ]
     return []
+
+
+def _still_blocks_message(name: str, items: list[str]) -> str:
+    """What the gate says once some items round ``name`` asks for changes on
+    are settled and ``items`` are not."""
+    one = len(items) == 1
+    finding_id = items[0] if one else "F-NN"
+    return (
+        f"the latest review round ({name}) is {CHANGES_REQUESTED} and {', '.join(items)}"
+        f" still {'blocks' if one else 'block'} it: fix {'it' if one else 'them'}, then"
+        " run another round with `specflo review start`, or settle"
+        f" {'it' if one else 'each'} with `specflo review finding reject {finding_id}"
+        f" --reason <why>` or `specflo review finding defer {finding_id} --do <what>`."
+    )
 
 
 def head_sha(root: Path) -> str:
@@ -865,6 +895,41 @@ def _ledger(
     for key in settled:
         items.pop(key, None)
     return items, known, closed, settled
+
+
+def _blocking_items(doc: str) -> dict[int, str]:
+    """The items a closed round asks for changes on, keyed by number: its own
+    blocker and should-fix findings and the earlier items it checked open.
+
+    A nit never blocks.
+    """
+    items: dict[int, str] = {}
+    for line in _findings_lines(doc) or []:
+        finding = parse_finding_line(line)
+        if finding and finding.severity != "nit":
+            items[finding.number] = finding.id
+    for line in _section_lines(doc, EARLIER_HEADER) or []:
+        match = _CHECK_LINE.match(line)
+        if match and match.group(3) == "open":
+            items[int(match.group(2))] = match.group(1)
+    return dict(sorted(items.items()))
+
+
+def _left_to_settle(
+    root: Path, cfg: SpecfloConfig, slug: str, number: int, path: Path
+) -> tuple[list[str], list[str]]:
+    """The items round ``number`` at ``path`` asks for changes on, and those
+    of them not settled yet.
+
+    A finding the round raised blocks until it is settled, whether a task
+    fixed it or not: only a later round checks a fix closed.
+    """
+    blocking = _blocking_items(path.read_text())
+    settled = _ledger(root, cfg, slug, number + 1)[3]
+    return (
+        list(blocking.values()),
+        [finding_id for key, finding_id in blocking.items() if key not in settled],
+    )
 
 
 def parse_checks(

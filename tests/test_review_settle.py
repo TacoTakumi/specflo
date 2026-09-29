@@ -12,9 +12,12 @@ checked closed, one already settled, a finding of the open round, an item
 the open round has checked, and an empty or multi-line reason or Do line are
 refused, and a refusal changes no file and files no follow-up. A settled
 finding leaves the ledger: no later round checks it, review start needs no
-fix task for it, and task add --fixes naming it is refused. A hosted project
-rejects the same way, and the daemon runs no git; a hosted project's defer
-is refused, naming the follow-up that will route its follow-ups.
+fix task for it, and task add --fixes naming it is refused. A latest round
+that asked for changes passes the completion gate once every blocking item
+it raised or kept open is settled; the gate names each item that still
+blocks. A hosted project rejects the same way, and the daemon runs no git; a
+hosted project's defer is refused, naming the follow-up that will route its
+follow-ups.
 """
 
 import json
@@ -286,6 +289,158 @@ def test_a_settled_item_leaves_the_open_round_it_was_not_checked_in(ledger, kind
     closed = service.close_round(SLUG)
     assert (closed.verdict, closed.still_open) == ("changes-requested", [])
     assert review.items_to_check(root, cfg, SLUG, 4) == ["F-05"]
+
+
+# --- the completion gate ----------------------------------------------------------------
+
+
+# What the gate says while a round that asked for changes has settled none of
+# its blocking items: the words it has always said.
+_ASKS_FOR_CHANGES = (
+    "the latest review round ({}) is changes-requested: address the findings,"
+    " then run another round with `specflo review start`."
+)
+
+
+# What it says once some are settled and one item, the second field, is not.
+_STILL_BLOCKS = (
+    "the latest review round ({0}) is changes-requested and {1} still blocks it:"
+    " fix it, then run another round with `specflo review start`, or settle it with"
+    " `specflo review finding reject {1} --reason <why>` or"
+    " `specflo review finding defer {1} --do <what>`."
+)
+
+
+def _all_tasks_done(root, cfg) -> None:
+    """Finish the plan's first task, so the review gate is all validate execute asks."""
+    plan.start_task(root, cfg, SLUG, "T-01")
+    plan.done_task(root, cfg, SLUG, "T-01")
+    assert plan.reconcile_issues(root, cfg, SLUG) == []
+
+
+def _validate_execute() -> tuple[int, dict]:
+    """`validate execute --json`'s exit code and payload."""
+    result = runner.invoke(app, ["validate", "execute", "--json"])
+    return result.exit_code, json.loads(result.stdout)
+
+
+@pytest.mark.parametrize("kind", _SETTLE)
+def test_a_round_whose_only_blocking_item_is_settled_passes_the_gate(single, monkeypatch, kind):
+    root, cfg, service, directory = single
+    _all_tasks_done(root, cfg)
+    projects.switch_project(root, cfg, SLUG)
+    monkeypatch.chdir(root)
+    code, payload = _validate_execute()
+    assert (code, payload["ready"]) == (1, False)
+    assert payload["issues"] == [_ASKS_FOR_CHANGES.format("review-1.md")]
+
+    _SETTLE[kind](service, "F-01")
+
+    code, payload = _validate_execute()
+    assert (code, payload["ready"], payload["issues"]) == (0, True, [])
+    assert service.validate_artifact(SLUG, "execute") == []
+    # The round keeps its verdict: settling changes no frontmatter.
+    assert review.frontmatter(directory / "review-1.md")["verdict"] == "changes-requested"
+
+
+@pytest.mark.parametrize("kind", _SETTLE)
+def test_a_blocking_item_left_open_fails_the_gate_naming_it(tmp_path, kind):
+    cfg, directory = _project(tmp_path)
+    service = LocalProjectService(tmp_path, cfg)
+    review.start_round(tmp_path, cfg, SLUG, sha="")
+    review.add_finding(tmp_path, cfg, SLUG, "should-fix", "A message names the wrong command",
+                       "src/app.py:9-12")
+    review.add_finding(tmp_path, cfg, SLUG, "should-fix", "A refusal names no ID", "src/app.py:30")
+    review.add_finding(tmp_path, cfg, SLUG, "nit", "A name reads oddly")
+    review.close_round(tmp_path, cfg, SLUG, nits_followup=False)
+    _all_tasks_done(tmp_path, cfg)
+
+    _SETTLE[kind](service, "F-01")
+
+    assert service.validate_artifact(SLUG, "execute") == [
+        _STILL_BLOCKS.format("review-1.md", "F-02")
+    ]
+    assert review.review_state(tmp_path, cfg, SLUG)["passing"] is False
+    # The nit never blocks: settling the last should-fix passes the gate.
+    _SETTLE[kind](service, "F-02")
+    assert service.validate_artifact(SLUG, "execute") == []
+    assert review.review_state(tmp_path, cfg, SLUG)["passing"] is True
+
+
+@pytest.mark.parametrize("kind", _SETTLE)
+def test_status_shows_a_round_whose_items_are_all_settled_as_passing(single, monkeypatch, kind):
+    root, cfg, service, directory = single
+    _all_tasks_done(root, cfg)
+    project_md = directory / "project.md"
+    project_md.write_text(project_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    projects.switch_project(root, cfg, SLUG)
+    monkeypatch.chdir(root)
+    before = json.loads(runner.invoke(app, ["status", "--json"]).stdout)
+    assert (before["phase"], before["review"]["passing"]) == ("execute", False)
+    assert "`specflo review start`" in before["next_step"]
+
+    _SETTLE[kind](service, "F-01")
+
+    shown = runner.invoke(app, ["status", "--json"])
+    assert shown.exit_code == 0, shown.output
+    state = json.loads(shown.stdout)
+    assert (state["review"]["verdict"], state["review"]["passing"]) == ("changes-requested", True)
+    assert state["review"]["open_items"] == []
+    # The next step is the advance, never another round.
+    assert state["next_step"] == (
+        "All tasks done and every item review-1.md asks for changes on is settled - run"
+        " the whole test suite once more, then `specflo advance` to complete the project."
+    )
+    text = runner.invoke(app, ["status"])
+    assert text.exit_code == 0, text.output
+    date = review.frontmatter(directory / "review-1.md")["date"]
+    assert (
+        f"Reviews: 1 round; latest round 1 changes-requested ({date}); passes: every item"
+        " settled\n"
+    ) in text.output
+    assert f"Next:    {state['next_step']}\n" in text.output
+    assert "review start" not in text.output
+
+
+def test_an_item_the_round_kept_open_blocks_until_it_is_settled(ledger):
+    """Round 3 checks F-02 open and F-04 closed, and raises should-fix F-05,
+    blocker F-06 and a nit. A done fix task does not unblock F-05: only a
+    later round checks a fix closed."""
+    root, cfg, service, directory = ledger
+    service.check_finding(SLUG, "F-02", "open")
+    service.check_finding(SLUG, "F-04", "closed")
+    review.add_finding(root, cfg, SLUG, "blocker", "The lock leaks", "src/app.py:50")
+    review.add_finding(root, cfg, SLUG, "nit", "A comment reads oddly")
+    assert service.close_round(SLUG).verdict == "changes-requested"
+    _done_fix(root, cfg, SLUG, "F-05")
+    _all_tasks_done(root, cfg)
+    assert service.validate_artifact(SLUG, "execute") == [_ASKS_FOR_CHANGES.format("review-3.md")]
+
+    service.reject_finding(SLUG, "F-06", REASON)
+    assert service.validate_artifact(SLUG, "execute") == [
+        "the latest review round (review-3.md) is changes-requested and F-02, F-05 still"
+        " block it: fix them, then run another round with `specflo review start`, or settle"
+        " each with `specflo review finding reject F-NN --reason <why>` or"
+        " `specflo review finding defer F-NN --do <what>`."
+    ]
+    service.defer_finding(SLUG, "F-02", DO)
+    assert service.validate_artifact(SLUG, "execute") == [
+        _STILL_BLOCKS.format("review-3.md", "F-05")
+    ]
+    service.reject_finding(SLUG, "F-05", REASON)
+    assert service.validate_artifact(SLUG, "execute") == []
+
+
+def test_a_changes_requested_round_that_records_no_blocking_item_still_fails_the_gate(single):
+    """An old round asked for changes in free-form prose: no item to settle."""
+    root, cfg, service, directory = single
+    _all_tasks_done(root, cfg)
+    path = directory / "review-1.md"
+    path.write_text(path.read_text().replace(
+        "- F-01 (should-fix) [src/app.py:9-12] A message names the wrong command",
+        "- A message names the wrong command",
+    ))
+    assert service.validate_artifact(SLUG, "execute") == [_ASKS_FOR_CHANGES.format("review-1.md")]
 
 
 # --- refusals ---------------------------------------------------------------------------
