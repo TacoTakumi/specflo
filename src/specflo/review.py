@@ -575,6 +575,10 @@ def _gate(root: Path, cfg: SpecfloConfig, slug: str, files: list[tuple[int, Path
     nothing open, a changes-requested one passes only once its items are
     settled, and a waive covers what it left open. So a project of gate rounds
     alone has nothing here, and with no gate round it is the whole ledger.
+
+    ``checked_closed``, carried only when it names one, lists the items a
+    changes-requested gate round asks for changes on that a later round
+    checked closed and nobody settled.
     """
     left = items_to_check(root, cfg, slug, files[-1][0] + 1)
     gate = _latest_gate(files)
@@ -583,16 +587,24 @@ def _gate(root: Path, cfg: SpecfloConfig, slug: str, files: list[tuple[int, Path
     number, path, fields = gate
     verdict = str(fields.get("verdict", "") or "")
     passes = verdict in PASSING
+    closed: list[str] = []
     if verdict == CHANGES_REQUESTED:
-        blocking, unsettled = _left_to_settle(root, cfg, slug, number, path)
+        blocking, unsettled, closed = _left_to_settle(root, cfg, slug, number, path)
         passes = bool(blocking) and not unsettled
     judged = set(items_to_check(root, cfg, slug, number + 1))
-    return {
+    state = {
         "file": path.name,
         "verdict": verdict,
         "passes": passes,
         "left_open": [item for item in left if item not in judged],
     }
+    # Only carried when a later round checked closed an item the round asks
+    # for changes on and nobody settled: its fix is proven, but only a new
+    # gate round clears the verdict, so the gate and the hint name no fix
+    # and no settling for it.
+    if closed:
+        state["checked_closed"] = closed
+    return state
 
 
 def _asked_for_changes(path: Path) -> bool:
@@ -733,16 +745,16 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
         )
     gate = _gate(root, cfg, slug, round_files(root, cfg, slug))
     return (
-        _verdict_issues(root, cfg, slug, gate, state["file"])
+        _verdict_issues(root, cfg, slug, gate, state)
         or _ledger_issues(gate["left_open"], state["file"])
     )
 
 
 def _verdict_issues(
-    root: Path, cfg: SpecfloConfig, slug: str, gate: dict, latest: str
+    root: Path, cfg: SpecfloConfig, slug: str, gate: dict, state: dict
 ) -> list[str]:
     """What the latest gate round's verdict still owes the gate; empty once it
-    passes. ``gate`` is :func:`_gate`'s and ``latest`` the latest round's file."""
+    passes. ``gate`` is :func:`_gate`'s and ``state`` :func:`review_state`'s."""
     if gate["file"] is None:
         return [
             "no gate round recorded, only harden rounds: open one with `specflo review"
@@ -751,11 +763,16 @@ def _verdict_issues(
         ]
     if gate["passes"]:
         return []
-    label = "review round" if gate["file"] == latest else "gate round"
+    label = "review round" if gate["file"] == state["file"] else "gate round"
+    if gate.get("checked_closed"):
+        return [_checked_closed_message(
+            gate["file"], gate["checked_closed"], state["open_items"], label,
+            state["budget_spent"],
+        )]
     if gate["verdict"] == CHANGES_REQUESTED:
         # Name what still blocks once some of the round's items are settled.
         path = project_dir(root, cfg, slug) / gate["file"]
-        blocking, left = _left_to_settle(root, cfg, slug, number_of(path), path)
+        blocking, left, _ = _left_to_settle(root, cfg, slug, number_of(path), path)
         if left != blocking:
             return [_still_blocks_message(gate["file"], left, label)]
     return [
@@ -796,6 +813,48 @@ def _still_blocks_message(name: str, items: list[str], label: str = "review roun
         f" {'it' if one else 'each'} with `specflo review finding reject {finding_id}"
         f" --reason <why>` or `specflo review finding defer {finding_id} --do <what>`."
     )
+
+
+def _checked_closed_message(
+    name: str, closed: list[str], items: list[str], label: str, spent: bool
+) -> str:
+    """What the gate says once a later round checked closed ``closed``, items
+    round ``name`` asks for changes on that nobody settled.
+
+    Their fix is proven, and they can no longer be settled, so the message
+    offers no fix and no settling for them: only a new gate round clears the
+    verdict. ``items`` are the items still open on the ledger, each fixed or
+    settled as ever; with none, that gate round checks nothing and can pass.
+    ``spent`` says the level has used its review budget, so the gate round
+    needs ``--over-budget`` unless the review is waived. ``label`` is as for
+    :func:`_still_blocks_message`.
+    """
+    one = len(closed) == 1
+    text = (
+        f"the latest {label} ({name}) is {CHANGES_REQUESTED} and {', '.join(closed)}"
+        f" {'was' if one else 'were'} checked closed by a later round, so"
+        f" {'its fix is' if one else 'their fixes are'} proven, but only a new gate round"
+        " clears the verdict"
+    )
+    left = "what is left" if items else "nothing left and can pass"
+    if items:
+        single = len(items) == 1
+        finding_id = items[0] if single else "F-NN"
+        text += (
+            f". {', '.join(items)} {'is' if single else 'are'} still open: fix"
+            f" {'it' if single else 'each'} with a task that fixes it (`specflo task add"
+            f" --fixes {finding_id}`), or settle {'it' if single else 'each'} with"
+            f" `specflo review finding reject {finding_id} --reason <why>` or"
+            f" `specflo review finding defer {finding_id} --do <what>`"
+        )
+    if spent:
+        return (
+            f"{text}. The level has used its review budget, so the next step is the user's"
+            " choice: `specflo review start --over-budget` opens a gate round that checks"
+            f" {left}, or `specflo review waive --reason <why>` waives the review."
+        )
+    then = ". Then" if items else ":"
+    return f"{text}{then} `specflo review start` opens a gate round that checks {left}."
 
 
 def head_sha(root: Path) -> str:
@@ -1153,18 +1212,29 @@ def _blocking_items(doc: str) -> dict[int, str]:
 
 def _left_to_settle(
     root: Path, cfg: SpecfloConfig, slug: str, number: int, path: Path
-) -> tuple[list[str], list[str]]:
-    """The items round ``number`` at ``path`` asks for changes on, and those
-    of them not settled yet.
+) -> tuple[list[str], list[str], list[str]]:
+    """The items round ``number`` at ``path`` asks for changes on, those of
+    them not settled yet, and those of the unsettled a later round checked
+    closed.
 
     A finding the round raised blocks until it is settled, whether a task
-    fixed it or not: only a later round checks a fix closed.
+    fixed it or not: only a later round checks a fix closed. That check
+    proves the fix but leaves the round's verdict standing, and an item
+    checked closed can no longer be settled, so only a later gate round
+    clears it.
     """
     blocking = _blocking_items(path.read_text())
     settled = _ledger(root, cfg, slug, number + 1)[3]
+    latest = round_files(root, cfg, slug)[-1][0]
+    closed = {
+        key for key, name in _ledger(root, cfg, slug, latest + 1)[2].items()
+        if number_of(name) > number
+    }
+    unsettled = {key: finding_id for key, finding_id in blocking.items() if key not in settled}
     return (
         list(blocking.values()),
-        [finding_id for key, finding_id in blocking.items() if key not in settled],
+        list(unsettled.values()),
+        [finding_id for key, finding_id in unsettled.items() if key in closed],
     )
 
 

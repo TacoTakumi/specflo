@@ -123,7 +123,8 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
 
     No round yet, a round left open, a round that passed, and a round that
     asked for changes each get their own next action; after a harden round,
-    so do no gate round and items it left open. Two quiet harden rounds in a
+    so do no gate round, items it left open, and items of the gate round a
+    later round checked closed. Two quiet harden rounds in a
     row, the latest two rounds, get a suggestion to stop hardening in place
     of any of those.
     Only a passing round offers ``specflo advance``, and it reads the
@@ -200,6 +201,14 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
             f"`specflo review start` for a round that checks the {'fix' if one else 'fixes'}."
         )
     name = review["file"] if gate is None else gate["file"]
+    # Only carried once a later round checked closed an item the gate round
+    # asks for changes on: its fix is proven, and only a new gate round
+    # clears the verdict, so the hint names no fix for it.
+    closed = (gate or {}).get("checked_closed") or []
+    if closed:
+        return _checked_closed_step(
+            name, closed, review.get("open_items") or [], review.get("budget_spent", False)
+        )
     if review.get("budget_spent"):
         return (
             f"All tasks done - {name} asks for changes and the level has "
@@ -216,6 +225,44 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
         f"fixes it (`specflo task add --fixes {fixes}`), work it to done and "
         "commit, then run `specflo review start` for a round that checks the fixes."
     )
+
+
+def _checked_closed_step(name: str, closed: list[str], items: list[str], spent: bool) -> str:
+    """The hint once a later round checked closed ``closed``, items the
+    latest gate round ``name`` asks for changes on that nobody settled.
+
+    Their fix is proven, so only a new gate round clears the verdict; with
+    no open item, ``items``, left, that round checks nothing and can pass.
+    An open item is fixed as ever. ``spent`` says the level has used its
+    review budget, so the gate round needs ``--over-budget`` unless the user
+    waives the review.
+    """
+    one = len(closed) == 1
+    proven = (
+        f"{', '.join(closed)} {'was' if one else 'were'} checked closed by a later round, so"
+        f" {'its fix is' if one else 'their fixes are'} proven, but only a new gate round"
+        " clears the verdict"
+    )
+    lead = f"All tasks done - {name} asks for changes and"
+    text = f"{lead} the level has used its review budget. {proven}" if spent else f"{lead} {proven}"
+    checks = "nothing left and can pass"
+    if items:
+        single = len(items) == 1
+        checks = f"the {'fix' if single else 'fixes'}"
+        text += (
+            f". {', '.join(items)} {'is' if single else 'are'} still open: fix"
+            f" {'it' if single else 'each'} with a task that fixes it (`specflo task add"
+            f" --fixes {items[0] if single else 'F-NN'}`), work {'it' if single else 'each'}"
+            " to done and commit"
+        )
+    if spent:
+        return (
+            f"{text}. The next step is the user's choice: a gate round with `specflo review"
+            f" start --over-budget`, which checks {checks}, or waive the review with"
+            " `specflo review waive --reason <why>`."
+        )
+    then = ", then" if items else ":"
+    return f"{text}{then} run `specflo review start` for a gate round, which checks {checks}."
 
 
 _NONE_ACTIONABLE = (

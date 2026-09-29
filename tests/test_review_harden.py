@@ -671,12 +671,17 @@ def test_after_a_spent_budget_the_gate_reads_the_latest_gate_round_not_the_harde
     _clean(project_dir, 3, "--harden", closed=["F-01", "F-02"])
 
     assert _validate() == (1, [
-        "the latest gate round (review-2.md) is changes-requested: address the findings,"
-        " then run another round with `specflo review start`."
+        "the latest gate round (review-2.md) is changes-requested and F-02 was checked closed"
+        " by a later round, so its fix is proven, but only a new gate round clears the"
+        " verdict. The level has used its review budget, so the next step is the user's"
+        " choice: `specflo review start --over-budget` opens a gate round that checks nothing"
+        " left and can pass, or `specflo review waive --reason <why>` waives the review."
     ])
     state = _state(tmp_path)
     assert (state["passing"], state["budget_spent"]) == (False, True)
-    assert state["gate"] == _gate("review-2.md", "changes-requested", False, [])
+    assert state["gate"] == {
+        **_gate("review-2.md", "changes-requested", False, []), "checked_closed": ["F-02"]
+    }
     hint = _next()
     assert hint.startswith(
         "All tasks done - review-2.md asks for changes and the level has used its review"
@@ -721,6 +726,201 @@ def test_a_project_of_gate_rounds_carries_no_gate_state(tmp_path, monkeypatch):
 
     assert "gate" not in _state(tmp_path)
     assert "quiet_rounds" not in _state(tmp_path)
+
+
+# --- a gate round whose items a later round checked closed ---------------------------------
+
+
+def _checked_after(path, monkeypatch, checks, spent=False):
+    """A full-level project at execute whose latest gate round asked for
+    changes, each item with a done fix task, and whose harden round after it
+    checked the items as ``checks``, F-NN to closed or open, says. Without
+    ``spent``, gate round 1 asked for changes on F-01, F-02 and F-03. With it,
+    the budget of 2 is spent: round 1 asked for changes on F-01 and round 2
+    on F-02 and F-03. The project's directory."""
+    project_dir = _planned(path, monkeypatch)
+    lines = [f"- F-0{n} (should-fix) [src/app.py:{n}] Item {n}" for n in (1, 2, 3)]
+    if spent:
+        _round(project_dir, 1, "changes-requested", "abc1234", lines[:1])
+        _round(project_dir, 2, "changes-requested", "def5678", lines[1:])
+    else:
+        _round(project_dir, 1, "changes-requested", "abc1234", lines)
+    fix_active_open_items()
+    _at(monkeypatch, "b0b0b0b")
+    number = 3 if spent else 2
+    _cli("review", "start", "--harden")
+    for item, state in checks.items():
+        _cli("review", "finding", "check", item, state)
+    write_none(project_dir / f"review-{number}.md")
+    assert _cli("review", "done").stdout.startswith(f"thing/review-{number} closed hardened")
+    return project_dir
+
+
+def _reject(item):
+    return runner.invoke(app, ["review", "finding", "reject", item, "--reason", "Not a problem"])
+
+
+# What the gate says once a later round checked closed an item the latest
+# gate round, the first field, asks for changes on and no one settled; the
+# second field names the items, the third their fixes.
+_CLOSED = (
+    "the latest gate round ({0}) is changes-requested and {1} checked closed by a later"
+    " round, so {2} proven, but only a new gate round clears the verdict"
+)
+# The hint in the same place, the first field naming the gate round.
+_CLOSED_HINT = (
+    "All tasks done - {0} asks for changes and {1} checked closed by a later round, so {2}"
+    " proven, but only a new gate round clears the verdict"
+)
+_CLEARS = ": `specflo review start` opens a gate round that checks nothing left and can pass."
+_CLEARS_HINT = (
+    ": run `specflo review start` for a gate round, which checks nothing left and can pass."
+)
+
+
+def test_checked_closed_items_with_the_rest_settled_need_only_a_new_gate_round(
+    tmp_path, monkeypatch
+):
+    project_dir = _checked_after(tmp_path, monkeypatch, {
+        "F-01": "closed", "F-02": "closed", "F-03": "open",
+    })
+    assert _reject("F-03").exit_code == 0
+
+    code, issues = _validate()
+
+    assert (code, issues) == (1, [
+        _CLOSED.format("review-1.md", "F-01, F-02 were", "their fixes are") + _CLEARS
+    ])
+    # Nothing the gate offers for a checked-closed item is refused.
+    for refused in ("reject F-01", "defer F-01", "reject F-NN", "--fixes"):
+        assert refused not in issues[0]
+    assert _reject("F-01").exit_code != 0
+    assert _state(tmp_path)["gate"] == {
+        **_gate("review-1.md", "changes-requested", False, []),
+        "checked_closed": ["F-01", "F-02"],
+    }
+    hint = _next()
+    assert hint == (
+        _CLOSED_HINT.format("review-1.md", "F-01, F-02 were", "their fixes are") + _CLEARS_HINT
+    )
+    assert "--fixes" not in hint
+    _at(monkeypatch, "c0c0c0c")
+
+    _clean(project_dir, 3)
+
+    assert _validate() == (0, [])
+
+
+def test_checked_closed_items_with_none_settled_need_only_a_new_gate_round(
+    tmp_path, monkeypatch
+):
+    _checked_after(tmp_path, monkeypatch, {"F-01": "closed", "F-02": "closed", "F-03": "closed"})
+
+    code, issues = _validate()
+
+    assert (code, issues) == (1, [
+        _CLOSED.format("review-1.md", "F-01, F-02, F-03 were", "their fixes are") + _CLEARS
+    ])
+    assert _next() == (
+        _CLOSED_HINT.format("review-1.md", "F-01, F-02, F-03 were", "their fixes are")
+        + _CLEARS_HINT
+    )
+
+
+@pytest.mark.parametrize("settle", [False, True], ids=["none-settled", "one-settled"])
+def test_checked_closed_and_still_open_items_of_a_gate_round_are_named_apart(
+    tmp_path, monkeypatch, settle
+):
+    _checked_after(tmp_path, monkeypatch, {"F-01": "closed", "F-02": "open", "F-03": "open"})
+    if settle:
+        assert _reject("F-03").exit_code == 0
+
+    code, issues = _validate()
+
+    closed = _CLOSED.format("review-1.md", "F-01 was", "its fix is")
+    closed_hint = _CLOSED_HINT.format("review-1.md", "F-01 was", "its fix is")
+    if settle:
+        assert (code, issues) == (1, [
+            f"{closed}. F-02 is still open: fix it with a task that fixes it (`specflo task"
+            " add --fixes F-02`), or settle it with `specflo review finding reject F-02"
+            " --reason <why>` or `specflo review finding defer F-02 --do <what>`. Then"
+            " `specflo review start` opens a gate round that checks what is left."
+        ])
+        assert _next() == (
+            f"{closed_hint}. F-02 is still open: fix it with a task that fixes it (`specflo"
+            " task add --fixes F-02`), work it to done and commit, then run `specflo review"
+            " start` for a gate round, which checks the fix."
+        )
+    else:
+        assert (code, issues) == (1, [
+            f"{closed}. F-02, F-03 are still open: fix each with a task that fixes it"
+            " (`specflo task add --fixes F-NN`), or settle each with `specflo review finding"
+            " reject F-NN --reason <why>` or `specflo review finding defer F-NN --do <what>`."
+            " Then `specflo review start` opens a gate round that checks what is left."
+        ])
+        assert _next() == (
+            f"{closed_hint}. F-02, F-03 are still open: fix each with a task that fixes it"
+            " (`specflo task add --fixes F-NN`), work each to done and commit, then run"
+            " `specflo review start` for a gate round, which checks the fixes."
+        )
+    for surface in (issues[0], _next()):
+        assert "F-01`" not in surface and "F-01 --" not in surface
+
+
+@pytest.mark.parametrize("settle", [True, False], ids=["closed", "mixed"])
+def test_checked_closed_items_after_a_spent_budget_name_over_budget_or_a_waive(
+    tmp_path, monkeypatch, settle
+):
+    project_dir = _checked_after(
+        tmp_path, monkeypatch, {"F-01": "closed", "F-02": "closed", "F-03": "open"}, spent=True
+    )
+    if settle:
+        assert _reject("F-03").exit_code == 0
+    state = _state(tmp_path)
+    assert (state["budget_spent"], state["gate"]["checked_closed"]) == (True, ["F-02"])
+
+    code, issues = _validate()
+
+    closed = _CLOSED.format("review-2.md", "F-02 was", "its fix is")
+    lead = (
+        "All tasks done - review-2.md asks for changes and the level has used its review"
+        " budget. F-02 was checked closed by a later round, so its fix is proven, but only a"
+        " new gate round clears the verdict"
+    )
+    if settle:
+        assert (code, issues) == (1, [
+            f"{closed}. The level has used its review budget, so the next step is the user's"
+            " choice: `specflo review start --over-budget` opens a gate round that checks"
+            " nothing left and can pass, or `specflo review waive --reason <why>` waives the"
+            " review."
+        ])
+        assert _next() == (
+            f"{lead}. The next step is the user's choice: a gate round with `specflo review"
+            " start --over-budget`, which checks nothing left and can pass, or waive the"
+            " review with `specflo review waive --reason <why>`."
+        )
+    else:
+        assert (code, issues) == (1, [
+            f"{closed}. F-03 is still open: fix it with a task that fixes it (`specflo task"
+            " add --fixes F-03`), or settle it with `specflo review finding reject F-03"
+            " --reason <why>` or `specflo review finding defer F-03 --do <what>`. The level"
+            " has used its review budget, so the next step is the user's choice: `specflo"
+            " review start --over-budget` opens a gate round that checks what is left, or"
+            " `specflo review waive --reason <why>` waives the review."
+        ])
+        assert _next() == (
+            f"{lead}. F-03 is still open: fix it with a task that fixes it (`specflo task add"
+            " --fixes F-03`), work it to done and commit. The next step is the user's choice:"
+            " a gate round with `specflo review start --over-budget`, which checks the fix,"
+            " or waive the review with `specflo review waive --reason <why>`."
+        )
+        return
+    assert _start().exit_code != 0                     # a gate round needs --over-budget
+    _at(monkeypatch, "c0c0c0c")
+
+    _clean(project_dir, 4, "--over-budget")
+
+    assert _validate() == (0, [])
 
 
 # --- a stop after two quiet harden rounds -------------------------------------------------
