@@ -10,6 +10,13 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ## [0.15.2]
 
+### Added
+- **Example statusline scripts for Claude Code in `examples/statusline`.**
+  `specflo_segment.py` prints the active project's segment (for example
+  `my-project T-03 2/5`) for any statusline, with the same rules as the pi
+  extension's segment. `claude_statusline.py` is a full Claude Code statusline
+  that uses it. The README's new Statusline section shows the setting.
+
 ### Changed
 - **The daemon and agent pool docs move to `DAEMON.md`.** Daemon hosting, the
   web UI, the agent pool and the commands for hosted projects, the pool, gates,

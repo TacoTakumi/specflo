@@ -727,6 +727,41 @@ In an auto run:
 
 [pi]: https://www.npmjs.com/package/@earendil-works/pi-coding-agent
 
+## Statusline
+
+The active project in your statusline tells you where the agent is without
+asking: `my-project:plan 0/5` in plan, or `my-project T-03 2/5` in execute
+(the task in progress, then done over total). pi users get this segment from
+the pi extension. For Claude Code, the repo ships two example scripts in
+[examples/statusline](https://github.com/TacoTakumi/specflo/tree/main/examples/statusline):
+
+- [specflo_segment.py](https://github.com/TacoTakumi/specflo/blob/main/examples/statusline/specflo_segment.py)
+  prints only the specflo segment, so you can add it to the statusline you
+  have. Call it with the session's directory (`specflo_segment.py "$dir"`), or
+  import it from Python (`specflo_segment.segment(dir)`). It prints nothing
+  outside a specflo repo, honours `SPECFLO_DIRECTORY` and `NO_COLOR`, and
+  reads the files directly, so it adds no `specflo` call to each redraw.
+- [claude_statusline.py](https://github.com/TacoTakumi/specflo/blob/main/examples/statusline/claude_statusline.py)
+  is a full Claude Code statusline: the project directory, the specflo
+  segment, the model and effort, context use, the cache-read share, and the
+  5-hour and 7-day quota with their reset times. It imports
+  `specflo_segment.py` from its own directory.
+
+To use the full one, copy both files to `~/.claude/`, make them executable,
+and add this to `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/claude_statusline.py"
+  }
+}
+```
+
+A project hosted on a daemon has no local files, so the segment shows nothing
+for it.
+
 ## Skills
 
 specflo ships its ten workflow skills inside the package and installs them into
