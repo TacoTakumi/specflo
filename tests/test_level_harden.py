@@ -7,7 +7,7 @@ import re
 import pytest
 from typer.testing import CliRunner
 
-from specflo import config, daemon, markdown, plan, projects, workflow
+from specflo import config, daemon, markdown, plan, projects, review, spec, workflow
 from specflo.cli import app
 
 runner = CliRunner()
@@ -251,3 +251,165 @@ def test_validate_brief_on_a_remote_harden_project_matches_a_local_one(
     assert views["hosted"][1] == [views["hosted"][1][0]]
     assert views["hosted"][1][0].startswith("Scope is empty")
     assert json.loads(views["hosted"][2])["ready"] is True
+
+
+# --- fix tasks only, with no task cap and no round budget --------------------------
+
+
+def _files(directory):
+    return {path.name: path.read_bytes() for path in directory.iterdir() if path.is_file()}
+
+
+def _task(*extra):
+    return runner.invoke(app, ["task", "add", "--text", "Harden the loader", "--acceptance",
+                               "fixed", "--verify", "uv run pytest", *extra])
+
+
+def _finding(severity="blocker", line=1):
+    """`review finding add` in the open round; the new finding's ID."""
+    added = _ok(["review", "finding", "add", "--severity", severity, "--at",
+                 f"src/app.py:{line}", "--text", f"A defect on line {line}", "--json"])
+    return json.loads(added.stdout)["id"]
+
+
+def _fix(finding):
+    """Add, start and finish a task fixing ``finding``; the task's ID."""
+    task_id = _ok(["task", "add", "--text", f"Fix {finding}", "--acceptance", "fixed",
+                   "--verify", "uv run pytest", "--fixes", finding]).output.split()[1]
+    _ok(["task", "start", task_id])
+    _ok(["task", "done", task_id])
+    return task_id
+
+
+def _round_asking_for_changes():
+    """A gate round that checks each open item closed, raises one blocker and
+    asks for changes, and a done task fixing that blocker; the blocker's ID."""
+    for item in json.loads(_ok(["review", "start", "--json"]).stdout)["items"]:
+        _ok(["review", "finding", "check", item, "closed"])
+    finding = _finding()
+    assert "changes-requested" in _ok(["review", "done"]).output
+    _fix(finding)
+    return finding
+
+
+@pytest.mark.parametrize("extra", [[], ["--from", "REQ-01"]])
+def test_task_add_without_fixes_is_refused_naming_fixes_and_changes_no_file(
+    tmp_path, monkeypatch, extra
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    project_dir = projects.load_project(root, config.load_config(root), "thing").path
+    before = _files(project_dir)
+
+    result = _task(*extra)
+
+    assert result.exit_code == 1, result.output
+    assert "harden level" in result.output and "--fixes F-NN" in result.output
+    assert "Open items a task can fix: none." in result.output
+    assert _files(project_dir) == before
+
+
+def test_task_add_from_a_requirement_of_a_spec_is_still_refused_naming_fixes(
+    tmp_path, monkeypatch
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    spec.start_spec(root, cfg, "thing")
+    spec.add_requirement(root, cfg, "thing", "The loader reads the file", "It reads it")
+    _ok(["review", "start"])
+    finding = _finding()
+    _ok(["review", "done"])
+    project_dir = projects.load_project(root, cfg, "thing").path
+    before = _files(project_dir)
+
+    result = _task("--from", "REQ-01")
+
+    assert result.exit_code == 1, result.output
+    assert "harden level" in result.output and "--fixes F-NN" in result.output
+    assert f"Open items a task can fix: {finding}." in result.output
+    assert _files(project_dir) == before
+
+
+def test_task_add_from_a_requirement_and_fixes_is_checked_against_the_spec(
+    tmp_path, monkeypatch
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _ok(["review", "start"])
+    finding = _finding()
+    _ok(["review", "done"])
+    project_dir = projects.load_project(root, config.load_config(root), "thing").path
+    before = _files(project_dir)
+
+    result = _task("--from", "REQ-01", "--fixes", finding)
+
+    assert result.exit_code == 1, result.output
+    assert "no spec.md" in result.output
+    assert _files(project_dir) == before
+
+
+def test_twenty_fix_tasks_raise_no_cap_warning(tmp_path, monkeypatch):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _ok(["review", "start"])
+    findings = [_finding("should-fix", line) for line in range(1, 21)]
+    _ok(["review", "done"])
+
+    for finding in findings:
+        _ok(["task", "add", "--text", f"Fix {finding}", "--acceptance", "fixed",
+             "--verify", "uv run pytest", "--fixes", finding])
+
+    assert len(plan.list_tasks(root, config.load_config(root), "thing")) == 20
+    warnings = json.loads(runner.invoke(app, ["validate", "plan", "--json"]).stdout)["warnings"]
+    assert not [warning for warning in warnings if "level's cap" in warning], warnings
+    assert json.loads(_ok(["checkpoint", "--json"]).stdout)["outgrew"] is None
+    assert "level's cap" not in _ok(["status"]).output
+
+
+def test_review_start_after_three_changes_requested_rounds_opens_without_over_budget(
+    tmp_path, monkeypatch
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+
+    for _ in range(3):
+        _round_asking_for_changes()
+
+    assert review.budget(root, cfg, "thing")["spent"] is False
+    info = json.loads(_ok(["status", "--json"]).stdout)
+    assert info["review"]["budget_spent"] is False
+    assert "budget" not in info["next_step"]
+    opened = json.loads(_ok(["review", "start", "--json"]).stdout)
+    assert (opened["created"], opened["items"]) == (True, ["F-03"])
+    assert review.round_kind(review.frontmatter(
+        projects.load_project(root, cfg, "thing").path / "review-4.md"
+    )) == review.GATE
+
+
+def test_a_hosted_harden_project_takes_only_fix_tasks_and_has_no_round_budget(
+    tmp_path, monkeypatch, live_daemon
+):
+    views = {}
+    for where, extra in (("local", []), ("hosted", ["--remote", "home"])):
+        if extra:
+            _hosted_checkout(tmp_path / where, monkeypatch, live_daemon)
+            project_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "thing"
+        else:
+            _checkout(tmp_path / where, monkeypatch)
+            project_dir = tmp_path / where / "docs" / "projects" / "thing"
+        _ok(["new", "Thing", "--level", "harden", *extra])
+        before = _files(project_dir)
+        refused = _task("--from", "REQ-01")
+        assert refused.exit_code == 1, refused.output
+        assert _files(project_dir) == before, where
+        found = [_round_asking_for_changes() for _ in range(3)]
+        info = json.loads(_ok(["status", "--json"]).stdout)
+        opened = json.loads(_ok(["review", "start", "--json"]).stdout)
+        assert (project_dir / "review-4.md").is_file(), where
+        views[where] = [refused.output, found, info["review"]["budget_spent"],
+                        info["next_step"], opened["created"], opened["items"]]
+
+    assert views["hosted"] == views["local"]
+    refusal, found, spent, next_step, created, items = views["hosted"]
+    assert "harden level" in refusal and "--fixes F-NN" in refusal
+    assert found == ["F-01", "F-02", "F-03"]
+    assert (spent, created, items) == (False, True, ["F-03"])
+    assert "budget" not in next_step
+    assert not (tmp_path / "hosted" / "docs" / "projects" / "thing").exists()

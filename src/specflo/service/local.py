@@ -17,7 +17,7 @@ from ..brainstorm import Decision
 from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
-from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
+from ..projects import FULL_LEVEL, HARDEN_LEVEL, LINEAR_EXECUTION, Project
 from ..review import ClosedRound
 from ..spec import Requirement
 from ..validators import VALIDATORS
@@ -336,9 +336,13 @@ class LocalProjectService:
         fixes: list[str] | None = None,
     ) -> Task:
         # Checked here, where a local and a hosted add both pass, so a task
-        # fixes only an open review item wherever the project lives.
+        # fixes only an open review item wherever the project lives, and a
+        # harden project, whose plan grows only from findings, takes no task
+        # that fixes none.
         if fixes:
             fixes = review.check_fixes(self.root, self.cfg, slug, fixes)
+        if not fixes and projects.load_project(self.root, self.cfg, slug).level == HARDEN_LEVEL:
+            raise SpecfloError(review.fixes_only_message(self.root, self.cfg, slug))
         return plan.add_task(
             self.root, self.cfg, slug, text, acceptance, verify,
             implements=implements, depends_on=depends_on, files=files,

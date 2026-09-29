@@ -27,7 +27,7 @@ from . import followup, markdown, plan
 from .config import SpecfloConfig
 from .errors import SpecfloError, require_one_line
 from .locking import lock_path_for, locked
-from .projects import load_project, project_dir
+from .projects import HARDEN_LEVEL, load_project, project_dir
 
 _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
 # A finding's severity. A blocker or a should-fix item asks for changes; a
@@ -260,6 +260,10 @@ def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     round ``review_max_rounds`` allows: the next round needs the user's say.
     ``regressions`` is the latest round's count (see :func:`regression_count`),
     None with no round; it changes neither ``used`` nor ``spent``.
+
+    A harden project has no round budget: its plan grows only from findings,
+    so its rounds go on until hardening stops. ``max`` is None there and
+    ``spent`` is never True.
     """
     level = load_project(root, cfg, slug).level
     files, rounds = [], []
@@ -270,12 +274,12 @@ def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
             rounds.append(fields)
     used = sum(1 for fields in rounds if (fields.get("level") or level) == level)
     latest = str(rounds[-1].get("verdict", "") or "") if rounds else ""
-    limit = cfg.review_max_rounds
+    limit = None if level == HARDEN_LEVEL else cfg.review_max_rounds
     return {
         "level": level,
         "used": used,
         "max": limit,
-        "spent": latest == CHANGES_REQUESTED and used >= limit,
+        "spent": limit is not None and latest == CHANGES_REQUESTED and used >= limit,
         "regressions": regression_count(files[-1][1]) if files else None,
     }
 
@@ -283,7 +287,8 @@ def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
 def budget_message(state: dict) -> str:
     """What to tell the user when the level's review budget is spent.
 
-    The latest round's regressions are named when it has any.
+    The latest round's regressions are named when it has any. Never asked
+    for in a harden project, whose budget is never spent.
     """
     count = state.get("regressions")
     marked = f" ({regressions_text(count)})" if count else ""
@@ -444,7 +449,8 @@ def start_round(
     the reviewer read, not at the climb.
 
     When the level's budget is spent (see :func:`budget`), no round opens
-    unless ``over_budget`` says the user chose one more.
+    unless ``over_budget`` says the user chose one more. A harden project
+    has no budget, so none of its rounds needs ``over_budget``.
 
     ``need_fixes`` opens no round while an open item has no done fix task
     (see :func:`unfixed_items`), whatever ``full`` and ``over_budget`` say.
@@ -638,7 +644,8 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         # for a waived round. A count only: the verdict never reads it.
         "regressions": regression_count(path),
         # What the next-step hint turns on after a close: the items the next
-        # round must check, whether the level's round budget is spent, and
+        # round must check, whether the level's round budget is spent (never
+        # in a harden project, which has none), and
         # whether any earlier round asked for changes (fixes were made, so the
         # whole suite runs once more before completion).
         "open_items": items_to_check(root, cfg, slug, latest + 1),
@@ -1693,12 +1700,7 @@ def check_fixes(root: Path, cfg: SpecfloConfig, slug: str, fixes: list[str]) -> 
     (naming how and in which round), and a finding of the open round, whose
     verdict is not decided yet. Reads the round files and changes nothing.
     """
-    rounds = round_files(root, cfg, slug)
-    current = open_round(root, cfg, slug)
-    latest = rounds[-1][0] if rounds else 0
-    items, known, closed, settled = _ledger(
-        root, cfg, slug, latest if current else latest + 1
-    )
+    (items, known, closed, settled), current = _fix_ledger(root, cfg, slug)
     pending = _defined_numbers(current.read_text()) if current else set()
     listed = ", ".join(items.values()) or "none"
     accepted = []
@@ -1732,6 +1734,28 @@ def check_fixes(root: Path, cfg: SpecfloConfig, slug: str, fixes: list[str]) -> 
             raise SpecfloError(f"{why} Open items a task can fix: {listed}.")
         accepted.append(items[key])
     return accepted
+
+
+def _fix_ledger(root: Path, cfg: SpecfloConfig, slug: str) -> tuple[tuple, Path | None]:
+    """The ledger a fix task is checked against (see :func:`_ledger`), and the
+    open round or None. The ledger stops before an open round, whose
+    findings are not decided yet."""
+    rounds = round_files(root, cfg, slug)
+    current = open_round(root, cfg, slug)
+    latest = rounds[-1][0] if rounds else 0
+    return _ledger(root, cfg, slug, latest if current else latest + 1), current
+
+
+def fixes_only_message(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """What to tell the user who adds a task that fixes no finding to a
+    harden project, where every task is a fix task: it names the open items
+    a task can fix, as :func:`check_fixes` does."""
+    listed = ", ".join(_fix_ledger(root, cfg, slug)[0][0].values()) or "none"
+    return (
+        f"Project {slug!r} is at harden level, where every task fixes a review"
+        " finding: name the open item this task fixes with --fixes F-NN."
+        f" Open items a task can fix: {listed}."
+    )
 
 
 def _settled_why(finding_id: str, settled: tuple[str, str]) -> str:
