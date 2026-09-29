@@ -638,7 +638,8 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     verdict = str(fields.get("verdict", "") or "")
     gate = _gate(root, cfg, slug, files)
     open_items = items_to_check(root, cfg, slug, latest + 1)
-    if load_project(root, cfg, slug).level == HARDEN_LEVEL:
+    harden = load_project(root, cfg, slug).level == HARDEN_LEVEL
+    if harden:
         passing = bool(verdict) and _hardened(files) and not open_items
     else:
         passing = bool(verdict) and gate["passes"] and not gate["left_open"]
@@ -677,6 +678,10 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     if any(round_kind(frontmatter(each)) == HARDEN for _, each in files):
         state["gate"] = gate
         state["quiet_rounds"] = _quiet_rounds(files)
+    # Only carried in a harden project, whose hint turns on each open item's
+    # fix: none yet, one not done, or a done one the next round checks.
+    if harden:
+        state["unfixed"] = unfixed_items(root, cfg, slug)
     return state
 
 

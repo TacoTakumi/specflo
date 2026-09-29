@@ -98,16 +98,20 @@ _GATE_NEEDS = (
 )
 
 
-def _harden_stop(quiet: list[str], test_command: str | None, finish: str) -> str:
+def _harden_stop(
+    quiet: list[str], test_command: str | None, finish: str, lead: str = "All tasks done - the"
+) -> str:
     """The hint once the latest two harden rounds, ``quiet``, raised no new
     blocker or should-fix finding.
 
     It only suggests: stopping is the user's call. To stop, the whole suite
     runs once, then ``finish`` says how the project goes on to completion,
     which is what its gate still needs; to go on, another harden round opens.
+    ``lead`` opens the sentence: a harden project, whose plan may be empty,
+    names no tasks.
     """
     return (
-        f"All tasks done - the last two harden rounds, {quiet[0]} and {quiet[1]}, raised no"
+        f"{lead} last two harden rounds, {quiet[0]} and {quiet[1]}, raised no"
         " new blocker or should-fix finding, so hardening may stop here; that is the user's"
         f" call. To stop, {_whole_suite(test_command)} once, then {finish}. To go on, open"
         " another harden round with `specflo review start --harden`."
@@ -214,6 +218,93 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     )
 
 
+_NONE_ACTIONABLE = (
+    "Tasks remain but none are actionable - unblock or reopen one "
+    "(`specflo task list`)."
+)
+
+# A harden project's move while no harden round has closed hardened.
+_START_HARDEN = (
+    "No harden round has closed hardened yet - fill in the brief first if `specflo validate"
+    " brief` names an issue, then open a harden round with `specflo review start --harden`,"
+    " hand a fresh-context reviewer the brief `specflo review prompt` prints, and close the"
+    " round with `specflo review done`."
+)
+
+
+def _harden_step(
+    progress: dict | None, review: dict | None, test_command: str | None = None
+) -> str:
+    """The hint a harden project gets at execute, where review findings grow the plan.
+
+    No harden round closed hardened, a round left open, open items with no
+    fix task, fix tasks not done, and open items whose fix tasks are done each
+    get their own next move; so does an empty ledger after a harden round
+    closed hardened, which completes the project. Two quiet harden rounds in
+    a row, once no fix task waits, get the suggestion to stop in place of the
+    last two. ``passing`` and ``unfixed`` are read from the review state, so
+    the hint agrees with the completion gate and with ``review start``, which
+    opens no round while an open item has no done fix task.
+    """
+    if review is None:
+        return _START_HARDEN
+    if review["open"]:
+        return (
+            f"Finish the open review round {review['file']}: run `specflo review start` to"
+            " take it back (a round nobody wrote into yet takes HEAD), hand a fresh-context"
+            " reviewer the brief `specflo review prompt` prints and have it record findings"
+            " through the CLI; then close it with `specflo review done`."
+        )
+    untasked = [item for item, tasks in (review.get("unfixed") or {}).items() if not tasks]
+    if untasked:
+        one = len(untasked) == 1
+        return (
+            f"{', '.join(untasked)} {'is' if one else 'are'} open with no fix task: add one"
+            f"{'' if one else ' for each'} with `specflo task add --fixes"
+            f" {untasked[0] if one else 'F-NN'}`, work {'it' if one else 'each'} to done and"
+            " commit, then open the next harden round with `specflo review start --harden`"
+            f" to check {'it' if one else 'them'}."
+        )
+    if progress is not None and progress.get("total", 0) > 0 and not progress.get("all_done"):
+        actionable = progress.get("next_actionable") or []
+        if not actionable:
+            return _NONE_ACTIONABLE
+        return (
+            f"Work the next fix task: {', '.join(actionable)} (`specflo task show`); once"
+            " every fix task is done and committed, open the next harden round with"
+            " `specflo review start --harden` to check the fixes."
+        )
+    items = review.get("open_items") or []
+    quiet = review.get("quiet_rounds") or []
+    if len(quiet) >= 2:
+        # Quiet rounds raise nothing new, but an item they checked open stays open.
+        finish = "run `specflo advance` to complete the project"
+        if items:
+            one = len(items) == 1
+            finish = (
+                f"fix {', '.join(items)}, which {'is' if one else 'are'} still open, and have"
+                f" a round opened with `specflo review start` check {'it' if one else 'them'}"
+                f" closed, or reject or defer {'it' if one else 'each'}; completion needs no"
+                " open item (`specflo validate execute` names what is left)"
+            )
+        return _harden_stop(quiet[-2:], test_command, finish, lead="The")
+    if items:
+        return (
+            "Every open item has a done fix task - with the fixes committed, open the next"
+            f" harden round with `specflo review start --harden` to check {', '.join(items)},"
+            " hand a fresh-context reviewer the brief `specflo review prompt` prints, and"
+            " close the round with `specflo review done`."
+        )
+    if review["passing"]:
+        return (
+            "No open item is left and a harden round closed hardened -"
+            f" {_whole_suite(test_command)} once, then run `specflo advance` to complete the"
+            " project."
+        )
+    # Closed, no item open and not passing: no harden round closed hardened.
+    return _START_HARDEN
+
+
 def _light_level_step(
     phase: str, validates: bool, level: str, unattended: bool = False
 ) -> str | None:
@@ -274,7 +365,9 @@ def next_step(
     ``review`` is the derived review state (``review.review_state``) or None
     when no round file exists; with every task done it decides which of the four
     review-aware hints is returned (review-rounds REQ-20). ``test_command`` is
-    the configured one, named where those hints call for the whole suite.
+    the configured one, named where those hints call for the whole suite. A
+    harden project at execute takes its hint from ``review`` whatever its
+    progress, as its plan starts empty and grows from findings.
 
     For brainstorm/spec/plan, ``validates=True`` means the phase's artifact
     passed its real validator, so the hint offers ``specflo advance`` and names
@@ -284,6 +377,8 @@ def next_step(
     """
     _require_known(phase)
     if not shelved and not complete:
+        if level == "harden" and phase == "execute":
+            return _harden_step(progress, review, test_command)
         light = _light_level_step(phase, validates, level, unattended)
         if light is not None:
             return light
@@ -301,10 +396,7 @@ def next_step(
             actionable = progress.get("next_actionable") or []
             if actionable:
                 return f"Work the next task: {', '.join(actionable)} (`specflo task show`)."
-            return (
-                "Tasks remain but none are actionable - unblock or reopen one "
-                "(`specflo task list`)."
-            )
+            return _NONE_ACTIONABLE
     elif validates:
         # brainstorm/spec/plan whose artifact passes its validator: derived
         # doneness -> offer the move rather than the work hint (REQ-01).

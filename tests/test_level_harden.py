@@ -69,7 +69,7 @@ def test_status_shows_level_harden_at_execute_and_no_other_phase(tmp_path, monke
     assert "Level: harden" in shown
     assert (info["level"], info["phase"], info["next_phase"]) == ("harden", "execute", None)
     for phase in ("brainstorm", "spec"):
-        assert phase not in info["next_step"]
+        assert not re.search(rf"\b{phase}\b", info["next_step"]), info["next_step"]
 
 
 def test_the_brief_has_scope_focus_and_stop_when_each_left_to_fill_in(tmp_path, monkeypatch):
@@ -693,3 +693,178 @@ def test_completing_a_hosted_harden_project_matches_a_local_one(
     assert passing is True
     assert advanced == "Completed project 'thing'."
     assert status == "complete"
+
+
+# --- the next-step hint names the next move, one state at a time -------------------
+
+
+TEST_COMMAND = "uv run pytest -q"
+
+START_HARDEN_ROUND = (
+    "No harden round has closed hardened yet - fill in the brief first if `specflo validate"
+    " brief` names an issue, then open a harden round with `specflo review start --harden`,"
+    " hand a fresh-context reviewer the brief `specflo review prompt` prints, and close the"
+    " round with `specflo review done`."
+)
+
+
+def _next_hint():
+    """The Next line `status` prints, without its label."""
+    (line,) = [line for line in _ok(["status"]).output.splitlines() if line.startswith("Next:")]
+    return line[len("Next:"):].strip()
+
+
+def _open_round_hint(name):
+    return (
+        f"Finish the open review round {name}: run `specflo review start` to take it back"
+        " (a round nobody wrote into yet takes HEAD), hand a fresh-context reviewer the"
+        " brief `specflo review prompt` prints and have it record findings through the CLI;"
+        " then close it with `specflo review done`."
+    )
+
+
+def _passing_hint():
+    return (
+        "No open item is left and a harden round closed hardened - run the whole test suite"
+        f" (`{TEST_COMMAND}`) once, then run `specflo advance` to complete the project."
+    )
+
+
+def _stop_hint(first, second, finish):
+    return (
+        f"The last two harden rounds, {first} and {second}, raised no new blocker or"
+        " should-fix finding, so hardening may stop here; that is the user's call. To stop,"
+        f" run the whole test suite (`{TEST_COMMAND}`) once, then {finish}. To go on, open"
+        " another harden round with `specflo review start --harden`."
+    )
+
+
+def _harden_checkout(tmp_path, monkeypatch):
+    _harden_project(tmp_path, monkeypatch)
+    _ok(["config", "set", "test_command", TEST_COMMAND])
+
+
+def test_status_on_a_harden_project_names_the_next_move_one_state_at_a_time(
+    tmp_path, monkeypatch
+):
+    _harden_checkout(tmp_path, monkeypatch)
+    assert _next_hint() == START_HARDEN_ROUND
+    _fill()
+    assert _next_hint() == START_HARDEN_ROUND
+
+    _ok(["review", "start", "--harden"])
+    assert _next_hint() == _open_round_hint("review-1.md")
+
+    finding = _finding()
+    _ok(["review", "done"])
+    assert _next_hint() == (
+        f"{finding} is open with no fix task: add one with `specflo task add --fixes"
+        f" {finding}`, work it to done and commit, then open the next harden round with"
+        " `specflo review start --harden` to check it."
+    )
+
+    task_id = _ok(["task", "add", "--text", f"Fix {finding}", "--acceptance", "fixed",
+                   "--verify", "uv run pytest", "--fixes", finding]).output.split()[1]
+    work = (
+        f"Work the next fix task: {task_id} (`specflo task show`); once every fix task is"
+        " done and committed, open the next harden round with `specflo review start"
+        " --harden` to check the fixes."
+    )
+    assert _next_hint() == work
+    _ok(["task", "start", task_id])
+    assert _next_hint() == work
+
+    _ok(["task", "done", task_id])
+    assert _next_hint() == (
+        "Every open item has a done fix task - with the fixes committed, open the next"
+        f" harden round with `specflo review start --harden` to check {finding}, hand a"
+        " fresh-context reviewer the brief `specflo review prompt` prints, and close the"
+        " round with `specflo review done`."
+    )
+
+    _harden_round()
+    assert _next_hint() == _passing_hint()
+
+    _harden_round()
+    assert _next_hint() == _stop_hint(
+        "review-2.md", "review-3.md", "run `specflo advance` to complete the project"
+    )
+
+
+def test_the_stop_suggestion_names_an_item_two_quiet_harden_rounds_left_open(
+    tmp_path, monkeypatch
+):
+    _harden_checkout(tmp_path, monkeypatch)
+    _fill()
+    (finding,) = _harden_round(1)
+    _fix(finding)
+    for _ in range(2):
+        _ok(["review", "start", "--harden"])
+        _ok(["review", "finding", "check", finding, "open"])
+        _finding("nit")
+        assert "closed hardened" in _ok(["review", "done"]).output
+
+    assert _next_hint() == _stop_hint(
+        "review-2.md", "review-3.md",
+        f"fix {finding}, which is still open, and have a round opened with `specflo review"
+        " start` check it closed, or reject or defer it; completion needs no open item"
+        " (`specflo validate execute` names what is left)",
+    )
+
+
+@pytest.mark.parametrize("rounds", ["gate", "waived harden"])
+def test_status_asks_for_a_harden_round_while_none_closed_hardened(
+    tmp_path, monkeypatch, rounds
+):
+    _harden_checkout(tmp_path, monkeypatch)
+    _fill()
+    if rounds == "gate":
+        _ok(["review", "start"])
+        _finding("nit")
+        assert "closed ready-to-merge" in _ok(["review", "done"]).output
+    else:
+        _ok(["review", "start", "--harden"])
+        _ok(["review", "waive", "--reason", "Not reviewed"])
+
+    assert _next_hint() == START_HARDEN_ROUND
+
+
+def test_status_on_a_hosted_harden_project_names_the_next_move_as_on_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    views = {}
+    for where, extra in (("local", []), ("hosted", ["--remote", "home"])):
+        if extra:
+            _hosted_checkout(tmp_path / where, monkeypatch, live_daemon)
+        else:
+            _checkout(tmp_path / where, monkeypatch)
+        _ok(["config", "set", "test_command", TEST_COMMAND])
+        _ok(["new", "Thing", "--level", "harden", *extra])
+        _fill()
+        hints = [_next_hint()]
+        _ok(["review", "start", "--harden"])
+        found = [_finding("blocker", 1), _finding("should-fix", 2)]
+        _ok(["review", "done"])
+        hints.append(_next_hint())
+        for finding in found:
+            _fix(finding)
+        hints.append(_next_hint())
+        _harden_round()
+        hints.append(_next_hint())
+        views[where] = hints
+
+    assert views["hosted"] == views["local"]
+    start, add, next_round, passing = views["hosted"]
+    assert start == START_HARDEN_ROUND
+    assert add == (
+        "F-01, F-02 are open with no fix task: add one for each with `specflo task add"
+        " --fixes F-NN`, work each to done and commit, then open the next harden round with"
+        " `specflo review start --harden` to check them."
+    )
+    assert next_round == (
+        "Every open item has a done fix task - with the fixes committed, open the next"
+        " harden round with `specflo review start --harden` to check F-01, F-02, hand a"
+        " fresh-context reviewer the brief `specflo review prompt` prints, and close the"
+        " round with `specflo review done`."
+    )
+    assert passing == _passing_hint()
