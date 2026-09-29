@@ -16,6 +16,7 @@ latter. Release tags are of the form `vX.Y.Z`.
   and products and work items are in a new top-level `DAEMON.md`. The README
   keeps a short section and links to it, so it is about 40% shorter. The text
   itself is unchanged.
+- **README.md rework.**
 
 ## [0.15.1]
 

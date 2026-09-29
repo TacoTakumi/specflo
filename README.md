@@ -432,40 +432,29 @@ items are in [DAEMON.md](https://github.com/TacoTakumi/specflo/blob/main/DAEMON.
 
 ## Execution modes and fan-out
 
-Every project records an execution mode in `project.md` (`execution: linear`
-or `execution: fan-out`; a file without the key reads as `linear`). Set it with
-`specflo new --execution ...` or switch it later with `specflo execution ...`;
-`status`, `checkpoint` and `task show` all state it.
+Every project records an execution mode, `linear` (the default) or `fan-out`.
+Set it with `specflo new --execution ...` or change it at any time with
+`specflo execution ...`. `status`, `checkpoint` and `task show` show it.
 
-- **linear** (default) - one agent works the plan one task at a time, as the
-  execute skill has always done.
-- **fan-out** - the main session is an orchestrator: it reads the frontier from
-  `specflo task list --json`, runs `task start` and spawns one subagent per
-  ready task with its `task show` brief, re-runs the task's verify step when
-  the subagent returns, commits one task per commit and runs `task done`.
-  Subagents never run `git` or `specflo`. Under fan-out the working-ahead note
-  in `task show` is suppressed, since lanes crossing milestones is the
-  expected shape.
+The easiest way to get subagents is to ask your agent: "start the execute
+phase in fan-out mode". The agent runs `specflo execution fan-out` and the
+execute skill makes it the orchestrator.
 
-The ready set (the `>` marker, `next_actionable`, `ready`) applies the same
-rules in both modes. A pending task whose dependencies are done is ready
-unless:
+- **linear** - one agent works the plan one task at a time.
+- **fan-out** - the main session is the orchestrator. It gives each ready task
+  to one subagent, runs the task's verify step when the subagent returns, and
+  commits one task per commit. Subagents never run `git` or `specflo`.
 
-- an in-progress task shares a file with it (from the parsed `Files` lists), or
-- a pool it needs has every slot held, counting one slot per in-progress task
-  naming that pool (sizes from `pool add`; undeclared pools, `user` included,
-  have one slot).
+A task is ready when its dependencies are done, no in-progress task edits one
+of its `Files`, and every pool in its `Needs` has a free slot (`pool add` sets
+the size, and an undeclared pool, `user` included, has one slot).
+`specflo task list --json` shows the ready set. `task reopen` frees the files
+and slots of a task whose agent died. A task with no `Files` and no `Needs` is
+never held back.
 
-A slot or file frees when its holder is done, reopened or blocked; `task
-reopen` is how an orchestrator releases work held by a dead agent. Tasks with
-no `Files` and no `Needs` are never held back, so plans written before these
-fields existed behave exactly as before.
-
-The plan skill decomposes every plan to be fan-out capable regardless of mode:
-every edited file in `Files`, an edge between tasks that share a file,
-per-task outputs plus one merge task for parallel producers, contract-first
-ordering, `--needs` plus `pool add` for hardware and shared environments, and
-`--needs user` for user-in-the-loop tasks.
+The plan skill writes every plan so it can fan out, whatever the mode. It lists
+the files each task edits, orders tasks that share a file, and marks hardware,
+shared environments and user-in-the-loop tasks with `--needs`.
 
 ## pi subagents (`specflo agent`)
 
