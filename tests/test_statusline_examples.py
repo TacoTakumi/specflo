@@ -5,9 +5,13 @@ status segment does, so every repo here is built with specflo's own writers,
 not hand-written markdown.
 """
 
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -177,3 +181,84 @@ def test_segment_colours_without_no_color(tmp_path, status, code):
 
 def test_segment_prints_no_escape_byte_with_no_color(tmp_path):
     assert ESC not in plain(make_repo(tmp_path))
+
+
+# --- the full Claude Code statusline ----------------------------------------
+
+FULL = EXAMPLES / "claude_statusline.py"
+ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def run_full(payload, script=FULL, cwd=None):
+    result = subprocess.run(
+        [sys.executable, str(script)], input=json.dumps(payload), cwd=cwd,
+        env=_env(), capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    return ANSI.sub("", result.stdout)
+
+
+def full_payload(directory):
+    now = time.time()
+    return {
+        "cwd": str(directory),
+        "workspace": {"current_dir": str(directory), "project_dir": str(directory)},
+        "model": {"display_name": "Some Model (1M context)"},
+        "effort": {"level": "high"},
+        "context_window": {
+            "context_window_size": 1_000_000,
+            "current_usage": {"input_tokens": 10_000, "cache_creation_input_tokens": 20_000,
+                              "cache_read_input_tokens": 70_000},
+        },
+        "rate_limits": {
+            "five_hour": {"used_percentage": 42.4, "resets_at": now + 2 * 3600 + 300},
+            "seven_day": {"used_percentage": 81, "resets_at": now + 3 * 86400 + 3600},
+        },
+    }
+
+
+def test_full_prints_every_segment(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    out = run_full(full_payload(root))
+    assert out.count("\n") == 1
+    segs = out.strip().split(" | ")
+    assert segs[0] == "repo"
+    assert segs[1] == "demo:brainstorm"
+    assert segs[2] == "Some Model high"
+    assert segs[3] == "100k/1M (10%)"
+    assert segs[4] == "cache 70%"
+    assert re.fullmatch(r"Q5h 42% 2h0[45]m", segs[5]), segs[5]
+    assert re.fullmatch(r"Q7d 81% 3d[01]h", segs[6]), segs[6]
+    assert len(segs) == 7
+
+
+def test_full_leaves_out_absent_data(tmp_path):
+    out = run_full({"workspace": {"current_dir": str(tmp_path)},
+                    "model": {"display_name": "Some Model"}})
+    assert out == f"{tmp_path.name} | Some Model\n"
+
+
+def test_full_prints_nothing_for_bad_input(tmp_path):
+    result = subprocess.run([sys.executable, str(FULL)], input="not json",
+                            env=_env(), capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0
+    assert result.stdout == ""
+
+
+def test_full_without_the_segment_file_leaves_the_segment_out(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    shutil.copy(FULL, alone / FULL.name)
+    out = run_full(full_payload(root), script=alone / FULL.name)
+    assert out.startswith("repo | Some Model high | ")
+    assert "demo" not in out
+
+
+def test_full_through_a_symlink_still_finds_the_segment_file(tmp_path):
+    root = make_repo(tmp_path / "repo")
+    links = tmp_path / "links"
+    links.mkdir()
+    (links / "statusline.py").symlink_to(FULL)
+    out = run_full(full_payload(root), script=links / "statusline.py")
+    assert out.startswith("repo | demo:brainstorm | ")
