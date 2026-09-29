@@ -205,10 +205,12 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
         )
     items = review.get("open_items") or []
     named = f" ({', '.join(items)})" if items else ""
+    fixes = items[0] if len(items) == 1 else "F-NN"
     return (
-        f"All tasks done - address the findings in {name}: fix the "
-        f"blocker and should-fix items{named}, never the nits, commit, then run "
-        "`specflo review start` for a round that checks the fixes."
+        f"All tasks done - address the findings in {name}: fix each "
+        f"blocker and should-fix item{named}, never the nits, with a task that "
+        f"fixes it (`specflo task add --fixes {fixes}`), work it to done and "
+        "commit, then run `specflo review start` for a round that checks the fixes."
     )
 
 

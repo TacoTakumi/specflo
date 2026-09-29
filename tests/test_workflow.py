@@ -321,8 +321,10 @@ def test_hint_after_changes_within_budget_names_the_open_items():
     hint = _hint(state)
 
     assert "F-01, F-02" in hint
-    assert "fix the blocker and should-fix items" in hint
     assert "never the nits" in hint
+    # A bare fix commit no longer opens the next round: each item needs a
+    # done fix task, so the hint names the verb that adds one.
+    assert "specflo task add --fixes F-NN" in hint
     assert "commit" in hint and "specflo review start" in hint
     assert "--over-budget" not in hint and "specflo advance" not in hint
 
