@@ -107,7 +107,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   and no round budget. Its harden rounds review the Scope the brief names,
   where a problem already present is a finding. It completes on a valid
   brief, a harden round closed `hardened`, no open round, every fix task
-  done and an empty ledger. `specflo auto` and `specflo level` refuse it.
+  done and an empty ledger. `specflo auto` and `specflo level` refuse it,
+  and the text `task done` prints to resume names only `specflo checkpoint`.
 - **`specflo-harden` skill** - works a harden project: start it, write the
   brief, run harden rounds, turn their findings into fix tasks, and stop on
   the user's say, with the whole suite run once.
@@ -744,8 +745,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   `--full`, `--over-budget` or `--harden`, while an open blocker or
   should-fix item has no fix task that is done. The refusal names each such
   item with its fix tasks, if any, and points at `specflo task add --fixes`
-  and `specflo review waive`. `review waive` and the ladder's climb are not
-  gated. Before, a round opened whether or not the items had a fix.
+  and `specflo review waive`. An item that a reviewed round checked open
+  after its fix needs one more done fix task for each such round; the
+  refusal, and a harden project's next-step hint, name that round and ask
+  for a new fix task. A waived round's checks do not count. `review waive`
+  and the ladder's climb are not gated. Before, a round opened whether or
+  not the items had a fix.
 - **`review finding add` needs `--at` for a blocker or should-fix.** Only a
   nit may leave its location out. A location whose file or lines the round's
   sha does not have is refused.

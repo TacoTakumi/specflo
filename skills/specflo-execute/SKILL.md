@@ -104,7 +104,8 @@ superseding requirement — never silently mutate a task or drift off its
      and its verify names the pin test, red then green: it fails before the fix
      and passes after. Work each fix task through the loop above, then run
      `specflo review start` again for the next round; it refuses while an open
-     item has no done fix task. A path the fix missed keeps the item open.
+     item has no done fix task. A path the fix missed keeps the item open, and
+     an item a round checked open needs a new fix task before the next round.
    - Defer or reject an item only on the user's say; ask, do not pick for them.
      `specflo review finding defer F-NN --do "<what>"` files a follow-up and
      settles the item (refused on a hosted project);

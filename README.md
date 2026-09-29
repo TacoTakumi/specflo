@@ -157,8 +157,9 @@ A blocker or should-fix finding names where its defect is (`--at
 round is marked a regression, which is counted but changes neither the verdict
 nor the budget. Each such finding is an open item until a round checks it
 closed. Fix it with a task that names it (`specflo task add --fixes F-NN`):
-`review start` opens no round while an open item has no done fix task. The
-brief lists each item's fix tasks and tells the reviewer to check an item
+`review start` opens no round while an open item has no done fix task. A
+round that checks an item open after its fix asks for one more done fix task
+for that item. The brief lists each item's fix tasks and tells the reviewer to check an item
 closed only when its pin test fails on the source at the latest reviewed
 round's sha and passes on HEAD, with the defect gone on every path to it. On
 the user's say, `specflo review finding defer` files an item as a follow-up
