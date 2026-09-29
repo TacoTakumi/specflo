@@ -513,16 +513,74 @@ def _render(fields: dict, body: str) -> str:
     return f"---\n{frontmatter_text}\n---\n\n{body}"
 
 
+def _latest_gate(files: list[tuple[int, Path]]) -> tuple[int, Path, dict] | None:
+    """The latest gate round of ``files``: its number, path and frontmatter;
+    None when every round is a harden round."""
+    for number, path in reversed(files):
+        fields = frontmatter(path)
+        if round_kind(fields) == GATE:
+            return number, path, fields
+    return None
+
+
+def _gate(root: Path, cfg: SpecfloConfig, slug: str, files: list[tuple[int, Path]]) -> dict:
+    """The completion gate's two halves over ``files``, the project's rounds.
+
+    ``file`` and ``verdict`` name the latest gate round: its verdict is the
+    gate's, and a harden round's never is. ``passes`` says whether that
+    verdict clears the gate: a passing verdict, or changes-requested with
+    every item it asks for changes on settled (see :func:`_left_to_settle`).
+    With no gate round they are None, "" and False.
+
+    ``left_open`` is the ledger half: the blocker and should-fix items the
+    rounds after the gate round leave open, raised or kept open there and not
+    checked closed, deferred or rejected since. What was open as the gate
+    round closed is its verdict's to judge: a ready-to-merge round leaves
+    nothing open, a changes-requested one passes only once its items are
+    settled, and a waive covers what it left open. So a project of gate rounds
+    alone has nothing here, and with no gate round it is the whole ledger.
+    """
+    left = items_to_check(root, cfg, slug, files[-1][0] + 1)
+    gate = _latest_gate(files)
+    if gate is None:
+        return {"file": None, "verdict": "", "passes": False, "left_open": left}
+    number, path, fields = gate
+    verdict = str(fields.get("verdict", "") or "")
+    passes = verdict in PASSING
+    if verdict == CHANGES_REQUESTED:
+        blocking, unsettled = _left_to_settle(root, cfg, slug, number, path)
+        passes = bool(blocking) and not unsettled
+    judged = set(items_to_check(root, cfg, slug, number + 1))
+    return {
+        "file": path.name,
+        "verdict": verdict,
+        "passes": passes,
+        "left_open": [item for item in left if item not in judged],
+    }
+
+
+def _asked_for_changes(path: Path) -> bool:
+    """Whether the closed round at ``path`` asked for changes, so fixes were
+    made after it: changes-requested, or hardened with a blocker or
+    should-fix finding or an item it checked open."""
+    verdict = frontmatter(path).get("verdict")
+    if verdict == HARDENED:
+        return bool(_blocking_items(path.read_text()))
+    return verdict == CHANGES_REQUESTED
+
+
 def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     """The project's derived review state, or None while no round file exists.
 
     The latest round is the highest-numbered one, open or closed (REQ-19); its
     verdict is what every surface reports, so an open round after a passing one
-    reads as open rather than as that earlier pass. ``passing`` says whether that
-    round clears the completion gate - a passing verdict, or changes-requested
-    with every item it asks them on settled (see :func:`_left_to_settle`) - so
-    every reader shares one judgement. Read fresh from the files on every call -
-    nothing is cached and nothing is mirrored (REQ-09).
+    reads as open rather than as that earlier pass. ``passing`` says whether the
+    closed rounds clear the completion gate (see :func:`_gate`): the latest gate
+    round's verdict passes, and the rounds after it leave no item open - so
+    every reader shares one judgement. Once a harden round is recorded, ``gate``
+    carries those two halves; a project of gate rounds reads as it always has.
+    Read fresh from the files on every call - nothing is cached and nothing is
+    mirrored (REQ-09).
     """
     files = round_files(root, cfg, slug)
     if not files:
@@ -530,19 +588,15 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     latest, path = files[-1]
     fields = frontmatter(path)
     verdict = str(fields.get("verdict", "") or "")
-    passing = verdict in PASSING
-    if verdict == CHANGES_REQUESTED:
-        # The latest round is the gate round: it passes once every item it
-        # asks for changes on is settled.
-        blocking, left = _left_to_settle(root, cfg, slug, latest, path)
-        passing = bool(blocking) and not left
-    return {
+    gate = _gate(root, cfg, slug, files)
+    passing = bool(verdict) and gate["passes"] and not gate["left_open"]
+    state = {
         "rounds": len(files),
         "latest": latest,
         "verdict": verdict,
         "open": not verdict,
-        # Whether this round clears the completion gate, decided here so the
-        # next-step hint does not re-derive it. `workflow` cannot import this
+        # Whether the closed rounds clear the completion gate, decided here so
+        # the next-step hint does not re-derive it. `workflow` cannot import this
         # module (review -> projects -> workflow would close a cycle), and two
         # copies of the rule are two chances to disagree.
         "passing": passing,
@@ -559,22 +613,28 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         # whole suite runs once more before completion).
         "open_items": items_to_check(root, cfg, slug, latest + 1),
         "budget_spent": budget(root, cfg, slug)["spent"],
-        "after_changes": any(
-            frontmatter(earlier).get("verdict") == CHANGES_REQUESTED
-            for _, earlier in files[:-1]
-        ),
+        # A hardened round that raised a blocker or should-fix item asked
+        # for changes as a changes-requested one does.
+        "after_changes": any(_asked_for_changes(earlier) for _, earlier in files[:-1]),
     }
+    # Only carried once a harden round is recorded, when the round the
+    # gate reads may not be the latest one; the next-step hint names it.
+    if any(round_kind(frontmatter(each)) == HARDEN for _, each in files):
+        state["gate"] = gate
+    return state
 
 
 def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """What the review still owes before the project may complete (REQ-21).
 
     Empty means the latest round is closed and passing, as
-    :func:`review_state` decides it: a passing verdict, or asked for changes
-    and every item it asks them on is settled, so settling the last items
-    needs no further round. Past that the gate reads the verdict and nothing
-    else, and never how old the round is (REQ-08). A reviewer that weighed
-    some nits and still said ready-to-merge is not second-guessed here.
+    :func:`review_state` decides it: the latest gate round's verdict passes -
+    a passing verdict, or asked for changes and every item it asks them on is
+    settled, so settling the last items needs no further round - and the
+    rounds after it leave no item open. Past that the gate reads the verdict
+    and the ledger and nothing else, and never how old the round is (REQ-08).
+    A reviewer that weighed some nits and still said ready-to-merge is not
+    second-guessed here. An open round of either kind is unfinished work.
     """
     state = review_state(root, cfg, slug)
     if state is None:
@@ -587,28 +647,68 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
             f"review round {state['latest']} is still open ({state['file']}):"
             " close it with `specflo review done`."
         ]
-    if not state["passing"]:
-        if state["verdict"] == CHANGES_REQUESTED:
-            # Name what still blocks once some of the round's items are settled.
-            path = project_dir(root, cfg, slug) / state["file"]
-            blocking, left = _left_to_settle(root, cfg, slug, state["latest"], path)
-            if left != blocking:
-                return [_still_blocks_message(state["file"], left)]
+    if state["passing"]:
+        return []
+    gate = _gate(root, cfg, slug, round_files(root, cfg, slug))
+    return (
+        _verdict_issues(root, cfg, slug, gate, state["file"])
+        or _ledger_issues(gate, state["file"])
+    )
+
+
+def _verdict_issues(
+    root: Path, cfg: SpecfloConfig, slug: str, gate: dict, latest: str
+) -> list[str]:
+    """What the latest gate round's verdict still owes the gate; empty once it
+    passes. ``gate`` is :func:`_gate`'s and ``latest`` the latest round's file."""
+    if gate["file"] is None:
         return [
-            f"the latest review round ({state['file']}) is {state['verdict']}:"
-            " address the findings, then run another round with"
-            " `specflo review start`."
+            "no gate round recorded, only harden rounds: open one with `specflo review"
+            " start`, hand the reviewer `specflo review prompt`, and close it with"
+            " `specflo review done`."
         ]
-    return []
+    if gate["passes"]:
+        return []
+    label = "review round" if gate["file"] == latest else "gate round"
+    if gate["verdict"] == CHANGES_REQUESTED:
+        # Name what still blocks once some of the round's items are settled.
+        path = project_dir(root, cfg, slug) / gate["file"]
+        blocking, left = _left_to_settle(root, cfg, slug, number_of(path), path)
+        if left != blocking:
+            return [_still_blocks_message(gate["file"], left, label)]
+    return [
+        f"the latest {label} ({gate['file']}) is {gate['verdict']}:"
+        " address the findings, then run another round with"
+        " `specflo review start`."
+    ]
 
 
-def _still_blocks_message(name: str, items: list[str]) -> str:
+def _ledger_issues(gate: dict, latest: str) -> list[str]:
+    """What the items the rounds after the latest gate round leave open owe
+    the gate; empty with none. ``latest`` is the latest round's file."""
+    items = gate["left_open"]
+    if not items:
+        return []
+    one = len(items) == 1
+    finding_id = items[0] if one else "F-NN"
+    return [
+        f"{', '.join(items)} {'is' if one else 'are'} still open after the latest review"
+        f" round ({latest}): fix {'it' if one else 'each'} with a task that fixes it"
+        f" (`specflo task add --fixes {finding_id}`), then run another round with"
+        f" `specflo review start` to check {'it' if one else 'them'} closed, or settle"
+        f" {'it' if one else 'each'} with `specflo review finding reject {finding_id}"
+        f" --reason <why>` or `specflo review finding defer {finding_id} --do <what>`."
+    ]
+
+
+def _still_blocks_message(name: str, items: list[str], label: str = "review round") -> str:
     """What the gate says once some items round ``name`` asks for changes on
-    are settled and ``items`` are not."""
+    are settled and ``items`` are not. ``label`` says which latest round it
+    is: the latest review round, or the latest gate round before a harden one."""
     one = len(items) == 1
     finding_id = items[0] if one else "F-NN"
     return (
-        f"the latest review round ({name}) is {CHANGES_REQUESTED} and {', '.join(items)}"
+        f"the latest {label} ({name}) is {CHANGES_REQUESTED} and {', '.join(items)}"
         f" still {'blocks' if one else 'block'} it: fix {'it' if one else 'them'}, then"
         " run another round with `specflo review start`, or settle"
         f" {'it' if one else 'each'} with `specflo review finding reject {finding_id}"

@@ -93,14 +93,15 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     """What to do next once every task is done, given where the review stands.
 
     No round yet, a round left open, a round that passed, and a round that
-    asked for changes each get their own next action.
+    asked for changes each get their own next action; after a harden round,
+    so do no gate round and items it left open.
     Only a passing round offers ``specflo advance``, and it reads the
     ``passing`` flag the review state carries rather than naming verdicts
     itself - so the hint and the completion gate can never disagree about
     which rounds clear it. The verdict only picks the words. The later keys
-    (open items, the spent budget, earlier changes) are read with defaults, as
-    a state dict may predate them. The three hints that call for the whole
-    suite name ``test_command`` when it is set.
+    (open items, the spent budget, earlier changes, the gate) are read with
+    defaults, as a state dict may predate them. The hints that call for the
+    whole suite name ``test_command`` when it is set.
     """
     if review is None:
         return (
@@ -137,9 +138,31 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
             f"All tasks done and {review['file']} is {review['verdict']} - run "
             "`specflo advance` to complete the project."
         )
+    # Only carried once a harden round is recorded: the latest gate round,
+    # whose verdict the gate reads, and the items the rounds after it leave
+    # open. Without it the latest round is the gate round.
+    gate = review.get("gate")
+    if gate is not None and gate["file"] is None:
+        return (
+            "All tasks done - no gate round is recorded, only harden rounds: "
+            f"{_whole_suite(test_command)} once, then open a gate round with "
+            "`specflo review start`, hand a fresh-context reviewer the brief "
+            "`specflo review prompt` prints, and close the round with "
+            "`specflo review done`."
+        )
+    if gate is not None and gate["passes"]:
+        items = gate["left_open"]
+        one = len(items) == 1
+        return (
+            f"All tasks done - {review['file']} leaves {', '.join(items)} open: fix "
+            f"{'it' if one else 'each'} with a task that fixes it (`specflo task add "
+            f"--fixes {items[0] if one else 'F-NN'}`), commit, then run "
+            f"`specflo review start` for a round that checks the {'fix' if one else 'fixes'}."
+        )
+    name = review["file"] if gate is None else gate["file"]
     if review.get("budget_spent"):
         return (
-            f"All tasks done - {review['file']} asks for changes and the level has "
+            f"All tasks done - {name} asks for changes and the level has "
             "used its review budget. The next step is the user's choice: one more "
             "round with `specflo review start --over-budget`, or waive the review "
             "with `specflo review waive --reason <why>`."
@@ -147,7 +170,7 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     items = review.get("open_items") or []
     named = f" ({', '.join(items)})" if items else ""
     return (
-        f"All tasks done - address the findings in {review['file']}: fix the "
+        f"All tasks done - address the findings in {name}: fix the "
         f"blocker and should-fix items{named}, never the nits, commit, then run "
         "`specflo review start` for a round that checks the fixes."
     )

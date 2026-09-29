@@ -5,6 +5,11 @@ with ``kind: harden`` in its frontmatter. A harden round always reviews its
 whole scope, so it has no base, and the round budget neither refuses nor
 counts it. A round file with no kind is a gate round, as every round file
 written before harden rounds is.
+
+The completion gate reads the verdict of the latest gate round, never a
+harden round's, and also needs each blocker and should-fix item the rounds
+after it raised checked closed, deferred or rejected. With no gate round it
+asks for one. ``validate execute``, the next-step hint and status agree.
 """
 
 import json
@@ -13,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from reviewhelp import fix_active_open_items, write_none
-from specflo import config, followup, projects, review
+from specflo import config, followup, plan, projects, review, spec
 from specflo.cli import app
 from test_hosted_parity import (
     SLUG,
@@ -431,6 +436,221 @@ def test_a_harden_round_can_still_be_waived(tmp_path, monkeypatch):
     )
 
 
+# --- the completion gate after a harden round --------------------------------------------
+
+
+def _planned(path, monkeypatch):
+    """A full-level project at execute whose plan's one task is done, so the
+    review gate is all ``validate execute`` asks, with HEAD at abc1234. The
+    project's directory."""
+    project_dir = _project(path, monkeypatch)
+    cfg = config.load_config(path)
+    spec.start_spec(path, cfg, "thing")
+    spec.add_requirement(path, cfg, "thing", "Prints help", acceptance="exits 0")
+    plan.start_plan(path, cfg, "thing")
+    task = plan.add_task(path, cfg, "thing", "Build help", "help prints", "uv run pytest",
+                         implements=["REQ-01"])
+    plan.start_task(path, cfg, "thing", task.id)
+    plan.done_task(path, cfg, "thing", task.id)
+    assert plan.reconcile_issues(path, cfg, "thing") == []
+    project_md = project_dir / "project.md"
+    project_md.write_text(project_md.read_text().replace("phase: brainstorm", "phase: execute"))
+    _at(monkeypatch, "abc1234")
+    return project_dir
+
+
+def _clean(project_dir, number, *flags, closed=()):
+    """Open round ``number`` with ``flags``, check each of ``closed`` closed,
+    record no finding and close it; what ``review done`` printed."""
+    _cli("review", "start", *flags)
+    for item in closed:
+        _cli("review", "finding", "check", item, "closed")
+    write_none(project_dir / f"review-{number}.md")
+    return _cli("review", "done").stdout
+
+
+def _validate():
+    """``validate execute --json``'s exit code and issues."""
+    result = runner.invoke(app, ["validate", "execute", "--json"])
+    return result.exit_code, json.loads(result.stdout)["issues"]
+
+
+def _state(path):
+    return review.review_state(path, config.load_config(path), "thing")
+
+
+def _next():
+    """The Next line ``status`` shows."""
+    return json.loads(_cli("status", "--json").stdout)["next_step"]
+
+
+def _gate(file, verdict, passes, left_open):
+    return {"file": file, "verdict": verdict, "passes": passes, "left_open": left_open}
+
+
+# What the gate says while one item, the second field, is left open after
+# the latest round, the first field.
+_LEFT_OPEN = (
+    "{1} is still open after the latest review round ({0}): fix it with a task that"
+    " fixes it (`specflo task add --fixes {1}`), then run another round with"
+    " `specflo review start` to check it closed, or settle it with"
+    " `specflo review finding reject {1} --reason <why>` or"
+    " `specflo review finding defer {1} --do <what>`."
+)
+
+
+def test_a_ready_gate_round_then_a_clean_harden_round_passes_the_gate(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    assert _clean(project_dir, 1).startswith("thing/review-1 closed ready-to-merge")
+    _at(monkeypatch, "b0b0b0b")
+
+    assert _clean(project_dir, 2, "--harden").startswith("thing/review-2 closed hardened")
+
+    assert _validate() == (0, [])
+    state = _state(tmp_path)
+    assert (state["verdict"], state["passing"], state["after_changes"]) == (
+        "hardened", True, False
+    )
+    assert state["gate"] == _gate("review-1.md", "ready-to-merge", True, [])
+    assert _next() == (
+        "All tasks done and review-2.md is hardened - run `specflo advance` to complete"
+        " the project."
+    )
+    date = review.frontmatter(project_dir / "review-2.md")["date"]
+    assert (
+        f"Reviews: 2 rounds; latest round 2 hardened ({date}, b0b0b0b); passes\n"
+        in _cli("status").stdout
+    )
+
+
+@pytest.mark.parametrize("later", [(), ("--harden",)], ids=["gate", "harden"])
+def test_a_should_fix_a_harden_round_raises_fails_the_gate_until_a_later_round_checks_it_closed(
+    tmp_path, monkeypatch, later
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _at(monkeypatch, "b0b0b0b")
+    _cli("review", "start", "--harden")
+    _should_fix_and_nit()
+    assert _cli("review", "done").stdout.startswith("thing/review-2 closed hardened")
+
+    assert _validate() == (1, [_LEFT_OPEN.format("review-2.md", "F-01")])
+    state = _state(tmp_path)
+    assert state["passing"] is False
+    assert state["gate"] == _gate("review-1.md", "ready-to-merge", True, ["F-01"])
+    hint = _next()
+    assert hint == (
+        "All tasks done - review-2.md leaves F-01 open: fix it with a task that fixes it"
+        " (`specflo task add --fixes F-01`), commit, then run `specflo review start` for a"
+        " round that checks the fix."
+    )
+    assert "asks for changes" not in hint and "F-02" not in hint
+    # A done fix task does not close the item: only a later round checks it closed.
+    fix_active_open_items()
+    assert _validate() == (1, [_LEFT_OPEN.format("review-2.md", "F-01")])
+    _at(monkeypatch, "c0c0c0c")
+
+    _clean(project_dir, 3, *later, closed=["F-01"])
+
+    assert _validate() == (0, [])
+    state = _state(tmp_path)
+    assert (state["passing"], state["after_changes"]) == (True, True)
+    # The fixes were made after the harden round, so the whole suite runs once more.
+    hint = _next()
+    assert "run the whole test suite once more" in hint and "`specflo advance`" in hint
+
+
+def test_a_project_with_only_harden_rounds_fails_the_gate_asking_for_a_gate_round(
+    tmp_path, monkeypatch
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1, "--harden")
+
+    assert _validate() == (1, [
+        "no gate round recorded, only harden rounds: open one with `specflo review start`,"
+        " hand the reviewer `specflo review prompt`, and close it with `specflo review done`."
+    ])
+    state = _state(tmp_path)
+    assert (state["verdict"], state["passing"]) == ("hardened", False)
+    assert state["gate"] == _gate(None, "", False, [])
+    assert _next() == (
+        "All tasks done - no gate round is recorded, only harden rounds: run the whole test"
+        " suite once, then open a gate round with `specflo review start`, hand a"
+        " fresh-context reviewer the brief `specflo review prompt` prints, and close the"
+        " round with `specflo review done`."
+    )
+    _at(monkeypatch, "c0c0c0c")
+
+    _clean(project_dir, 2)
+
+    assert _validate() == (0, [])
+    assert _state(tmp_path)["passing"] is True
+
+
+def test_after_a_spent_budget_the_gate_reads_the_latest_gate_round_not_the_harden_round(
+    tmp_path, monkeypatch
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested", "abc1234", ["- F-01 (blocker) [src/app.py:1] One"])
+    _round(project_dir, 2, "changes-requested", "def5678",
+           ["- F-02 (should-fix) [src/app.py:2] Two"])
+    fix_active_open_items()
+    _at(monkeypatch, "b0b0b0b")
+
+    _clean(project_dir, 3, "--harden", closed=["F-01", "F-02"])
+
+    assert _validate() == (1, [
+        "the latest gate round (review-2.md) is changes-requested: address the findings,"
+        " then run another round with `specflo review start`."
+    ])
+    state = _state(tmp_path)
+    assert (state["passing"], state["budget_spent"]) == (False, True)
+    assert state["gate"] == _gate("review-2.md", "changes-requested", False, [])
+    hint = _next()
+    assert hint.startswith(
+        "All tasks done - review-2.md asks for changes and the level has used its review"
+        " budget."
+    )
+    assert "review-3.md" not in hint
+
+
+def test_a_waive_covers_what_it_left_open_but_not_what_a_later_harden_round_raises(
+    tmp_path, monkeypatch
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _round(project_dir, 1, "changes-requested", "abc1234", ["- F-01 (blocker) [src/app.py:1] One"])
+    _cli("review", "waive", "--reason", "Out of time")
+    assert _validate() == (0, [])
+    fix_active_open_items()
+    _at(monkeypatch, "b0b0b0b")
+    _cli("review", "start", "--harden")
+    _cli("review", "finding", "check", "F-01", "open")
+    _should_fix_and_nit()
+    assert _cli("review", "done").stdout.startswith("thing/review-3 closed hardened")
+
+    assert _validate() == (1, [_LEFT_OPEN.format("review-3.md", "F-02")])
+    assert _state(tmp_path)["gate"] == _gate("review-2.md", "waived", True, ["F-02"])
+
+
+def test_an_open_harden_round_blocks_the_gate_until_it_closes(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _cli("review", "start", "--harden")
+
+    assert _validate() == (1, [
+        "review round 2 is still open (review-2.md): close it with `specflo review done`."
+    ])
+    assert _state(tmp_path)["passing"] is False
+    assert _next().startswith("All tasks done - finish the open review round review-2.md:")
+
+
+def test_a_project_of_gate_rounds_carries_no_gate_state(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+
+    assert "gate" not in _state(tmp_path)
+
+
 # --- a hosted harden round -------------------------------------------------------------
 
 
@@ -512,4 +732,53 @@ def test_a_hosted_harden_close_writes_the_same_round_as_a_local_one(
     assert (local_dir / "review-3.md").read_text() == (hosted_dir / "review-3.md").read_text()
     # The local round files no nits follow-up either.
     assert not (local_dir / followup.FOLLOWUP_FILENAME).exists()
+    _assert_the_daemon_ran_no_git(git, live_daemon["root"])
+
+
+def test_a_hosted_gate_after_a_harden_round_reads_as_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    """A gate round closes ready, a harden round raises should-fix F-03, and
+    a later harden round checks it closed: the gate fails naming F-03, then
+    passes, locally and hosted alike."""
+    gate = [
+        (["validate", "execute", "--json"], None),
+        (["status"], None),
+    ]
+    steps = [
+        *_round_one(),
+        *_fix("Name the right command", "F-01", "T-02"),
+        (["review", "start"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A name is vague"], None),
+        (["review", "done"], None),
+        (["review", "start", "--harden"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:5",
+          "--text", "The lock is dropped early"], None),
+        (["review", "done"], None),
+        *gate,
+        *_fix("Keep the lock", "F-03", "T-03"),
+        (["review", "start", "--harden"], None),
+        (["review", "finding", "check", "F-03", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A comment is stale"], None),
+        (["review", "done"], None),
+        *gate,
+    ]
+    local, _ = _local_steps(tmp_path, monkeypatch, steps)
+    git = _recording_git(monkeypatch)
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+
+    assert len(local) == len(hosted) == len(steps) + 1
+    for mine, theirs in zip(local[1:], hosted[1:], strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    checks = [
+        (code, json.loads(text)["issues"]) for args, code, text in hosted[1:]
+        if args[:2] == ["validate", "execute"]
+    ]
+    assert checks == [(1, [_LEFT_OPEN.format("review-3.md", "F-03")]), (0, [])]
+    shown = [text for args, _, text in hosted[1:] if args == ["status"]]
+    assert "latest round 3 hardened" in shown[0] and "passes" not in shown[0]
+    assert "review-3.md leaves F-03 open" in shown[0]
+    assert "latest round 4 hardened" in shown[1] and "; passes" in shown[1]
+    assert "`specflo advance`" in shown[1]
     _assert_the_daemon_ran_no_git(git, live_daemon["root"])

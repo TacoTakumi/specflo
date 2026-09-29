@@ -143,7 +143,8 @@ def _review_line(state: dict) -> str:
     date, and the sha when git could supply one. The latest round's regressions
     follow when it has any; a view from a daemon older than the count has none.
     A round that passes with a verdict that does not, because every item it
-    asks for changes on is settled, says so after its stamp.
+    asks for changes on is settled, says so after its stamp; a hardened round
+    the gate passes after says it passes.
     """
     plural = "round" if state["rounds"] == 1 else "rounds"
     head = f"Reviews: {state['rounds']} {plural}; latest round {state['latest']}"
@@ -152,10 +153,12 @@ def _review_line(state: dict) -> str:
     if state["open"]:
         return f"{head} open (started {state['date']}){marked}"
     stamp = ", ".join(part for part in (state["date"], state["sha"]) if part)
-    settled = (
-        "; passes: every item settled"
-        if state.get("passing") and state["verdict"] not in review.PASSING else ""
-    )
+    settled = ""
+    if state.get("passing") and state["verdict"] not in review.PASSING:
+        settled = (
+            "; passes: every item settled"
+            if state["verdict"] == review.CHANGES_REQUESTED else "; passes"
+        )
     return (
         f"{head} {state['verdict']}" + (f" ({stamp})" if stamp else "") + settled + marked
     )
