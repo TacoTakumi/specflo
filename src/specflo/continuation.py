@@ -123,28 +123,33 @@ def _skill_pointer_line(phase: str) -> str:
     )
 
 
-def _continue_line() -> str:
+def _continue_line(offer_auto: bool = True) -> str:
     """The clear-point plus both resume paths (REQ-11, D-02).
 
     Naming both paths is a wording choice, not a conditional: it keeps the CLI
     mode-agnostic (REQ-03) while still showing an agent in an auto run the
-    command that re-emits its bootstrap.
+    command that re-emits its bootstrap. ``offer_auto=False`` names the
+    checkpoint alone, for a project `specflo auto` refuses; the caller says
+    so, and nothing here reads the project.
     """
+    if not offer_auto:
+        return f"{CLEAR_POINT_MARKER} - resume with `specflo checkpoint`."
     return (
         f"{CLEAR_POINT_MARKER} - resume with `specflo checkpoint` "
         "(or `specflo auto` in an auto run)."
     )
 
 
-def clear_point_only() -> str:
+def clear_point_only(offer_auto: bool = True) -> str:
     """The clear-point-and-continue line alone, with no next-step hint.
 
     For a seam that knows it stands at a clear-point but could not derive what
     comes next: emitting the clear-point unconditionally beats falling silent,
     and keeps a seam's guarantee from regressing to best-effort (REQ-10). The
     wording still comes from here, so no seam holds a copy (REQ-04).
+    ``offer_auto`` is as for :func:`build_continuation`.
     """
-    return _continue_line()
+    return _continue_line(offer_auto)
 
 
 def _complete_line() -> str:
@@ -167,7 +172,9 @@ def build_level_end(do_next: str) -> str:
     return "\n".join([do_next, _continue_line()])
 
 
-def build_continuation(phase: str, do_next: str, complete: bool = False) -> str:
+def build_continuation(
+    phase: str, do_next: str, complete: bool = False, offer_auto: bool = True
+) -> str:
     """Render the continuation for ``phase`` with its derived ``do_next`` hint.
 
     Returns one contiguous block: the phase and its immediate next action, the
@@ -181,11 +188,14 @@ def build_continuation(phase: str, do_next: str, complete: bool = False) -> str:
     framing: a finished project has no current phase to be in and nothing next to
     do, so ``do_next`` (already a closing note, e.g. "Project complete. Start the
     next piece of work with `specflo new`.") stands on its own.
+
+    With ``offer_auto=False`` the clear-point names `specflo checkpoint` alone:
+    the caller passes it for a project `specflo auto` refuses, a harden one.
     """
     if complete:
         return "\n".join([do_next, _complete_line()])
     return "\n".join([
         _action_line(phase, do_next),
         _skill_pointer_line(phase),
-        _continue_line(),
+        _continue_line(offer_auto),
     ])

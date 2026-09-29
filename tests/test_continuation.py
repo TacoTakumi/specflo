@@ -357,3 +357,24 @@ def test_reseed_brief_carries_a_task_note():
     payload = continuation.build_reseed("directive", "body", brief)
     assert "2026-08-30 [Design] why we changed course" in payload
     assert payload.index("why we changed course") > payload.index("body")
+
+
+def test_a_continuation_that_does_not_offer_auto_names_only_the_checkpoint():
+    # A project `specflo auto` refuses must not be told to resume with it.
+    for phase in PHASES:
+        text = continuation.build_continuation(phase, SENTINEL, offer_auto=False)
+        assert continuation.CLEAR_POINT_MARKER in text
+        assert "`specflo checkpoint`" in text
+        assert "specflo auto" not in text
+    alone = continuation.clear_point_only(offer_auto=False)
+    assert continuation.CLEAR_POINT_MARKER in alone
+    assert "specflo auto" not in alone
+
+
+def test_the_continuation_offers_auto_by_default():
+    for phase in PHASES:
+        assert continuation.build_continuation(phase, SENTINEL) == (
+            continuation.build_continuation(phase, SENTINEL, offer_auto=True)
+        )
+    assert continuation.clear_point_only() == continuation.clear_point_only(offer_auto=True)
+    assert "`specflo auto`" in continuation.clear_point_only()
