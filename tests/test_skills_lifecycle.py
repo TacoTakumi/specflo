@@ -23,6 +23,7 @@ SKILL_NAMES = [
     "specflo-agent",
     "specflo-brainstorm",
     "specflo-execute",
+    "specflo-harden",
     "specflo-plan",
     "specflo-quick",
     "specflo-research",
