@@ -23,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from . import followup, markdown, plan
+from . import brief, followup, markdown, plan
 from .config import SpecfloConfig
 from .errors import SpecfloError, require_one_line
 from .locking import lock_path_for, locked
@@ -2057,6 +2057,45 @@ def settled_section(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> l
     ]
 
 
+# Why a harden round in a harden project has no brief for its reviewer: it
+# reviews the Scope the project's brief names, and that brief names none.
+_NO_SCOPE = (
+    "{slug!r} is at harden level and its brief names no Scope: a harden round there"
+    " reviews that Scope. Name the paths to harden, one list item each, or say the"
+    " whole repo, with `specflo section set brief Scope --stdin`, then run `specflo"
+    " review prompt` again."
+)
+
+
+def _brief_text(doc: str, title: str) -> str:
+    """The text of the brief section ``title``, comments stripped; "" when the
+    section is absent or empty or says none."""
+    text = markdown.strip_comments(markdown.section_body(doc, f"## {title}") or "").strip()
+    return "" if text.rstrip(".").casefold() == "none" else text
+
+
+def _hardening(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, str] | None:
+    """What a harden project's brief says to harden: its Scope and its Focus,
+    "" when the Focus says none. None in any other project. Its Stop when is
+    not read: it tells the user when to stop opening rounds, and a reviewer
+    reviews one. Raises ``SpecfloError`` when the brief names no Scope.
+    """
+    if load_project(root, cfg, slug).level != HARDEN_LEVEL:
+        return None
+    path = brief.brief_path(root, cfg, slug)
+    doc = path.read_text() if path.is_file() else ""
+    scope = _brief_text(doc, "Scope")
+    if not scope:
+        raise SpecfloError(_NO_SCOPE.format(slug=slug))
+    return {"scope": scope, "focus": _brief_text(doc, "Focus")}
+
+
+def _quoted(text: str) -> list[str]:
+    """``text`` as a block quote: '> ' before each line, and '>' alone for a
+    blank one, so no line of it reads as a heading of the reviewer brief."""
+    return [f"> {line}".rstrip() for line in text.splitlines()]
+
+
 def reviewer_brief(
     root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False,
     test_command: str | None = None,
@@ -2085,11 +2124,28 @@ def reviewer_brief(
     unless it tells an agent or user to do the wrong thing, which makes it a
     should-fix; its nits stay in the round; and only the tests that
     reproduce a finding run, the whole suite once when hardening stops.
+
+    In a harden project a harden round's scope is not the branch but the
+    Scope the project's brief names, quoted with its comments stripped, and
+    its Focus unless that says none. A problem already present in that
+    scope is a finding; one outside it is a follow-up, as a problem the
+    branch did not introduce is in any other project. Raises
+    ``SpecfloError`` when that brief names no Scope.
     """
     scope = review_scope(root, cfg, slug)
     name = scope["file"]
     harden = scope["kind"] == HARDEN
-    if harden:
+    hardening = _hardening(root, cfg, slug) if harden else None
+    if hardening:
+        # Hardening fixes the code that is there, so how old a problem is
+        # does not matter; where it is does.
+        where = (
+            "This is a harden round in a harden project. Review its whole scope,"
+            " whatever earlier rounds read: all of the code in the Scope the"
+            " project's brief names:"
+        )
+        outside = "A problem outside that scope is not a finding."
+    elif harden:
         # A harden round reads all of its scope afresh, whatever earlier
         # rounds read. In a project on a branch, that scope is the branch.
         where = (
@@ -2119,6 +2175,21 @@ def reviewer_brief(
         "",
         where,
     ]
+    if hardening:
+        lines += [
+            "",
+            *_quoted(hardening["scope"]),
+            "",
+            "A problem already present in that scope is a finding, however old it is:"
+            " hardening fixes the code that is there.",
+        ]
+        if hardening["focus"]:
+            lines += [
+                "",
+                "Look hardest at what the brief's Focus names:",
+                "",
+                *_quoted(hardening["focus"]),
+            ]
     if scope["items"]:
         fixes = _fix_tasks(root, cfg, slug, scope["items"])
         lines += [

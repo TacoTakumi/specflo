@@ -19,6 +19,10 @@ text; wording in agent-facing text and docs is never a finding unless it tells
 an agent or user to do the wrong thing, which makes it a should-fix; its nits
 stay in the round; and only the tests that reproduce a finding run, the whole
 suite once when hardening stops. A gate round's brief says none of it.
+
+A harden round in a harden project reviews the Scope its brief names, quoted
+into the brief with its Focus, not the branch: a problem already present in
+that scope is a finding, and one outside it goes to a follow-up.
 """
 
 import pytest
@@ -28,6 +32,7 @@ from reviewhelp import fix_active_open_items
 from specflo import config, followup, plan, projects, review, spec
 from specflo.cli import app
 from test_hosted_parity import _hosted_steps, _local_steps, _pipeline
+from test_level_harden import _checkout, _fill, _hosted_checkout, _ok
 
 runner = CliRunner()
 
@@ -590,3 +595,183 @@ def test_a_gate_round_keeps_its_brief_word_for_word(tmp_path, monkeypatch, delta
     assert text == (_GATE_DELTA if delta else _GATE_FIRST)
     for rule in _HARDEN_RULES:
         assert rule not in text, rule
+
+
+# A harden round's brief in a normal project, word for word: its scope is the
+# whole branch, and a problem the branch did not introduce is a follow-up.
+_HARDEN_FIRST = (
+    "# Reviewer brief: thing, review round 1 (review-1.md)\n"
+    "\n"
+    "Review the work and record what you find through the specflo CLI.\n"
+    "\n"
+    "## Scope\n"
+    "\n"
+    "This is a harden round. Review its whole scope, whatever earlier rounds read: the"
+    " whole branch, every change the branch makes.\n"
+    "\n"
+    "## Severity\n"
+    "\n"
+    "- blocker: wrong behaviour, a broken requirement, or data loss.\n"
+    "- should-fix: a real problem to fix before merge, smaller than a blocker.\n"
+    "- nit: style or naming polish.\n"
+    "\n"
+    "Record a blocker or should-fix only with evidence, and name that evidence in the"
+    " finding's text: a repro, a failing test or a trace.\n"
+    "\n"
+    "A blocker or should-fix finding becomes an item to fix, which a later round checks."
+    " A nit stays listed in the round: no follow-up is filed for it.\n"
+    "\n"
+    "## What is not a finding\n"
+    "\n"
+    "A problem the branch did not introduce is not a finding. Record it with `specflo"
+    " followup add \"<title>\" --do \"<what to do>\" --from \"review-1.md\"` instead, so it"
+    " never becomes an item to fix.\n"
+    "\n"
+    "Wording in agent-facing text (skills, prompts, payload and hint strings) and in docs"
+    " is never a finding, not even a nit, unless it tells an agent or user to do the"
+    " wrong thing: then it is a should-fix.\n"
+    "\n"
+    "## How to record\n"
+    "\n"
+    "- Each finding: `specflo review finding add --severity blocker|should-fix|nit --at"
+    " <file>:<line>[-<line>] --text \"<one line>\"`. `--at` names where the defect is, as"
+    " the file is at the round's sha; a blocker or should-fix needs it, and a nit may"
+    " leave it out.\n"
+    "- No earlier items to check this round. A later round records each one with `specflo"
+    " review finding check F-NN closed|open`.\n"
+    "- One line under `## Scope reviewed` in review-1.md saying what you read.\n"
+    "- A round with no findings: `- none` as the only line under `## Findings` in"
+    " review-1.md.\n"
+    "\n"
+    "A harden round has no verdict. `specflo review done` closes it as hardened, whatever"
+    " you recorded.\n"
+    "\n"
+    "## Tests\n"
+    "\n"
+    "Run only the tests needed to reproduce a finding. The whole suite runs once, when"
+    " hardening stops.\n"
+)
+
+
+def test_a_harden_round_in_a_normal_project_keeps_its_brief_word_for_word(
+    tmp_path, monkeypatch
+):
+    _project(tmp_path, monkeypatch)
+    assert runner.invoke(app, ["review", "start", "--harden"]).exit_code == 0
+
+    assert _prompt() == _HARDEN_FIRST
+
+
+# --- a harden round in a harden project -----------------------------------------------
+
+# The harden brief's sections, with a comment the prompt leaves out.
+_SCOPE = "- src/specflo/review.py <!-- left out of the prompt -->\n- src/specflo/brief.py\n"
+_QUOTED_SCOPE = "> - src/specflo/review.py\n> - src/specflo/brief.py\n"
+_FOCUS = "Error paths and refusals.\n"
+_STOP = "Two quiet harden rounds in a row.\n"
+
+
+def _harden_level(path, monkeypatch, focus=_FOCUS, hosted=None):
+    """A harden project with a filled brief and an open harden round, in a
+    checkout at ``path``, or on the ``hosted`` daemon when one is given."""
+    if hosted:
+        _hosted_checkout(path, monkeypatch, hosted)
+    else:
+        _checkout(path, monkeypatch)
+    _ok(["new", "Thing", "--level", "harden", *(["--remote", "home"] if hosted else [])])
+    _fill(scope=_SCOPE, focus=focus, stop=_STOP)
+    _ok(["review", "start", "--harden"])
+
+
+def test_a_harden_round_in_a_harden_project_reviews_the_scope_its_brief_names(
+    tmp_path, monkeypatch
+):
+    _harden_level(tmp_path / "local", monkeypatch)
+
+    text = _prompt()
+
+    # Its scope is the brief's Scope, quoted with its comments left out, not
+    # the branch, and a problem already present there is a finding.
+    scope = _part(text, "Scope")
+    assert _QUOTED_SCOPE in scope
+    assert "already present in that scope is a finding" in scope
+    assert "<!--" not in text and "left out of the prompt" not in text
+    assert "branch" not in text
+    # A problem outside that scope goes to a follow-up; none is outside for
+    # want of a branch that brought it.
+    not_a_finding = _part(text, "What is not a finding")
+    assert "outside that scope is not a finding" in not_a_finding
+    assert "specflo followup add" in not_a_finding
+    assert "did not introduce" not in text
+    # Every other harden rule stays, the wording rule among them.
+    assert "not even a nit" in not_a_finding
+    for rule in _HARDEN_RULES:
+        assert rule in text, rule
+    assert " ".join(_tests_part(text).split()) == _HARDEN_TESTS
+
+
+@pytest.mark.parametrize("focus", [_FOCUS, "None.\n"])
+def test_a_harden_project_brief_shows_its_focus_and_never_its_stop_when(
+    tmp_path, monkeypatch, focus
+):
+    _harden_level(tmp_path / "local", monkeypatch, focus=focus)
+
+    text = _prompt()
+
+    if focus == _FOCUS:
+        assert "hardest" in _line_with(text, "Focus")
+        assert "> Error paths and refusals." in _part(text, "Scope").splitlines()
+    else:
+        assert "Focus" not in text and "hardest" not in text
+    # Stop when tells the user when to stop opening rounds, not the reviewer
+    # what to review.
+    assert _STOP.strip() not in text and "Stop when" not in text
+
+
+@pytest.mark.parametrize("scope", [None, "None.\n"])
+def test_a_harden_round_in_a_harden_project_with_no_scope_refuses_naming_it(
+    tmp_path, monkeypatch, scope
+):
+    _checkout(tmp_path / "local", monkeypatch)
+    _ok(["new", "Thing", "--level", "harden"])
+    if scope:
+        _fill(scope=scope)
+    _ok(["review", "start", "--harden"])
+
+    result = runner.invoke(app, ["review", "prompt"])
+
+    assert result.exit_code == 1, result.output
+    assert isinstance(result.exception, SystemExit), result.exception
+    assert "names no Scope" in result.output
+    assert "`specflo section set brief Scope --stdin`" in result.output
+
+
+def test_a_gate_round_in_a_harden_project_keeps_the_gate_brief(tmp_path, monkeypatch):
+    _checkout(tmp_path / "local", monkeypatch)
+    _ok(["new", "Thing", "--level", "harden"])
+    _fill(scope=_SCOPE, focus=_FOCUS, stop=_STOP)
+    _ok(["review", "start"])
+
+    assert _prompt() == _GATE_FIRST
+
+
+def test_a_hosted_harden_project_gets_the_same_brief_as_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    briefs = {}
+    for where, hosted in (("local", None), ("hosted", live_daemon)):
+        _harden_level(tmp_path / where, monkeypatch, hosted=hosted)
+        briefs[where] = _prompt()
+    local, hosted = briefs["local"], briefs["hosted"]
+
+    assert _QUOTED_SCOPE in _part(hosted, "Scope")
+    assert "> Error paths and refusals." in _part(hosted, "Scope").splitlines()
+    # Only where a problem outside the scope goes differs: a daemon records no
+    # follow-up, so the reviewer names it in the reply.
+    hosted_outside, local_outside = (
+        _line_with(_part(text, "What is not a finding"), "outside that scope is not a finding")
+        for text in (hosted, local)
+    )
+    assert "in your reply" in hosted_outside and "specflo followup add" not in hosted_outside
+    assert hosted.replace(hosted_outside, local_outside) == local
+    assert "did not introduce" not in hosted
