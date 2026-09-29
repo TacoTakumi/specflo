@@ -486,3 +486,210 @@ def test_level_on_a_hosted_harden_project_is_refused_as_on_a_local_one(
     assert views["hosted"] == views["local"]
     for shown in views["hosted"]:
         assert "'thing' is at harden level" in shown and "`specflo new`" in shown
+
+
+# --- completing on an empty ledger, not on a verdict -------------------------------
+
+
+NO_HARDEN_ROUND = "no harden round closed hardened"
+
+
+def _execute_issues():
+    """`validate execute --json` run to a failure; its issues."""
+    result = runner.invoke(app, ["validate", "execute", "--json"])
+    assert result.exit_code == 1, result.output
+    return json.loads(result.output)["issues"]
+
+
+def _passing(root):
+    return review.review_state(root, config.load_config(root), "thing")["passing"]
+
+
+def _harden_round(*raised):
+    """A harden round that checks each open item closed and raises a blocker
+    for each of ``raised`` lines, or one nit with none, so it closes hardened;
+    the IDs of what it raised."""
+    for item in json.loads(_ok(["review", "start", "--harden", "--json"]).stdout)["items"]:
+        _ok(["review", "finding", "check", item, "closed"])
+    found = [_finding("blocker", line) for line in raised] or [_finding("nit")]
+    assert "closed hardened" in _ok(["review", "done"]).output
+    return found
+
+
+def test_validate_execute_on_a_new_harden_project_names_the_brief_and_the_harden_round(
+    tmp_path, monkeypatch
+):
+    _harden_project(tmp_path, monkeypatch)
+
+    issues = _execute_issues()
+
+    for title in SECTIONS:
+        assert any(issue.startswith(f"{title} is empty") for issue in issues), (title, issues)
+    assert issues[-1].startswith(NO_HARDEN_ROUND), issues
+    assert "`specflo review start --harden`" in issues[-1]
+    assert not [issue for issue in issues if "no tasks captured" in issue], issues
+
+
+@pytest.mark.parametrize("rounds", ["none", "gate", "waived harden"])
+def test_validate_execute_fails_with_no_harden_round_closed_hardened(
+    tmp_path, monkeypatch, rounds
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill()
+    if rounds == "gate":
+        _ok(["review", "start"])
+        _finding("nit")
+        assert "closed ready-to-merge" in _ok(["review", "done"]).output
+    elif rounds == "waived harden":
+        _ok(["review", "start", "--harden"])
+        _ok(["review", "waive", "--reason", "Not reviewed"])
+
+    issues = _execute_issues()
+
+    assert len(issues) == 1 and issues[0].startswith(NO_HARDEN_ROUND), issues
+    assert "`specflo review start --harden`" in issues[0]
+    if rounds != "none":
+        assert _passing(root) is False
+
+
+@pytest.mark.parametrize("flag", [["--harden"], []])
+def test_validate_execute_fails_while_a_round_is_open(tmp_path, monkeypatch, flag):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill()
+    _harden_round()
+    _ok(["review", "start", *flag])
+
+    assert _execute_issues() == [
+        "review round 2 is still open (review-2.md): close it with `specflo review done`."
+    ]
+    assert _passing(root) is False
+
+
+@pytest.mark.parametrize("progress", ["pending", "in_progress"])
+def test_validate_execute_fails_with_a_fix_task_not_done(tmp_path, monkeypatch, progress):
+    _harden_project(tmp_path, monkeypatch)
+    _fill()
+    (finding,) = _harden_round(1)
+    task_id = _ok(["task", "add", "--text", f"Fix {finding}", "--acceptance", "fixed",
+                   "--verify", "uv run pytest", "--fixes", finding]).output.split()[1]
+    if progress == "in_progress":
+        _ok(["task", "start", task_id])
+
+    issues = _execute_issues()
+
+    assert len(issues) == 1 and issues[0].startswith(f"not all tasks are done: {task_id}"), issues
+
+
+@pytest.mark.parametrize("after", ["fix", "waive"])
+def test_validate_execute_fails_with_an_open_ledger_item(tmp_path, monkeypatch, after):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill()
+    (finding,) = _harden_round(1)
+    _fix(finding)
+    latest = "review-1.md"
+    if after == "waive":
+        # A waive covers what a gate round left open in a normal project;
+        # here no round's verdict gates, so the item stays open.
+        _ok(["review", "waive", "--reason", "Not reviewed"])
+        latest = "review-2.md"
+
+    issues = _execute_issues()
+
+    assert len(issues) == 1, issues
+    assert issues[0].startswith(
+        f"{finding} is still open after the latest review round ({latest})"
+    ), issues
+    assert f"`specflo task add --fixes {finding}`" in issues[0]
+    assert _passing(root) is False
+
+
+def test_validate_execute_names_the_brief_once_the_rest_holds(tmp_path, monkeypatch):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill(scope="None.\n")
+    _harden_round()
+
+    issues = _execute_issues()
+
+    assert len(issues) == 1 and issues[0].startswith("Scope says none"), issues
+    assert _passing(root) is True
+
+
+def test_validate_execute_passes_on_an_empty_plan_after_a_clean_harden_round(
+    tmp_path, monkeypatch
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill()
+    _harden_round()
+
+    assert plan.list_tasks(root, config.load_config(root), "thing") == []
+    assert "ok - execute is ready." in _ok(["validate", "execute"]).output
+    assert "ok - plan is ready." in _ok(["validate", "plan"]).output
+    assert _passing(root) is True
+
+
+def test_validate_execute_passes_after_a_changes_requested_gate_round_once_the_ledger_is_empty(
+    tmp_path, monkeypatch
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    _fill()
+    _harden_round()
+    _ok(["review", "start"])
+    rejected, deferred, fixed = (_finding("blocker", line) for line in (1, 2, 3))
+    assert "changes-requested" in _ok(["review", "done"]).output
+    _ok(["review", "finding", "reject", rejected, "--reason", "The caller never passes None"])
+    _ok(["review", "finding", "defer", deferred, "--do", "Name the file in the error"])
+    _fix(fixed)
+    _harden_round()
+
+    kinds = [
+        (review.round_kind(fields := review.frontmatter(path)), fields["verdict"])
+        for _, path in review.round_files(root, cfg, "thing")
+    ]
+    assert kinds == [(review.HARDEN, review.HARDENED), (review.GATE, review.CHANGES_REQUESTED),
+                     (review.HARDEN, review.HARDENED)]
+    assert "ok - execute is ready." in _ok(["validate", "execute"]).output
+    assert _passing(root) is True
+    assert "latest round 3 hardened" in _ok(["status"]).output
+
+    result = _ok(["advance"])
+
+    assert "Completed project 'thing'." in result.output
+    assert projects.load_project(root, config.load_config(root), "thing").status == "complete"
+
+
+def test_completing_a_hosted_harden_project_matches_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    views = {}
+    for where, extra in (("local", []), ("hosted", ["--remote", "home"])):
+        if extra:
+            _hosted_checkout(tmp_path / where, monkeypatch, live_daemon)
+        else:
+            _checkout(tmp_path / where, monkeypatch)
+        _ok(["new", "Thing", "--level", "harden", *extra])
+        _fill()
+        views[where] = [_execute_issues()]
+        (finding,) = _harden_round(1)
+        views[where].append(_execute_issues())
+        _fix(finding)
+        _ok(["review", "start"])
+        _ok(["review", "finding", "check", finding, "closed"])
+        _finding("blocker", 2)
+        _ok(["review", "done"])
+        views[where].append(_execute_issues())
+        _ok(["review", "finding", "reject", "F-02", "--reason", "Not a defect"])
+        views[where].append(_ok(["validate", "execute"]).output)
+        views[where].append(json.loads(_ok(["status", "--json"]).stdout)["review"]["passing"])
+        views[where].append(_ok(["advance"]).output.splitlines()[0])
+        views[where].append(json.loads(_ok(["status", "--json"]).stdout)["status"])
+
+    assert views["hosted"] == views["local"]
+    no_round, open_item, still_open, ready, passing, advanced, status = views["hosted"]
+    assert len(no_round) == 1 and no_round[0].startswith(NO_HARDEN_ROUND)
+    assert len(open_item) == 1 and open_item[0].startswith("F-01 is still open")
+    assert len(still_open) == 1 and still_open[0].startswith("F-02 is still open")
+    assert "ok - execute is ready." in ready
+    assert passing is True
+    assert advanced == "Completed project 'thing'."
+    assert status == "complete"

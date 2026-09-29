@@ -605,6 +605,15 @@ def _asked_for_changes(path: Path) -> bool:
     return verdict == CHANGES_REQUESTED
 
 
+def _hardened(files: list[tuple[int, Path]]) -> bool:
+    """Whether any of ``files`` is a harden round closed hardened. A waived
+    harden round reviewed nothing, so it is not one."""
+    return any(
+        round_kind(fields := frontmatter(path)) == HARDEN and fields.get("verdict") == HARDENED
+        for _, path in files
+    )
+
+
 def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     """The project's derived review state, or None while no round file exists.
 
@@ -615,6 +624,9 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     round's verdict passes, and the rounds after it leave no item open - so
     every reader shares one judgement. Once a harden round is recorded, ``gate``
     carries those two halves; a project of gate rounds reads as it always has.
+    A harden project's gate reads no verdict: there ``passing`` says a harden
+    round closed hardened and the whole ledger is empty (see
+    :func:`completion_issues`).
     Read fresh from the files on every call - nothing is cached and nothing is
     mirrored (REQ-09).
     """
@@ -625,7 +637,11 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     fields = frontmatter(path)
     verdict = str(fields.get("verdict", "") or "")
     gate = _gate(root, cfg, slug, files)
-    passing = bool(verdict) and gate["passes"] and not gate["left_open"]
+    open_items = items_to_check(root, cfg, slug, latest + 1)
+    if load_project(root, cfg, slug).level == HARDEN_LEVEL:
+        passing = bool(verdict) and _hardened(files) and not open_items
+    else:
+        passing = bool(verdict) and gate["passes"] and not gate["left_open"]
     state = {
         "rounds": len(files),
         "latest": latest,
@@ -648,7 +664,7 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
         # in a harden project, which has none), and
         # whether any earlier round asked for changes (fixes were made, so the
         # whole suite runs once more before completion).
-        "open_items": items_to_check(root, cfg, slug, latest + 1),
+        "open_items": open_items,
         "budget_spent": budget(root, cfg, slug)["spent"],
         # A hardened round that raised a blocker or should-fix item asked
         # for changes as a changes-requested one does.
@@ -664,6 +680,13 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     return state
 
 
+# What a harden project's gate says while no harden round is closed hardened.
+_NO_HARDEN_ROUND = (
+    "no harden round closed hardened: open one with `specflo review start --harden`,"
+    " hand the reviewer `specflo review prompt`, and close it with `specflo review done`."
+)
+
+
 def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """What the review still owes before the project may complete (REQ-21).
 
@@ -675,9 +698,17 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     and the ledger and nothing else, and never how old the round is (REQ-08).
     A reviewer that weighed some nits and still said ready-to-merge is not
     second-guessed here. An open round of either kind is unfinished work.
+
+    A harden project's gate reads no round's verdict: it needs a harden round
+    closed hardened, no round open, and an empty ledger - every blocker and
+    should-fix item of any round kind checked closed, deferred or rejected.
+    A gate-kind round run there is a delta check whose checks close items.
     """
     state = review_state(root, cfg, slug)
+    harden = load_project(root, cfg, slug).level == HARDEN_LEVEL
     if state is None:
+        if harden:
+            return [_NO_HARDEN_ROUND]
         return [
             "no review round recorded: open one with `specflo review start`, hand the"
             " reviewer `specflo review prompt`, and close it with `specflo review done`."
@@ -689,10 +720,16 @@ def completion_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
         ]
     if state["passing"]:
         return []
+    if harden:
+        hardened = _hardened(round_files(root, cfg, slug))
+        return (
+            ([] if hardened else [_NO_HARDEN_ROUND])
+            + _ledger_issues(state["open_items"], state["file"])
+        )
     gate = _gate(root, cfg, slug, round_files(root, cfg, slug))
     return (
         _verdict_issues(root, cfg, slug, gate, state["file"])
-        or _ledger_issues(gate, state["file"])
+        or _ledger_issues(gate["left_open"], state["file"])
     )
 
 
@@ -723,10 +760,10 @@ def _verdict_issues(
     ]
 
 
-def _ledger_issues(gate: dict, latest: str) -> list[str]:
-    """What the items the rounds after the latest gate round leave open owe
-    the gate; empty with none. ``latest`` is the latest round's file."""
-    items = gate["left_open"]
+def _ledger_issues(items: list[str], latest: str) -> list[str]:
+    """What the open ``items`` owe the gate; empty with none. They are what
+    the rounds after the latest gate round leave open, or in a harden project
+    the whole ledger. ``latest`` is the latest round's file."""
     if not items:
         return []
     one = len(items) == 1

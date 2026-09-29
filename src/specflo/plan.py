@@ -22,7 +22,7 @@ from .config import SpecfloConfig
 from .errors import SpecfloError, refuse_duplicate, require_one_line
 from .locking import lock_path_for, locked
 from .projects import (
-    FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, load_project, project_dir,
+    FAN_OUT_EXECUTION, FAST_LEVEL, FAST_MAX_TASKS, HARDEN_LEVEL, load_project, project_dir,
 )
 
 PLAN_FILENAME = "plan.md"
@@ -413,7 +413,11 @@ def validate_plan(
     issues = markdown.placeholder_issues(_authored_text(markdown.strip_comments(doc)))
 
     active = [t for t in _parse_tasks(doc) if t.status == "active"]
-    if not active:
+    # A harden plan starts empty and grows only from review findings: each
+    # task fixes one, so the plan owes no task and covers no requirement,
+    # even where the project has a spec.
+    harden = load_project(root, cfg, slug).level == HARDEN_LEVEL
+    if not active and not harden:
         issues.append("no tasks captured (need at least one).")
         return issues
 
@@ -424,9 +428,9 @@ def validate_plan(
             issues.append(f"{t.id} has no verification step.")
 
     sp = spec_mod.spec_path(root, cfg, slug)
-    if not sp.is_file():
+    if not harden and not sp.is_file():
         issues.append("spec.md not found — coverage cannot be checked.")
-    else:
+    elif not harden:
         spec_doc = sp.read_text()
         active_reqs = spec_mod.active_requirement_ids(spec_doc)
         smap = spec_mod.supersession_map(spec_doc)
@@ -511,8 +515,9 @@ def validate_plan(
         # The union of all milestones' derived REQ coverage must equal the active
         # REQ set (REQ-12): every active requirement is implemented by some task
         # that belongs to a milestone. (sp/active_reqs come from the coverage block
-        # above; active_reqs is bound iff the spec file exists.)
-        if sp.is_file():
+        # above; active_reqs is bound iff the spec file exists and the plan is
+        # not a harden one.)
+        if not harden and sp.is_file():
             milestone_reqs = {
                 resolved
                 for t in active if t.milestone in order

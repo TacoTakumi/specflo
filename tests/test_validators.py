@@ -246,3 +246,12 @@ def test_a_project_whose_latest_round_came_from_review_waive_completes(tmp_path,
 
     assert result.exit_code == 0, result.output
     assert projects.load_project(tmp_path, config.load_config(tmp_path), "thing").status == "complete"
+
+
+def test_execute_on_a_full_project_with_no_task_still_names_the_empty_plan(tmp_path):
+    # Only a harden plan may be empty, since it grows from review findings;
+    # every other plan still needs a task before its project completes.
+    cfg = _project_at(tmp_path, "full")
+    assert validators.execute_issues(tmp_path, cfg, "thing") == [
+        "no tasks captured (need at least one)."
+    ]

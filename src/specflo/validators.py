@@ -31,12 +31,18 @@ def execute_issues(root, cfg, slug) -> list[str]:
     """
     # A quick project is worked from its brief: the brief's own gate is the
     # whole of it, with no plan to reconcile and no review round.
-    if projects.load_project(root, cfg, slug).level == projects.QUICK_LEVEL:
+    level = projects.load_project(root, cfg, slug).level
+    if level == projects.QUICK_LEVEL:
         return brief.validate_brief(root, cfg, slug)
-    issues = plan.reconcile_issues(root, cfg, slug)
-    if issues:
-        return issues
-    return review.completion_issues(root, cfg, slug)
+    # A harden project's brief says what it hardens and when it stops, so it
+    # validates too, and its issues never hide the plan's or the review's.
+    issues = (
+        brief.validate_brief(root, cfg, slug) if level == projects.HARDEN_LEVEL else []
+    )
+    plan_issues = plan.reconcile_issues(root, cfg, slug)
+    if plan_issues:
+        return issues + plan_issues
+    return issues + review.completion_issues(root, cfg, slug)
 
 
 VALIDATORS = {
