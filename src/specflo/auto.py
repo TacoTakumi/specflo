@@ -69,6 +69,29 @@ AUTO_COMPLETE_DIRECTIVE = (
     "resume it or pick the project back up; stop and hand off to the human."
 )
 
+
+class AttendedOnly(SpecfloError):
+    """An auto run refused because the project's level is attended work.
+
+    The one error the auto entries let out of their never-errors guard, so the
+    command exits non-zero with the message instead of emitting a payload.
+    """
+
+
+def refuse_attended(project) -> None:
+    """Refuse an auto run on a harden project, naming its level.
+
+    Hardening stops on the user's say, so no auto run drives it. Each entry
+    calls this before it reads or writes the run state: the refusal changes
+    no file.
+    """
+    if project.level == projects.HARDEN_LEVEL:
+        raise AttendedOnly(
+            f"Project {project.slug!r} is at harden level, which is attended work:"
+            " hardening stops on the user's say, so `specflo auto` does not run it."
+            " Work it with the specflo-execute skill instead."
+        )
+
 # Leads any guardrail stop that hands the run back to a human (the cap here in
 # T-09; stall / kill-switch reuse it in T-10/T-11). Distinct from the bootstrap
 # so a stop can never be mistaken for a continue directive.
@@ -149,8 +172,9 @@ def set_kill_switch(cwd: Path | None = None, killed: bool = True) -> str:
 
     The flag lives in the dedicated per-project run-state file - never a config
     key, so it is not a persisted auto-*on* default (REQ-01). Returns a
-    human-facing confirmation, or ``""`` when there is no active project. Never
-    raises.
+    human-facing confirmation, or ``""`` when there is no active project.
+    Raises only :class:`AttendedOnly`, for a harden project, which has no
+    auto run to switch.
     """
     try:
         if cwd is None:
@@ -159,6 +183,7 @@ def set_kill_switch(cwd: Path | None = None, killed: bool = True) -> str:
         if found is None:
             return ""
         root, cfg, project = found
+        refuse_attended(project)
         state = load_run_state(root, cfg, project.slug)
         if killed:
             state["killed"] = True
@@ -166,6 +191,8 @@ def set_kill_switch(cwd: Path | None = None, killed: bool = True) -> str:
             state.pop("killed", None)
         save_run_state(root, cfg, project.slug, state)
         return KILL_SET_MESSAGE if killed else KILL_CLEARED_MESSAGE
+    except AttendedOnly:
+        raise
     except Exception:
         return ""
 
@@ -746,7 +773,8 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
     Returns ``""`` and never raises when there is nothing to emit (no specflo
     root, no active project, or an unreadable project) - even resolving the
     current directory happens inside the guard, so `specflo auto` is safe to
-    invoke at any phase and cannot break on a half-set-up tree.
+    invoke at any phase and cannot break on a half-set-up tree. Raises only
+    :class:`AttendedOnly`, for a harden project.
     """
     try:
         if cwd is None:
@@ -755,12 +783,15 @@ def auto_text(cwd: Path | None = None, autonomy: str | None = None) -> str:
         if found is None:
             return ""
         root, cfg, project = found
+        refuse_attended(project)
         # A finished project has nothing to continue: stop and hand off, never
         # re-run it (REQ-13). No bootstrap (continue directive) is emitted.
         if project.status == COMPLETE_STATUS:
             return AUTO_COMPLETE_DIRECTIVE
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
         return _reseed_payload(root, cfg, project, level)
+    except AttendedOnly:
+        raise
     except Exception:
         return ""
 
@@ -791,9 +822,10 @@ def auto_pass_result(
     - otherwise the self-contained three-part :func:`_reseed_payload` for the
       current phase (bootstrap + verbatim checkpoint + generated next-step).
 
-    Never raises: nothing to emit (no root, no active project, unreadable
-    project) is an empty payload stopping on :data:`STOP_UNAVAILABLE`, so a
-    machine consumer always gets the same three keys back.
+    Nothing to emit (no root, no active project, unreadable project) is an
+    empty payload stopping on :data:`STOP_UNAVAILABLE`, so a machine consumer
+    always gets the same three keys back. The one raise is :class:`AttendedOnly`
+    for a harden project, before the pass counts or writes anything.
     """
     try:
         if cwd is None:
@@ -802,6 +834,7 @@ def auto_pass_result(
         if found is None:
             return _pass_result("", STOP_UNAVAILABLE)
         root, cfg, project = found
+        refuse_attended(project)
         state = load_run_state(root, cfg, project.slug)
         ladder = state.get("ladder")
         climbing = (
@@ -896,6 +929,8 @@ def auto_pass_result(
             )
         level = resolve_autonomy(autonomy, getattr(cfg, "autonomy", None))
         return _pass_result(_reseed_payload(root, cfg, project, level, extra=extra), None)
+    except AttendedOnly:
+        raise
     except Exception:
         return _pass_result("", STOP_UNAVAILABLE)
 
