@@ -472,6 +472,109 @@ def test_checkpoint_review_lists_only_the_latest_round_file(tmp_path):
     assert "docs/projects/thing/review-1.md" not in read_first
 
 
+def _harden_round(tmp_path, cfg, *found):
+    """A harden round that checks each open item closed, records each of
+    ``found`` - a (severity, location) pair - or ``- none``, and closes hardened."""
+    import reviewhelp
+    from specflo import review
+    path, _ = review.start_round(tmp_path, cfg, "thing", today="2026-08-03", harden=True)
+    for item in review.review_scope(tmp_path, cfg, "thing")["items"]:
+        review.check_finding(tmp_path, cfg, "thing", item, "closed")
+    for severity, location in found:
+        review.add_finding(tmp_path, cfg, "thing", severity, "A defect", location)
+    if not found:
+        reviewhelp.write_none(path)
+    review.close_round(tmp_path, cfg, "thing", today="2026-08-04")
+
+
+def test_checkpoint_review_drops_a_round_whose_items_are_all_settled(tmp_path):
+    # The round asked for changes, but with its only item rejected the review
+    # passes: nothing in it is left to act on.
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "changes-requested")
+    assert "docs/projects/thing/review-1.md" in _read_first(tmp_path, cfg, project)
+
+    review.reject_finding(tmp_path, cfg, "thing", "F-01", "The caller never passes None")
+
+    assert review.review_state(tmp_path, cfg, "thing")["passing"] is True
+    assert not any("review-" in path for path in _read_first(tmp_path, cfg, project))
+
+
+def test_checkpoint_review_lists_a_hardened_round_while_an_item_it_raised_is_open(tmp_path):
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "ready-to-merge")
+    _harden_round(tmp_path, cfg, ("should-fix", "src/app.py:5"))
+
+    read_first = _read_first(tmp_path, cfg, project)
+
+    assert "docs/projects/thing/review-2.md" in read_first
+    assert "docs/projects/thing/review-1.md" not in read_first
+    review.reject_finding(tmp_path, cfg, "thing", "F-01", "The lock is held by the caller")
+    assert not any("review-" in path for path in _read_first(tmp_path, cfg, project))
+
+
+def test_checkpoint_review_lists_no_hardened_round_that_raised_only_a_nit(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "ready-to-merge")
+    _harden_round(tmp_path, cfg, ("nit", None))
+
+    assert not any("review-" in path for path in _read_first(tmp_path, cfg, project))
+
+
+# --- round kinds and the harden level in the checkpoint ----------------------
+
+
+def test_checkpoint_names_each_round_kind_once_a_harden_round_exists(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "ready-to-merge")
+    _harden_round(tmp_path, cfg)
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-04")
+
+    assert payload["review"]["kinds"] == ["gate", "harden"]
+    do_next = checkpoint.render_checkpoint(payload).split("## Do next\n")[1]
+    assert do_next.splitlines()[1] == (
+        "Reviews: 2 rounds (1 gate, 1 harden); latest round 2 hardened"
+        " (harden round, 2026-08-04); passes"
+    )
+
+
+def test_checkpoint_of_gate_rounds_alone_names_no_review_line(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _round(tmp_path, cfg, "changes-requested")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02")
+
+    assert "review" not in payload
+    text = checkpoint.render_checkpoint(payload)
+    assert "Reviews:" not in text and "gate" not in text
+
+
+def test_checkpoint_names_the_harden_level_in_its_subtitle(tmp_path):
+    cfg = config.init_config(tmp_path)
+    project = projects.create_project(tmp_path, cfg, "Thing", level="harden")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02")
+
+    assert payload["level"] == "harden"
+    assert checkpoint.render_checkpoint(payload).splitlines()[1] == (
+        "_phase: execute | execution: linear | level: harden | generated 2026-08-02_"
+    )
+
+
+def test_checkpoint_names_no_other_level_in_its_subtitle(tmp_path):
+    for level in ("quick", "fast", "full"):
+        sub = tmp_path / level
+        sub.mkdir()
+        cfg = config.init_config(sub)
+        project = projects.create_project(sub, cfg, "Thing", level=level)
+        payload = checkpoint.build_checkpoint(sub, project, cfg=cfg, today="2026-08-02")
+        assert payload["level"] == level
+        assert "level" not in checkpoint.render_checkpoint(payload).splitlines()[1]
+
+
 # --- execution mode in the checkpoint (fan-out-plans REQ-03) ---------------
 
 

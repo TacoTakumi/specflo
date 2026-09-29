@@ -418,6 +418,125 @@ def test_status_has_no_review_line_before_any_round_exists(tmp_path):
     assert "Reviews:" not in status.render_status(tmp_path, info)
 
 
+# --- round kinds on the review line -------------------------------------------
+# A project of gate rounds reads as it always has. Once a harden round is
+# recorded, the line counts each kind and the latest round's stamp names its own.
+
+
+def _harden_review(tmp_path, cfg, close=True):
+    """Open a harden round with no findings, closing it hardened unless it
+    should stay open; its path."""
+    import reviewhelp
+    from specflo import review
+    path, _ = review.start_round(tmp_path, cfg, "thing", today="2026-08-03", harden=True)
+    if close:
+        reviewhelp.write_none(path)
+        review.close_round(tmp_path, cfg, "thing", today="2026-08-04")
+    return path
+
+
+def test_status_review_line_names_each_kind_once_a_harden_round_exists(tmp_path):
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "ready-to-merge")
+    _harden_review(tmp_path, cfg)
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"]["kinds"] == ["gate", "harden"]
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 2 rounds (1 gate, 1 harden); latest round 2 hardened"
+        " (harden round, 2026-08-04); passes"
+    )
+
+
+def test_status_review_line_names_the_kind_of_an_open_or_waived_latest_round(tmp_path):
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _harden_review(tmp_path, cfg)
+    _harden_review(tmp_path, cfg, close=False)
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 2 rounds (0 gate, 2 harden); latest round 2 open"
+        " (harden round, started 2026-08-03)"
+    )
+    review.close_round(tmp_path, cfg, "thing", "waived", reason="By hand", today="2026-08-05")
+    _close_review(tmp_path, cfg, "waived", reason="By hand")
+    info = status.build_status(tmp_path, cfg, project)
+    assert info["review"]["kinds"] == ["harden", "harden", "gate"]
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 3 rounds (1 gate, 2 harden); latest round 3 waived (gate round, 2026-08-02)"
+    )
+
+
+def test_status_of_gate_rounds_alone_carries_no_kinds(tmp_path):
+    # The review block stays the review state as it always was.
+    from specflo import review
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "changes-requested")
+
+    info = status.build_status(tmp_path, cfg, project)
+
+    assert info["review"] == review.review_state(tmp_path, cfg, "thing")
+    assert "kinds" not in info["review"]
+    assert "gate" not in _reviews_line(tmp_path, info)
+
+
+def test_status_reads_a_view_without_kinds_as_gate_rounds_alone(tmp_path):
+    # A view from a daemon older than harden rounds carries no kinds.
+    cfg, project = _plan_at_execute(tmp_path)
+    _close_review(tmp_path, cfg, "ready-to-merge")
+    _harden_review(tmp_path, cfg)
+    info = status.build_status(tmp_path, cfg, project)
+    del info["review"]["kinds"]
+
+    assert _reviews_line(tmp_path, info) == (
+        "Reviews: 2 rounds; latest round 2 hardened (2026-08-04); passes"
+    )
+
+
+def test_a_hosted_status_and_checkpoint_name_the_round_kinds_as_local_ones(
+    tmp_path, monkeypatch, live_daemon
+):
+    """A gate round asks for changes, a gate round closes ready, and a harden
+    round raises should-fix F-03: status and the checkpoint name both kinds,
+    and the checkpoint lists the harden round to read first, locally and
+    hosted alike."""
+    from test_hosted_parity import _fix, _hosted_steps, _local_steps
+    from test_review_settle import _round_one
+
+    shown = [(["status"], None), (["checkpoint"], None), (["doc", "show", "checkpoint"], None)]
+    steps = [
+        *_round_one(),
+        *_fix("Name the right command", "F-01", "T-02"),
+        (["review", "start"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A name is vague"], None),
+        (["review", "done"], None),
+        (["review", "start", "--harden"], None),
+        (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:5",
+          "--text", "The lock is dropped early"], None),
+        (["review", "done"], None),
+        *shown,
+    ]
+    local, _ = _local_steps(tmp_path, monkeypatch, steps)
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+
+    assert len(local) == len(hosted) == len(steps) + 1
+    for mine, theirs in zip(local[1:], hosted[1:], strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    text, printed, stored = (out for _, _, out in hosted[-3:])
+    line = next(ln for ln in text.splitlines() if ln.startswith("Reviews:"))
+    assert line.startswith(
+        "Reviews: 3 rounds (2 gate, 1 harden); latest round 3 hardened (harden round, "
+    )
+    assert f"\n{line}\n" in printed
+    read_first = printed.split("## Read first")[1].split("## Do next")[0]
+    assert "- parity-thing/review-3\n" in read_first
+    assert printed == stored + "\n"
+
+
 def test_status_review_state_never_reaches_project_md(tmp_path):
     # REQ-09: round files are the only store; project.md gains no review keys.
     import yaml
@@ -497,7 +616,7 @@ def _project_at_level(tmp_path, level):
     assert runner.invoke(app, ["new", "Thing", "--level", level]).exit_code == 0
 
 
-@pytest.mark.parametrize("level", ["quick", "fast", "full"])
+@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden"])
 def test_status_prints_the_level(tmp_path, monkeypatch, level):
     monkeypatch.chdir(tmp_path)
     _project_at_level(tmp_path, level)
@@ -506,7 +625,7 @@ def test_status_prints_the_level(tmp_path, monkeypatch, level):
     assert f"Level: {level}" in result.output.splitlines()
 
 
-@pytest.mark.parametrize("level", ["quick", "fast", "full"])
+@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden"])
 def test_status_json_reports_the_level(tmp_path, monkeypatch, level):
     monkeypatch.chdir(tmp_path)
     _project_at_level(tmp_path, level)

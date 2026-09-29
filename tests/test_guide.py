@@ -225,6 +225,30 @@ def test_guide_lists_the_review_loop_commands(cwd):
         assert command in out, command
 
 
+def test_guide_lists_the_harden_level_with_its_meaning(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    line = next(line for line in out.splitlines() if line.startswith("  harden "))
+    assert "`--level harden`" in line
+    for phrase in ("code that already exists", "harden rounds", "fix tasks"):
+        assert phrase in line, phrase
+    entries = {entry["name"]: entry for entry in guide.COMMANDS}
+    assert "harden" in entries["new"]["args"]
+
+
+def test_guide_lists_the_harden_loop_commands(cwd):
+    entries = {entry["name"]: entry for entry in guide.COMMANDS}
+    assert "--harden" in entries["review start"]["args"]
+    assert "--at <file>:<line>[-<line>]" in entries["review finding add"]["args"]
+    assert "--fixes <F-NN>" in entries["task add"]["args"]
+    assert "--do <what>" in entries["review finding defer"]["args"]
+    assert "--reason <why>" in entries["review finding reject"]["args"]
+    out = runner.invoke(app, ["guide"]).output
+    for label in ("review start [--full] [--over-budget] [--harden]", "review finding add",
+                  "task add", "review finding defer", "review finding reject"):
+        assert f"    {label}" in out, label
+    assert "--fixes <F-NN>" in out and "--at <file>:<line>[-<line>]" in out
+
+
 def test_readme_documents_the_review_loop():
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
     for term in (*_REVIEW_COMMANDS, "--full", "--over-budget", "review_max_rounds",

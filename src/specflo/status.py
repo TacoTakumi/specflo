@@ -130,12 +130,28 @@ def build_status(
         info["boundary"] = boundary
     # Only carried once a round file exists (review-rounds REQ-11), so a project
     # that has never been reviewed ships no review field - mirrors `progress`.
+    # Each round's kind joins it once a harden round is recorded; a project of
+    # gate rounds ships the review state as it always has.
     if review_info is not None:
-        info["review"] = review_info
+        kinds = round_kinds(root, cfg, project.slug)
+        info["review"] = review_info if kinds is None else {**review_info, "kinds": kinds}
     return info
 
 
-def _review_line(state: dict) -> str:
+def round_kinds(root: Path, cfg: SpecfloConfig, slug: str) -> list[str] | None:
+    """Each round's kind, in round order; None while no harden round is recorded.
+
+    A project of gate rounds names no kinds, so it reads as it did before
+    harden rounds existed.
+    """
+    kinds = [
+        review.round_kind(review.frontmatter(path))
+        for _, path in review.round_files(root, cfg, slug)
+    ]
+    return kinds if review.HARDEN in kinds else None
+
+
+def review_line(state: dict) -> str:
     """The one-line review summary: how many rounds, and where the latest sits.
 
     An open round is reported as open with the date it started (REQ-12) - it
@@ -145,14 +161,26 @@ def _review_line(state: dict) -> str:
     A round that passes with a verdict that does not, because every item it
     asks for changes on is settled, says so after its stamp; a hardened round
     the gate passes after says it passes.
+
+    A state that carries each round's kind - one with a harden round - counts
+    the rounds of each kind, and the latest round's stamp names its own. One
+    without, from a project of gate rounds or a daemon older than harden
+    rounds, reads as it always has.
     """
     plural = "round" if state["rounds"] == 1 else "rounds"
-    head = f"Reviews: {state['rounds']} {plural}; latest round {state['latest']}"
+    kinds = state.get("kinds")
+    counted = (
+        " (" + ", ".join(f"{kinds.count(kind)} {kind}" for kind in review.KINDS) + ")"
+        if kinds else ""
+    )
+    head = f"Reviews: {state['rounds']} {plural}{counted}; latest round {state['latest']}"
+    kind = f"{kinds[-1]} round" if kinds else ""
     count = state.get("regressions")
     marked = f"; {review.regressions_text(count)}" if count else ""
     if state["open"]:
-        return f"{head} open (started {state['date']}){marked}"
-    stamp = ", ".join(part for part in (state["date"], state["sha"]) if part)
+        started = ", ".join(part for part in (kind, f"started {state['date']}") if part)
+        return f"{head} open ({started}){marked}"
+    stamp = ", ".join(part for part in (kind, state["date"], state["sha"]) if part)
     settled = ""
     if state.get("passing") and state["verdict"] not in review.PASSING:
         settled = (
@@ -207,7 +235,7 @@ def render_status(root: Path, info: dict) -> str:
         m = info["milestone"]
         lines.append(f"Milestone: {m['id']} {m['title']} — {m['done']}/{m['total']} done")
     if "review" in info:
-        lines.append(_review_line(info["review"]))
+        lines.append(review_line(info["review"]))
     if "boundary" in info:
         lines.extend(plan.boundary_beat_lines(info["boundary"]))
     lines.append(f"Next:    {info['next_step']}")

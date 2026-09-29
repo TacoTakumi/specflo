@@ -56,7 +56,7 @@ NO_ACTIVE_PROJECT_MESSAGE = " ".join(NO_ACTIVE_PROJECT_LINES)
 COMMANDS: list[dict[str, str]] = [
     {"name": "init", "group": "setup", "args": "",
      "summary": "Scaffold .specflo/ and the projects dir."},
-    {"name": "new", "group": "setup", "args": "<name> [--level quick|fast|full]",
+    {"name": "new", "group": "setup", "args": "<name> [--level quick|fast|full|harden]",
      "summary": "Create a project and make it active."},
     {"name": "list", "group": "setup", "args": "",
      "summary": "List all projects, marking the active one."},
@@ -69,7 +69,8 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "egress", "group": "setup", "args": "local|no-train|open",
      "summary": "Pin the active project's egress class (any phase)."},
     {"name": "level", "group": "setup", "args": "fast|full",
-     "summary": "Move the active project up a level; it goes back to brainstorm."},
+     "summary": "Move the active project up a level; it goes back to brainstorm. "
+                "A harden project never moves."},
     {"name": "switch", "group": "setup", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "leave", "group": "setup", "args": "",
@@ -174,8 +175,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Create the plan.md artifact."},
     {"name": "plan graph", "group": "workflow", "args": "",
      "summary": "Render the execution graph: waves, tasks, and a mermaid block."},
-    {"name": "task add", "group": "workflow", "args": "",
-     "summary": "Record a plan task (T-NN)."},
+    {"name": "task add", "group": "workflow", "args": "[--fixes <F-NN>]",
+     "summary": "Record a plan task (T-NN); --fixes names a review finding it fixes "
+                "(a harden project's only kind of task)."},
     {"name": "task rewire", "group": "workflow", "args": "",
      "summary": "Repoint dependents of one task onto another (--from/--to)."},
     {"name": "task start", "group": "workflow", "args": "<T-NN>",
@@ -206,13 +208,16 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Declare or resize a resource pool (--size N) in plan.md."},
     {"name": "pool list", "group": "workflow", "args": "",
      "summary": "List declared and needed pools with their slot sizes."},
-    {"name": "review start", "group": "workflow", "args": "",
-     "summary": "Mint the next review round (review-N.md) and print its scope "
-                "(--full, --over-budget)."},
+    {"name": "review start", "group": "workflow", "args": "[--full] [--over-budget] [--harden]",
+     "summary": "Mint the next review round (review-N.md) and print its scope; --harden "
+                "opens a harden round: a fresh review of the whole scope, outside the "
+                "round budget."},
     {"name": "review prompt", "group": "workflow", "args": "",
      "summary": "Print the reviewer brief for the open round."},
-    {"name": "review finding add", "group": "workflow", "args": "",
-     "summary": "Record a finding (F-NN) with --severity blocker|should-fix|nit and --text."},
+    {"name": "review finding add", "group": "workflow",
+     "args": "--severity <s> --text <t> [--at <file>:<line>[-<line>]]",
+     "summary": "Record a finding (F-NN), severity blocker|should-fix|nit; --at names where "
+                "the defect is, needed for blocker and should-fix."},
     {"name": "review finding check", "group": "workflow", "args": "<F-NN> <closed|open>",
      "summary": "Record whether an earlier blocker or should-fix item is fixed."},
     {"name": "review finding reject", "group": "workflow", "args": "<F-NN> --reason <why>",
@@ -284,7 +289,10 @@ LEVELS_TEXT = (
     "  quick   one goal and one check (`new <name> --level quick`): one brief, proof, no review\n"
     "  fast    3 to 7 tasks (`--level fast`): short brainstorm, spec and plan, one approval\n"
     "  full    more than that (the default): every phase, an approval at each\n"
-    "  A project moves up with `specflo level fast|full`, never down.\n"
+    "  harden  make code that already exists sound (`--level harden`): harden rounds,"
+    " fix tasks only, the user stops it\n"
+    "  A project moves up with `specflo level fast|full`, never down; a harden project"
+    " never moves.\n"
     "  When the user names a follow-up (FU-NN) to do, read it with"
     " `specflo followup show FU-NN` before you propose a level."
 )

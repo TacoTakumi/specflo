@@ -588,7 +588,8 @@ def test_a_ready_gate_round_then_a_clean_harden_round_passes_the_gate(tmp_path, 
     )
     date = review.frontmatter(project_dir / "review-2.md")["date"]
     assert (
-        f"Reviews: 2 rounds; latest round 2 hardened ({date}, b0b0b0b); passes\n"
+        f"Reviews: 2 rounds (1 gate, 1 harden); latest round 2 hardened"
+        f" (harden round, {date}, b0b0b0b); passes\n"
         in _cli("status").stdout
     )
 

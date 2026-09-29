@@ -20,6 +20,7 @@ from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
 from .projects import (
     COMPLETE_STATUS,
+    HARDEN_LEVEL,
     PROJECT_FILENAME,
     SHELVED_STATUS,
     Project,
@@ -80,12 +81,24 @@ def build_checkpoint(
     # Where the review stands, read fresh from the round files (review-rounds
     # REQ-09). None without cfg, or while the project has no rounds.
     review_info = review.review_state(root, cfg, project.slug) if cfg is not None else None
-    # The latest round joins Read first only when it asked for changes (REQ-14):
-    # that is the one case where the resuming session has work to do about it.
-    # Listing a passing round would pull its stale findings into the next
-    # reviewer's context for no gain.
-    if review_info is not None and review_info["verdict"] == "changes-requested":
+    # The latest round joins Read first only while the resuming session has
+    # work to do about it (REQ-14): the review does not pass, and an item the
+    # round raised or kept open is still open. A reviewed round closes only
+    # once it has checked every earlier item, so the items open after it are
+    # its own. Listing a passing round - one whose items are all settled too -
+    # would pull its stale findings into the next reviewer's context for no
+    # gain; an open or waived round has none to act on.
+    if (
+        review_info is not None and review_info["verdict"] in review.REVIEWED
+        and not review_info["passing"] and review_info["open_items"]
+    ):
         read_first.append(name(directory / review_info["file"]))
+    kinds = None
+    if review_info is not None:
+        # status imports this module, so it is read here, at call time.
+        from . import status
+
+        kinds = status.round_kinds(root, cfg, project.slug)
     shelved = project.status == SHELVED_STATUS
     plan_file = directory / plan_module.PLAN_FILENAME
     prog = None
@@ -159,11 +172,12 @@ def build_checkpoint(
                 do_next += "  (next task: " + ", ".join(prog["next_actionable"]) + ")"
             elif prog["all_done"]:
                 do_next += "  (all tasks done)"
-    return {
+    payload = {
         "project": project.slug,
         "phase": project.phase,
         "status": project.status,
         "execution": project.execution,
+        "level": project.level,
         "shelved_reason": project.shelved_reason,
         # The prior-projects rule (project-index REQ-06): the checkpoint is what
         # carries it into the session-start hook payload. None without cfg, or
@@ -185,6 +199,12 @@ def build_checkpoint(
         # human line: the same wherever its bytes live.
         "locator": f"{project.slug}/checkpoint",
     }
+    # Only carried once a harden round is recorded: the review state with each
+    # round's kind, which the resume block names as status does. A project of
+    # gate rounds carries none, so its checkpoint reads as it always has.
+    if kinds is not None:
+        payload["review"] = {**review_info, "kinds": kinds}
+    return payload
 
 
 def hosted_view(payload: dict) -> dict:
@@ -205,6 +225,11 @@ def render_checkpoint(payload: dict) -> str:
     if shelved:
         subtitle += " (shelved)"
     subtitle += f" | execution: {payload['execution']}"
+    # A harden project's loop is its own - harden rounds, fix tasks only, and
+    # an empty ledger to complete - so the resuming session is told the level.
+    # A payload from an older daemon carries no level and names none.
+    if payload.get("level") == HARDEN_LEVEL:
+        subtitle += f" | level: {HARDEN_LEVEL}"
     subtitle += f" | generated {payload['generated']}_"
     lines = [
         f"# Checkpoint - {payload['project']}",
@@ -232,6 +257,12 @@ def render_checkpoint(payload: dict) -> str:
             f"Current milestone: {milestone['id']} {milestone['title']} "
             f"— {milestone['done']}/{milestone['total']} done."
         )
+    # Where the review stands once a harden round is recorded: the line status
+    # prints, naming each round's kind. Absent for a project of gate rounds.
+    if payload.get("review"):
+        from . import status
+
+        lines.append(status.review_line(payload["review"]))
     # The soft milestone-boundary verify beat: the just-completed milestone's Exit
     # checklist for a user-gated proceed (REQ-14). Absent off a boundary.
     boundary = payload.get("boundary")
