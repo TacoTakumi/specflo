@@ -95,7 +95,8 @@ def ledger(tmp_path):
     """Three rounds. Round 1 asked for changes (blocker F-01, should-fix F-02,
     nit F-03); round 2 checked F-01 closed and F-02 open, and asked for
     changes (blocker F-04); round 3 is open and has found should-fix F-05.
-    Every open item has a done fix task. (root, cfg, service, project dir)."""
+    Every open item has a done fix task, and F-02 a second one since round 2
+    checked it open. (root, cfg, service, project dir)."""
     cfg, directory = _project(tmp_path)
     service = LocalProjectService(tmp_path, cfg)
     review.start_round(tmp_path, cfg, SLUG, sha="")
@@ -110,7 +111,7 @@ def ledger(tmp_path):
     review.check_finding(tmp_path, cfg, SLUG, "F-02", "open")
     review.add_finding(tmp_path, cfg, SLUG, "blocker", "The lock is dropped early", "src/app.py:20")
     review.close_round(tmp_path, cfg, SLUG, nits_followup=False)
-    _done_fix(tmp_path, cfg, SLUG, "F-04")
+    _done_fix(tmp_path, cfg, SLUG, "F-02", "F-04")
     service.start_round(SLUG, sha="", over_budget=True)
     review.add_finding(tmp_path, cfg, SLUG, "should-fix", "A refusal names no ID", "src/app.py:30")
     return tmp_path, cfg, service, directory

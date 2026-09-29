@@ -42,21 +42,26 @@ def write_none(path: Path) -> None:
 
 
 def fix_open_items(root, cfg, slug) -> list[str]:
-    """Add a done task fixing each open item that has none; the tasks' IDs.
+    """Add a done task fixing each open item that needs one; the tasks' IDs.
 
-    ``review start`` opens no round while an open item has no done fix task.
-    A project with no plan gets one, and only when an item needs a task.
+    ``review start`` opens no round while an open item has no done fix task,
+    or no more of them than the reviewed rounds that checked it open. A
+    project with no plan gets one, and only when an item needs a task.
     """
     unfixed = review.unfixed_items(root, cfg, slug)
     if unfixed:
         plan.start_plan(root, cfg, slug)
     added = []
-    for item in unfixed:
-        task = plan.add_task(root, cfg, slug, f"Fix {item}", f"{item} is fixed",
-                             "uv run pytest", implements=[], fixes=[item])
-        plan.start_task(root, cfg, slug, task.id)
-        plan.done_task(root, cfg, slug, task.id)
-        added.append(task.id)
+    while unfixed:
+        for item in unfixed:
+            tries = sum(item in task.fixes for task in plan.list_tasks(root, cfg, slug))
+            text = f"Fix {item}" + (f" again, try {tries + 1}" if tries else "")
+            task = plan.add_task(root, cfg, slug, text, f"{item} is fixed",
+                                 "uv run pytest", implements=[], fixes=[item])
+            plan.start_task(root, cfg, slug, task.id)
+            plan.done_task(root, cfg, slug, task.id)
+            added.append(task.id)
+        unfixed = review.unfixed_items(root, cfg, slug)
     return added
 
 

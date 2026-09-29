@@ -275,7 +275,7 @@ def _ledger_steps():
     """A plan with T-01 and three rounds. Round 1 asked for changes (blocker
     F-01, should-fix F-02, nit F-03), fixed by T-02; round 2 checked F-01
     closed and F-02 open, and asked for changes (blocker F-04), fixed by
-    T-03; round 3 is open and has found should-fix F-05. The open items are
+    T-03, which fixes F-02 again; round 3 is open and has found should-fix F-05. The open items are
     F-02 and F-04."""
     pipeline = _pipeline()
     last = next(i for i, (args, _) in enumerate(pipeline) if args[:2] == ["task", "add"])
@@ -296,7 +296,7 @@ def _ledger_steps():
         (["review", "finding", "check", "F-02", "open"], None),
         ([*finding, "blocker", "--at", "src/app.py:20", "--text", "The lock is dropped early"], None),
         (["review", "done"], None),
-        ([*fix, "--text", "Hold the lock", "--fixes", "F-04"], None),
+        ([*fix, "--text", "Hold the lock", "--fixes", "F-02", "--fixes", "F-04"], None),
         (["task", "start", "T-03"], None),
         (["task", "done", "T-03"], None),
         (["review", "start", "--over-budget"], None),

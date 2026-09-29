@@ -112,16 +112,16 @@ def _assert_rounds_unchanged(project_dir):
 
 
 def _fix_open_items():
-    """Add, start and finish a task fixing each open item through the CLI; the tasks' IDs.
+    """Add, start and finish the tasks fixing each open item through the CLI; the tasks' IDs.
 
-    The plan has milestones, so each task joins the last one and the plan
-    still validates.
+    Round 3 checked F-07 open, so F-07 needs a second fix task. The plan has
+    milestones, so each task joins the last one and the plan still validates.
     """
     milestone = re.findall(r"^### (M-\d+) ", (FIXTURE / "plan.md").read_text(), re.MULTILINE)[-1]
     added = []
-    for item in ("F-07", "F-08"):
+    for item, text in (("F-07", "Fix F-07"), ("F-07", "Fix F-07 again"), ("F-08", "Fix F-08")):
         result = runner.invoke(app, [
-            "task", "add", "--text", f"Fix {item}", "--acceptance", f"{item} is fixed",
+            "task", "add", "--text", text, "--acceptance", f"{item} is fixed",
             "--verify", "uv run pytest", "--fixes", item, "--milestone", milestone, "--json",
         ])
         assert result.exit_code == 0, result.output

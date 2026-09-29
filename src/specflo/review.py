@@ -362,19 +362,39 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     reviewed round has checked closed and none has settled; a nit never is
     one. Only an active
     task whose progress is done counts as its fix: a superseded task fixes
-    nothing, and a project with no plan has no fix at all. Reads the round
-    files and plan.md and changes nothing.
+    nothing, and a project with no plan has no fix at all. A reviewed round
+    that checks an item open found its fixes so far did not hold, so the item
+    needs more done fix tasks than the rounds that checked it open. Reads the
+    round files and plan.md and changes nothing.
     """
     rounds = round_files(root, cfg, slug)
     latest = rounds[-1][0] if rounds else 0
     items = _ledger(root, cfg, slug, latest + 1)[0]
     if not items:
         return {}
+    reopened = _open_checks(rounds)
     return {
-        item: [task.id for task in fixes]
+        item: [task.id for task in fixes if task.progress != "done"]
         for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items()
-        if not any(task.progress == "done" for task in fixes)
+        if sum(task.progress == "done" for task in fixes) <= len(reopened.get(item, []))
     }
+
+
+def _open_checks(rounds: list[tuple[int, Path]]) -> dict[str, list[str]]:
+    """Each item a reviewed round of ``rounds`` checked open, with the round
+    files that did, in round order.
+
+    A waived round reviewed nothing, so its checks do not count.
+    """
+    checks: dict[str, list[str]] = {}
+    for _, path in rounds:
+        if frontmatter(path).get("verdict") not in REVIEWED:
+            continue
+        for line in _section_lines(path.read_text(), EARLIER_HEADER) or []:
+            match = _CHECK_LINE.match(line)
+            if match and match.group(3) == "open":
+                checks.setdefault(match.group(1), []).append(path.name)
+    return checks
 
 
 def _fix_tasks(

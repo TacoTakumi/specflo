@@ -1050,7 +1050,8 @@ def test_a_waived_harden_round_breaks_the_run(tmp_path, monkeypatch):
 
 def _harden_steps():
     """Two rounds that ask for changes spend the gate budget of 2, and each
-    open item gets a done fix task; a plain start is then refused, a harden
+    open item gets a done fix task, F-01 a second one since round 2 checked
+    it open; a plain start is then refused, a harden
     start opens round 3, and starting it again with --full hands it back."""
     return [
         *_round_one(),
@@ -1061,6 +1062,7 @@ def _harden_steps():
           "--text", "The lock is dropped early"], None),
         (["review", "done"], None),
         *_fix("Keep the lock", "F-02", "T-03"),
+        *_fix("Name the right command on every path", "F-01", "T-04"),
         (["review", "start"], None),
         (["review", "start", "--harden"], None),
         (["review", "start", "--harden", "--full"], None),

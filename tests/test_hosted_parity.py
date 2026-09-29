@@ -301,6 +301,8 @@ def _review_steps():
         (["review", "finding", "add", "--severity", "should-fix", "--at", "src/app.py:9-12", "--text", "A message names the wrong command"], None),
         (["review", "done"], None),
         *_fix("Name the right command", "F-03", "T-02"),
+        # Round 2 checked F-01 open: the fix before it did not hold.
+        *_fix("Keep the sha on every path", "F-01", "T-03"),
         (["review", "start"], None),
         (["review", "start", "--over-budget"], None),
         (["review", "done"], None),

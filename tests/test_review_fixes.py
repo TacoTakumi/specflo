@@ -18,6 +18,7 @@ from specflo import config, plan, projects, review, spec
 from specflo.cli import app
 from specflo.errors import SpecfloError
 from specflo.service.local import LocalProjectService
+from reviewhelp import write_none
 from test_hosted_parity import _hosted_steps, _local_steps, _pipeline
 
 runner = CliRunner()
@@ -282,3 +283,56 @@ def test_the_ladder_and_the_waive_mint_a_round_without_the_check(reviewed):
     assert (path.name, created) == ("review-2.md", True)
     review.close_round(root, cfg, slug, "waived", reason="Checked by hand")
     assert service.waive_round(slug, "Checked by hand again", sha="").name == "review-3.md"
+
+
+# --- an item a later round checks open again ----------------------------------
+
+
+def _check_open_and_close(root, cfg, slug, service, **start):
+    """Open the next round, check F-01 open and close it: changes-requested."""
+    path, _ = service.start_round(slug, sha="", **start)
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+
+def test_an_item_checked_open_again_needs_one_more_done_fix_task(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    _check_open_and_close(root, cfg, slug, service)
+
+    # The fix done before round 2 did not hold, so it no longer counts.
+    assert list(review.unfixed_items(root, cfg, slug)) == ["F-01"]
+    with pytest.raises(SpecfloError, match="F-01"):
+        service.start_round(slug, sha="", over_budget=True)
+    assert [path.name for _, path in review.round_files(root, cfg, slug)] == [
+        "review-1.md", "review-2.md"]
+
+    _done_fix(root, cfg, slug, "F-01", text="Keep the sha on every path")
+    assert review.unfixed_items(root, cfg, slug) == {}
+    path, created = service.start_round(slug, sha="", over_budget=True)
+    assert (path.name, created) == ("review-3.md", True)
+
+
+def test_each_open_check_needs_its_own_done_fix_task(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    _check_open_and_close(root, cfg, slug, service)
+    _done_fix(root, cfg, slug, "F-01", text="Keep the sha on every path")
+    _check_open_and_close(root, cfg, slug, service, over_budget=True)
+
+    assert list(review.unfixed_items(root, cfg, slug)) == ["F-01"]
+    _done_fix(root, cfg, slug, "F-01", text="Keep the sha on the last path")
+    assert review.unfixed_items(root, cfg, slug) == {}
+
+
+def test_a_waived_round_checking_an_item_open_asks_no_more_fix_tasks(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    path, _ = service.start_round(slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    review.close_round(root, cfg, slug, "waived", reason="Checked by hand")
+
+    # A waive reviewed nothing, so its check is not a finding that the fix failed.
+    assert review.unfixed_items(root, cfg, slug) == {}
