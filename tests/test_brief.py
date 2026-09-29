@@ -155,6 +155,19 @@ def test_validate_brief_names_an_empty_proof(tmp_path, monkeypatch):
     assert any("Proof" in issue for issue in _issues(tmp_path))
 
 
+def test_validate_brief_on_a_new_quick_brief_names_its_own_sections_only(
+    tmp_path, monkeypatch
+):
+    monkeypatch.chdir(tmp_path)
+    _quick_project(tmp_path)
+
+    assert _issues(tmp_path) == [
+        "Goal is empty: say what this change does.",
+        "Done when has no check: write exactly one, as a list item.",
+        "Proof is empty: record the test or command output that shows the check passes.",
+    ]
+
+
 def test_validate_brief_ignores_an_empty_deferred_section(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _quick_project(tmp_path)

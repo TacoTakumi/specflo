@@ -4,6 +4,7 @@ Stop when, and a plan that starts empty and grows from review findings."""
 import json
 import re
 
+import pytest
 from typer.testing import CliRunner
 
 from specflo import config, daemon, markdown, plan, projects, workflow
@@ -131,3 +132,122 @@ def test_new_harden_on_a_remote_gives_the_same_project_through_the_daemon(
     assert (hosted / "brief.md").is_file() and (hosted / "plan.md").is_file()
     assert not (tmp_path / "hosted" / "docs" / "projects" / "thing").exists()
     assert config.hosted_projects(tmp_path / "hosted") == {"thing": "home"}
+
+
+# --- validating the brief ---------------------------------------------------------
+
+
+def _set(title, body):
+    _ok(["section", "set", "brief", title, "--stdin"], body)
+
+
+def _fill(scope="- src/specflo/\n", focus="none\n", stop="none\n"):
+    for title, body in (("Scope", scope), ("Focus", focus), ("Stop when", stop)):
+        if body is not None:
+            _set(title, body)
+
+
+def _issues():
+    result = runner.invoke(app, ["validate", "brief", "--json"])
+    assert result.exit_code == 1, result.output
+    return json.loads(result.output)["issues"]
+
+
+def test_validate_brief_on_the_scaffold_names_each_section_and_no_quick_one(
+    tmp_path, monkeypatch
+):
+    _harden_project(tmp_path, monkeypatch)
+
+    issues = _issues()
+
+    for title in SECTIONS:
+        assert any(issue.startswith(f"{title} is empty") for issue in issues), (title, issues)
+    for title in ("Goal", "Done when", "Proof", "Deferred"):
+        assert not any(title in issue for issue in issues), (title, issues)
+
+
+def test_validate_brief_names_scope_while_it_holds_only_the_scaffold_comment(
+    tmp_path, monkeypatch
+):
+    _harden_project(tmp_path, monkeypatch)
+    _fill(scope=None)
+
+    issues = _issues()
+
+    assert len(issues) == 1 and issues[0].startswith("Scope is empty"), issues
+
+
+def test_validate_brief_names_a_scope_that_says_none(tmp_path, monkeypatch):
+    _harden_project(tmp_path, monkeypatch)
+    _fill(scope="None.\n")
+
+    issues = _issues()
+
+    assert len(issues) == 1 and issues[0].startswith("Scope says none"), issues
+
+
+def test_validate_brief_passes_with_a_scope_and_focus_and_stop_when_saying_none(
+    tmp_path, monkeypatch
+):
+    _harden_project(tmp_path, monkeypatch)
+    _fill()
+
+    result = runner.invoke(app, ["validate", "brief"])
+
+    assert result.exit_code == 0, result.output
+    assert "ok - brief is ready." in result.output
+
+
+def test_validate_brief_passes_with_text_in_every_section(tmp_path, monkeypatch):
+    _harden_project(tmp_path, monkeypatch)
+    _fill(scope="The whole repo.\n", focus="- error paths\n",
+          stop="Two quiet harden rounds in a row.\n")
+
+    assert _ok(["validate", "brief"]).exit_code == 0
+
+
+@pytest.mark.parametrize("title", ["Focus", "Stop when"])
+def test_validate_brief_names_focus_or_stop_when_left_as_the_scaffold_comment(
+    tmp_path, monkeypatch, title
+):
+    _harden_project(tmp_path, monkeypatch)
+    _fill(**{"focus" if title == "Focus" else "stop": None})
+
+    issues = _issues()
+
+    assert len(issues) == 1 and issues[0].startswith(f"{title} is empty"), issues
+    assert "none" in issues[0]
+
+
+@pytest.mark.parametrize("title", SECTIONS)
+def test_validate_brief_names_a_section_that_is_absent(tmp_path, monkeypatch, title):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    _fill()
+    path = projects.load_project(root, config.load_config(root), "thing").path / "brief.md"
+    path.write_text(re.sub(
+        rf"^## {title}\n.*?(?=^## |\Z)", "", path.read_text(), flags=re.S | re.M
+    ))
+
+    assert _issues() == [f"missing '{title}' section."]
+
+
+def test_validate_brief_on_a_remote_harden_project_matches_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    views = {}
+    for where, extra in (("local", []), ("hosted", ["--remote", "home"])):
+        if extra:
+            _hosted_checkout(tmp_path / where, monkeypatch, live_daemon)
+        else:
+            _checkout(tmp_path / where, monkeypatch)
+        _ok(["new", "Thing", "--level", "harden", *extra])
+        views[where] = [_issues()]
+        _fill(scope=None)
+        views[where].append(_issues())
+        _fill(scope="- src/specflo/\n", focus=None, stop=None)
+        views[where].append(_ok(["validate", "brief", "--json"]).output)
+
+    assert views["hosted"] == views["local"]
+    assert views["hosted"][1] == [views["hosted"][1][0]]
+    assert views["hosted"][1][0].startswith("Scope is empty")
+    assert json.loads(views["hosted"][2])["ready"] is True

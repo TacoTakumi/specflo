@@ -51,6 +51,14 @@ updated: {today}
 # A harden brief's sections, in document order.
 HARDEN_SECTIONS = ("Scope", "Focus", "Stop when")
 
+# What each harden section asks for when it is left empty. Focus and Stop when
+# may say 'none'; Scope may not.
+_HARDEN_EMPTY = {
+    "Scope": "Scope is empty: name the paths to harden, one list item each, or say the whole repo.",
+    "Focus": "Focus is empty: say what the review rounds look at hardest, or write none.",
+    "Stop when": "Stop when is empty: say when hardening stops, or write none.",
+}
+
 _HARDEN_TEMPLATE = """\
 ---
 project: {slug}
@@ -108,15 +116,37 @@ def check_count(doc: str) -> int:
     return len(_list_items(body))
 
 
+def _validate_harden_brief(doc: str) -> list[str]:
+    """A harden brief's gaps; empty when every section is there and has text.
+
+    A section holding only its scaffold comment is empty. Focus and Stop when
+    may say 'none'; a Scope of none hardens nothing, so it is a gap.
+    """
+    issues = []
+    for title in HARDEN_SECTIONS:
+        body = markdown.section_body(doc, f"## {title}")
+        text = markdown.strip_comments(body or "").strip()
+        if body is None:
+            issues.append(f"missing '{title}' section.")
+        elif not text:
+            issues.append(_HARDEN_EMPTY[title])
+        elif title == "Scope" and text.rstrip(".").casefold() == "none":
+            issues.append("Scope says none: name the paths to harden, or say the whole repo.")
+    return issues
+
+
 def validate_brief(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     """The brief's gaps; empty when it has a goal, exactly one check and proof.
 
-    Read-only. An empty Deferred section is not a gap: it is optional.
+    Read-only. An empty Deferred section is not a gap: it is optional. A
+    harden project's brief is checked on its own sections instead.
     """
     path = brief_path(root, cfg, slug)
     if not path.is_file():
         return ["brief.md not found - a quick project makes it at `specflo new`."]
     doc = path.read_text()
+    if load_project(root, cfg, slug).level == HARDEN_LEVEL:
+        return _validate_harden_brief(doc)
     issues = []
     bodies = {}
     for title in SECTIONS:
