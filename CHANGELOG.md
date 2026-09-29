@@ -26,6 +26,16 @@ latter. Release tags are of the form `vX.Y.Z`.
   Agents, and the commands in each group come in the order they are used. In
   `--json` each command's `group` names its new group.
 
+- **The memory snippet works in a global file.** It now says "The user
+  develops features with specflo" and has the agent run `specflo guide` only
+  in a repo that has a `.specflo/` directory, so it can go in
+  `~/.claude/CLAUDE.md` without sending the agent into repos that do not use
+  specflo. Update a copy you pasted before.
+- **`specflo guide` tells the agent to ask where the snippet goes:** global
+  (every repo), local (`CLAUDE.local.md`, gitignored: this repo, only you) or
+  team (the repo's `CLAUDE.md` or `AGENTS.md`, committed). `--json` carries the
+  same text as `memory_placement`. The README lists the three places.
+
 ### Fixed
 - **`specflo guide` lists the `skills` commands.** `skills install`,
   `status`, `update` and `uninstall` were missing, because the check that the

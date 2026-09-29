@@ -33,11 +33,22 @@ from .errors import SpecfloError
 MEMORY_SNIPPET = (
     "## Development workflow\n"
     "\n"
-    "This repo uses specflo for feature development. Run `specflo guide` at the\n"
-    "start of a session to orient yourself; `specflo status` shows the active\n"
-    "project and phase. Features move through brainstorm -> spec -> plan -> execute\n"
-    "using the specflo skills, recording decisions, requirements, and tasks through\n"
-    "the specflo CLI rather than editing its artifacts by hand."
+    "The user develops features with specflo. In a repo that has a `.specflo/`\n"
+    "directory, run `specflo guide` at the start of a session to orient yourself;\n"
+    "`specflo status` shows the active project and phase. Features move through\n"
+    "brainstorm -> spec -> plan -> execute using the specflo skills, recording\n"
+    "decisions, requirements, and tasks through the specflo CLI rather than editing\n"
+    "its artifacts by hand."
+)
+
+# Where the snippet goes is the user's call: the guide tells the agent to ask.
+# The README section lists the same three places.
+MEMORY_PLACEMENT = (
+    "Add this section once near the top of an agent memory file, so a fresh agent\n"
+    "knows specflo is here. Ask the user which file:\n"
+    "  global  ~/.claude/CLAUDE.md or the harness's user file: every repo\n"
+    "  local   CLAUDE.local.md in the repo root, gitignored: this repo, only you\n"
+    "  team    the repo's CLAUDE.md or AGENTS.md, committed: everyone in the repo"
 )
 
 # No active project is a state, not a prompt: the same two lines serve `guide`,
@@ -317,6 +328,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
         "pipeline": list(workflow.PHASES),
         "commands": [dict(entry) for entry in COMMANDS],
         "memory_snippet": MEMORY_SNIPPET,
+        "memory_placement": MEMORY_PLACEMENT,
         "levels": LEVELS_TEXT,
     }
 

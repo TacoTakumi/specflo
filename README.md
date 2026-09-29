@@ -100,18 +100,31 @@ daemon and team commands).
 
 ## Using specflo with your agent
 
-The installed skills make your agent *able* to drive specflo; a note in the
-project memory file (`CLAUDE.md`, `AGENTS.md`, ...) makes it *routine*. Paste
-this near the top of that file:
+The installed skills make your agent *able* to drive specflo; a note in an
+agent memory file makes it *routine*. Put it in one of three places:
+
+- **Global** - `~/.claude/CLAUDE.md`, or your harness's user memory file. It
+  applies to every repo you work in; the note only has the agent run specflo in
+  a repo that has a `.specflo/` directory.
+- **Local** - `CLAUDE.local.md` in the repo root, added to `.gitignore`. It
+  applies to this repo and only to you, so a team repo's files stay unchanged.
+  This file is a Claude Code feature. In another harness, a repo that does not
+  track `AGENTS.md` can hold your own copy listed in `.git/info/exclude`.
+- **Team** - the repo's `CLAUDE.md` or `AGENTS.md`, committed, for everyone who
+  works in the repo.
+
+`specflo guide` prints the note and tells the agent to ask you which place to
+use. Add this near the top of the file:
 
 ```markdown
 ## Development workflow
 
-This repo uses specflo for feature development. Run `specflo guide` at the
-start of a session to orient yourself; `specflo status` shows the active
-project and phase. Features move through brainstorm -> spec -> plan -> execute
-using the specflo skills, recording decisions, requirements, and tasks through
-the specflo CLI rather than editing its artifacts by hand.
+The user develops features with specflo. In a repo that has a `.specflo/`
+directory, run `specflo guide` at the start of a session to orient yourself;
+`specflo status` shows the active project and phase. Features move through
+brainstorm -> spec -> plan -> execute using the specflo skills, recording
+decisions, requirements, and tasks through the specflo CLI rather than editing
+its artifacts by hand.
 ```
 
 Prompts that map onto the workflow:

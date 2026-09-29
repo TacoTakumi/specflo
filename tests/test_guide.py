@@ -151,6 +151,23 @@ def test_guide_offers_paste_ready_memory_snippet(cwd):
     assert "v0." not in guide.MEMORY_SNIPPET  # version-less by design
 
 
+def test_guide_asks_where_to_add_the_memory_snippet(cwd):
+    # The snippet may go in a global, local or team file, so the agent asks the
+    # user; and in a global file it must not send the agent into every repo.
+    out = runner.invoke(app, ["guide"]).output
+    assert guide.MEMORY_PLACEMENT in out
+    assert out.index(guide.MEMORY_PLACEMENT) < out.index(guide.MEMORY_SNIPPET)
+    for place in ("global  ~/.claude/CLAUDE.md", "local   CLAUDE.local.md",
+                  "team    the repo's CLAUDE.md or AGENTS.md"):
+        assert place in guide.MEMORY_PLACEMENT, place
+    assert "Ask the user" in guide.MEMORY_PLACEMENT
+    assert "The user develops features with specflo" in guide.MEMORY_SNIPPET
+    assert "In a repo that has a `.specflo/`" in guide.MEMORY_SNIPPET
+    assert "This repo uses" not in guide.MEMORY_SNIPPET
+    data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert data["memory_placement"] == guide.MEMORY_PLACEMENT
+
+
 def test_memory_snippet_matches_the_readme_block():
     # README.md is the authority for this blurb - it is the copy users read while
     # onboarding - and MEMORY_SNIPPET mirrors it so the CLI can print it without

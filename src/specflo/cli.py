@@ -1110,8 +1110,7 @@ def guide_(
     lines = [
         "specflo - a spec-driven software-engineering workflow.",
         "",
-        "Paste this near the top of your agent memory file (CLAUDE.md / AGENTS.md)\n"
-        "once, so a fresh agent always knows specflo is here:",
+        data["memory_placement"],
         rule,
         data["memory_snippet"],
         rule,
