@@ -105,8 +105,16 @@ VERDICTS = (READY, CHANGES_REQUESTED, WAIVED)
 # The verdicts that clear the completion gate (D-08). ``waived`` is a
 # deliberate, reasoned way past it, not an accident.
 PASSING = (READY, WAIVED)
+# A round's kind. A gate round is the review the round budget reads; a
+# harden round is a fresh review of its whole scope that the budget skips.
+# Only a harden round records its kind, so a round file with none - every
+# file written before harden rounds - is a gate round.
+GATE = "gate"
+HARDEN = "harden"
+KINDS = (GATE, HARDEN)
 # Frontmatter key order, pinned so a close rewrites a round file in the
-# shape `review start` minted it.
+# shape `review start` minted it. A harden round's kind is minted after
+# these, where a close keeps it (see :func:`_render`).
 _FIELDS = ("round", "verdict", "date", "sha", "base", "level", "reason")
 # Minting reads every round file then writes one; the lock covers that whole
 # critical section so two processes cannot mint the same number. It is named
@@ -123,7 +131,7 @@ sha: '{sha}'
 base: '{base}'
 level: '{level}'
 reason: ''
----
+{kind}---
 
 # Review round {number}
 
@@ -180,6 +188,13 @@ def frontmatter(path: Path) -> dict:
     return fields if isinstance(fields, dict) else {}
 
 
+def round_kind(fields: dict) -> str:
+    """A round's kind from its frontmatter mapping: ``harden`` when it says
+    so, else ``gate`` - a round with no kind, or one a hand-edit spelled
+    otherwise, is a gate round."""
+    return HARDEN if fields.get("kind") == HARDEN else GATE
+
+
 def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
     """The open round's path, or None - when no round exists, or when the latest
     one carries a verdict.
@@ -229,18 +244,23 @@ def _first_reviewed_sha(rounds: list[tuple[int, Path]]) -> str | None:
 
 
 def budget(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
-    """The current level's review budget, read from the round files.
+    """The current level's review budget, read from the gate round files.
 
-    ``used`` counts the rounds whose level is the project's current level; a
-    round with no level recorded counts toward it too. ``spent`` is True when
-    the latest round asks for changes and the level has used every round
-    ``review_max_rounds`` allows: the next round needs the user's say.
+    A harden round is skipped: it neither counts nor is the latest round
+    here. ``used`` counts the rounds whose level is the project's current
+    level; a round with no level recorded counts toward it too. ``spent`` is
+    True when the latest round asks for changes and the level has used every
+    round ``review_max_rounds`` allows: the next round needs the user's say.
     ``regressions`` is the latest round's count (see :func:`regression_count`),
     None with no round; it changes neither ``used`` nor ``spent``.
     """
     level = load_project(root, cfg, slug).level
-    files = round_files(root, cfg, slug)
-    rounds = [frontmatter(path) for _, path in files]
+    files, rounds = [], []
+    for number, path in round_files(root, cfg, slug):
+        fields = frontmatter(path)
+        if round_kind(fields) == GATE:
+            files.append((number, path))
+            rounds.append(fields)
     used = sum(1 for fields in rounds if (fields.get("level") or level) == level)
     latest = str(rounds[-1].get("verdict", "") or "") if rounds else ""
     limit = cfg.review_max_rounds
@@ -365,6 +385,7 @@ def start_round(
     over_budget: bool = False,
     sha: str | None = None,
     need_fixes: bool = False,
+    harden: bool = False,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
@@ -392,21 +413,31 @@ def start_round(
     (see :func:`unfixed_items`), whatever ``full`` and ``over_budget`` say.
     The ``review start`` verb asks for it; a ladder's climb, which opens a
     level's round before the level's work, and a waive do not.
+
+    ``harden`` opens a harden round, which records its kind: it always
+    reviews its whole scope, so it has no base whatever ``full`` says, and
+    the budget neither refuses it nor counts it, so ``over_budget`` changes
+    nothing. It still needs each open item's fix, since it checks each item.
+    It hands back an open harden round, and refuses an open gate round
+    rather than pass it off as a harden one.
     """
     today = today or datetime.date.today().isoformat()
     directory = project_dir(root, cfg, slug)
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         existing = open_round(root, cfg, slug)
         if existing is not None:
+            if harden and round_kind(frontmatter(existing)) != HARDEN:
+                raise SpecfloError(_open_gate_message(existing.name))
             _restamp_untouched(root, existing, sha)
             return existing, False
         # Before the budget: --over-budget cannot open a round while an item
         # is unfixed, so the budget's choice is asked only once it could.
         if need_fixes and (unfixed := unfixed_items(root, cfg, slug)):
             raise SpecfloError(unfixed_message(unfixed))
-        state = budget(root, cfg, slug)
-        if state["spent"] and not over_budget:
-            raise SpecfloError(budget_message(state))
+        if not harden:
+            state = budget(root, cfg, slug)
+            if state["spent"] and not over_budget:
+                raise SpecfloError(budget_message(state))
         rounds = round_files(root, cfg, slug)
         number = max((n for n, _ in rounds), default=0) + 1
         path = directory / f"review-{number}.md"
@@ -414,10 +445,21 @@ def start_round(
             number=number,
             today=today,
             sha=head_sha(root) if sha is None else sha,
-            base="" if full else _reviewed_sha(rounds),
+            base="" if full or harden else _reviewed_sha(rounds),
             level=load_project(root, cfg, slug).level,
+            kind=f"kind: {HARDEN}\n" if harden else "",
         ))
     return path, True
+
+
+def _open_gate_message(name: str) -> str:
+    """What to tell the user who asks for a harden round while gate round ``name`` is open."""
+    return (
+        f"{name} is an open gate round, and a harden round opens only once it is"
+        " closed. Close it with `specflo review done`, or waive it with"
+        " `specflo review waive --reason <why>`; then run"
+        " `specflo review start --harden` again."
+    )
 
 
 def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
@@ -439,7 +481,7 @@ def _restamp_untouched(root: Path, path: Path, sha: str | None) -> None:
 
 def skeleton_body(number: int) -> str:
     """The body ``review start`` mints for round ``number``."""
-    minted = _TEMPLATE.format(number=number, today="", sha="", base="", level="")
+    minted = _TEMPLATE.format(number=number, today="", sha="", base="", level="", kind="")
     return minted.split("---", 2)[2].lstrip("\n")
 
 
@@ -454,8 +496,9 @@ def body_of(path: Path) -> str:
 def _render(fields: dict, body: str) -> str:
     """A round file from its frontmatter mapping and body.
 
-    Keys keep their minted order; any key a human added survives after them,
-    since the CLI reads only the ones in ``_FIELDS``.
+    Keys keep their minted order; any other key - a harden round's kind, or
+    one a human added - survives after them, so a gate round never gains a
+    kind it was not minted with.
     """
     ordered = {key: fields.get(key, "") or "" for key in _FIELDS}
     ordered.update({k: v for k, v in fields.items() if k not in _FIELDS})
@@ -1384,7 +1427,7 @@ def items_to_check(root: Path, cfg: SpecfloConfig, slug: str, number: int) -> li
 
 
 def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
-    """What the open round reviews: its scope, its range, and the items to check.
+    """What the open round reviews: its kind, its scope, its range, and the items to check.
 
     A round with a base reviews the delta ``<base>..HEAD``; one without
     reviews the whole branch. ``sha`` is the commit the round opened at,
@@ -1407,6 +1450,7 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
         "file": path.name,
         "sha": str(fields.get("sha", "") or ""),
         "first_reviewed_sha": _first_reviewed_sha(earlier),
+        "kind": round_kind(fields),
         "scope": DELTA if base else WHOLE_BRANCH,
         "base": base,
         "range": f"{base}..HEAD" if base else None,

@@ -437,14 +437,14 @@ class LocalProjectService:
 
     def start_round(
         self, slug: str, full: bool = False, over_budget: bool = False,
-        sha: str | None = None,
+        sha: str | None = None, harden: bool = False,
     ) -> tuple[Path, bool]:
         # Checked here, where a local and a hosted start both pass, so a round
         # opens only once each open item has a done fix task wherever the
         # project lives.
         return review.start_round(
             self.root, self.cfg, slug, full=full, over_budget=over_budget, sha=sha,
-            need_fixes=True,
+            need_fixes=True, harden=harden,
         )
 
     def review_scope(self, slug: str) -> dict:

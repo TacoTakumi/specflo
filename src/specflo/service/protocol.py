@@ -322,13 +322,14 @@ class ProjectService(Protocol):
 
     def start_round(
         self, slug: str, full: bool = False, over_budget: bool = False,
-        sha: str | None = None,
+        sha: str | None = None, harden: bool = False,
     ) -> tuple[Path, bool]:
         """Mint the next review round or hand back the open one; ``full``
         reviews the whole branch rather than the delta since the last round,
         and ``over_budget`` opens a round past the level's round budget.
         ``sha`` is HEAD of the caller's checkout, where the code lives: a
-        daemon holds only the documents."""
+        daemon holds only the documents. ``harden`` opens a harden round,
+        which reviews the whole scope outside the round budget."""
         ...
 
     def review_scope(self, slug: str) -> dict:

@@ -164,6 +164,17 @@ def test_each_round_reads_the_verdict_sha_and_base_it_closed_with(tmp_path, monk
     assert [n for n, _ in review.round_files(tmp_path, _cfg(tmp_path), SLUG)] == [1, 2, 3, 4]
 
 
+def test_each_round_has_no_kind_and_reads_as_a_gate_round(tmp_path, monkeypatch):
+    """The rounds predate harden rounds, so none names a kind."""
+    project_dir = _project(tmp_path, monkeypatch)
+
+    for name in ROUND_FILES:
+        fields = review.frontmatter(project_dir / name)
+        assert "kind" not in fields, name
+        assert review.round_kind(fields) == review.GATE, name
+    _assert_rounds_unchanged(project_dir)
+
+
 def test_a_finding_line_with_no_location_parses_as_before(tmp_path, monkeypatch):
     project_dir = _project(tmp_path, monkeypatch)
 

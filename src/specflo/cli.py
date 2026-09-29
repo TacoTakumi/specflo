@@ -2473,6 +2473,10 @@ def review_start(
         False, "--over-budget",
         help="Open one more round when the level has used its review budget.",
     ),
+    harden: bool = typer.Option(
+        False, "--harden",
+        help="Open a harden round: a fresh review of the whole branch, outside the round budget.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mint the active project's next review round and print its locator and scope."""
@@ -2482,7 +2486,8 @@ def review_start(
         # HEAD is read here, in the checkout that holds the code: a daemon
         # holds only the documents, so its own git names nothing reviewed.
         path, created = svc.start_round(
-            slug, full=full, over_budget=over_budget, sha=review_module.head_sha(root)
+            slug, full=full, over_budget=over_budget, sha=review_module.head_sha(root),
+            harden=harden,
         )
         scope = svc.review_scope(slug)
     except SpecfloError as exc:
@@ -2491,12 +2496,15 @@ def review_start(
     locator, reported = _artifact_report(root, slug, path)
     if json_output:
         typer.echo(json.dumps({
-            "locator": locator, "path": reported, "created": created,
+            "locator": locator, "path": reported, "created": created, "kind": scope["kind"],
             "scope": scope["scope"], "range": scope["range"], "items": scope["items"],
         }))
         return
     note = "" if created else " (already open)"
     typer.echo(f"{locator}{note}")
+    # Only a harden round names its kind: a gate round prints as it always did.
+    if scope["kind"] == "harden":
+        typer.echo("Kind: harden")
     typer.echo(f"Scope: {scope['range'] or 'whole branch'}")
     if scope["items"]:
         typer.echo("Items to check: " + ", ".join(scope["items"]))
