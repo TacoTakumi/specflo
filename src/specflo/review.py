@@ -320,6 +320,36 @@ def _marked_in(doc: str) -> int:
     )
 
 
+def _new_finds_in(doc: str) -> int:
+    """How many blocker and should-fix finding lines under a document's
+    Findings heading carry no regression mark: what a harden round found new.
+    A nit is never a new find."""
+    return sum(
+        1 for line in _findings_lines(doc) or []
+        if (finding := parse_finding_line(line))
+        and finding.severity != "nit" and not finding.regression
+    )
+
+
+def _quiet_rounds(files: list[tuple[int, Path]]) -> list[str]:
+    """The file of each round in the run of quiet harden rounds ``files`` ends
+    in, oldest first; empty when the latest round is not one.
+
+    A quiet round is a harden round closed hardened with no new find. Any
+    other round breaks the run: a gate round, an open round, or a waived one,
+    which reviewed nothing.
+    """
+    quiet: list[str] = []
+    for _, path in reversed(files):
+        fields = frontmatter(path)
+        if round_kind(fields) != HARDEN or fields.get("verdict") != HARDENED:
+            break
+        if _new_finds_in(path.read_text()):
+            break
+        quiet.insert(0, path.name)
+    return quiet
+
+
 def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[str]]:
     """The open items no done task fixes, each with the tasks that fix it but are not done.
 
@@ -619,8 +649,11 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     }
     # Only carried once a harden round is recorded, when the round the
     # gate reads may not be the latest one; the next-step hint names it.
+    # So are the quiet harden rounds the series ends in: after two, the hint
+    # suggests that hardening stop.
     if any(round_kind(frontmatter(each)) == HARDEN for _, each in files):
         state["gate"] = gate
+        state["quiet_rounds"] = _quiet_rounds(files)
     return state
 
 
@@ -763,7 +796,9 @@ class ClosedRound:
     ``findings`` is None for a waived round, whose findings are never read.
     ``still_open`` names the earlier items the round checked open.
     ``regressions`` counts the findings that carry the regression mark once
-    the round is closed; None for a waived round.
+    the round is closed; None for a waived round. ``new_finds`` counts a
+    harden round's blocker and should-fix findings with no regression mark;
+    None for a gate round or a waived round.
     """
 
     path: Path
@@ -771,6 +806,7 @@ class ClosedRound:
     findings: dict[str, int] | None
     still_open: list[str] = dataclasses.field(default_factory=list)
     regressions: int | None = None
+    new_finds: int | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1152,7 +1188,8 @@ def close_round(
     :func:`regression_marks`), since a daemon holds no code, and the marks
     are written as sent. A line already marked keeps its mark. The closed
     round counts its marked findings, and the verdict is the one it would be
-    with no mark.
+    with no mark. A closed harden round also counts its new finds: its
+    blocker and should-fix findings with no mark.
 
     A round with nits adds one follow-up naming their IDs, so the nits stay
     listed after the project completes without blocking it. ``nits_followup``
@@ -1213,6 +1250,7 @@ def close_round(
             body = report_text
         counts = None
         marked = None
+        new_finds = None
         still_open: list[str] = []
         if verdict != WAIVED:
             findings = parse_findings(root, cfg, slug, path, body)
@@ -1231,6 +1269,7 @@ def close_round(
                 # Not a gate round: whatever it found, it closes hardened, and
                 # its blocker and should-fix findings are items later rounds check.
                 derived = HARDENED
+                new_finds = _new_finds_in(body)
             if verdict is not None and verdict != derived:
                 if harden:
                     raise SpecfloError(
@@ -1269,7 +1308,8 @@ def close_round(
             fields["reason"] = reason
         path.write_text(_render(fields, body))
     return ClosedRound(
-        path=path, verdict=verdict, findings=counts, still_open=still_open, regressions=marked
+        path=path, verdict=verdict, findings=counts, still_open=still_open,
+        regressions=marked, new_finds=new_finds,
     )
 
 

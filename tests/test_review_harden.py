@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from reviewhelp import fix_active_open_items, write_none
-from specflo import config, followup, plan, projects, review, spec
+from specflo import config, followup, markdown, plan, projects, review, spec
 from specflo.cli import app
 from test_hosted_parity import (
     SLUG,
@@ -286,7 +286,9 @@ def test_a_harden_round_closes_hardened_whatever_it_found_and_files_no_nits_foll
 
     result = _cli("review", "done")
 
-    assert result.stdout == "thing/review-2 closed hardened (0 blocker, 1 should-fix, 1 nit)\n"
+    assert result.stdout == (
+        "thing/review-2 closed hardened (0 blocker, 1 should-fix, 1 nit; 1 new find)\n"
+    )
     fields = review.frontmatter(project_dir / "review-2.md")
     assert (fields["verdict"], fields["kind"], fields["sha"]) == ("hardened", "harden", "b0b0b0b")
     assert "- F-03 (nit) A name is vague" in (project_dir / "review-2.md").read_text()
@@ -348,7 +350,7 @@ def test_a_harden_round_that_checks_an_item_closed_drops_it_from_the_next_items(
     _cli("review", "finding", "check", "F-01", "closed")
     write_none(project_dir / "review-2.md")
     assert _cli("review", "done").stdout == (
-        "thing/review-2 closed hardened (0 blocker, 0 should-fix, 0 nit)\n"
+        "thing/review-2 closed hardened (0 blocker, 0 should-fix, 0 nit; 0 new finds)\n"
     )
 
     started = _cli("review", "start")
@@ -377,6 +379,72 @@ def test_a_harden_round_is_the_first_reviewed_round_for_regression_marks(
     assert "- F-02 (blocker, regression) [src/app.py:3] It broke" in (
         project_dir / "review-2.md"
     ).read_text()
+
+
+# --- the new finds of a harden round ------------------------------------------------------
+
+
+def _write_findings(path, lines):
+    """Write ``lines`` by hand as the Findings section of the round at ``path``."""
+    path.write_text(
+        markdown.replace_section_body(path.read_text(), review.FINDINGS_HEADER, "\n".join(lines))
+    )
+
+
+def _new_and_marked(project_dir):
+    """Check F-01 closed in open harden round 2 and record, by hand, a
+    should-fix marked as a regression, a new blocker and a nit."""
+    _cli("review", "finding", "check", "F-01", "closed")
+    _write_findings(project_dir / "review-2.md", [
+        "- F-02 (should-fix, regression) [src/app.py:5] The fix broke the lock",
+        "- F-03 (blocker) [src/app.py:9] The cache is never cleared",
+        "- F-04 (nit) A name is vague",
+    ])
+
+
+def test_a_regression_or_a_nit_is_no_new_find_of_a_harden_round(tmp_path, monkeypatch):
+    project_dir = _asked(tmp_path, monkeypatch)
+    _new_and_marked(project_dir)
+
+    result = _cli("review", "done")
+
+    assert result.stdout == (
+        "thing/review-2 closed hardened (1 blocker, 1 should-fix, 1 nit; 1 regression;"
+        " 1 new find)\n"
+    )
+    closed = review.frontmatter(project_dir / "review-2.md")
+    assert closed["verdict"] == "hardened"
+
+
+def test_done_json_on_a_harden_round_carries_its_new_finds(tmp_path, monkeypatch):
+    project_dir = _asked(tmp_path, monkeypatch)
+    _new_and_marked(project_dir)
+
+    data = json.loads(_cli("review", "done", "--json").stdout)
+
+    assert (data["verdict"], data["regressions"], data["new_finds"]) == ("hardened", 1, 1)
+    assert data["findings"] == {"blocker": 1, "should-fix": 1, "nit": 1}
+
+
+def test_done_on_a_gate_round_names_no_new_finds(tmp_path, monkeypatch):
+    project_dir = _asked(tmp_path, monkeypatch, harden=False)
+    _new_and_marked(project_dir)
+
+    data = json.loads(_cli("review", "done", "--json").stdout)
+
+    assert data["verdict"] == "changes-requested"
+    assert "new_finds" not in data
+
+
+def test_a_waived_harden_round_names_no_new_finds(tmp_path, monkeypatch):
+    project_dir = _asked(tmp_path, monkeypatch)
+    _new_and_marked(project_dir)
+
+    result = _cli("review", "done", "--verdict", "waived", "--reason", "Out of time")
+    data = json.loads(_cli("status", "--json").stdout)
+
+    assert result.stdout == "thing/review-2 closed waived\n"
+    assert data["review"]["quiet_rounds"] == []
 
 
 # --- an explicit verdict for a harden round ---------------------------------------------
@@ -408,7 +476,9 @@ def test_a_harden_round_takes_verdict_hardened(tmp_path, monkeypatch):
 
     result = _cli("review", "done", "--verdict", "hardened")
 
-    assert result.stdout == "thing/review-2 closed hardened (0 blocker, 1 should-fix, 1 nit)\n"
+    assert result.stdout == (
+        "thing/review-2 closed hardened (0 blocker, 1 should-fix, 1 nit; 1 new find)\n"
+    )
     assert review.frontmatter(project_dir / "review-2.md")["verdict"] == "hardened"
 
 
@@ -649,6 +719,129 @@ def test_a_project_of_gate_rounds_carries_no_gate_state(tmp_path, monkeypatch):
     _clean(project_dir, 1)
 
     assert "gate" not in _state(tmp_path)
+    assert "quiet_rounds" not in _state(tmp_path)
+
+
+# --- a stop after two quiet harden rounds -------------------------------------------------
+
+# The hint once the latest two harden rounds, the first two fields, raised no
+# new blocker or should-fix finding; the third field is how the whole suite
+# is named, and the fourth what completion then needs.
+_STOP = (
+    "All tasks done - the last two harden rounds, {0} and {1}, raised no new blocker or"
+    " should-fix finding, so hardening may stop here; that is the user's call. To stop,"
+    " {2} once, then {3}. To go on, open another harden round with"
+    " `specflo review start --harden`."
+)
+_ADVANCE = "run `specflo advance` to complete the project"
+_GATE_NEEDS = (
+    "go on to completion, which needs a gate round whose verdict passes and no open item"
+    " (`specflo validate execute` names what is left)"
+)
+_SUITE = "run the whole test suite"
+
+
+def test_two_quiet_harden_rounds_in_a_row_hint_a_stop_naming_the_whole_suite(
+    tmp_path, monkeypatch
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    assert _clean(project_dir, 2, "--harden").endswith("; 0 new finds)\n")
+    # One quiet round is no run: the hint reads as it did.
+    assert _next() == (
+        "All tasks done and review-2.md is hardened - run `specflo advance` to complete"
+        " the project."
+    )
+
+    assert _clean(project_dir, 3, "--harden") == (
+        "thing/review-3 closed hardened (0 blocker, 0 should-fix, 0 nit; 0 new finds)\n"
+    )
+
+    assert _state(tmp_path)["quiet_rounds"] == ["review-2.md", "review-3.md"]
+    assert _next() == _STOP.format("review-2.md", "review-3.md", _SUITE, _ADVANCE)
+    _cli("config", "set", "test_command", "uv run pytest -q")
+    assert _next() == _STOP.format(
+        "review-2.md", "review-3.md", f"{_SUITE} (`uv run pytest -q`)", _ADVANCE
+    )
+    # The hint only suggests: the gate reads as it did.
+    assert _validate() == (0, [])
+
+
+def test_harden_rounds_whose_only_findings_are_nits_or_regressions_hint_a_stop(
+    tmp_path, monkeypatch
+):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _cli("review", "start", "--harden")
+    _write_findings(project_dir / "review-2.md", [
+        "- F-01 (should-fix, regression) [src/app.py:5] The fix broke the lock",
+        "- F-02 (nit) A name is vague",
+    ])
+    assert _cli("review", "done").stdout.endswith("; 1 regression; 0 new finds)\n")
+    fix_active_open_items()
+    _cli("review", "start", "--harden")
+    _cli("review", "finding", "check", "F-01", "closed")
+    _write_findings(project_dir / "review-3.md", [
+        "- F-03 (blocker, regression) [src/app.py:7] The fix broke the cache",
+        "- F-04 (nit) A comment is stale",
+    ])
+
+    assert _cli("review", "done").stdout == (
+        "thing/review-3 closed hardened (1 blocker, 0 should-fix, 1 nit; 1 regression;"
+        " 0 new finds)\n"
+    )
+
+    # F-03 is still an item to fix: the stop names what completion needs.
+    assert _validate() == (1, [_LEFT_OPEN.format("review-3.md", "F-03")])
+    assert _next() == _STOP.format("review-2.md", "review-3.md", _SUITE, _GATE_NEEDS)
+
+
+def test_two_quiet_harden_rounds_with_a_new_find_between_hint_no_stop(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _clean(project_dir, 2, "--harden")
+    _cli("review", "start", "--harden")
+    _should_fix_and_nit()
+    assert _cli("review", "done").stdout.endswith("; 1 new find)\n")
+    fix_active_open_items()
+
+    _clean(project_dir, 4, "--harden", closed=["F-01"])
+
+    assert _state(tmp_path)["quiet_rounds"] == ["review-4.md"]
+    hint = _next()
+    assert hint == (
+        "All tasks done and review-4.md is hardened after a round that asked for changes"
+        " - run the whole test suite once more, then `specflo advance` to complete the"
+        " project."
+    )
+
+
+def test_a_gate_round_between_two_quiet_harden_rounds_breaks_the_run(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _clean(project_dir, 2, "--harden")
+    _clean(project_dir, 3)
+
+    _clean(project_dir, 4, "--harden")
+
+    assert _state(tmp_path)["quiet_rounds"] == ["review-4.md"]
+    assert _next() == (
+        "All tasks done and review-4.md is hardened - run `specflo advance` to complete"
+        " the project."
+    )
+
+
+def test_a_waived_harden_round_breaks_the_run(tmp_path, monkeypatch):
+    project_dir = _planned(tmp_path, monkeypatch)
+    _clean(project_dir, 1)
+    _clean(project_dir, 2, "--harden")
+    _cli("review", "start", "--harden")
+    _cli("review", "waive", "--reason", "Out of time")
+
+    _clean(project_dir, 4, "--harden")
+
+    assert _state(tmp_path)["quiet_rounds"] == ["review-4.md"]
+    assert "--harden" not in _next()
 
 
 # --- a hosted harden round -------------------------------------------------------------
@@ -725,7 +918,7 @@ def test_a_hosted_harden_close_writes_the_same_round_as_a_local_one(
         assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
     done = [(code, text) for args, code, text in hosted[1:] if args[:2] == ["review", "done"]]
     assert done[-1] == (0, f"{SLUG}/review-3 closed hardened"
-                           " (0 blocker, 1 should-fix, 1 nit; still open: F-02)\n")
+                           " (0 blocker, 1 should-fix, 1 nit; 1 new find; still open: F-02)\n")
     for rounds in (local_dir, hosted_dir):
         fields = review.frontmatter(rounds / "review-3.md")
         assert (fields["verdict"], fields["kind"]) == ("hardened", "harden")
@@ -781,4 +974,46 @@ def test_a_hosted_gate_after_a_harden_round_reads_as_a_local_one(
     assert "review-3.md leaves F-03 open" in shown[0]
     assert "latest round 4 hardened" in shown[1] and "; passes" in shown[1]
     assert "`specflo advance`" in shown[1]
+    _assert_the_daemon_ran_no_git(git, live_daemon["root"])
+
+
+def test_a_hosted_stop_after_two_quiet_harden_rounds_reads_as_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    """A gate round closes ready, then two harden rounds record only a nit
+    each: the second close counts no new find, and status suggests a stop
+    naming this checkout's test command, locally and hosted alike."""
+    steps = [
+        *_round_one(),
+        *_fix("Name the right command", "F-01", "T-02"),
+        (["review", "start"], None),
+        (["review", "finding", "check", "F-01", "closed"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A name is vague"], None),
+        (["review", "done"], None),
+        (["review", "start", "--harden"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A comment is stale"], None),
+        (["review", "done"], None),
+        (["status"], None),
+        (["review", "start", "--harden"], None),
+        (["review", "finding", "add", "--severity", "nit", "--text", "A test name is long"], None),
+        (["review", "done"], None),
+        (["config", "set", "test_command", "uv run pytest -q"], None),
+        (["status"], None),
+    ]
+    local, _ = _local_steps(tmp_path, monkeypatch, steps)
+    git = _recording_git(monkeypatch)
+    hosted, _ = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+
+    assert len(local) == len(hosted) == len(steps) + 1
+    for mine, theirs in zip(local[1:], hosted[1:], strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    done = [text for args, _, text in hosted[1:] if args[:2] == ["review", "done"]]
+    assert done[-1] == (
+        f"{SLUG}/review-4 closed hardened (0 blocker, 0 should-fix, 1 nit; 0 new finds)\n"
+    )
+    shown = [text for args, _, text in hosted[1:] if args == ["status"]]
+    assert "--harden" not in shown[0]
+    stop = " ".join(shown[1].split())
+    assert "the last two harden rounds, review-3.md and review-4.md," in stop
+    assert "run the whole test suite (`uv run pytest -q`) once" in stop
     _assert_the_daemon_ran_no_git(git, live_daemon["root"])

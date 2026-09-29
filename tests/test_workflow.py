@@ -505,3 +505,58 @@ def test_advance_names_the_test_command_when_every_task_is_done(tmp_path, monkey
 
 def test_advance_keeps_the_no_round_hint_without_a_test_command(tmp_path, monkeypatch):
     assert _advance_with_every_task_done(tmp_path, monkeypatch) == _NO_ROUND_TEXT
+
+
+# --- a stop after two quiet harden rounds -------------------------------------------
+
+# The hint once the latest two harden rounds raised no new blocker or
+# should-fix finding; the first field names the whole suite, the second what
+# completion then needs.
+_STOP_TEXT = (
+    "All tasks done - the last two harden rounds, review-3.md and review-4.md, raised no"
+    " new blocker or should-fix finding, so hardening may stop here; that is the user's"
+    " call. To stop, {0} once, then {1}. To go on, open another harden round with"
+    " `specflo review start --harden`."
+)
+_GATE_NEEDS_TEXT = (
+    "go on to completion, which needs a gate round whose verdict passes and no open item"
+    " (`specflo validate execute` names what is left)"
+)
+
+
+def _hardened(quiet, passing=True):
+    """Round 4 closed hardened after gate round 1, with ``quiet`` the run of
+    quiet harden rounds the series ends in."""
+    gate = {"file": "review-1.md", "verdict": "ready-to-merge", "passes": True,
+            "left_open": [] if passing else ["F-02"]}
+    return {**_closed(4, "hardened"), "passing": passing, "open_items": [],
+            "budget_spent": False, "after_changes": False, "gate": gate,
+            "quiet_rounds": quiet}
+
+
+def test_two_quiet_harden_rounds_hint_a_stop_naming_the_test_command():
+    quiet = ["review-3.md", "review-4.md"]
+    advance = "run `specflo advance` to complete the project"
+
+    assert _hint(_hardened(quiet)) == _STOP_TEXT.format("run the whole test suite", advance)
+    assert workflow.next_step(
+        "execute", progress=_ALL_DONE, review=_hardened(quiet), test_command=_SENTINEL
+    ) == _STOP_TEXT.format(f"run the whole test suite (`{_SENTINEL}`)", advance)
+    # A longer run names its latest two rounds.
+    assert _hint(_hardened(["review-2.md", *quiet])) == _hint(_hardened(quiet))
+
+
+def test_the_stop_names_what_completion_needs_while_the_gate_fails():
+    hint = _hint(_hardened(["review-3.md", "review-4.md"], passing=False))
+
+    assert hint == _STOP_TEXT.format("run the whole test suite", _GATE_NEEDS_TEXT)
+
+
+def test_one_quiet_harden_round_keeps_the_hint_it_had():
+    for passing in (True, False):
+        without = {**_hardened([], passing)}
+        del without["quiet_rounds"]
+
+        for quiet in ([], ["review-4.md"]):
+            assert _hint(_hardened(quiet, passing)) == _hint(without), (passing, quiet)
+            assert "--harden" not in _hint(_hardened(quiet, passing))

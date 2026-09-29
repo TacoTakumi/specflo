@@ -2570,11 +2570,16 @@ def review_done(
     _refresh_checkpoint(svc, slug)
     locator, reported = _artifact_report(root, slug, closed.path)
     if json_output:
-        typer.echo(json.dumps({
+        payload = {
             "locator": locator, "path": reported, "verdict": closed.verdict,
             "findings": closed.findings, "still_open": closed.still_open,
             "regressions": closed.regressions,
-        }))
+        }
+        # Only a harden round counts its new finds, so a gate round's JSON
+        # reads as before.
+        if closed.new_finds is not None:
+            payload["new_finds"] = closed.new_finds
+        typer.echo(json.dumps(payload))
     elif closed.findings is None:
         typer.echo(f"{locator} closed {closed.verdict}")
     else:
@@ -2583,6 +2588,11 @@ def review_done(
         if closed.regressions:
             plural = "" if closed.regressions == 1 else "s"
             counts += f"; {closed.regressions} regression{plural}"
+        # Named for every closed harden round, none included: a round with no
+        # new find is what tells hardening it may stop.
+        if closed.new_finds is not None:
+            plural = "" if closed.new_finds == 1 else "s"
+            counts += f"; {closed.new_finds} new find{plural}"
         if closed.still_open:
             counts += "; still open: " + ", ".join(closed.still_open)
         typer.echo(f"{locator} closed {closed.verdict} ({counts})")

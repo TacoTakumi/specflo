@@ -89,18 +89,44 @@ def _whole_suite(test_command: str | None) -> str:
     return "run the whole test suite"
 
 
+# What completion needs once hardening stops, in a project whose gate reads
+# the latest gate round's verdict and the items the rounds after it leave open.
+_GATE_NEEDS = (
+    "go on to completion, which needs a gate round whose verdict passes and no open item"
+    " (`specflo validate execute` names what is left)"
+)
+
+
+def _harden_stop(quiet: list[str], test_command: str | None, finish: str) -> str:
+    """The hint once the latest two harden rounds, ``quiet``, raised no new
+    blocker or should-fix finding.
+
+    It only suggests: stopping is the user's call. To stop, the whole suite
+    runs once, then ``finish`` says how the project goes on to completion,
+    which is what its gate still needs; to go on, another harden round opens.
+    """
+    return (
+        f"All tasks done - the last two harden rounds, {quiet[0]} and {quiet[1]}, raised no"
+        " new blocker or should-fix finding, so hardening may stop here; that is the user's"
+        f" call. To stop, {_whole_suite(test_command)} once, then {finish}. To go on, open"
+        " another harden round with `specflo review start --harden`."
+    )
+
+
 def _review_hint(review: dict | None, test_command: str | None = None) -> str:
     """What to do next once every task is done, given where the review stands.
 
     No round yet, a round left open, a round that passed, and a round that
     asked for changes each get their own next action; after a harden round,
-    so do no gate round and items it left open.
+    so do no gate round and items it left open. Two quiet harden rounds in a
+    row, the latest two rounds, get a suggestion to stop hardening in place
+    of any of those.
     Only a passing round offers ``specflo advance``, and it reads the
     ``passing`` flag the review state carries rather than naming verdicts
     itself - so the hint and the completion gate can never disagree about
     which rounds clear it. The verdict only picks the words. The later keys
-    (open items, the spent budget, earlier changes, the gate) are read with
-    defaults, as a state dict may predate them. The hints that call for the
+    (open items, the spent budget, earlier changes, the gate, the quiet
+    rounds) are read with defaults, as a state dict may predate them. The hints that call for the
     whole suite name ``test_command`` when it is set.
     """
     if review is None:
@@ -118,6 +144,15 @@ def _review_hint(review: dict | None, test_command: str | None = None) -> str:
             "reviewer the brief `specflo review prompt` prints and have it record "
             "findings through the CLI; then close it with `specflo review done`."
         )
+    # Only carried once a harden round is recorded: the run of harden rounds
+    # with no new find that the series ends in.
+    quiet = review.get("quiet_rounds") or []
+    if len(quiet) >= 2:
+        finish = (
+            "run `specflo advance` to complete the project" if review["passing"]
+            else _GATE_NEEDS
+        )
+        return _harden_stop(quiet[-2:], test_command, finish)
     if review["passing"]:
         # A round that asked for changes passes once every item it asks them
         # on is settled. It keeps its verdict, so the hint names the settling,
