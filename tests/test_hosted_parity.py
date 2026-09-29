@@ -568,11 +568,16 @@ def _recording_git(monkeypatch) -> list[tuple[bool, list[str]]]:
     return calls
 
 
+def _assert_the_daemon_ran_no_git(git, daemon_root: Path) -> None:
+    """The daemon holds no git repository and ran no git at all."""
+    assert not (daemon_root / ".git").exists()
+    assert [argv for on_client, argv in git if not on_client] == []
+
+
 def _assert_only_the_client_ran_git(git, daemon_root: Path) -> None:
     """The client blamed the lines in its checkout; the daemon, which holds no
     git repository, ran no git at all and took the marks as data."""
-    assert not (daemon_root / ".git").exists()
-    assert [argv for on_client, argv in git if not on_client] == []
+    _assert_the_daemon_ran_no_git(git, daemon_root)
     assert any("blame" in argv for on_client, argv in git if on_client), git
 
 
@@ -635,3 +640,118 @@ def test_a_hosted_review_done_marks_a_hand_written_line_as_a_local_one_does(
         assert (local_rounds / name).read_text() == (hosted_rounds / name).read_text()
     assert sent == [[], ["F-02"], ["F-05"]]
     _assert_only_the_client_ran_git(git, live_daemon["root"])
+
+
+# --- settling a finding without a fix, local and hosted ----------------------------------
+# The settle suite's scenario and helpers live in test_review_settle, which
+# imports this module, so each test here imports them as it runs.
+
+_LOCK_REASON = "The caller holds the lock"
+_REJECT_VERB = ["review", "finding", "reject"]
+
+
+def _reject_steps():
+    """Round one asks for changes for should-fix F-01, and a fix for it is
+    done; round two checks F-01 open, records blocker F-02 and asks for
+    changes. Each item is then rejected, and F-01 once more, and the rounds
+    and the status are shown."""
+    from test_review_settle import REASON, _round_one
+
+    return [
+        *_round_one(),
+        *_fix("Name the right command", "F-01", "T-02"),
+        (["review", "start"], None),
+        (["review", "finding", "check", "F-01", "open"], None),
+        (["review", "finding", "add", "--severity", "blocker", "--at", "src/app.py:20",
+          "--text", "The lock is dropped early"], None),
+        (["review", "done"], None),
+        ([*_REJECT_VERB, "F-01", "--reason", REASON], None),
+        ([*_REJECT_VERB, "F-02", "--reason", _LOCK_REASON], None),
+        ([*_REJECT_VERB, "F-01", "--reason", "Again"], None),
+        (["doc", "show", "review-1"], None),
+        (["doc", "show", "review-2"], None),
+        (["status"], None),
+    ]
+
+
+def _settled(path: Path) -> list[str]:
+    """The lines under the one Settled heading of the round file at ``path``."""
+    text = path.read_text()
+    assert text.count("\n## Settled\n") == 1, text
+    return text.split("\n## Settled\n", 1)[1].strip("\n").splitlines()
+
+
+def test_a_hosted_reject_writes_the_same_settled_line_as_a_local_one_and_the_daemon_runs_no_git(
+    tmp_path, monkeypatch, live_daemon
+):
+    from test_review_settle import REASON
+
+    steps = _reject_steps()
+    local, local_dir = _local_steps(tmp_path, monkeypatch, steps)
+    git = _recording_git(monkeypatch)
+    hosted, hosted_dir = _hosted_steps(tmp_path, monkeypatch, live_daemon, steps)
+
+    assert len(local) == len(hosted) == len(steps) + 1
+    for mine, theirs in zip(local[1:], hosted[1:], strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    rejects = [(code, text) for args, code, text in hosted[1:] if args[:3] == _REJECT_VERB]
+    assert rejects == [
+        (0, f"Rejected F-01 in {SLUG}/review-1.\n"),
+        (0, f"Rejected F-02 in {SLUG}/review-2.\n"),
+        (1, ""),
+    ]
+    # The pipeline's first validate fails on purpose; past it only the second
+    # reject of F-01 is refused.
+    assert [args for args, code, _ in hosted[1:] if code != 0] == [
+        ["validate", "brainstorm"], [*_REJECT_VERB, "F-01", "--reason", "Again"]
+    ]
+    # Each line lands in the round that recorded its finding, once, the same
+    # locally and hosted.
+    for rounds in (local_dir, hosted_dir):
+        assert _settled(rounds / "review-1.md") == [f"- F-01 rejected: {REASON}"]
+        assert _settled(rounds / "review-2.md") == [f"- F-02 rejected: {_LOCK_REASON}"]
+    for name in ("review-1.md", "review-2.md"):
+        assert (local_dir / name).read_text() == (hosted_dir / name).read_text(), name
+    _assert_the_daemon_ran_no_git(git, live_daemon["root"])
+
+
+def test_a_hosted_defer_is_refused_naming_the_follow_up_that_routes_it_and_changes_no_document(
+    tmp_path, monkeypatch, live_daemon
+):
+    from test_review_settle import DO, _DEFER, _round_one, _snapshot
+
+    local, local_dir = _local_steps(tmp_path, monkeypatch, [*_round_one(), (_DEFER, None)])
+    hosted, hosted_dir = _hosted_steps(tmp_path, monkeypatch, live_daemon, _round_one())
+
+    # The runs are alike up to the defer, which a local project takes.
+    for mine, theirs in zip(local[1:-1], hosted[1:], strict=True):
+        assert mine == theirs, f"{' '.join(mine[0])}:\nlocal:\n{mine[2]}\nhosted:\n{theirs[2]}"
+    assert local[-1] == (
+        _DEFER, 0, f"Deferred F-01 in {SLUG}/review-1 to FU-01 in {SLUG}/followup.\n"
+    )
+    daemon_root, docs = live_daemon["root"], tmp_path / "hosted" / "docs"
+    before = (_snapshot(daemon_root), _snapshot(docs))
+    git = _recording_git(monkeypatch)
+
+    # Whatever else it asks, a hosted defer is refused, and the refusal names
+    # the follow-up that will route a hosted project's follow-ups.
+    for args in (
+        _DEFER,
+        [*_DEFER, "--json"],
+        ["review", "finding", "defer", "F-09", "--do", DO],
+        ["review", "finding", "defer", "F-01", "--do", ""],
+    ):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 1, (args, result.output)
+        assert "FU-90" in result.output, (args, result.output)
+        assert result.stdout == "", (args, result.stdout)
+
+    # No document changed, on the daemon or in the checkout, and the daemon
+    # ran no git: the hosted round is the local one as it stood before its
+    # defer.
+    assert (_snapshot(daemon_root), _snapshot(docs)) == before
+    _assert_the_daemon_ran_no_git(git, daemon_root)
+    assert (local_dir / "review-1.md").read_text() == (
+        (hosted_dir / "review-1.md").read_text() + "\n## Settled\n\n- F-01 deferred FU-01\n"
+    )
+    assert list(daemon_root.rglob("followup.md")) == []
