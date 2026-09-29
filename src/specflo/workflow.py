@@ -9,12 +9,13 @@ PHASES: list[str] = ["brainstorm", "spec", "plan", "execute"]
 
 # Quick level has one phase: the brief is written and worked in execute, and
 # no approval sits between the two, so a phase boundary would do nothing.
+# Harden level has the same one phase: its plan grows from review findings.
 _QUICK_PHASES: list[str] = ["execute"]
 
 
 def phases_for(level: str) -> list[str]:
     """The phases a project at ``level`` goes through, in order."""
-    return _QUICK_PHASES if level == "quick" else PHASES
+    return _QUICK_PHASES if level in ("quick", "harden") else PHASES
 
 _NEXT_STEP: dict[str, str] = {
     "brainstorm": "Brainstorm and research; capture decisions, then write the spec.",

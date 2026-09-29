@@ -44,6 +44,11 @@ QUICK_LEVEL = "quick"
 FAST_LEVEL = "fast"
 FULL_LEVEL = "full"
 LEVELS = (QUICK_LEVEL, FAST_LEVEL, FULL_LEVEL)
+# Harden level hardens code outside a normal project. It stands apart from the
+# levels above: a project starts at it with `new`, and never moves to or from it.
+HARDEN_LEVEL = "harden"
+# The levels `new` starts a project at.
+NEW_LEVELS = (*LEVELS, HARDEN_LEVEL)
 # Fast level's caps: more than this is work for full level.
 FAST_MAX_DECISIONS = 3
 FAST_MAX_TASKS = 7
@@ -141,12 +146,12 @@ def validate_execution(mode: str) -> str:
     return mode
 
 
-def validate_level(level: str) -> str:
-    """Return ``level`` if it is a known level, else raise naming all three."""
-    if level not in LEVELS:
+def validate_level(level: str, known: tuple[str, ...] = LEVELS) -> str:
+    """Return ``level`` if it is one of ``known``, else raise naming each of them."""
+    if level not in known:
         raise SpecfloError(
             f"Unknown level {level!r}: expected one of "
-            + ", ".join(repr(name) for name in LEVELS) + "."
+            + ", ".join(repr(name) for name in known) + "."
         )
     return level
 
@@ -173,7 +178,7 @@ def create_project(
     level: str = FULL_LEVEL,
 ) -> Project:
     execution = validate_execution(execution)
-    level = validate_level(level)
+    level = validate_level(level, NEW_LEVELS)
     slug = slugify(name)
     directory = project_dir(root, cfg, slug)
     if directory.exists():

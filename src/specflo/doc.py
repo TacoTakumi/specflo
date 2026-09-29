@@ -23,7 +23,7 @@ from .errors import SpecfloError
 from .followup import FOLLOWUP_FILENAME
 from .locking import lock_path_for, locked
 from .plan import PLAN_FILENAME
-from .projects import FAST_LEVEL, PROJECT_FILENAME, QUICK_LEVEL, load_project
+from .projects import FAST_LEVEL, HARDEN_LEVEL, PROJECT_FILENAME, QUICK_LEVEL, load_project
 from .spec import SPEC_FILENAME
 
 # Artifact name -> filename, in pipeline order. The name is the public
@@ -90,10 +90,10 @@ def show_document(root: Path, cfg: SpecfloConfig, slug: str, name: str) -> str:
         level = load_project(root, cfg, slug).level
         if level == FAST_LEVEL:
             return brief.render_view(root, cfg, slug)
-        if level != QUICK_LEVEL:
+        if level not in (QUICK_LEVEL, HARDEN_LEVEL):
             raise SpecfloError(
                 f"Project {slug!r} is at level {level!r}; the brief view is for"
-                " quick and fast levels."
+                " quick, fast and harden levels."
             )
     path = artifact_path(root, cfg, slug, name)
     if not path.is_file():

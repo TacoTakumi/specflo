@@ -513,7 +513,7 @@ def new(
     level: str = typer.Option(
         projects.FULL_LEVEL,
         "--level",
-        metavar="|".join(projects.LEVELS),
+        metavar="|".join(projects.NEW_LEVELS),
         help="How much ceremony the project gets (default: full).",
     ),
 ) -> None:
@@ -521,14 +521,15 @@ def new(
     root = _require_root()
     cfg = config.load_config(root)
     try:
-        projects.validate_level(level)
-        if remote is not None and level != projects.FULL_LEVEL:
+        projects.validate_level(level, projects.NEW_LEVELS)
+        if remote is not None and level not in (projects.FULL_LEVEL, projects.HARDEN_LEVEL):
             raise SpecfloError(
-                f"Level {level!r} is local only; a project on a remote is full."
+                f"Level {level!r} is local only; a project on a remote is full or harden."
             )
         slug = projects.slugify(name)
         svc = _service_for_new_project(root, cfg, slug, remote)
-        # Only a light level is passed on, so a remote never sees the key.
+        # Only a level other than full is passed on, so a remote never sees
+        # the key for a full project.
         extra = {} if level == projects.FULL_LEVEL else {"level": level}
         project = svc.create_project(
             name, summary=summary, execution=execution, **extra
@@ -542,17 +543,22 @@ def new(
     # Scaffold the first artifact so a new project is immediately ready to work
     # (no separate `brainstorm start`). create_project stays container-only;
     # the scaffold is CLI orchestration over the idempotent helper.
-    # A quick project is worked from its brief and has no brainstorm.
+    # A quick project is worked from its brief and has no brainstorm. A harden
+    # project has a brief too, and a plan that starts empty: its tasks are fix
+    # tasks added from review findings.
     if project.level == projects.QUICK_LEVEL:
-        first_path, _ = svc.start_brief(project.slug)
+        scaffolded = [svc.start_brief(project.slug)[0]]
+    elif project.level == projects.HARDEN_LEVEL:
+        scaffolded = [svc.start_brief(project.slug)[0], svc.start_plan(project.slug)[0]]
     else:
-        first_path, _ = svc.start_brainstorm(project.slug)
+        scaffolded = [svc.start_brainstorm(project.slug)[0]]
     _refresh_checkpoint(svc, project.slug)
     _refresh_index(root, cfg)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
-    typer.echo(f"Scaffolded {_locator(project.slug, first_path)} (ready to work).")
+    named = " and ".join(_locator(project.slug, path) for path in scaffolded)
+    typer.echo(f"Scaffolded {named} (ready to work).")
     if summary is None:
         typer.echo(
             'No summary set - add a one-liner with `specflo summary "<what this is>"`.'

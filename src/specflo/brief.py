@@ -3,6 +3,10 @@
 A quick project has no brainstorm, spec or plan. Its ``brief.md`` holds the
 goal, the one check that says the work is done, the proof that the check
 passes, and any work found along the way that the brief does not do.
+
+A harden-level project has a brief too, with other sections: the scope its
+review rounds harden, what they focus on, and when hardening stops. Its plan
+starts empty and grows from review findings as fix tasks.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ from pathlib import Path
 
 from . import markdown
 from .config import SpecfloConfig
-from .projects import load_project, project_dir
+from .projects import HARDEN_LEVEL, load_project, project_dir
 
 BRIEF_FILENAME = "brief.md"
 
@@ -44,6 +48,30 @@ updated: {today}
 <!-- work found along the way that this brief does not do (optional) -->
 """
 
+# A harden brief's sections, in document order.
+HARDEN_SECTIONS = ("Scope", "Focus", "Stop when")
+
+_HARDEN_TEMPLATE = """\
+---
+project: {slug}
+level: harden
+status: draft
+created: {today}
+updated: {today}
+---
+
+# Brief: {name}
+
+## Scope
+<!-- the paths to harden, one list item each, or: the whole repo -->
+
+## Focus
+<!-- what the review rounds look at hardest, or: none -->
+
+## Stop when
+<!-- when hardening stops, beyond an empty ledger and every fix task done, or: none -->
+"""
+
 
 def brief_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     return project_dir(root, cfg, slug) / BRIEF_FILENAME
@@ -61,7 +89,8 @@ def start_brief(
     if path.exists():
         return path, False
     today = today or datetime.date.today().isoformat()
-    path.write_text(_TEMPLATE.format(slug=project.slug, name=project.name, today=today))
+    template = _HARDEN_TEMPLATE if project.level == HARDEN_LEVEL else _TEMPLATE
+    path.write_text(template.format(slug=project.slug, name=project.name, today=today))
     return path, True
 
 
