@@ -474,13 +474,21 @@ def set_level(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> tuple[Pr
 
     A move up goes back to the brainstorm phase and makes a complete project
     active again; every document stays as it is. A move to the same or a
-    lighter level is refused, leaving ``project.md`` unchanged.
+    lighter level is refused, as is any move of a harden project, leaving
+    ``project.md`` unchanged.
     """
-    level = validate_level(level)
     path = project_dir(root, cfg, slug) / PROJECT_FILENAME
     with locked(lock_path_for(root, slug, path)):
         project = load_project(root, cfg, slug)
         previous = project.level
+        # Checked before the target, so every target gets this one reason.
+        if previous == HARDEN_LEVEL:
+            raise SpecfloError(
+                f"Project {slug!r} is at harden level, which stands apart from quick,"
+                " fast and full: it never moves to another level. For more ceremony,"
+                " start a normal project with `specflo new`."
+            )
+        level = validate_level(level)
         if LEVELS.index(level) <= LEVELS.index(previous):
             raise SpecfloError(
                 f"Project {slug!r} is at level {previous!r}; a project only moves up."

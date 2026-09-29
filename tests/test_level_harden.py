@@ -413,3 +413,76 @@ def test_a_hosted_harden_project_takes_only_fix_tasks_and_has_no_round_budget(
     assert (spent, created, items) == (False, True, ["F-03"])
     assert "budget" not in next_step
     assert not (tmp_path / "hosted" / "docs" / "projects" / "thing").exists()
+
+
+# --- the level verb leaves a harden project where it is ----------------------------
+
+
+def _tree(directory):
+    """Every file under ``directory``, by its path relative to it, with its bytes."""
+    return {str(path.relative_to(directory)): path.read_bytes()
+            for path in sorted(directory.rglob("*")) if path.is_file()}
+
+
+def _refused(args):
+    """``args`` run to a clean refusal: exit 1 with an error line, no traceback."""
+    result = runner.invoke(app, args)
+    assert result.exit_code == 1, (args, result.output)
+    assert isinstance(result.exception, SystemExit), (args, result.exception)
+    assert result.output.startswith("error: "), (args, result.output)
+    return result.output
+
+
+@pytest.mark.parametrize("target", ["quick", "fast", "full", "harden"])
+def test_level_on_a_harden_project_is_refused_naming_harden_and_changes_no_file(
+    tmp_path, monkeypatch, target
+):
+    root, _ = _harden_project(tmp_path, monkeypatch)
+    projects_dir = projects.load_project(root, config.load_config(root), "thing").path.parent
+    before = _tree(projects_dir)
+
+    shown = _refused(["level", target])
+
+    assert "'thing' is at harden level" in shown
+    assert "stands apart from quick, fast and full" in shown
+    assert "`specflo new`" in shown
+    assert _tree(projects_dir) == before
+    project = projects.load_project(root, config.load_config(root), "thing")
+    assert (project.level, project.phase) == ("harden", "execute")
+
+
+@pytest.mark.parametrize("start", ["quick", "fast", "full"])
+def test_level_harden_is_refused_on_every_other_level_and_changes_no_file(
+    tmp_path, monkeypatch, start
+):
+    root = _checkout(tmp_path / "local", monkeypatch)
+    _ok(["new", "Thing", "--level", start])
+    projects_dir = projects.load_project(root, config.load_config(root), "thing").path.parent
+    before = _tree(projects_dir)
+
+    shown = _refused(["level", "harden"])
+
+    assert "Unknown level 'harden': expected one of 'quick', 'fast', 'full'." in shown
+    assert _tree(projects_dir) == before
+
+
+def test_level_on_a_hosted_harden_project_is_refused_as_on_a_local_one(
+    tmp_path, monkeypatch, live_daemon
+):
+    views = {}
+    for where, extra in (("local", []), ("hosted", ["--remote", "home"])):
+        if extra:
+            _hosted_checkout(tmp_path / where, monkeypatch, live_daemon)
+            projects_dir = live_daemon["root"] / daemon.PROJECTS_DIRNAME
+        else:
+            _checkout(tmp_path / where, monkeypatch)
+            projects_dir = tmp_path / where / "docs" / "projects"
+        _ok(["new", "Thing", "--level", "harden", *extra])
+        before = _tree(projects_dir)
+        views[where] = [_refused(["level", target]) for target in ("fast", "full")]
+        assert _tree(projects_dir) == before, where
+        assert "Level: harden" in _ok(["status"]).output, where
+
+    assert views["hosted"] == views["local"]
+    for shown in views["hosted"]:
+        assert "'thing' is at harden level" in shown and "`specflo new`" in shown
