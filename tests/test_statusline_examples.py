@@ -262,3 +262,31 @@ def test_full_through_a_symlink_still_finds_the_segment_file(tmp_path):
     (links / "statusline.py").symlink_to(FULL)
     out = run_full(full_payload(root), script=links / "statusline.py")
     assert out.startswith("repo | demo:brainstorm | ")
+
+
+# --- no personal content ----------------------------------------------------
+
+# The examples started as a real user's own statusline. These are the traces of
+# that origin: a home path, the setup it replaced, and a private project name.
+PERSONAL = ("/home/", "cache-fix proxy", "quota-statusline", "dsv4")
+
+
+def personal_hits(directory: Path) -> list[str]:
+    hits = []
+    # __pycache__ is local build output that git ignores, not a shipped file.
+    files = (p for p in directory.rglob("*")
+             if p.is_file() and "__pycache__" not in p.parts)
+    for path in sorted(files):
+        text = path.read_text(errors="replace").lower()
+        hits += [f"{path.name}: {word}" for word in PERSONAL if word in text]
+    return hits
+
+
+def test_the_examples_hold_no_personal_content():
+    assert personal_hits(EXAMPLES) == []
+
+
+@pytest.mark.parametrize("word", PERSONAL)
+def test_the_personal_scan_catches_each_string(tmp_path, word):
+    (tmp_path / "planted.py").write_text(f"# from {word.upper()} somewhere\n")
+    assert personal_hits(tmp_path) == [f"planted.py: {word}"]
