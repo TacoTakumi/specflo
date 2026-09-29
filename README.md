@@ -44,28 +44,47 @@ no migration path.
 Requires Python 3.12+. Install from PyPI:
 
 ```bash
-uv tool install specflo    # or: pipx install specflo / pip install specflo
+# With uv
+uv tool install specflo
+
+# Or with pipx
+pipx install specflo
+
+# Or with pip
+pip install specflo
 ```
 
 Then set up the repo you want to work in:
 
 ```bash
-specflo init                # scaffold .specflo/ config + the projects dir
-specflo skills install      # install the workflow skills into your agent harness(es)
-specflo hook install        # Claude Code: session-resume wiring (recommended)
-specflo extension install   # pi: same session-resume wiring, as a pi extension
+# Scaffold the .specflo/ config and the projects dir
+specflo init
+
+# Install the workflow skills into your agent harness(es)
+specflo skills install
+
+# Claude Code: session-resume wiring (recommended)
+specflo hook install
+
+# pi: the same session-resume wiring, as a pi extension
+specflo extension install
 ```
 
-The last two lines are per-harness alternatives - run the one that matches your
-agent, or neither if it is some other harness. Then add the specflo note to your
-agent's memory file, as [Using specflo with your agent](#using-specflo-with-your-agent)
+The hook and extension commands are per-harness alternatives - run the one that
+matches your agent, or neither if it is some other harness. Then add the specflo
+note to your agent's memory file, as [Using specflo with your agent](#using-specflo-with-your-agent)
 describes, and check the setup with `specflo doctor`. It names the command that
 fixes each problem it finds.
 
 ### Your first project
 
 ```bash
-specflo new "my first project"   # full level; --level quick or --level fast for smaller work
+# A full-level project: brainstorm, spec, plan and execute
+specflo new "my first project"
+
+# Or, for smaller work, a quick (one check) or fast (3 to 7 tasks) project
+# specflo new "my first project" --level quick
+# specflo new "my first project" --level fast
 ```
 
 Then start your agent. With the hook or the pi extension installed, it reads the
