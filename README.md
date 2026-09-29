@@ -736,7 +736,7 @@ In an auto run:
 
 ## Skills
 
-specflo ships its nine workflow skills inside the package and installs them into
+specflo ships its ten workflow skills inside the package and installs them into
 whatever agent harness it finds on your machine (Claude Code, pi, Hermes,
 opencode). Let the CLI do it - no copying or symlinking by hand:
 
@@ -762,7 +762,7 @@ line on stderr pointing at `specflo skills update`. It is notice-only: it never
 prompts, never updates anything, and never changes the exit code. Silence it by
 setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
-The nine skills:
+The ten skills:
 
 - **`specflo-brainstorm`** (`skills/specflo-brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
 - **`specflo-spec`** (`skills/specflo-spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
@@ -773,6 +773,7 @@ The nine skills:
 - **`specflo-research`** (`skills/specflo-research/SKILL.md`) - a research subagent the `specflo-brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
 - **`specflo-shelve`** (`skills/specflo-shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
 - **`specflo-auto`** (`skills/specflo-auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
+- **`specflo-agent`** (`skills/specflo-agent/SKILL.md`) - drives headless pi subagents through the `specflo agent` CLI: start a worker, send it prompts, monitor it and stop it. It is for delegating work to pi, not for the pipeline phases. A preview, like the [`specflo agent`](#pi-subagents-specflo-agent) surface it uses.
 
 ### Working on the skills themselves
 
