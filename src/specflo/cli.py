@@ -7,6 +7,7 @@ import dataclasses
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
 
 import click
@@ -1035,13 +1036,22 @@ def _render_you_are_here(data: dict) -> list[str]:
     ]
 
 
-def _render_commands(data: dict) -> list[str]:
-    groups = [
-        ("setup", "Setup & navigation"),
-        ("workflow", "Workflow"),
-        ("agents", "Agents"),
-    ]
-    width = max(len(f"{c['name']} {c['args']}".strip()) for c in data["commands"])
+# The label column stops at this width: a longer label takes its own line, so
+# one long label does not pad every row. Summaries wrap to the line width.
+_GUIDE_LABEL_WIDTH = 32
+_GUIDE_LINE_WIDTH = 100
+
+# The groups `specflo guide` shows by default, and the topics it shows on request.
+_GUIDE_GROUPS = [
+    ("setup", "Setup & navigation"),
+    ("workflow", "Workflow"),
+    ("agents", "Agents"),
+]
+_GUIDE_TOPICS = {"daemon": ("daemon", "Daemon & team")}
+
+
+def _render_commands(data: dict, groups: list[tuple[str, str]]) -> list[str]:
+    indent = " " * (4 + _GUIDE_LABEL_WIDTH + 2)
     lines: list[str] = []
     for key, title in groups:
         lines.append(f"  {title}")
@@ -1049,25 +1059,43 @@ def _render_commands(data: dict) -> list[str]:
             if c["group"] != key:
                 continue
             label = f"{c['name']} {c['args']}".strip()
-            lines.append(f"    {label.ljust(width)}  {c['summary']}")
+            summary = textwrap.wrap(c["summary"], _GUIDE_LINE_WIDTH - len(indent))
+            if len(label) > _GUIDE_LABEL_WIDTH:
+                lines.extend(textwrap.wrap(
+                    label, _GUIDE_LINE_WIDTH, initial_indent="    ",
+                    subsequent_indent="      ", break_on_hyphens=False,
+                ))
+            else:
+                lines.append(f"    {label.ljust(_GUIDE_LABEL_WIDTH)}  {summary.pop(0)}")
+            lines.extend(f"{indent}{part}" for part in summary)
     return lines
 
 
 @app.command(name="guide", epilog="Example: specflo guide --json")
 def guide_(
+    topic: str | None = typer.Argument(
+        None, help="Show one topic's commands instead: daemon."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Show what specflo is, the workflow, and what to do next here.
 
     Runs cold - works before `specflo init` - so an agent can get oriented in any
-    repo with a single command.
+    repo with a single command. `specflo guide daemon` lists the daemon and team
+    commands; `--json` always carries every command.
     """
+    if topic is not None and topic not in _GUIDE_TOPICS:
+        raise _die(f"Unknown guide topic {topic!r}. Topics: {', '.join(_GUIDE_TOPICS)}.")
     root = config.find_root(Path.cwd())
     cfg = config.load_config(root) if root is not None else None
     data = guide_module.build_guide(root, cfg)
 
     if json_output:
         typer.echo(json.dumps(data))
+        return
+
+    if topic is not None:
+        typer.echo("\n".join(["Commands:", *_render_commands(data, [_GUIDE_TOPICS[topic]])]))
         return
 
     rule = "-" * 72
@@ -1089,7 +1117,10 @@ def guide_(
         *(["", data["rule"]] if data.get("rule") else []),
         "",
         "Commands:",
-        *_render_commands(data),
+        *_render_commands(data, _GUIDE_GROUPS),
+        "",
+        "Daemon & team commands (serve, remote, product, workitem, gate, lease,"
+        " console):\n  `specflo guide daemon`.",
         "",
         "Skills:  in a skill-capable harness the `specflo-brainstorm`, `specflo-spec`, "
         "`specflo-plan`, and `specflo-execute` skills drive\n  the conversation; these "

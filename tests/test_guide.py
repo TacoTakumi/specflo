@@ -249,6 +249,45 @@ def test_guide_lists_the_harden_loop_commands(cwd):
     assert "--fixes <F-NN>" in out and "--at <file>:<line>[-<line>]" in out
 
 
+def _daemon_names():
+    return [e["name"] for e in guide.COMMANDS if e["group"] == "daemon"]
+
+
+def test_guide_rows_do_not_pad_to_the_longest_label(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    rows = out[out.index("Commands:"):out.index("Skills:")].splitlines()
+    assert all(len(row) <= 100 for row in rows), max(rows, key=len)
+    daemon = runner.invoke(app, ["guide", "daemon"]).output.splitlines()
+    assert all(len(row) <= 100 for row in daemon), max(daemon, key=len)
+
+
+def test_guide_moves_the_daemon_commands_to_their_own_topic(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    for name in _daemon_names():
+        assert f"    {name} " not in out, name
+    assert "`specflo guide daemon`" in out
+    result = runner.invoke(app, ["guide", "daemon"])
+    assert result.exit_code == 0
+    for name in _daemon_names():
+        assert f"    {name} " in result.output, name
+    assert "    task add" not in result.output
+    names = set(_daemon_names())
+    for prefix in ("serve", "remote", "promote", "product", "workitem", "gate", "lease",
+                   "console"):
+        assert any(n.split()[0] == prefix for n in names), prefix
+
+
+def test_guide_json_keeps_every_command(cwd):
+    data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert len(data["commands"]) == len(guide.COMMANDS)
+
+
+def test_guide_refuses_an_unknown_topic(cwd):
+    result = runner.invoke(app, ["guide", "bogus"])
+    assert result.exit_code == 1
+    assert "daemon" in result.output
+
+
 def test_readme_documents_the_review_loop():
     readme = (Path(__file__).resolve().parents[1] / "README.md").read_text()
     for term in (*_REVIEW_COMMANDS, "--full", "--over-budget", "review_max_rounds",

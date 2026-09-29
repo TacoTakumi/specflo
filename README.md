@@ -95,7 +95,8 @@ brief` prints the brief at any point.
 
 A change that needs more than one check is a bigger project: use `--level fast`
 or leave the level out. `specflo status` then says what to do next at each
-step, and `specflo guide` lists every command.
+step, and `specflo guide` lists the commands (`specflo guide daemon` lists the
+daemon and team commands).
 
 ## Using specflo with your agent
 
@@ -317,7 +318,7 @@ them yourself.
 ### Setup and orientation
 
 - `specflo --version` - print the installed version and exit.
-- `specflo guide [--json]` - orientation in one shot: what specflo is, the pipeline, the full command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo.
+- `specflo guide [daemon] [--json]` - orientation in one shot: what specflo is, the pipeline, the command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo. The daemon and team commands (serve, remote, promote, product, workitem, gate, lease, console) are listed by `specflo guide daemon`; `--json` carries every command.
 - `specflo init` - scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 
 ### Configuration

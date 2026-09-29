@@ -8,6 +8,20 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.15.1]
+
+### Added
+- **`specflo guide daemon`.** It lists the daemon and team commands: serve,
+  remote, promote, product, workitem, gate, lease and console. The default
+  `specflo guide` no longer lists them and names `specflo guide daemon`
+  instead. `--json` still carries every command. An unknown topic exits 1.
+
+### Changed
+- **`specflo guide` rows fit in 100 columns.** The label column stops at 32
+  characters: a longer label takes its own line and summaries wrap, so one
+  long label no longer pads every row to about 140 columns. The default
+  output drops from 23.6 KB to about 11 KB.
+
 ## [0.15.0]
 
 ### Added
