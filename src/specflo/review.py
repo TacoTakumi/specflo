@@ -1960,7 +1960,8 @@ def reviewer_brief(
     root: Path, cfg: SpecfloConfig, slug: str, hosted: bool = False,
     test_command: str | None = None,
 ) -> str:
-    """The brief for the reviewer of the open round: one set of rules every round.
+    """The brief for the reviewer of the open round: one set of rules every
+    gate round, and a harden round's own.
 
     Carries the round's scope (the whole branch, or the delta range and the
     earlier items to check), each item's fix tasks and the rules for checking
@@ -1975,10 +1976,27 @@ def reviewer_brief(
     only the documents. ``hosted`` says a daemon holds the project, where
     follow-ups are not recorded, so the brief asks for such problems in the
     reply. Raises ``SpecfloError`` when no round is open.
+
+    A harden round reviews its whole scope, the whole branch, and checks
+    each item as a gate round does. Its brief says there is no verdict, as
+    the round closes hardened; a blocker or should-fix needs evidence named
+    in its text; wording in agent-facing text and docs is never a finding
+    unless it tells an agent or user to do the wrong thing, which makes it a
+    should-fix; its nits stay in the round; and only the tests that
+    reproduce a finding run, the whole suite once when hardening stops.
     """
     scope = review_scope(root, cfg, slug)
     name = scope["file"]
-    if scope["range"]:
+    harden = scope["kind"] == HARDEN
+    if harden:
+        # A harden round reads all of its scope afresh, whatever earlier
+        # rounds read. In a project on a branch, that scope is the branch.
+        where = (
+            "This is a harden round. Review its whole scope, whatever earlier"
+            " rounds read: the whole branch, every change the branch makes."
+        )
+        outside = "A problem the branch did not introduce is not a finding."
+    elif scope["range"]:
         where = (
             f"This is a delta round: review only the changes in `{scope['range']}`"
             f" (`git diff {scope['range']}`), the fixes made since the last reviewed"
@@ -2040,23 +2058,49 @@ def reviewer_brief(
         "",
         "- blocker: wrong behaviour, a broken requirement, or data loss.",
         "- should-fix: a real problem to fix before merge, smaller than a blocker.",
-        "- nit: style, naming, wording or docs polish. Wording in agent-facing text"
-        " (skills, prompts, messages an agent reads) is a nit unless it tells the"
-        " agent to do the wrong thing.",
-        "",
-        "A blocker or should-fix finding asks for changes. A nit never blocks: it"
-        + (" stays listed in the round." if hosted else " goes to a follow-up when the round closes."),
+    ]
+    if harden:
+        lines += [
+            "- nit: style or naming polish.",
+            "",
+            "Record a blocker or should-fix only with evidence, and name that evidence"
+            " in the finding's text: a repro, a failing test or a trace.",
+            "",
+            "A blocker or should-fix finding becomes an item to fix, which a later"
+            " round checks. A nit stays listed in the round: no follow-up is filed for it.",
+        ]
+    else:
+        lines += [
+            "- nit: style, naming, wording or docs polish. Wording in agent-facing text"
+            " (skills, prompts, messages an agent reads) is a nit unless it tells the"
+            " agent to do the wrong thing.",
+            "",
+            "A blocker or should-fix finding asks for changes. A nit never blocks: it"
+            + (" stays listed in the round." if hosted else " goes to a follow-up when the round closes."),
+        ]
+    # A harden round blocks nothing itself, but its findings become items.
+    keeps = "so it never becomes an item to fix" if harden else "so it never blocks this round"
+    lines += [
         "",
         "## What is not a finding",
         "",
         (
             f"{outside} Follow-ups work only for projects in a checkout, and a"
             " daemon holds this one: name such a problem in your reply instead,"
-            " so it never blocks this round."
+            f" {keeps}."
             if hosted else
             f"{outside} Record it with `specflo followup add \"<title>\" --do \"<what"
-            f" to do>\" --from \"{name}\"` instead, so it never blocks this round."
+            f" to do>\" --from \"{name}\"` instead, {keeps}."
         ),
+    ]
+    if harden:
+        lines += [
+            "",
+            "Wording in agent-facing text (skills, prompts, payload and hint strings)"
+            " and in docs is never a finding, not even a nit, unless it tells an agent"
+            " or user to do the wrong thing: then it is a should-fix.",
+        ]
+    lines += [
         "",
         "## How to record",
         "",
@@ -2078,17 +2122,30 @@ def reviewer_brief(
         f"- One line under `## Scope reviewed` in {name} saying what you read.",
         f"- A round with no findings: `- none` as the only line under `## Findings` in {name}.",
         "",
-        "Do not choose a verdict. `specflo review done` derives it from what you"
-        " recorded when the round closes.",
+        (
+            "A harden round has no verdict. `specflo review done` closes it as"
+            " hardened, whatever you recorded."
+            if harden else
+            "Do not choose a verdict. `specflo review done` derives it from what you"
+            " recorded when the round closes."
+        ),
         "",
         "## Tests",
         "",
     ]
-    # A configured test_command is the whole suite: the reviewer runs it every
-    # round rather than guess which tests reach the changed code.
-    lines.append(
-        f"Run the whole test suite with `{test_command}` each round." if test_command else
-        "Run only the tests for the files in scope. The whole suite ran before the"
-        " first round."
-    )
+    if harden:
+        # Hardening runs round after round, so the whole suite runs once, when
+        # it stops, not each round.
+        lines.append(
+            "Run only the tests needed to reproduce a finding. The whole suite runs"
+            " once, when hardening stops."
+        )
+    else:
+        # A configured test_command is the whole suite: the reviewer runs it every
+        # round rather than guess which tests reach the changed code.
+        lines.append(
+            f"Run the whole test suite with `{test_command}` each round." if test_command else
+            "Run only the tests for the files in scope. The whole suite ran before the"
+            " first round."
+        )
     return "\n".join(lines) + "\n"

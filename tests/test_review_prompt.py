@@ -1,4 +1,4 @@
-"""The reviewer brief: one set of rules for every review round.
+"""The reviewer brief: one set of rules for every gate round, and a harden round's own.
 
 ``specflo review prompt`` prints what the reviewer of the open round needs:
 the scope, what each severity means, what is not a finding, how to record,
@@ -11,6 +11,14 @@ round after one that settled something lists it under Already settled: each
 nit, each deferred finding with its follow-up, each rejected finding with its
 reason and each follow-up a reviewer recorded from an earlier round, with the
 rule to raise one again only with new evidence that it is worse than recorded.
+
+A harden round's brief keeps the scope, the items, the rules for checking an
+item closed and what earlier rounds settled, and says: there is no verdict,
+the round closes hardened; a blocker or should-fix needs evidence named in its
+text; wording in agent-facing text and docs is never a finding unless it tells
+an agent or user to do the wrong thing, which makes it a should-fix; its nits
+stay in the round; and only the tests that reproduce a finding run, the whole
+suite once when hardening stops. A gate round's brief says none of it.
 """
 
 import pytest
@@ -368,3 +376,217 @@ def test_a_hosted_brief_lists_the_same_settled_nits_and_rejects(
     assert "- F-02 (nit) A name reads oddly" in hosted.splitlines()
     assert _REJECTED_WHY in _line_with(hosted, "F-01")
     assert hosted == local
+
+
+# --- a harden round's own brief -------------------------------------------------------
+
+# The gate briefs word for word: a first round, and a delta round with an item,
+# its fix task and what earlier rounds settled. A harden round's brief leaves
+# them as they are.
+_GATE_FIRST = (
+    "# Reviewer brief: thing, review round 1 (review-1.md)\n"
+    "\n"
+    "Review the work and record what you find through the specflo CLI.\n"
+    "\n"
+    "## Scope\n"
+    "\n"
+    "This round reviews the whole branch: every change the branch makes.\n"
+    "\n"
+    "## Severity\n"
+    "\n"
+    "- blocker: wrong behaviour, a broken requirement, or data loss.\n"
+    "- should-fix: a real problem to fix before merge, smaller than a blocker.\n"
+    "- nit: style, naming, wording or docs polish. Wording in agent-facing text (skills,"
+    " prompts, messages an agent reads) is a nit unless it tells the agent to do the"
+    " wrong thing.\n"
+    "\n"
+    "A blocker or should-fix finding asks for changes. A nit never blocks: it goes to a"
+    " follow-up when the round closes.\n"
+    "\n"
+    "## What is not a finding\n"
+    "\n"
+    "A problem the branch did not introduce is not a finding. Record it with `specflo"
+    " followup add \"<title>\" --do \"<what to do>\" --from \"review-1.md\"` instead, so it"
+    " never blocks this round.\n"
+    "\n"
+    "## How to record\n"
+    "\n"
+    "- Each finding: `specflo review finding add --severity blocker|should-fix|nit --at"
+    " <file>:<line>[-<line>] --text \"<one line>\"`. `--at` names where the defect is, as"
+    " the file is at the round's sha; a blocker or should-fix needs it, and a nit may"
+    " leave it out.\n"
+    "- No earlier items to check this round. A later round records each one with `specflo"
+    " review finding check F-NN closed|open`.\n"
+    "- One line under `## Scope reviewed` in review-1.md saying what you read.\n"
+    "- A round with no findings: `- none` as the only line under `## Findings` in"
+    " review-1.md.\n"
+    "\n"
+    "Do not choose a verdict. `specflo review done` derives it from what you recorded"
+    " when the round closes.\n"
+    "\n"
+    "## Tests\n"
+    "\n"
+    "Run only the tests for the files in scope. The whole suite ran before the first"
+    " round.\n"
+)
+_GATE_DELTA = (
+    "# Reviewer brief: thing, review round 3 (review-3.md)\n"
+    "\n"
+    "Review the work and record what you find through the specflo CLI.\n"
+    "\n"
+    "## Scope\n"
+    "\n"
+    "This is a delta round: review only the changes in `def5678..HEAD` (`git diff"
+    " def5678..HEAD`), the fixes made since the last reviewed round.\n"
+    "\n"
+    "Earlier rounds left these blocker and should-fix items. Check each one and record"
+    " whether it is fixed. Under each item are the tasks that fix it:\n"
+    "\n"
+    "- F-06\n"
+    "  - T-03 Fix F-06. Verify: `uv run pytest`\n"
+    "\n"
+    "## Checking an item closed\n"
+    "\n"
+    "Check an item closed only after its pin test, the test its fix task's verify step"
+    " runs, fails on the source at `def5678`, the latest reviewed round's sha, and passes"
+    " on HEAD. A pin test that passes before the fix proves nothing about the fix.\n"
+    "\n"
+    "Check an item closed only when the defect is gone on every path that reaches it, not"
+    " only the path its finding names: search for the other code that reaches the same"
+    " defect. A path the fix missed keeps the item open and is not a new finding: check"
+    " the item open, and do not record the path with `specflo review finding add`.\n"
+    "\n"
+    "## Already settled\n"
+    "\n"
+    "Earlier rounds settled these, so they are not findings again. Raise one again only"
+    " with new evidence that it is worse than recorded, and say in the finding's text"
+    " what that evidence is.\n"
+    "\n"
+    "- F-03 (nit) A name reads oddly\n"
+    "- F-04 (should-fix) [src/app.py:9-12] A message names the wrong command - deferred"
+    " to FU-120\n"
+    "- F-05 (blocker) [src/app.py:20] The refusal loses the ID - rejected: The caller"
+    " names the ID itself\n"
+    "- FU-118 Tidy the help text - a follow-up recorded from review-1.md\n"
+    "\n"
+    "## Severity\n"
+    "\n"
+    "- blocker: wrong behaviour, a broken requirement, or data loss.\n"
+    "- should-fix: a real problem to fix before merge, smaller than a blocker.\n"
+    "- nit: style, naming, wording or docs polish. Wording in agent-facing text (skills,"
+    " prompts, messages an agent reads) is a nit unless it tells the agent to do the"
+    " wrong thing.\n"
+    "\n"
+    "A blocker or should-fix finding asks for changes. A nit never blocks: it goes to a"
+    " follow-up when the round closes.\n"
+    "\n"
+    "## What is not a finding\n"
+    "\n"
+    "A problem the branch did not introduce, or one outside `def5678..HEAD`, is not a"
+    " finding. Record it with `specflo followup add \"<title>\" --do \"<what to do>\" --from"
+    " \"review-3.md\"` instead, so it never blocks this round.\n"
+    "\n"
+    "## How to record\n"
+    "\n"
+    "- Each finding: `specflo review finding add --severity blocker|should-fix|nit --at"
+    " <file>:<line>[-<line>] --text \"<one line>\"`. `--at` names where the defect is, as"
+    " the file is at the round's sha; a blocker or should-fix needs it, and a nit may"
+    " leave it out.\n"
+    "- Each earlier item above: `specflo review finding check F-NN closed|open`.\n"
+    "- One line under `## Scope reviewed` in review-3.md saying what you read.\n"
+    "- A round with no findings: `- none` as the only line under `## Findings` in"
+    " review-3.md.\n"
+    "\n"
+    "Do not choose a verdict. `specflo review done` derives it from what you recorded"
+    " when the round closes.\n"
+    "\n"
+    "## Tests\n"
+    "\n"
+    "Run only the tests for the files in scope. The whole suite ran before the first"
+    " round.\n"
+)
+
+# What only a harden round's brief says.
+_HARDEN_RULES = (
+    # there is no verdict: the round closes hardened
+    "has no verdict", "as hardened",
+    # a blocker or should-fix only with evidence, named in its text
+    "only with evidence", "a repro, a failing test or a trace",
+    # wording in agent-facing text and docs is no finding unless it misleads
+    "payload and hint strings", "not even a nit", "an agent or user to do the wrong thing",
+    # its nits stay in the round
+    "no follow-up is filed",
+    # only the tests that reproduce a finding; the suite runs when hardening stops
+    "reproduce a finding", "when hardening stops",
+)
+_HARDEN_TESTS = (
+    "Run only the tests needed to reproduce a finding. The whole suite runs once,"
+    " when hardening stops."
+)
+
+
+def _part(text, header):
+    """The brief's section under ``## header``, up to the next heading."""
+    marker = f"\n## {header}\n"
+    assert marker in text, text
+    return text.split(marker, 1)[1].split("\n## ", 1)[0]
+
+
+@pytest.mark.parametrize("earlier", [None, "settled"])
+def test_a_harden_round_gets_its_own_brief(tmp_path, monkeypatch, earlier):
+    if earlier:
+        _settled_rounds(tmp_path, monkeypatch)
+    else:
+        _project(tmp_path, monkeypatch)
+    started = runner.invoke(app, ["review", "start", "--harden"])
+    assert started.exit_code == 0, started.output
+
+    text = _prompt()
+
+    # Its scope is the whole branch, and a problem the branch did not bring
+    # is a follow-up, not a finding.
+    assert "whole branch" in _part(text, "Scope")
+    not_a_finding = _part(text, "What is not a finding")
+    assert "did not introduce" in not_a_finding and "specflo followup add" in not_a_finding
+    for rule in _HARDEN_RULES:
+        assert rule in text, rule
+    assert "should-fix" in _line_with(text, "not even a nit")
+    # No verdict to derive, no follow-up for its nits, no suite each round.
+    for gate_rule in ("derives it", "asks for changes", "goes to a follow-up", "files in scope"):
+        assert gate_rule not in text, gate_rule
+    if earlier:
+        # It still checks each open item, and lists what earlier rounds settled.
+        assert "- F-06" in text.splitlines()
+        for rule in _FIX_RULES:
+            assert rule in text, rule
+        assert "- F-03 (nit) A name reads oddly" in _settled_part(text).splitlines()
+
+
+@pytest.mark.parametrize("test_command", [None, _TEST_COMMAND])
+def test_a_harden_round_runs_only_the_tests_that_reproduce_a_finding(
+    tmp_path, monkeypatch, test_command
+):
+    _project(tmp_path, monkeypatch)
+    if test_command:
+        assert runner.invoke(app, ["config", "set", "test_command", test_command]).exit_code == 0
+    assert runner.invoke(app, ["review", "start", "--harden"]).exit_code == 0
+
+    tests = _tests_part(_prompt())
+
+    assert " ".join(tests.split()) == _HARDEN_TESTS
+
+
+@pytest.mark.parametrize("delta", [False, True])
+def test_a_gate_round_keeps_its_brief_word_for_word(tmp_path, monkeypatch, delta):
+    if delta:
+        _settled_rounds(tmp_path, monkeypatch)
+    else:
+        _project(tmp_path, monkeypatch)
+    start = ["review", "start", "--over-budget"] if delta else ["review", "start"]
+    assert runner.invoke(app, start).exit_code == 0
+
+    text = _prompt()
+
+    assert text == (_GATE_DELTA if delta else _GATE_FIRST)
+    for rule in _HARDEN_RULES:
+        assert rule not in text, rule
