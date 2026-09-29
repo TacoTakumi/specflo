@@ -45,6 +45,12 @@ def _color(text, code, color):
     return "\033[{}m{}{}".format(code, text, RESET) if color else text
 
 
+def _open(path):
+    # UTF-8 with replacement, as the pi extension reads: a stray byte in a
+    # file must not hide the segment.
+    return open(path, encoding="utf-8", errors="replace")
+
+
 def _find_root(start):
     root = os.path.realpath(start)
     if not os.path.isdir(root):
@@ -59,7 +65,7 @@ def _find_root(start):
 
 def _read_config(root):
     cfg = {}
-    with open(os.path.join(root, ".specflo", "config.yaml")) as f:
+    with _open(os.path.join(root, ".specflo", "config.yaml")) as f:
         for line in f:
             m = re.match(r"^(projects_dir|active_project):\s*(.+?)\s*$", line)
             if m:
@@ -71,7 +77,7 @@ def _task_tally(plan_path):
     """(task in progress or None, done, total) over the tasks not superseded."""
     tasks, cur = [], None
     try:
-        with open(plan_path) as f:
+        with _open(plan_path) as f:
             for line in f:
                 m = re.match(r"^### (T-\d+)", line)
                 if m:
@@ -114,7 +120,7 @@ def segment(start, color=None):
         label = slug if len(slug) <= MAX_LABEL else slug[:MAX_LABEL - 1] + "…"
         pdir = os.path.join(root, cfg.get("projects_dir", "docs/projects"), slug)
         try:
-            with open(os.path.join(pdir, "project.md")) as f:
+            with _open(os.path.join(pdir, "project.md")) as f:
                 head = f.read(2048)
         except OSError:
             return None

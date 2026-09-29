@@ -290,3 +290,30 @@ def test_the_examples_hold_no_personal_content():
 def test_the_personal_scan_catches_each_string(tmp_path, word):
     (tmp_path / "planted.py").write_text(f"# from {word.upper()} somewhere\n")
     assert personal_hits(tmp_path) == [f"planted.py: {word}"]
+
+
+# --- a byte that is not UTF-8 -------------------------------------------------
+
+# The pi extension decodes with replacement, so one bad byte in a file never
+# hides the segment. The script must do the same.
+
+def _append_bad_byte(path: Path):
+    path.write_bytes(path.read_bytes() + b"\n# \xff\xfe\n")
+
+
+def test_invalid_utf8_in_plan_keeps_the_tally(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=2, done=["T-01"])
+    _append_bad_byte(root / "docs" / "projects" / "demo" / "plan.md")
+    assert plain(root) == "demo 1/2\n"
+
+
+def test_invalid_utf8_in_project_keeps_the_segment(tmp_path):
+    root = make_repo(tmp_path)
+    _append_bad_byte(root / "docs" / "projects" / "demo" / "project.md")
+    assert plain(root) == "demo:brainstorm\n"
+
+
+def test_invalid_utf8_in_config_keeps_the_segment(tmp_path):
+    root = make_repo(tmp_path)
+    _append_bad_byte(root / ".specflo" / "config.yaml")
+    assert plain(root) == "demo:brainstorm\n"
