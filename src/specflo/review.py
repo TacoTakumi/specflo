@@ -122,8 +122,9 @@ KINDS = (GATE, HARDEN)
 # these, where a close keeps it (see :func:`_render`).
 _FIELDS = ("round", "verdict", "date", "sha", "base", "level", "reason")
 # The frontmatter key a closing round records, for each earlier item it
-# checked open, the fix tasks that were done then and so did not hold. Only
-# written when there is one, after the pinned fields.
+# checked open, the fix tasks it saved when it opened (FIXES_AT_OPEN): it
+# reviewed them, and they did not hold. Only written when there is one,
+# after the pinned fields.
 FAILED_FIXES = "failed_fixes"
 # The key an opening round records, for each earlier item it checks, the fix
 # tasks done by then: what the round reviews, and so all a close may fail.
@@ -370,8 +371,9 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     one. Only an active
     task whose progress is done counts as its fix: a superseded task fixes
     nothing, and a project with no plan has no fix at all. A fix task that a
-    reviewed round found did not hold - one done when the round checked the
-    item open (see :func:`close_round`) - no longer counts for that item.
+    reviewed round found did not hold - one done when the round opened, for
+    an item the round checked open (see :func:`close_round`) - no longer
+    counts for that item.
     Reads the round files and plan.md and changes nothing.
     """
     return {item: pending for item, (pending, _) in _unfixed(root, cfg, slug).items()}
