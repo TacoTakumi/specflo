@@ -358,7 +358,7 @@ export function isSeam(last: StatusSnapshot, current: StatusSnapshot): boolean {
  * One rendered status segment: the uncolored text and the theme-token style
  * the wiring applies it with.
  *
- * Mirrors statusline.sh's specflo_seg output minus the ANSI: the wiring owns
+ * Mirrors examples/statusline/specflo_segment.py's output minus the ANSI: the wiring owns
  * colour, via ctx.ui.theme, so the segment follows the active pi theme and no
  * escape byte lives in this source (REQ-07).
  */
@@ -374,7 +374,7 @@ export interface SegmentText {
  *
  * Parses the specflo artifacts directly - .specflo/config.yaml walked up from
  * that start directory, the active project's project.md frontmatter, and its plan.md task
- * blocks - with exactly the rules of ~/.claude/statusline.sh's specflo_seg
+ * blocks - with exactly the rules of examples/statusline/specflo_segment.py
  * (D-02). A slug longer than 17 characters is truncated to its first 16 plus
  * an ellipsis; complete/shelved render dim 'slug done'/'slug shelved'; plan
  * and execute append a task tally ' T-NN d/total' counting non-superseded
@@ -388,7 +388,7 @@ export interface SegmentText {
 export function computeSegment(cwd: string): SegmentText | null {
   try {
     // Walk up from the cwd to the first .specflo/config.yaml, exactly the
-    // statusline's loop (realpath first, so a symlinked cwd resolves the
+    // segment script's loop (realpath first, so a symlinked cwd resolves the
     // same repo a shell would resolve it to). SPECFLO_DIRECTORY, when set and
     // non-empty, is where the walk starts instead - the same override the
     // specflo CLI honours - so the segment names the tree specflo acts on. A
@@ -415,7 +415,7 @@ export function computeSegment(cwd: string): SegmentText | null {
     const label = [...slug].length <= 17 ? slug : [...slug].slice(0, 16).join("") + "\u2026";
     const pdir = path.join(root, cfg["projects_dir"] ?? "docs/projects", slug);
     // project.md: the frontmatter block alone, first 2048 characters, with
-    // the last phase/status match winning (dict semantics in the statusline).
+    // the last phase/status match winning (dict semantics in the segment script).
     let head: string;
     try {
       head = fs.readFileSync(path.join(pdir, "project.md"), "utf8").slice(0, 2048);
@@ -453,7 +453,7 @@ export function computeSegment(cwd: string): SegmentText | null {
           }
         }
       } catch {
-        // An unreadable plan.md leaves the tally off, as in the statusline.
+        // An unreadable plan.md leaves the tally off, as in the segment script.
       }
       const active = tasks.filter((t) => !t.sup);
       if (active.length > 0) {

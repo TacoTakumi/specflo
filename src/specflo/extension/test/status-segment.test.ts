@@ -3,7 +3,7 @@
  *
  * `computeSegment(cwd)` parses the specflo artifacts directly - config.yaml,
  * project.md frontmatter, plan.md task blocks - with exactly the rules of
- * `~/.claude/statusline.sh`'s specflo_seg, and returns the uncolored segment
+ * `examples/statusline/specflo_segment.py`, and returns the uncolored segment
  * text plus the style token the wiring should theme it with, or null when
  * there is nothing to show. The tests here pin the parse rules with a fixture
  * repo; the wiring that applies the result through ctx.ui.setStatus is tested
