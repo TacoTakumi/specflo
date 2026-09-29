@@ -57,48 +57,22 @@ specflo extension install   # pi: same session-resume wiring, as a pi extension
 ```
 
 The last two lines are per-harness alternatives - run the one that matches your
-agent, or neither if it is some other harness.
+agent, or neither if it is some other harness. Then add the specflo note to your
+agent's memory file, as [Using specflo with your agent](#using-specflo-with-your-agent)
+describes, and check the setup with `specflo doctor`. It names the command that
+fixes each problem it finds.
 
-Check the setup with `specflo doctor`. It names the command that fixes each
-problem it finds.
-
-That is the whole setup. Start your coding agent and say:
-
-> We use specflo here. Start a new specflo project for <the thing to build>.
-
-The specflo-brainstorm skill takes over - one question at a time, decisions recorded on
-disk - and hands off through spec and plan to task-by-task execution. Every
-step also works without an agent; see the
-[command reference](#command-reference).
-
-### Your first project by hand
-
-specflo also works with no agent. This is one small change at quick level: a
-goal, one check, the work, and the proof that the check passes. Run it in a git
-repo; it takes about five minutes.
+### Your first project
 
 ```bash
-specflo init
-specflo new "ignore env files" --level quick
-echo "Git ignores .env files." | specflo section set brief "Goal" --stdin
-echo '- `git check-ignore .env` prints .env' | specflo section set brief "Done when" --stdin
-echo ".env" >> .gitignore
-git check-ignore .env | specflo section set brief "Proof" --stdin
-specflo validate brief
-git add .gitignore && git commit -m "Ignore .env files"
-specflo advance
+specflo new "my first project"   # full level; --level quick or --level fast for smaller work
 ```
 
-`new` creates the project and its brief. The two `section set` lines write the
-goal and the one check, and the `.gitignore` line is the work itself. The Proof
-is what the check printed. `validate brief` confirms that the brief has a goal,
-one check and proof, and `advance` completes the project. `specflo doc show
-brief` prints the brief at any point.
-
-A change that needs more than one check is a bigger project: use `--level fast`
-or leave the level out. `specflo status` then says what to do next at each
-step, and `specflo guide` lists the commands (`specflo guide daemon` lists the
-daemon and team commands).
+Then start your agent. With the hook or the pi extension installed, it reads the
+new project and asks whether to continue. In another harness, say "Continue the
+specflo project." The specflo-brainstorm skill takes over and hands off through
+spec and plan to task-by-task execution. [Levels](#levels) describes quick and
+fast, and the [command reference](#command-reference) lists every step.
 
 ## Using specflo with your agent
 

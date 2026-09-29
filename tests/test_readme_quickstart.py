@@ -1,4 +1,4 @@
-"""The README's by-hand quickstart runs as written and completes its project."""
+"""The README's first-project block runs as written and starts a full-level project."""
 
 import os
 import re
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 README = Path(__file__).resolve().parents[1] / "README.md"
-HEADING = "### Your first project by hand"
+HEADING = "### Your first project"
 
 
 def _block():
@@ -19,7 +19,7 @@ def _block():
     return match.group(1)
 
 
-def test_the_by_hand_block_completes_its_project(tmp_path):
+def test_the_first_project_block_starts_a_project(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     env = {
@@ -35,11 +35,16 @@ def test_the_by_hand_block_completes_its_project(tmp_path):
         "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
     }
     subprocess.run(["git", "init", "-q"], cwd=repo, env=env, check=True)
+    # The Quick start setup block runs init before this one.
+    subprocess.run(["specflo", "init"], cwd=repo, env=env, check=True,
+                   capture_output=True)
     result = subprocess.run(
         ["bash", "-e", "-o", "pipefail", "-c", _block()],
         cwd=repo, env=env, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "Completed project" in result.stdout
     [project] = (repo / "docs" / "projects").glob("*/project.md")
-    assert "status: complete" in project.read_text()
+    text = project.read_text()
+    assert "phase: brainstorm" in text
+    assert "status: active" in text
+    assert "level: full" in text
