@@ -343,3 +343,64 @@ def test_a_waived_round_checking_an_item_open_asks_no_more_fix_tasks(reviewed):
 
     # A waive reviewed nothing, so its check is not a finding that the fix failed.
     assert review.unfixed_items(root, cfg, slug) == {}
+
+
+def test_a_task_superseding_a_failed_fix_counts_once_done(reviewed):
+    root, cfg, slug, service = reviewed
+    failed = _done_fix(root, cfg, slug, "F-01")
+    _check_open_and_close(root, cfg, slug, service)
+
+    task = plan.add_task(root, cfg, slug, "Keep the sha on every path", "kept", "uv run pytest",
+                         implements=[], fixes=["F-01"], supersedes=failed)
+    plan.start_task(root, cfg, slug, task.id)
+    plan.done_task(root, cfg, slug, task.id)
+
+    assert review.unfixed_items(root, cfg, slug) == {}
+    path, created = service.start_round(slug, sha="", over_budget=True)
+    assert (path.name, created) == ("review-3.md", True)
+
+
+def test_a_round_that_checks_an_item_open_before_any_fix_marks_no_fix_failed(reviewed):
+    root, cfg, slug, service = reviewed
+    # The ladder's climb opens a round without the fix check.
+    path, _ = review.start_round(root, cfg, slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "open")
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert "failed_fixes" not in review.frontmatter(path)
+    assert review.reopened_items(root, cfg, slug) == {}
+    with pytest.raises(SpecfloError, match=r"F-01 \(no fix task\)"):
+        service.start_round(slug, sha="", over_budget=True)
+    _done_fix(root, cfg, slug, "F-01")
+    path, created = service.start_round(slug, sha="", over_budget=True)
+    assert (path.name, created) == ("review-3.md", True)
+
+
+@pytest.mark.parametrize("checks", ["- F-1 open", "- F-01 open\n- F-01 open"])
+def test_a_check_is_read_by_its_number_and_once(reviewed, checks):
+    root, cfg, slug, service = reviewed
+    failed = _done_fix(root, cfg, slug, "F-01")
+    path, _ = service.start_round(slug, sha="")
+    doc = path.read_text().replace(
+        "## Findings", f"{review.EARLIER_HEADER}\n\n{checks}\n\n## Findings", 1)
+    path.write_text(doc)
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert review.frontmatter(path)["failed_fixes"] == {"F-01": [failed]}
+    assert review.reopened_items(root, cfg, slug) == {"F-01": "review-2.md"}
+    _done_fix(root, cfg, slug, "F-01", text="Keep the sha on every path")
+    assert review.unfixed_items(root, cfg, slug) == {}
+
+
+def test_a_round_that_checks_nothing_open_records_no_failed_fix(reviewed):
+    root, cfg, slug, service = reviewed
+    _done_fix(root, cfg, slug, "F-01")
+    path, _ = service.start_round(slug, sha="")
+    review.check_finding(root, cfg, slug, "F-01", "closed")
+    write_none(path)
+    review.close_round(root, cfg, slug, nits_followup=False)
+
+    assert "failed_fixes" not in review.frontmatter(path)
+    assert "failed_fixes" not in path.read_text()

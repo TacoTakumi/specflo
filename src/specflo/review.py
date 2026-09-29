@@ -121,6 +121,10 @@ KINDS = (GATE, HARDEN)
 # shape `review start` minted it. A harden round's kind is minted after
 # these, where a close keeps it (see :func:`_render`).
 _FIELDS = ("round", "verdict", "date", "sha", "base", "level", "reason")
+# The frontmatter key a closing round records, for each earlier item it
+# checked open, the fix tasks that were done then and so did not hold. Only
+# written when there is one, after the pinned fields.
+FAILED_FIXES = "failed_fixes"
 # Minting reads every round file then writes one; the lock covers that whole
 # critical section so two processes cannot mint the same number. It is named
 # for the series, not for a file, because the file's name is what is being
@@ -362,17 +366,17 @@ def unfixed_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, list[s
     reviewed round has checked closed and none has settled; a nit never is
     one. Only an active
     task whose progress is done counts as its fix: a superseded task fixes
-    nothing, and a project with no plan has no fix at all. A reviewed round
-    that checks an item open found its fixes so far did not hold, so the item
-    needs more done fix tasks than the rounds that checked it open. Reads the
-    round files and plan.md and changes nothing.
+    nothing, and a project with no plan has no fix at all. A fix task that a
+    reviewed round found did not hold - one done when the round checked the
+    item open (see :func:`close_round`) - no longer counts for that item.
+    Reads the round files and plan.md and changes nothing.
     """
     return {item: pending for item, (pending, _) in _unfixed(root, cfg, slug).items()}
 
 
 def reopened_items(root: Path, cfg: SpecfloConfig, slug: str) -> dict[str, str]:
     """The open items whose fix tasks are all done but did not hold, each with
-    the round file that last checked it open.
+    the round file that last found one of them did not.
 
     Each is an item of :func:`unfixed_items` with at least one done fix task
     and none left to finish: it needs a new fix task. Reads the round files
@@ -389,39 +393,50 @@ def _unfixed(
     root: Path, cfg: SpecfloConfig, slug: str
 ) -> dict[str, tuple[list[str], str | None]]:
     """Each open item no done task fixes: its fix tasks not done, and the
-    round file that last checked it open when a done fix task did not hold."""
+    round file that last found one of its done fix tasks did not hold."""
     rounds = round_files(root, cfg, slug)
     latest = rounds[-1][0] if rounds else 0
     items = _ledger(root, cfg, slug, latest + 1)[0]
     if not items:
         return {}
-    checks = _open_checks(rounds)
+    failed = _failed_fixes(rounds)
     unfixed = {}
     for item, fixes in _fix_tasks(root, cfg, slug, list(items.values())).items():
-        done = sum(task.progress == "done" for task in fixes)
-        if done <= len(checks.get(item, [])):
+        done = [task.id for task in fixes if task.progress == "done"]
+        held = failed.get(_item_number(item), {})
+        if all(task_id in held for task_id in done):
             unfixed[item] = (
                 [task.id for task in fixes if task.progress != "done"],
-                checks[item][-1] if done else None,
+                max((held[task_id] for task_id in done), key=number_of, default=None),
             )
     return unfixed
 
 
-def _open_checks(rounds: list[tuple[int, Path]]) -> dict[str, list[str]]:
-    """Each item a reviewed round of ``rounds`` checked open, with the round
-    files that did, in round order.
+def _item_number(finding_id: str) -> int | None:
+    match = re.fullmatch(r"F-(\d+)", str(finding_id).strip())
+    return int(match.group(1)) if match else None
 
-    A waived round reviewed nothing, so its checks do not count.
+
+def _failed_fixes(rounds: list[tuple[int, Path]]) -> dict[int, dict[str, str]]:
+    """The fix tasks each reviewed round of ``rounds`` found did not hold,
+    keyed by the item's number, each with the round file that says so.
+
+    A waived round reviewed nothing, so it fails no fix; a value that is not
+    an item-to-task-list mapping fails none either.
     """
-    checks: dict[str, list[str]] = {}
+    failed: dict[int, dict[str, str]] = {}
     for _, path in rounds:
-        if frontmatter(path).get("verdict") not in REVIEWED:
+        fields = frontmatter(path)
+        recorded = fields.get(FAILED_FIXES)
+        if fields.get("verdict") not in REVIEWED or not isinstance(recorded, dict):
             continue
-        for line in _section_lines(path.read_text(), EARLIER_HEADER) or []:
-            match = _CHECK_LINE.match(line)
-            if match and match.group(3) == "open":
-                checks.setdefault(match.group(1), []).append(path.name)
-    return checks
+        for item, tasks in recorded.items():
+            number = _item_number(item)
+            if number is None or not isinstance(tasks, list):
+                continue
+            for task_id in tasks:
+                failed.setdefault(number, {})[str(task_id)] = path.name
+    return failed
 
 
 def _fix_tasks(
@@ -1473,6 +1488,15 @@ def close_round(
                     source=path.name,
                     today=today,
                 )
+        fields.pop(FAILED_FIXES, None)
+        if verdict != WAIVED:
+            # A fix done before this round checked its item open did not hold.
+            failed = {
+                item: [task.id for task in fixes if task.progress == "done"]
+                for item, fixes in _fix_tasks(root, cfg, slug, still_open).items()
+            }
+            if failed := {item: tasks for item, tasks in failed.items() if tasks}:
+                fields[FAILED_FIXES] = failed
         fields["verdict"] = verdict
         fields["date"] = today or datetime.date.today().isoformat()
         # The sha the round opened at is the commit its reviewer read; only a

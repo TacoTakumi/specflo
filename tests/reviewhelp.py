@@ -44,9 +44,9 @@ def write_none(path: Path) -> None:
 def fix_open_items(root, cfg, slug) -> list[str]:
     """Add a done task fixing each open item that needs one; the tasks' IDs.
 
-    ``review start`` opens no round while an open item has no done fix task,
-    or no more of them than the reviewed rounds that checked it open. A
-    project with no plan gets one, and only when an item needs a task.
+    ``review start`` opens no round while an open item has no done fix task
+    that a reviewed round did not find failed. A project with no plan gets
+    one, and only when an item needs a task.
     """
     unfixed = review.unfixed_items(root, cfg, slug)
     if unfixed:
