@@ -89,19 +89,42 @@ superseding requirement — never silently mutate a task or drift off its
      do **not** review inline (it defeats fresh eyes and burns context) —
      `specflo checkpoint`, then run the review in a fresh session.
    - The reviewer records findings through the CLI: `specflo review finding add
-     --severity blocker|should-fix|nit --text "…"` for each finding,
-     `specflo review finding check F-NN closed|open` for each earlier item, and
-     `- none` as the only line under Findings for a clean round.
+     --severity blocker|should-fix|nit --at <file>:<line>[-<line>] --text "…"`
+     for each finding (`--at` is required for a blocker or should-fix; the CLI
+     marks a regression itself), `specflo review finding check F-NN
+     closed|open` for each earlier item, and `- none` as the only line under
+     Findings for a clean round.
    - Close the round with `specflo review done`. The CLI sets the verdict from
      the findings: any blocker or should-fix item, or an earlier item still
      open, is changes-requested; nits never block and go to one follow-up.
      `--file <path>` ingests a reviewer's report as the round's body.
-   - On changes-requested, fix the blocker and should-fix items, never the nits,
-     commit, then `specflo review start` again for the next round.
+   - On changes-requested, fix each open blocker and should-fix item, never the
+     nits, with a fix task of its own: `specflo task add --fixes F-NN`. Its
+     acceptance lists every path that reaches the defect, with a test for each,
+     and its verify names the pin test, red then green: it fails before the fix
+     and passes after. Work each fix task through the loop above, then run
+     `specflo review start` again for the next round; it refuses while an open
+     item has no done fix task. A path the fix missed keeps the item open.
+   - Defer or reject an item only on the user's say; ask, do not pick for them.
+     `specflo review finding defer F-NN --do "<what>"` files a follow-up and
+     settles the item (refused on a hosted project);
+     `specflo review finding reject F-NN --reason "<why>"` settles it as not a
+     defect. A changes-requested round whose blocking items are all settled
+     passes the completion gate.
    - At the round budget (`review_max_rounds`, 2 rounds per level by default),
      `review start` refuses and the choice is the user's: one more round with
      `specflo review start --over-budget`, or `specflo review waive --reason
      <why>`. Ask; do not pick for them.
+   - **Hardening** is available for a deeper look than the gate round gives:
+     `specflo review start --harden` opens a harden round, a fresh review of the
+     whole branch outside the round budget. `specflo review done` closes it as
+     hardened; its blocker and should-fix findings become items with a fix task
+     each, like any other, and its nits stay in the round. Completion still
+     needs the latest gate round to pass and no open item. After two quiet
+     harden rounds in a row the next-step hint suggests stopping; that is the
+     user's call. At the stop, run the whole test suite once
+     (`specflo config get test_command`, or the usual full test command when it
+     prints nothing).
    - When any round was changes-requested, run the whole test suite again
      before completion (`specflo config get test_command`, or the usual full
      test command when it prints nothing).
@@ -312,8 +335,9 @@ Before completing the project:
       **until the round is closed**, so expect it to pass only once the review
       below is recorded — not before it.
 - [ ] A fresh-context final review ran under `specflo review start` and was
-      closed with `specflo review done`; the latest round is ready-to-merge (or
-      a reasoned waive).
+      closed with `specflo review done`; the latest gate round is
+      ready-to-merge or has every blocking item settled (or a reasoned waive),
+      and no item is left open.
 - [ ] The whole test suite ran again after the fixes when a round was
       changes-requested.
 - [ ] Then, and only then, surface the checkpoint-saved phase-end beat and leave `specflo advance` (project completion) to the user.

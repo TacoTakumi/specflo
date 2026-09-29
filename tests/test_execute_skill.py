@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1] / "skills" / "specflo-execute" / "SKILL.md"
@@ -233,6 +234,58 @@ def test_readiness_describes_the_converging_review_loop():
         assert phrase in step, phrase
     # The prompt is handed over after the round opens.
     assert step.index("specflo review start") < step.index("specflo review prompt")
+
+
+def _readiness_bullet(phrase):
+    # The one readiness bullet that holds `phrase`, with its line breaks folded.
+    raw = SKILL.read_text().split("**Readiness**", 1)[1].split("\n## ", 1)[0]
+    bullets = [" ".join(b.split()) for b in re.split(r"\n\s+- ", raw)]
+    hits = [b for b in bullets if phrase in b]
+    assert len(hits) == 1, f"{phrase!r} is in {len(hits)} readiness bullets"
+    return hits[0]
+
+
+def test_readiness_records_a_finding_with_its_location():
+    bullet = _readiness_bullet("specflo review finding add")
+    assert "--at <file>:<line>[-<line>]" in bullet
+    assert "blocker" in bullet and "should-fix" in bullet and "required" in bullet
+
+
+def test_readiness_fixes_each_open_item_with_a_fix_task():
+    bullet = _readiness_bullet("On changes-requested")
+    low = bullet.lower()
+    assert "`specflo task add --fixes F-NN`" in bullet
+    # the fix task covers every path to the defect, each with a test
+    assert "every path" in low and "a test for each" in low
+    # its verify names the pin test, which goes red then green
+    assert "pin test" in low
+    assert "red then green" in low
+    assert "fails before the fix and passes after" in low
+    # the next round opens only once the fix tasks are done
+    assert bullet.index("task add --fixes") < bullet.index("specflo review start")
+    assert "no done fix task" in low
+    assert "never the nits" in low
+    # the bare fix-and-commit step the CLI now refuses is gone
+    assert "fix the blocker and should-fix items, never the nits, commit" not in bullet
+
+
+def test_readiness_defers_or_rejects_an_item_only_on_the_users_say():
+    bullet = _readiness_bullet("specflo review finding reject")
+    assert '`specflo review finding defer F-NN --do "<what>"`' in bullet
+    assert '`specflo review finding reject F-NN --reason "<why>"`' in bullet
+    assert "only on the user's say" in bullet
+    low = bullet.lower()
+    assert "follow-up" in low and "hosted" in low
+    assert "settled" in low and "completion gate" in low
+
+
+def test_readiness_offers_hardening():
+    bullet = _readiness_bullet("specflo review start --harden")
+    low = bullet.lower()
+    assert "whole branch" in low and "outside the round budget" in low
+    assert "hardened" in low and "fix task" in low
+    assert "latest gate round" in low
+    assert "two quiet harden rounds" in low and "the user's call" in low
 
 
 def test_readiness_no_longer_withholds_earlier_findings_from_the_reviewer():
