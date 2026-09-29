@@ -1430,6 +1430,23 @@ def validate_finding(
     return parse_location(location)
 
 
+def _repo_top(root: Path) -> Path:
+    """The top of the git checkout ``root`` is in, where a location's path starts.
+
+    A location names its file from the repository root, and a specflo root
+    may be a subdirectory of the repository: git reads and blames the file
+    from the top, so a path means the same file to each call. ``root``
+    itself wherever git cannot name the top, and the call that follows says
+    why. Raises what ``subprocess.run`` raises.
+    """
+    top = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=root, capture_output=True, text=True, timeout=30,
+    )
+    name = top.stdout.strip()
+    return Path(name) if top.returncode == 0 and name else root
+
+
 def check_location(
     root: Path, sha: str, path: str, start: int, end: int | None
 ) -> str | None:
@@ -1437,7 +1454,8 @@ def check_location(
 
     Runs git in the checkout at ``root``, which must be the caller's: a
     daemon holds only the documents, so this never runs in a service.
-    ``path`` is as git names it at ``sha``, from the repository root.
+    ``path`` is as git names it at ``sha``, from the repository root, which
+    may be above ``root``.
 
     Returns None once the location is checked, or why it could not be
     checked: the round records no sha or one that is not a commit id, or git
@@ -1453,15 +1471,17 @@ def check_location(
     if not re.fullmatch(r"[0-9a-f]{4,64}", sha):
         return f"the round's sha {sha!r} is not a commit id"
     try:
+        # From the top, as the blame runs: a ./ path is read from there too.
+        top = _repo_top(root)
         commit = subprocess.run(
             ["git", "cat-file", "-e", f"{sha}^{{commit}}"],
-            cwd=root, capture_output=True, timeout=30,
+            cwd=top, capture_output=True, timeout=30,
         )
         if commit.returncode != 0:
             return f"this checkout has no commit {sha}"
         blob = subprocess.run(
             ["git", "cat-file", "blob", f"{sha}:{path}"],
-            cwd=root, capture_output=True, timeout=30,
+            cwd=top, capture_output=True, timeout=30,
         )
     except (OSError, subprocess.TimeoutExpired):
         return f"git cannot read commit {sha} here"
@@ -1497,7 +1517,8 @@ def regression_mark(
     finding with no location are never marked, and git does not run.
 
     Runs git in the checkout at ``root``, which must be the caller's, as
-    :func:`check_location` does. Returns ``(marked, None)`` once told, or
+    :func:`check_location` does, and blames ``path`` from the repository
+    root as that reads it. Returns ``(marked, None)`` once told, or
     ``(False, why)`` when it could not be: a sha missing or not a commit id,
     or git here unable to read a commit or blame the file. Such a finding
     is not marked.
@@ -1512,16 +1533,18 @@ def regression_mark(
             return False, f"{name}'s sha {value!r} is not a commit id"
     lines = f"{start},{start if end is None else end}"
     try:
+        # git blame reads its path from the directory it runs in.
+        top = _repo_top(root)
         for commit in (sha, first):
             found = subprocess.run(
                 ["git", "cat-file", "-e", f"{commit}^{{commit}}"],
-                cwd=root, capture_output=True, timeout=30,
+                cwd=top, capture_output=True, timeout=30,
             )
             if found.returncode != 0:
                 return False, f"this checkout has no commit {commit}"
         blame = subprocess.run(
             ["git", "blame", "--porcelain", "-L", lines, sha, "--", path],
-            cwd=root, capture_output=True, text=True, timeout=30,
+            cwd=top, capture_output=True, text=True, timeout=30,
         )
         if blame.returncode != 0:
             return False, f"git cannot blame {path} at {sha} here"
@@ -1530,7 +1553,7 @@ def regression_mark(
             # Exit 0: contained in first; 1: not, so changed after it.
             ancestor = subprocess.run(
                 ["git", "merge-base", "--is-ancestor", commit, first],
-                cwd=root, capture_output=True, timeout=30,
+                cwd=top, capture_output=True, timeout=30,
             )
             if ancestor.returncode == 1:
                 return True, None

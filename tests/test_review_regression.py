@@ -927,3 +927,145 @@ def test_a_regression_is_counted_the_same_for_a_local_and_a_hosted_project(
     assert "the latest round asks for changes (1 regression)." in refused
     assert reviews[0].endswith("; 1 regression")
     assert state["regressions"] == 1
+
+
+# --- a specflo root in a subdirectory of the git repo ------------------------
+
+
+def _subdirectory_second_round(tmp_path, monkeypatch, shadow=False):
+    """``_second_round`` with the specflo root at pkg/, a subdirectory of the repo.
+
+    The code is pkg/src/x.py, and a location names it from the repository
+    root. With ``shadow``, the repository root holds a src/x.py of its own,
+    whose lines no later commit changes. Returns the specflo root, the
+    project directory and the open round's scope.
+    """
+    pkg = tmp_path / "pkg"
+    _git(tmp_path, "init", "-q")
+    _commit(tmp_path, "pkg/src/x.py", X_PY)
+    if shadow:
+        _commit(tmp_path, "src/x.py", X_PY)
+    cfg = config.init_config(pkg)
+    projects.create_project(pkg, cfg, "Thing", created="2026-09-01")
+    projects.switch_project(pkg, cfg, "Thing")
+    monkeypatch.chdir(pkg)
+    a = _change(pkg, 20, "line 20 in A")
+    _run("review", "start")
+    assert _add("blocker", "One", "pkg/src/x.py:20").exit_code == 0
+    assert _add("should-fix", "Two", "pkg/src/x.py:10").exit_code == 0
+    _run("review", "done")
+    b = _change(pkg, 10, "line 10 fixed in B")
+    _start()
+    scope = review.review_scope(pkg, config.load_config(pkg), SLUG)
+    # Both shas are read in the subdirectory, so the checks below run git.
+    assert (scope["sha"], scope["first_reviewed_sha"]) == (b, a)
+    return pkg, pkg / "docs" / "projects" / SLUG, scope
+
+
+@pytest.mark.parametrize("at", ["pkg/src/x.py:10", "pkg/src/x.py:9-10"])
+@pytest.mark.parametrize("severity", ["blocker", "should-fix"])
+def test_subdirectory_finding_add_marks_a_line_a_fix_changed(tmp_path, monkeypatch, severity, at):
+    _, project_dir, _ = _subdirectory_second_round(tmp_path, monkeypatch)
+
+    result = _add(severity, "The fix broke it", at)
+
+    assert result.exit_code == 0, result.output
+    assert result.stdout == "Recorded F-03 in thing/review-2.\n"
+    assert result.stderr == ""
+    assert _findings(project_dir / "review-2.md") == [
+        f"- F-03 ({severity}, regression) [{at}] The fix broke it"
+    ]
+
+
+@pytest.mark.parametrize("at", ["pkg/src/x.py:30", "pkg/src/x.py:20"])
+def test_subdirectory_finding_add_does_not_mark_lines_no_later_commit_changed(
+    tmp_path, monkeypatch, at
+):
+    _, project_dir, _ = _subdirectory_second_round(tmp_path, monkeypatch)
+
+    result = _add("blocker", "Not a regression", at)
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert _findings(project_dir / "review-2.md") == [f"- F-03 (blocker) [{at}] Not a regression"]
+
+
+def test_subdirectory_finding_add_refuses_a_path_from_the_specflo_root(tmp_path, monkeypatch):
+    _, project_dir, _ = _subdirectory_second_round(tmp_path, monkeypatch)
+
+    result = _add("blocker", "The fix broke it", "src/x.py:10")
+
+    assert result.exit_code == 1, result.output
+    assert "src/x.py is not a file at the round's sha" in result.stderr
+    assert _findings(project_dir / "review-2.md") == []
+
+
+def test_subdirectory_finding_add_blames_the_file_the_location_check_read(tmp_path, monkeypatch):
+    # src/x.py names the repository root's file, which no fix changed, not
+    # pkg/src/x.py, whose line 10 B changed.
+    _, project_dir, _ = _subdirectory_second_round(tmp_path, monkeypatch, shadow=True)
+
+    root_file = _add("blocker", "The root's file", "src/x.py:10")
+    pkg_file = _add("blocker", "The fix broke it", "pkg/src/x.py:10")
+
+    assert (root_file.exit_code, root_file.stderr) == (0, ""), root_file.output
+    assert (pkg_file.exit_code, pkg_file.stderr) == (0, ""), pkg_file.output
+    assert _findings(project_dir / "review-2.md") == [
+        "- F-03 (blocker) [src/x.py:10] The root's file",
+        "- F-04 (blocker, regression) [pkg/src/x.py:10] The fix broke it",
+    ]
+
+
+@pytest.mark.parametrize(
+    "path, found",
+    [
+        ("pkg/src/x.py", True),
+        ("./pkg/src/x.py", True),
+        # From the specflo root, not the repository root.
+        ("src/x.py", False),
+        ("./src/x.py", False),
+    ],
+)
+def test_subdirectory_the_location_check_and_the_blame_read_the_same_path(
+    tmp_path, monkeypatch, path, found
+):
+    pkg, _, scope = _subdirectory_second_round(tmp_path, monkeypatch)
+    sha, first = scope["sha"], scope["first_reviewed_sha"]
+
+    try:
+        checked = review.check_location(pkg, sha, path, 10, None) is None
+    except SpecfloError:
+        checked = False
+    marked, why = review.regression_mark(pkg, sha, first, "blocker", path, 10, None)
+
+    assert checked is found
+    assert (marked, why) == ((True, None) if found else (False, f"git cannot blame {path} at {sha} here"))
+
+
+@pytest.mark.parametrize("how", ["round file", "--file"])
+def test_subdirectory_done_marks_a_hand_written_line_on_a_line_a_fix_changed(
+    tmp_path, monkeypatch, how
+):
+    _, project_dir, _ = _subdirectory_second_round(tmp_path, monkeypatch)
+    path = project_dir / "review-2.md"
+    lines = [
+        "- F-03 (should-fix) [pkg/src/x.py:9-10] Hand-written on B's line",
+        "- F-04 (blocker) [pkg/src/x.py:30] Hand-written on a line no fix changed",
+    ]
+    args = ["review", "done"]
+    if how == "--file":
+        report = tmp_path / "report.md"
+        report.write_text(_REPORT.format(findings="\n".join(lines)))
+        args += ["--file", str(report)]
+    else:
+        _check_round_one_closed()
+        _write_findings(path, lines)
+
+    result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    assert result.stderr == ""
+    assert _findings(path) == [
+        "- F-03 (should-fix, regression) [pkg/src/x.py:9-10] Hand-written on B's line",
+        "- F-04 (blocker) [pkg/src/x.py:30] Hand-written on a line no fix changed",
+    ]
