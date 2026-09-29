@@ -8,6 +8,15 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.15.2]
+
+### Changed
+- **The daemon and agent pool docs move to `DAEMON.md`.** Daemon hosting, the
+  web UI, the agent pool and the commands for hosted projects, the pool, gates,
+  and products and work items are in a new top-level `DAEMON.md`. The README
+  keeps a short section and links to it, so it is about 40% shorter. The text
+  itself is unchanged.
+
 ## [0.15.1]
 
 ### Added

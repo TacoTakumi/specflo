@@ -14,7 +14,7 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Docs that are published to the public repo and should read cleanly anywhere.
-ASCII_DOCS = ["README.md", "CHANGELOG.md"]
+ASCII_DOCS = ["README.md", "CHANGELOG.md", "DAEMON.md"]
 
 
 @pytest.mark.parametrize("name", ASCII_DOCS)
