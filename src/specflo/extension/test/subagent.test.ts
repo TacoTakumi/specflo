@@ -27,7 +27,7 @@ const PAYLOAD = "You are resuming a specflo project.\n# Checkpoint - demo\n";
 /** The header value pi-subagents writes: the parent's session id. */
 const PARENT_ID = "01a101cb-52a8-7422-897f-94f1400f2aba";
 /** The header value a fork carries: the parent's session file. */
-const PARENT_FILE = "/home/u/.pi/agent/sessions/--p--/2026-10-03T12-44-24-616Z_01a101cb.jsonl";
+const PARENT_FILE = "/home/user/.pi/agent/sessions/--p--/2026-10-03T12-44-24-616Z_01a101cb.jsonl";
 
 /** A status --json snapshot with the arming threshold and a done count. */
 function status(done: number): string {
