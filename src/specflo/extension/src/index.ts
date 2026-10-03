@@ -56,6 +56,20 @@ const COLD_START_REASONS: ReadonlySet<SessionStartEvent["reason"]> = new Set([
   "resume",
 ]);
 
+/**
+ * True in a child session that pi-subagents made for a subagent.
+ *
+ * pi-subagents writes the parent's session id to the child header's
+ * `parentSession`. A fork or a branch has the parent's session file path
+ * there, and is a session the user works in, so only a value that is no path
+ * marks a child. A child has a task from its parent and no user: a reseed
+ * tells it to stop and ask one, and a seam clear would end the parent's task.
+ */
+function isSubagentSession(ctx: ExtensionContext): boolean {
+  const parent = ctx.sessionManager?.getHeader?.()?.parentSession;
+  return typeof parent === "string" && parent !== "" && !/[\\/]/.test(parent);
+}
+
 /** Marks the injected message in the session log. */
 const RESEED_MESSAGE_TYPE = "specflo-reseed";
 
@@ -556,6 +570,9 @@ export default function specflo(pi: ExtensionAPI): void {
   });
 
   pi.on("session_start", async (event: SessionStartEvent, ctx: ExtensionContext) => {
+    // A subagent's child session gets no payload and seeds no threshold, so
+    // it never arms.
+    if (isSubagentSession(ctx)) return;
     if (COLD_START_REASONS.has(event.reason)) {
       // No direct-continuation flag: a cold start has no one's answer yet about
       // whether to keep going, which is exactly what the ask-first payload is
@@ -594,6 +611,9 @@ export default function specflo(pi: ExtensionAPI): void {
   });
 
   pi.on("turn_end", async (_event: TurnEndEvent, ctx: ExtensionContext) => {
+    // No seam handling in a subagent's child session: no notice, no abort and
+    // no fire through the parent's anchor.
+    if (isSubagentSession(ctx)) return;
     // The arming check is this line alone: an in-process read of context usage
     // against the seeded threshold, spawning nothing (REQ-26). Unknown usage and
     // an unknown threshold both leave it unarmed (REQ-05).

@@ -102,6 +102,12 @@ export interface FakeCtxOptions {
    * expected to clear needs.
    */
   replacement?: ReplacementFactory;
+  /**
+   * The session header's ``parentSession``: a session id in a pi-subagents
+   * child session, a session file path in a fork. Left unset, the context has
+   * no sessionManager at all.
+   */
+  parentSession?: string;
 }
 
 export interface FakeCtx {
@@ -130,6 +136,7 @@ export interface FakeCtx {
   /** ctx.abort() invocations, for REQ-01/REQ-06 counting. */
   abortCalls: unknown[];
   abort(): void;
+  sessionManager?: { getHeader(): { parentSession?: string } };
 }
 
 export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
@@ -190,6 +197,9 @@ export function createFakeCtx(options: FakeCtxOptions = {}): FakeCtx {
     abort() {
       abortCalls.push(true);
     },
+    ...(options.parentSession === undefined
+      ? {}
+      : { sessionManager: { getHeader: () => ({ parentSession: options.parentSession }) } }),
   };
 }
 
