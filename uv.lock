@@ -514,7 +514,7 @@ wheels = [
 
 [[package]]
 name = "specflo"
-version = "0.14.0"
+version = "0.15.3"
 source = { editable = "." }
 dependencies = [
     { name = "agentsquire" },
