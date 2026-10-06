@@ -282,8 +282,8 @@ def test_task_done_offers_the_brief_review_only_when_its_last_task_is_done(tmp_p
     last = _ok(["task", "done", "T-03"]).output
 
     assert "B-01" not in first
-    assert offer in last.splitlines()
-    assert "review start --brief B-01" in last
+    assert last.rstrip().splitlines()[-1] == offer
+    assert "Checkpoint saved" in last and last.index("Checkpoint saved") < last.index(offer)
 
 
 def test_task_done_json_names_the_completed_briefs(tmp_path, monkeypatch):

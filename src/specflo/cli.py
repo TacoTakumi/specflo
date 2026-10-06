@@ -2377,11 +2377,6 @@ def task_done(
     if not json_output:
         for followup_id, holder in closed:
             typer.echo(f"Closed {followup_id} in {holder}/followup.")
-        for brief_id in completed_briefs:
-            typer.echo(
-                f"{brief_id} is complete: every task that cites it is done."
-                f" Review it with `specflo review start --brief {brief_id}`."
-            )
         if cont["continuation"] is None:
             # Same fallback reopen takes: a seam that is a clear-point stays one
             # even when the next step is underivable, so a harness grepping the
@@ -2391,6 +2386,13 @@ def task_done(
             if written:
                 typer.echo(f"Checkpoint saved: {cont['checkpoint_locator']}")
             typer.echo(cont["continuation"])
+        # Last, after the Next line: the brief's review is the next move, and
+        # an agent that reads the end of the output takes it before the next task.
+        for brief_id in completed_briefs:
+            typer.echo(
+                f"{brief_id} is complete: every task that cites it is done."
+                f" Review it with `specflo review start --brief {brief_id}`."
+            )
 
 
 @task_app.command("block", epilog='Example: specflo task block T-01 --reason "waiting on API"')
