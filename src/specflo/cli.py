@@ -1937,14 +1937,49 @@ def plan_graph(
     typer.echo("\n".join(lines))
 
 
+def _long_field(label: str, text: str | None, file: str | None) -> str | None:
+    """The one-line value of a long task field, given inline or read from a file.
+
+    ``file`` names a file, or ``-`` for stdin. Its text is folded to one line
+    (runs of whitespace and line breaks become single spaces; quotes stay as
+    they are), since a plan entry holds each field on one line. Giving both
+    the flag and the file is refused; neither gives None.
+    """
+    if text is not None and file is not None:
+        raise _die(f"Give --{label} or --{label}-file, not both.")
+    if file is None:
+        return text
+    if file == "-":
+        raw = sys.stdin.read()
+    else:
+        try:
+            raw = Path(file).read_text()
+        except FileNotFoundError:
+            raise _die(f"No {label} file at {file}.")
+        except (OSError, UnicodeDecodeError) as exc:
+            raise _die(f"Cannot read {file} as text: {exc}")
+    folded = " ".join(raw.split())
+    if not folded:
+        raise _die(f"The {label} file {file} holds no text.")
+    return folded
+
+
 @task_app.command(
     "add",
-    epilog='Example: specflo task add --text "Build X" --acceptance "X works" --verify "uv run pytest" --from REQ-01  |  --from B-01',
+    epilog='Example: specflo task add --text "Build X" --acceptance "X works" --verify "uv run pytest" --from REQ-01  |  --from B-01  |  --acceptance-file a.txt',
 )
 def task_add(
     text: str = typer.Option(..., "--text", help="The task title (one line)."),
-    acceptance: str = typer.Option(..., "--acceptance", help="Pass/fail acceptance criterion (required)."),
-    verify: str = typer.Option(..., "--verify", help="Verification command or step (required)."),
+    acceptance: str = typer.Option(None, "--acceptance", help="Pass/fail acceptance criterion (required, or --acceptance-file)."),
+    acceptance_file: str = typer.Option(
+        None, "--acceptance-file", metavar="<path>",
+        help="Read the acceptance from this file (- for stdin); folded to one line.",
+    ),
+    verify: str = typer.Option(None, "--verify", help="Verification command or step (required, or --verify-file)."),
+    verify_file: str = typer.Option(
+        None, "--verify-file", metavar="<path>",
+        help="Read the verify step from this file (- for stdin); folded to one line.",
+    ),
     from_: list[str] = typer.Option(
         None, "--from", metavar="REQ-NN|B-NN",
         help="Requirement(s) or brief(s) this task implements (repeatable; >=1 unless --fixes).",
@@ -1968,6 +2003,12 @@ def task_add(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Append a task (T-NN) to the active project's plan.md."""
+    acceptance = _long_field("acceptance", acceptance, acceptance_file)
+    verify = _long_field("verify", verify, verify_file)
+    if acceptance is None:
+        raise _die("A task needs an acceptance criterion: --acceptance <text> or --acceptance-file <path>.")
+    if verify is None:
+        raise _die("A task needs a verify step: --verify <text> or --verify-file <path>.")
     root = _require_root()
     cfg = config.load_config(root)
     svc = _service(root, cfg)
@@ -2068,7 +2109,15 @@ def task_edit(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to edit."),
     title: str = typer.Option(None, "--title", help="Rewrite the task title."),
     acceptance: str = typer.Option(None, "--acceptance", help="Rewrite Acceptance."),
+    acceptance_file: str = typer.Option(
+        None, "--acceptance-file", metavar="<path>",
+        help="Rewrite Acceptance from this file (- for stdin); folded to one line.",
+    ),
     verify: str = typer.Option(None, "--verify", help="Rewrite Verify."),
+    verify_file: str = typer.Option(
+        None, "--verify-file", metavar="<path>",
+        help="Rewrite Verify from this file (- for stdin); folded to one line.",
+    ),
     scope: str = typer.Option(None, "--scope", help="Rewrite Scope."),
     files: str = typer.Option(None, "--files", help="Rewrite Files (comma-separated)."),
     needs: str = typer.Option(None, "--needs", help="Rewrite Needs (comma-separated pools)."),
@@ -2088,6 +2137,8 @@ def task_edit(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Edit an active task's fields and dependencies in place."""
+    acceptance = _long_field("acceptance", acceptance, acceptance_file)
+    verify = _long_field("verify", verify, verify_file)
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
@@ -2114,7 +2165,11 @@ def task_edit(
 )
 def task_note(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to annotate."),
-    text: str = typer.Option(..., "--text", help="The note text (written as one line)."),
+    text: str = typer.Option(None, "--text", help="The note text (written as one line)."),
+    text_file: str = typer.Option(
+        None, "--text-file", metavar="<path>",
+        help="Read the note from this file (- for stdin); folded to one line.",
+    ),
     label: str = typer.Option(
         None, "--label",
         help="One of Note (default), Design, Resolution, Descoped. "
@@ -2123,6 +2178,9 @@ def task_note(
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Append a dated note to a task, in any progress state."""
+    text = _long_field("text", text, text_file)
+    if text is None:
+        raise _die("A note needs text: --text <text> or --text-file <path>.")
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:

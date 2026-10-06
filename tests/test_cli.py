@@ -4853,3 +4853,74 @@ def test_new_refuses_a_light_level_on_a_remote(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "local only" in result.output
     assert not (tmp_path / "docs" / "projects" / "thing").exists()
+
+
+# --- long task fields from a file or stdin ------------------------------------
+
+
+def _plan_text(tmp_path):
+    return (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+
+
+def test_task_add_file_input_folds_lines_and_keeps_quotes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    acceptance = tmp_path / "a.txt"
+    acceptance.write_text('Rob said "ship it".\n\nThe form posts to /feedback\n  and shows a toast.\n')
+    verify = tmp_path / "v.txt"
+    verify.write_text("uv run pytest tests/test_form.py -q\n")
+
+    result = runner.invoke(app, ["task", "add", "--text", "add the form", "--from", "REQ-01",
+                                 "--acceptance-file", str(acceptance), "--verify-file", str(verify)])
+
+    assert result.exit_code == 0, result.output
+    text = _plan_text(tmp_path)
+    assert '- Acceptance: Rob said "ship it". The form posts to /feedback and shows a toast.\n' in text
+    assert "- Verify: uv run pytest tests/test_form.py -q\n" in text
+
+
+def test_task_note_file_input_reads_stdin(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+
+    result = runner.invoke(app, ["task", "note", "T-01", "--text-file", "-", "--label", "Resolution"],
+                           input="build 42\nscreencap 'home.png'\n")
+
+    assert result.exit_code == 0, result.output
+    assert "[Resolution] build 42 screencap 'home.png'" in _plan_text(tmp_path)
+
+
+def test_task_edit_file_input_rewrites_the_field(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    acceptance = tmp_path / "a.txt"
+    acceptance.write_text("it works\ntwice\n")
+
+    result = runner.invoke(app, ["task", "edit", "T-01", "--acceptance-file", str(acceptance)])
+
+    assert result.exit_code == 0, result.output
+    assert "- Acceptance: it works twice\n" in _plan_text(tmp_path)
+
+
+def test_file_input_refusals_leave_the_plan_untouched(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    before = _plan_text(tmp_path)
+    acceptance = tmp_path / "a.txt"
+    acceptance.write_text("it works\n")
+
+    both = runner.invoke(app, ["task", "add", "--text", "x", "--from", "REQ-01", "--verify", "true",
+                               "--acceptance", "y", "--acceptance-file", str(acceptance)])
+    neither = runner.invoke(app, ["task", "add", "--text", "x", "--from", "REQ-01", "--verify", "true"])
+    missing = runner.invoke(app, ["task", "edit", "T-01", "--acceptance-file", str(tmp_path / "nope.txt")])
+    empty = tmp_path / "empty.txt"
+    empty.write_text(" \n")
+    blank = runner.invoke(app, ["task", "note", "T-01", "--text-file", str(empty)])
+    no_note = runner.invoke(app, ["task", "note", "T-01"])
+
+    assert both.exit_code != 0 and "not both" in both.output
+    assert neither.exit_code != 0 and "--acceptance-file" in neither.output
+    assert missing.exit_code != 0 and "nope.txt" in missing.output
+    assert blank.exit_code != 0 and "holds no text" in blank.output
+    assert no_note.exit_code != 0 and "--text-file" in no_note.output
+    assert _plan_text(tmp_path) == before
