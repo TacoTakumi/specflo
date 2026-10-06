@@ -2301,6 +2301,9 @@ def task_done(
             message += f" Closed: {', '.join(i for i, _ in closed)}."
         raise _die(message)
     written = _refresh_checkpoint(svc, slug)
+    # The briefs this task finished: every task citing them is done now, so
+    # each can be reviewed on its own.
+    completed_briefs = svc.briefs_completed_by(slug, task.id)
     # Unlike the other task verbs, completing a task is a clear-point: it gets the
     # full continuation (REQ-01). start/block/reopen stay terse by design.
     cont = _seam_continuation(svc, slug, root, cfg)
@@ -2310,10 +2313,17 @@ def task_done(
         cont = {**cont, "checkpoint": None, "checkpoint_locator": None}
     if closes:
         cont = {**cont, "closed_followups": [followup_id for followup_id, _ in closed]}
+    if completed_briefs:
+        cont = {**cont, "completed_briefs": completed_briefs}
     _report_transition(task, json_output, extra=cont)
     if not json_output:
         for followup_id, holder in closed:
             typer.echo(f"Closed {followup_id} in {holder}/followup.")
+        for brief_id in completed_briefs:
+            typer.echo(
+                f"{brief_id} is complete: every task that cites it is done."
+                f" Review it with `specflo review start --brief {brief_id}`."
+            )
         if cont["continuation"] is None:
             # Same fallback reopen takes: a seam that is a clear-point stays one
             # even when the next step is underivable, so a harness grepping the
@@ -2579,9 +2589,15 @@ def review_start(
         False, "--harden",
         help="Open a harden round: a fresh review of the whole branch, outside the round budget.",
     ),
+    brief: str = typer.Option(
+        None, "--brief", metavar="B-NN",
+        help="Open a brief round: a review of that brief's commits, outside the round budget.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mint the active project's next review round and print its locator and scope."""
+    if harden and brief:
+        raise _die("Give --harden or --brief B-NN, not both.")
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
@@ -2589,7 +2605,7 @@ def review_start(
         # holds only the documents, so its own git names nothing reviewed.
         path, created = svc.start_round(
             slug, full=full, over_budget=over_budget, sha=review_module.head_sha(root),
-            harden=harden,
+            harden=harden, brief=brief,
         )
         scope = svc.review_scope(slug)
     except SpecfloError as exc:
@@ -2599,14 +2615,17 @@ def review_start(
     if json_output:
         typer.echo(json.dumps({
             "locator": locator, "path": reported, "created": created, "kind": scope["kind"],
+            "brief": scope.get("brief"),
             "scope": scope["scope"], "range": scope["range"], "items": scope["items"],
         }))
         return
     note = "" if created else " (already open)"
     typer.echo(f"{locator}{note}")
-    # Only a harden round names its kind: a gate round prints as it always did.
+    # Only a harden or brief round names its kind: a gate round prints as it always did.
     if scope["kind"] == "harden":
         typer.echo("Kind: harden")
+    elif scope["kind"] == "brief":
+        typer.echo(f"Kind: brief ({scope['brief']})")
     # A harden project's harden round reviews the Scope its brief names, not a branch.
     if scope["kind"] == "harden" and svc.load_project(slug).level == projects.HARDEN_LEVEL:
         typer.echo("Scope: the brief's Scope")

@@ -116,7 +116,13 @@ PASSING = (READY, WAIVED)
 # file written before harden rounds - is a gate round.
 GATE = "gate"
 HARDEN = "harden"
-KINDS = (GATE, HARDEN)
+# A brief round reviews one brief's commits, from the commit the brief
+# started at: the budget skips it, the gate never reads its verdict, and no
+# later round starts its range at it, since it reviewed one slice only.
+BRIEF = "brief"
+KINDS = (GATE, HARDEN, BRIEF)
+# The frontmatter key a brief round records the brief under.
+BRIEF_FIELD = "brief"
 # Frontmatter key order, pinned so a close rewrites a round file in the
 # shape `review start` minted it. A harden round's kind is minted after
 # these, where a close keeps it (see :func:`_render`).
@@ -202,10 +208,11 @@ def frontmatter(path: Path) -> dict:
 
 
 def round_kind(fields: dict) -> str:
-    """A round's kind from its frontmatter mapping: ``harden`` when it says
-    so, else ``gate`` - a round with no kind, or one a hand-edit spelled
-    otherwise, is a gate round."""
-    return HARDEN if fields.get("kind") == HARDEN else GATE
+    """A round's kind from its frontmatter mapping: ``harden`` or ``brief``
+    when it says so, else ``gate`` - a round with no kind, or one a hand-edit
+    spelled otherwise, is a gate round."""
+    kind = fields.get("kind")
+    return kind if kind in (HARDEN, BRIEF) else GATE
 
 
 def open_round(root: Path, cfg: SpecfloConfig, slug: str) -> Path | None:
@@ -234,11 +241,13 @@ def _reviewed_sha(rounds: list[tuple[int, Path]]) -> str:
     "" when none was.
 
     A waived round reviewed nothing, so a range never starts at its sha: that
-    would skip the fixes made before the waive.
+    would skip the fixes made before the waive. A brief round reviewed one
+    brief's slice, so a range never starts at its sha either: that would skip
+    everything else since the last gate or harden round.
     """
     for _, path in reversed(rounds):
         fields = frontmatter(path)
-        if fields.get("verdict") in REVIEWED:
+        if fields.get("verdict") in REVIEWED and round_kind(fields) != BRIEF:
             return str(fields.get("sha", "") or "")
     return ""
 
@@ -248,12 +257,13 @@ def _first_reviewed_sha(rounds: list[tuple[int, Path]]) -> str | None:
     None when none was.
 
     A finding on a line changed after it is a regression. A waived round
-    reviewed nothing, so it is never the first reviewed round. A reviewed
-    round that records no sha gives "", which marks nothing.
+    reviewed nothing, so it is never the first reviewed round, and a brief
+    round reviewed one slice, so it is not one either. A reviewed round that
+    records no sha gives "", which marks nothing.
     """
     for _, path in rounds:
         fields = frontmatter(path)
-        if fields.get("verdict") in REVIEWED:
+        if fields.get("verdict") in REVIEWED and round_kind(fields) != BRIEF:
             return str(fields.get("sha", "") or "")
     return None
 
@@ -502,6 +512,7 @@ def start_round(
     sha: str | None = None,
     need_fixes: bool = False,
     harden: bool = False,
+    brief_id: str | None = None,
 ) -> tuple[Path, bool]:
     """Mint the next round file, or hand back the open one (REQ-01..REQ-03).
 
@@ -537,21 +548,41 @@ def start_round(
     nothing. It still needs each open item's fix, since it checks each item.
     It hands back an open harden round, and refuses an open gate round
     rather than pass it off as a harden one.
+
+    ``brief_id`` opens a brief round: a review of that brief's commits, from
+    the commit the brief started at (its base) to HEAD. Like a harden round
+    it is outside the budget and records its kind, with the brief under
+    ``brief``. It opens only once every task that cites the brief is done,
+    and refuses a brief with no task. An open brief round of the same brief
+    is handed back; any other open round is refused, as a brief round is
+    refused when a gate or harden round is asked for.
     """
     today = today or datetime.date.today().isoformat()
     directory = project_dir(root, cfg, slug)
+    wanted = BRIEF if brief_id else HARDEN if harden else GATE
     with locked(lock_path_for(root, slug, _LOCK_NAME)):
         existing = open_round(root, cfg, slug)
         if existing is not None:
-            if harden and round_kind(frontmatter(existing)) != HARDEN:
+            open_fields = frontmatter(existing)
+            open_kind = round_kind(open_fields)
+            if wanted == HARDEN and open_kind == GATE:
                 raise SpecfloError(_open_gate_message(existing.name))
+            if wanted == BRIEF and (
+                open_kind != BRIEF or open_fields.get(BRIEF_FIELD) != brief_id
+            ):
+                raise SpecfloError(_open_other_round_message(existing.name, open_fields, brief_id))
+            if wanted != BRIEF and open_kind == BRIEF:
+                raise SpecfloError(_open_other_round_message(existing.name, open_fields, None))
             _restamp_untouched(root, cfg, slug, existing, sha)
             return existing, False
+        base_sha = None
+        if brief_id is not None:
+            base_sha = _brief_base(root, cfg, slug, brief_id)
         # Before the budget: --over-budget cannot open a round while an item
         # is unfixed, so the budget's choice is asked only once it could.
         if need_fixes and (unfixed := unfixed_items(root, cfg, slug)):
             raise SpecfloError(unfixed_message(unfixed, reopened_items(root, cfg, slug)))
-        if not harden:
+        if wanted == GATE:
             state = budget(root, cfg, slug)
             if state["spent"] and not over_budget:
                 raise SpecfloError(budget_message(state))
@@ -559,16 +590,60 @@ def start_round(
         number = max((n for n, _ in rounds), default=0) + 1
         path = directory / f"review-{number}.md"
         seen = _done_fixes(root, cfg, slug, number)
+        if wanted == BRIEF:
+            base = base_sha or ""
+            kind = f"kind: {BRIEF}\n{BRIEF_FIELD}: {brief_id}\n"
+        elif wanted == HARDEN:
+            base, kind = "", f"kind: {HARDEN}\n"
+        else:
+            base, kind = ("" if full else _reviewed_sha(rounds)), ""
         path.write_text(_TEMPLATE.format(
             number=number,
             today=today,
             sha=head_sha(root) if sha is None else sha,
-            base="" if full or harden else _reviewed_sha(rounds),
+            base=base,
             level=load_project(root, cfg, slug).level,
-            kind=(f"kind: {HARDEN}\n" if harden else "")
+            kind=kind
             + (yaml.safe_dump({FIXES_AT_OPEN: seen}, sort_keys=False) if seen else ""),
         ))
     return path, True
+
+
+def _brief_base(root: Path, cfg: SpecfloConfig, slug: str, brief_id: str) -> str:
+    """The commit brief ``brief_id`` started at, once its tasks are all done.
+
+    Refuses a brief the project does not have, one with no task, and one
+    with a task still pending, in progress or blocked, naming each.
+    """
+    from . import briefs as briefs_mod
+
+    doc = briefs_mod.read_brief(root, cfg, slug, brief_id)
+    tasks = plan.brief_tasks(root, cfg, slug, brief_id)
+    if not tasks:
+        raise SpecfloError(
+            f"{brief_id} has no task yet: there is nothing to review. File its work"
+            f" with `specflo task add --from {brief_id}` first."
+        )
+    unfinished = [t for t in tasks if t.progress != "done"]
+    if unfinished:
+        named = ", ".join(f"{t.id} ({t.progress})" for t in unfinished)
+        raise SpecfloError(
+            f"{brief_id} still has active work: {named}. A brief's review opens"
+            " once every task that cites it is done."
+        )
+    match = re.search(r"(?m)^sha:\s*(.*)$", doc.split("---", 2)[1] if doc.startswith("---") else "")
+    return (match.group(1).strip().strip("'\"") if match else "")
+
+
+def _open_other_round_message(name: str, fields: dict, brief_id: str | None) -> str:
+    """What to tell the user whose round request clashes with open round ``name``."""
+    kind = round_kind(fields)
+    what = f"a brief round of {fields.get(BRIEF_FIELD)}" if kind == BRIEF else f"a {kind} round"
+    asked = f"a brief round of {brief_id}" if brief_id else "a round"
+    return (
+        f"{name} is open ({what}), and {asked} opens only once it is closed:"
+        " finish it with `specflo review done`, then run `specflo review start` again."
+    )
 
 
 def _open_gate_message(name: str) -> str:
@@ -786,7 +861,7 @@ def review_state(root: Path, cfg: SpecfloConfig, slug: str) -> dict | None:
     # gate reads may not be the latest one; the next-step hint names it.
     # So are the quiet harden rounds the series ends in: after two, the hint
     # suggests that hardening stop.
-    if any(round_kind(frontmatter(each)) == HARDEN for _, each in files):
+    if any(round_kind(frontmatter(each)) != GATE for _, each in files):
         state["gate"] = gate
         state["quiet_rounds"] = _quiet_rounds(files)
     # Only carried in a harden project, whose hint turns on each open item's
@@ -1876,6 +1951,7 @@ def review_scope(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
         "sha": str(fields.get("sha", "") or ""),
         "first_reviewed_sha": _first_reviewed_sha(earlier),
         "kind": round_kind(fields),
+        "brief": str(fields.get(BRIEF_FIELD, "") or "") or None,
         "scope": DELTA if base else WHOLE_BRANCH,
         "base": base,
         "range": f"{base}..HEAD" if base else None,

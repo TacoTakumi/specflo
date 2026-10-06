@@ -741,3 +741,56 @@ def test_directory_option_ingests_a_report_relative_to_dir(tmp_path, monkeypatch
     assert body_of(minted) == report.read_text()
     assert _frontmatter(minted)["verdict"] == "ready-to-merge"
     assert os.getcwd() == before
+
+
+# --- brief rounds: outside the budget, never a later round's base -------------
+
+
+def _brief_round(project_dir, number, brief_id="B-01", verdict="ready-to-merge", sha="bbb2222"):
+    path = project_dir / f"review-{number}.md"
+    path.write_text(
+        f"---\nround: {number}\nverdict: {verdict}\ndate: '2026-10-06'\n"
+        f"sha: {sha}\nbase: aaa1111\nlevel: full\nreason: ''\nkind: brief\nbrief: {brief_id}\n---\n\n"
+        f"# Review round {number}\n"
+    )
+    return path
+
+
+def test_a_brief_round_neither_counts_toward_the_budget_nor_is_the_gate(tmp_path, monkeypatch):
+    from specflo import review
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    _closed_round(project_dir, 1, verdict="changes-requested")
+    _brief_round(project_dir, 2)
+    _brief_round(project_dir, 3, brief_id="B-02", verdict="changes-requested")
+
+    state = review.budget(tmp_path, cfg, "thing")
+    gate = review._latest_gate(review.round_files(tmp_path, cfg, "thing"))
+
+    assert state["used"] == 1
+    assert gate is not None and gate[0] == 1
+
+
+def test_the_next_gate_round_does_not_start_its_range_at_a_brief_round(tmp_path, monkeypatch):
+    from specflo import review
+    project_dir = _project(tmp_path, monkeypatch)
+    cfg = config.load_config(tmp_path)
+    _closed_round(project_dir, 1)                     # sha abc1234, reviewed
+    _brief_round(project_dir, 2, sha="bbb2222")       # one slice only
+
+    rounds = review.round_files(tmp_path, cfg, "thing")
+
+    assert review._reviewed_sha(rounds) == "abc1234"
+    assert review._first_reviewed_sha(rounds) == "abc1234"
+    assert review._first_reviewed_sha(rounds[1:]) is None
+
+
+def test_a_gate_round_is_refused_while_a_brief_round_is_open(tmp_path, monkeypatch):
+    project_dir = _project(tmp_path, monkeypatch)
+    _brief_round(project_dir, 1, verdict="")
+
+    result = runner.invoke(app, ["review", "start"])
+
+    assert result.exit_code != 0
+    assert "review-1.md is open (a brief round of B-01)" in result.output
+    assert not (project_dir / "review-2.md").exists()

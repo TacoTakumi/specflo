@@ -661,6 +661,39 @@ def resolution_notes(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     return notes
 
 
+def brief_tasks(root: Path, cfg: SpecfloConfig, slug: str, brief_id: str) -> list[Task]:
+    """The active tasks that cite brief ``brief_id``, in plan order; empty with no plan."""
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return []
+    return [
+        t for t in _parse_tasks(path.read_text())
+        if t.status == "active" and brief_id in t.implements
+    ]
+
+
+def briefs_completed_by(root: Path, cfg: SpecfloConfig, slug: str, task_id: str) -> list[str]:
+    """The briefs task ``task_id`` cites whose every active task is done.
+
+    Read after ``task done``: a brief named here has no work left, so its
+    review can open. A brief with an active task still pending, in progress
+    or blocked is not named. Unknown task: empty.
+    """
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        return []
+    tasks = [t for t in _parse_tasks(path.read_text()) if t.status == "active"]
+    task = next((t for t in tasks if t.id == task_id), None)
+    if task is None:
+        return []
+    completed = []
+    for brief_id in split_citations(task.implements)[1]:
+        cited = [t for t in tasks if brief_id in t.implements]
+        if cited and all(t.progress == "done" for t in cited):
+            completed.append(brief_id)
+    return completed
+
+
 def start_plan(
     root: Path, cfg: SpecfloConfig, slug: str, today: str | None = None
 ) -> tuple[Path, bool]:

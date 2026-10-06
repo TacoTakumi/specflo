@@ -286,6 +286,10 @@ class ProjectService(Protocol):
         """Mark a task done, recording ``note`` in the same write."""
         ...
 
+    def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:
+        """The briefs ``task_id`` cites whose every active task is done."""
+        ...
+
     def block_task(self, slug: str, task_id: str, *, reason: str | None = None) -> Task:
         """Mark a task blocked."""
         ...
@@ -342,7 +346,7 @@ class ProjectService(Protocol):
 
     def start_round(
         self, slug: str, full: bool = False, over_budget: bool = False,
-        sha: str | None = None, harden: bool = False,
+        sha: str | None = None, harden: bool = False, brief: str | None = None,
     ) -> tuple[Path, bool]:
         """Mint the next review round or hand back the open one; ``full``
         reviews the whole branch rather than the delta since the last round,

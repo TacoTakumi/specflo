@@ -139,16 +139,16 @@ def build_status(
 
 
 def round_kinds(root: Path, cfg: SpecfloConfig, slug: str) -> list[str] | None:
-    """Each round's kind, in round order; None while no harden round is recorded.
+    """Each round's kind, in round order; None while every round is a gate round.
 
     A project of gate rounds names no kinds, so it reads as it did before
-    harden rounds existed.
+    harden and brief rounds existed.
     """
     kinds = [
         review.round_kind(review.frontmatter(path))
         for _, path in review.round_files(root, cfg, slug)
     ]
-    return kinds if review.HARDEN in kinds else None
+    return kinds if any(kind != review.GATE for kind in kinds) else None
 
 
 def review_line(state: dict) -> str:
@@ -162,15 +162,20 @@ def review_line(state: dict) -> str:
     asks for changes on is settled, says so after its stamp; a hardened round
     the gate passes after says it passes.
 
-    A state that carries each round's kind - one with a harden round - counts
-    the rounds of each kind, and the latest round's stamp names its own. One
-    without, from a project of gate rounds or a daemon older than harden
-    rounds, reads as it always has.
+    A state that carries each round's kind - one with a harden or a brief
+    round - counts the rounds of each kind it has, and the latest round's
+    stamp names its own. One without, from a project of gate rounds or a
+    daemon older than harden rounds, reads as it always has.
     """
     plural = "round" if state["rounds"] == 1 else "rounds"
     kinds = state.get("kinds")
     counted = (
-        " (" + ", ".join(f"{kinds.count(kind)} {kind}" for kind in review.KINDS) + ")"
+        " (" + ", ".join(
+            f"{kinds.count(kind)} {kind}" for kind in review.KINDS
+            # gate and harden are always counted, as they were before brief
+            # rounds; a brief count appears only once a brief round exists.
+            if kind != review.BRIEF or kind in kinds
+        ) + ")"
         if kinds else ""
     )
     head = f"Reviews: {state['rounds']} {plural}{counted}; latest round {state['latest']}"

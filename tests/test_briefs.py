@@ -250,3 +250,108 @@ def test_decision_list_json_and_all(tmp_path, monkeypatch):
     ]
     assert "D-02  B-01        Post to /feedback  [superseded by D-03]" in everything
     assert "No divergences recorded." in _ok(["decision", "list", "--diverges"]).output
+
+
+# --- the review offer and review start --brief ----------------------------------
+
+
+def _brief_with_two_tasks(tmp_path):
+    """B-01 at a real commit, cited by T-02 and T-03, both pending."""
+    sha = _repo_with_a_commit(tmp_path)
+    _ok(["brief", "add", "Feedback form"])
+    for text in ("add the form", "wire the form"):
+        _ok(["task", "add", "--text", text, "--acceptance", "x", "--verify", "true", "--from", "B-01"])
+    return sha
+
+
+def _round_frontmatter(tmp_path, number):
+    import yaml
+    path = tmp_path / "docs" / "projects" / "thing" / f"review-{number}.md"
+    return yaml.safe_load(path.read_text().split("---", 2)[1])
+
+
+def test_task_done_offers_the_brief_review_only_when_its_last_task_is_done(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _brief_with_two_tasks(tmp_path)
+    offer = "B-01 is complete: every task that cites it is done. Review it with `specflo review start --brief B-01`."
+
+    _ok(["task", "start", "T-02"])
+    first = _ok(["task", "done", "T-02"]).output
+    _ok(["task", "start", "T-03"])
+    last = _ok(["task", "done", "T-03"]).output
+
+    assert "B-01" not in first
+    assert offer in last.splitlines()
+    assert "review start --brief B-01" in last
+
+
+def test_task_done_json_names_the_completed_briefs(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _brief_with_two_tasks(tmp_path)
+    _ok(["task", "start", "T-02"]); _ok(["task", "done", "T-02"])
+    _ok(["task", "start", "T-03"])
+
+    payload = json.loads(_ok(["task", "done", "T-03", "--json"]).output)
+
+    assert payload["completed_briefs"] == ["B-01"]
+    plain = json.loads(_ok(["task", "start", "T-01", "--json"]).output)
+    assert "completed_briefs" not in plain
+
+
+def test_review_start_brief_opens_a_round_based_at_the_brief_start(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    sha = _brief_with_two_tasks(tmp_path)
+    for task_id in ("T-02", "T-03"):
+        _ok(["task", "start", task_id]); _ok(["task", "done", task_id])
+
+    result = _ok(["review", "start", "--brief", "B-01"])
+
+    assert result.output.splitlines()[:3] == [
+        "thing/review-1", "Kind: brief (B-01)", f"Scope: {sha}..HEAD",
+    ]
+    fields = _round_frontmatter(tmp_path, 1)
+    assert (fields["kind"], fields["brief"], fields["base"]) == ("brief", "B-01", sha)
+    again = _ok(["review", "start", "--brief", "B-01", "--json"])
+    assert json.loads(again.output)["created"] is False
+    assert json.loads(again.output)["brief"] == "B-01"
+
+
+def test_review_start_brief_is_refused_while_the_brief_has_active_work(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _brief_with_two_tasks(tmp_path)
+    _ok(["task", "start", "T-02"]); _ok(["task", "done", "T-02"])
+    _ok(["task", "start", "T-03"])
+
+    result = runner.invoke(app, ["review", "start", "--brief", "B-01"])
+
+    assert result.exit_code != 0
+    assert "B-01 still has active work: T-03 (in_progress)" in result.output
+    assert not (tmp_path / "docs" / "projects" / "thing" / "review-1.md").exists()
+    unknown = runner.invoke(app, ["review", "start", "--brief", "B-09"])
+    assert unknown.exit_code != 0 and "No brief B-09" in unknown.output
+
+
+def test_review_start_brief_opens_past_a_spent_budget(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _brief_with_two_tasks(tmp_path)
+    for task_id in ("T-02", "T-03"):
+        _ok(["task", "start", task_id]); _ok(["task", "done", task_id])
+    # Two changes-requested gate rounds spend a full project's budget.
+    project_dir = tmp_path / "docs" / "projects" / "thing"
+    for number in (1, 2):
+        (project_dir / f"review-{number}.md").write_text(
+            f"---\nround: {number}\nverdict: changes-requested\ndate: '2026-10-06'\n"
+            f"sha: abc1234\nbase: ''\nlevel: full\nreason: ''\n---\n\n# Review round {number}\n"
+        )
+    spent = runner.invoke(app, ["review", "start"])
+    assert spent.exit_code != 0 and "used its review budget" in spent.output
+
+    result = runner.invoke(app, ["review", "start", "--brief", "B-01"])
+
+    assert result.exit_code == 0, result.output
+    assert _round_frontmatter(tmp_path, 3)["kind"] == "brief"

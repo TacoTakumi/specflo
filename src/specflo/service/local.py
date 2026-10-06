@@ -412,6 +412,9 @@ class LocalProjectService:
     def done_task(self, slug: str, task_id: str, *, note: str | None = None) -> Task:
         return plan.done_task(self.root, self.cfg, slug, task_id, note=note)
 
+    def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:
+        return plan.briefs_completed_by(self.root, self.cfg, slug, task_id)
+
     def block_task(self, slug: str, task_id: str, *, reason: str | None = None) -> Task:
         return plan.block_task(self.root, self.cfg, slug, task_id, reason=reason)
 
@@ -460,14 +463,14 @@ class LocalProjectService:
 
     def start_round(
         self, slug: str, full: bool = False, over_budget: bool = False,
-        sha: str | None = None, harden: bool = False,
+        sha: str | None = None, harden: bool = False, brief: str | None = None,
     ) -> tuple[Path, bool]:
         # Checked here, where a local and a hosted start both pass, so a round
         # opens only once each open item has a done fix task wherever the
         # project lives.
         return review.start_round(
             self.root, self.cfg, slug, full=full, over_budget=over_budget, sha=sha,
-            need_fixes=True, harden=harden,
+            need_fixes=True, harden=harden, brief_id=brief,
         )
 
     def review_scope(self, slug: str) -> dict:
