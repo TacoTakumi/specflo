@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Protocol, TypedDict, runtime_checkable
 
 from ..brainstorm import Decision
+from ..briefs import Brief
 from ..plan import Milestone, Task
 from ..projects import FULL_LEVEL, LINEAR_EXECUTION, Project
 from ..review import ClosedRound
@@ -149,6 +150,16 @@ class ProjectService(Protocol):
 
     def start_brief(self, slug: str) -> tuple[Path, bool]:
         """Create or locate a quick project's brief; ``(path, created)``."""
+        ...
+
+    # --- briefs inside a running project ----------------------------------
+
+    def add_brief(self, slug: str, title: str, sha: str = "") -> Brief:
+        """Create brief B-NN for ``title``; ``sha`` is the commit it starts at."""
+        ...
+
+    def set_brief_section(self, slug: str, brief_id: str, section: str, body: str) -> str:
+        """Replace one prose section of a brief; returns the section title."""
         ...
 
     def start_brainstorm(self, slug: str) -> tuple[Path, bool]:

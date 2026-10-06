@@ -12,8 +12,9 @@ import hashlib
 import shutil
 from pathlib import Path
 
-from .. import brainstorm, brief, checkpoint, doc, index, plan, projects, review, spec, status
+from .. import brainstorm, brief, briefs, checkpoint, doc, index, plan, projects, review, spec, status
 from ..brainstorm import Decision
+from ..briefs import Brief
 from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
@@ -269,6 +270,14 @@ class LocalProjectService:
 
     def start_brief(self, slug: str) -> tuple[Path, bool]:
         return brief.start_brief(self.root, self.cfg, slug)
+
+    # --- briefs inside a running project ----------------------------------
+
+    def add_brief(self, slug: str, title: str, sha: str = "") -> Brief:
+        return briefs.add_brief(self.root, self.cfg, slug, title, sha=sha)
+
+    def set_brief_section(self, slug: str, brief_id: str, section: str, body: str) -> str:
+        return briefs.set_section(self.root, self.cfg, slug, brief_id, section, body)
 
     def start_brainstorm(self, slug: str) -> tuple[Path, bool]:
         return brainstorm.start_brainstorm(self.root, self.cfg, slug)

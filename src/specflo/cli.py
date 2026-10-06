@@ -182,6 +182,9 @@ app.add_typer(brainstorm_app, name="brainstorm")
 decision_app = typer.Typer(help="Capture brainstorm decisions.")
 app.add_typer(decision_app, name="decision")
 
+brief_app = typer.Typer(help="Briefs inside a running project: the ask, facts, decisions and contract for one feature.")
+app.add_typer(brief_app, name="brief")
+
 spec_app = typer.Typer(help="Work with the spec artifact.")
 app.add_typer(spec_app, name="spec")
 
@@ -2863,6 +2866,78 @@ def doc_show(
     typer.echo(text, nl=False)
 
 
+def _brief_locator(slug: str, brief_id: str) -> str:
+    """The locator ``<project>/briefs/B-NN`` a brief command prints instead of a path."""
+    return f"{slug}/briefs/{brief_id}"
+
+
+@brief_app.command("add", epilog='Example: specflo brief add "Feedback form"')
+def brief_add(
+    title: str = typer.Argument(..., metavar="<title>", help="What the brief is about (one line)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Create brief B-NN in the active project; HEAD is recorded as its start commit."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        # HEAD is read here, in the checkout that holds the code: a daemon
+        # holds only the documents, so its own git names nothing.
+        brief = svc.add_brief(slug, title, sha=review_module.head_sha(root))
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    locator = _brief_locator(slug, brief.id)
+    hosted = config.hosting_remote(root, slug) is not None
+    if json_output:
+        typer.echo(json.dumps({
+            "id": brief.id, "locator": locator,
+            "path": None if hosted else str(brief.path), "sha": brief.sha,
+        }))
+        return
+    typer.echo(locator)
+    start = f" at {brief.sha}" if brief.sha else ""
+    typer.echo(f"Recorded {brief.id}{start}. Fill it with `specflo brief set {brief.id} <section>`.")
+
+
+@brief_app.command(
+    "set", epilog="Example: specflo brief set B-01 Facts --file facts.md"
+)
+def brief_set(
+    brief_id: str = typer.Argument(..., metavar="<B-NN>", help="The brief to write."),
+    section: str = typer.Argument(
+        ..., metavar="<section>", help="One of: Ask, Facts, Contract, Deferred."
+    ),
+    file: str = typer.Option(
+        None, "--file", metavar="<path>", help="Read the new body from this file."
+    ),
+    stdin: bool = typer.Option(False, "--stdin", help="Read the new body from stdin."),
+) -> None:
+    """Replace one prose section of a brief; Decisions belongs to `decision add --brief`."""
+    body = _section_body(file, stdin)
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        title = svc.set_brief_section(slug, brief_id, section, body)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    typer.echo(f"Set '{title}' in {_brief_locator(slug, brief_id)}.")
+
+
+def _section_body(file: str | None, stdin: bool) -> str:
+    """The new section body a prose-write command was given: a file or stdin, exactly one."""
+    if (file is None) == (not stdin):
+        raise _die("Give the new body with --file <path> or --stdin (exactly one).")
+    if stdin:
+        return sys.stdin.read()
+    try:
+        return Path(file).read_text()
+    except FileNotFoundError:
+        raise _die(f"No body file at {file}.")
+    except (OSError, UnicodeDecodeError) as exc:
+        raise _die(f"Cannot read {file} as text: {exc}")
+
+
 @section_app.command(
     "set",
     epilog='Example: specflo section set brainstorm "Current understanding" --file synthesis.md',
@@ -2882,19 +2957,9 @@ def section_set(
     stdin: bool = typer.Option(False, "--stdin", help="Read the new body from stdin."),
 ) -> None:
     """Replace one prose section's body; managed sections keep their own verbs."""
-    if (file is None) == (not stdin):
-        raise _die("Give the new body with --file <path> or --stdin (exactly one).")
+    body = _section_body(file, stdin)
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
-    if stdin:
-        body = sys.stdin.read()
-    else:
-        try:
-            body = Path(file).read_text()
-        except FileNotFoundError:
-            raise _die(f"No body file at {file}.")
-        except (OSError, UnicodeDecodeError) as exc:
-            raise _die(f"Cannot read {file} as text: {exc}")
     try:
         title = svc.set_section(slug, artifact, section, body)
     except SpecfloError as exc:
