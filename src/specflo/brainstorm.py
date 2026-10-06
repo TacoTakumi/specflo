@@ -22,6 +22,11 @@ from .projects import load_project, project_dir
 
 BRAINSTORM_FILENAME = "brainstorm.md"
 BRAINSTORM_SOURCE = "brainstorm"
+# One D-NN sequence runs across the brainstorm and every brief, so minting an
+# id reads every document: the read and the write sit under this one lock
+# for the series, named for the series since no single file is what is
+# being decided inside it.
+DECISIONS_LOCK = "decisions"
 
 _DECISION_ID_RE = re.compile(r"^### (D-\d+) —", re.MULTILINE)
 
@@ -217,7 +222,7 @@ def add_decision(
         where = BRAINSTORM_SOURCE
         if not path.is_file():
             raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
-    with locked(lock_path_for(root, slug, path)):
+    with locked(lock_path_for(root, slug, DECISIONS_LOCK)), locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Decisions" not in doc:
             raise SpecfloError(f"Malformed {path.name}: no '## Decisions' section.")

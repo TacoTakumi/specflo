@@ -389,3 +389,29 @@ def test_a_duplicate_decision_is_refused_across_documents(root, cfg, project):
 
     with pytest.raises(SpecfloError):
         brainstorm.add_decision(root, cfg, project, "use  sqlite", brief_id="B-01")
+
+
+def test_decision_ids_are_minted_under_one_project_wide_decisions_lock(root, cfg, project, monkeypatch):
+    # The next D-NN is read across the brainstorm and every brief, so the read
+    # and the write must sit under one lock for the whole series, not only the
+    # lock of the one document being written.
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    _brief_in(root, cfg, project)
+    taken = []
+    real_locked = brainstorm.locked
+
+    def recording_locked(path):
+        taken.append(path.name)
+        return real_locked(path)
+
+    monkeypatch.setattr(brainstorm, "locked", recording_locked)
+
+    brainstorm.add_decision(root, cfg, project, "Use SQLite")
+    into_brainstorm = list(taken); taken.clear()
+    brainstorm.add_decision(root, cfg, project, "Drop tablets", brief_id="B-01")
+    into_brief = list(taken)
+
+    assert into_brainstorm[0] == brainstorm.DECISIONS_LOCK + ".lock"
+    assert into_brief[0] == brainstorm.DECISIONS_LOCK + ".lock"
+    assert "brainstorm.md.lock" in into_brainstorm
+    assert "B-01-feedback-form.md.lock" in into_brief
