@@ -302,6 +302,62 @@ not do it on the side.
   follow-up records the task as what closed it. Work outside any task closes
   with `specflo followup close FU-NN --note "<what was done>" --by <commit>`.
 
+## Ad hoc work: briefs
+
+A project that lives past its plan grows by work the plan never named: the
+user reports a problem or an idea, you do recon, you report findings and
+options, the user picks, and tasks follow. That recon and those picks need
+a home. The **brief** is it: one file per feature inside the project
+(`briefs/B-NN-<slug>.md`), with the sections Ask, Facts, Decisions, Contract
+and Deferred. The project keeps its level and phase. Size the ask first, then
+take one of two paths.
+
+**A bare task is enough** when you can see the fix without recon and the
+user has nothing to pick: file one task (`specflo task add --from REQ-NN`,
+or `--from B-NN` when it belongs to a brief that exists) and work it through
+the per-task loop above. The task is the whole record.
+
+**Use a brief** when any of these holds: recon is needed, the user has a
+pick to make, more than one task comes out, or the result changes a decision
+already made. Then:
+
+1. `specflo brief add "<title>"` mints `B-NN`, records the current commit as
+   the brief's start, and prints its locator. Write the user's own words and
+   the date into Ask: `specflo brief set B-NN Ask --file <path>` (or
+   `--stdin`).
+2. Do the recon and write what you found, with file references, into Facts
+   (`specflo brief set B-NN Facts`). Report findings, options and questions
+   to the user as you do now.
+3. Record each pick the moment it lands: `specflo decision add --brief B-NN
+   --text "..." --rationale "..."`. Add `--diverges` when the pick departs
+   from the reference design the project follows; `specflo decision list
+   --diverges` then lists every approved divergence. Decisions take the
+   project's one `D-NN` sequence, so `--supersedes D-NN` works across the
+   brainstorm and every brief.
+4. Write Contract (what is true after the brief's tasks are done) and
+   Deferred (what the brief found and does not do).
+5. File the tasks with `specflo task add --from B-NN`. Acceptance is one or
+   two sentences about that task's slice; the facts and decisions live in
+   the brief, and `specflo task show` prints the brief under the task, so a
+   fresh session reads what the task depends on without reading the plan.
+6. Work each task through the per-task loop above. When the last task that
+   cites the brief is done, `specflo task done` prints the offer to review
+   it: `specflo review start --brief B-NN` opens a round that reviews only
+   the brief's commits, from its start commit to HEAD, outside the level's
+   round budget. Take the offer: hand the reviewer `specflo review prompt`,
+   record findings and close the round as in **Readiness**. A blocker or
+   should-fix item gets a fix task (`specflo task add --fixes F-NN`) like
+   any other.
+
+**A task that outgrew its path.** When a bare task turns out to need recon or
+a pick, file the brief then and point the task at it: `specflo task edit
+T-NN --implements B-NN` (keep any `REQ-NN` it already cites).
+
+**Long fields.** The acceptance, verify and note fields are one line each.
+When the text is long or full of quotes, write it to a file and pass
+`--acceptance-file`, `--verify-file` or `--text-file` (`-` reads stdin); the
+CLI folds it to one line.
+
 ## Anti-sycophancy
 
 Do not open with "All done!", "Looks perfect", or similar. State what's

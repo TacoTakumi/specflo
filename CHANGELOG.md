@@ -8,6 +8,41 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.16.0]
+
+### Added
+- **Briefs inside a running project.** A project that lives past its plan
+  grows by ad hoc work: the user reports a problem or an idea, the agent does
+  recon, the user picks, and tasks follow. `specflo brief add "<title>"`
+  makes `briefs/B-NN-<slug>.md` in the project, with the sections Ask, Facts,
+  Decisions, Contract and Deferred, and records the current commit as the
+  brief's start; `specflo brief set B-NN <section> --file|--stdin` writes a
+  prose section. The project keeps its level and phase.
+- **Tasks cite a brief.** `specflo task add --from B-NN` (and `task edit
+  --implements B-NN`) is accepted in place of, or beside, a requirement;
+  `validate plan` counts the citation as coverage. `specflo task show` prints
+  each cited brief after the task's fields and before Global constraints, and
+  its `--json` carries a `briefs` list.
+- **Decisions in a brief.** `specflo decision add --brief B-NN` writes the
+  decision into the brief, in the project's one `D-NN` sequence across the
+  brainstorm and every brief; `--supersedes` works across them. `--diverges`
+  marks an approved divergence from the reference design. `specflo decision
+  list` prints every active decision with where it lives; `--diverges`
+  filters, `--all` includes superseded ones.
+- **A review per brief.** When the last task that cites a brief is done,
+  `specflo task done` prints the offer to review it (its `--json` names the
+  `completed_briefs`). `specflo review start --brief B-NN` opens a brief
+  round: a review of the brief's commits from its start commit to HEAD,
+  outside the level's round budget. It is refused while the brief has a task
+  not done. A brief round never becomes a later gate round's base, and the
+  Reviews line of `status` counts brief rounds only once one exists.
+- **Long task fields from a file.** `task add` and `task edit` take
+  `--acceptance-file` and `--verify-file`, and `task note` takes
+  `--text-file`; `-` reads stdin. The text is folded to one line, so quotes
+  and line breaks no longer need shell escaping.
+- **The execute skill describes the brief loop:** when a bare task is enough,
+  when a brief is used, and the review offer at its end.
+
 ## [0.15.3]
 
 ### Fixed

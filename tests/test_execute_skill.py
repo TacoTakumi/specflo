@@ -298,3 +298,31 @@ def test_auto_skill_names_the_review_budget_stop():
     text = " ".join(AUTO_SKILL.read_text().split())
     assert "review-budget" in text
     assert "--over-budget" in text and "specflo review waive" in text
+
+
+# --- ad hoc work: briefs ------------------------------------------------------------
+
+
+def _briefs_section():
+    text = SKILL.read_text()
+    assert "## Ad hoc work: briefs" in text
+    return " ".join(text.split("## Ad hoc work: briefs", 1)[1].split("\n## ", 1)[0].split())
+
+
+def test_skill_names_the_brief_commands():
+    section = _briefs_section()
+    for cmd in ["specflo brief add", "specflo brief set", "specflo decision add --brief B-NN",
+                "specflo task add --from B-NN", "specflo review start --brief B-NN",
+                "specflo decision list --diverges", "specflo task edit T-NN --implements B-NN"]:
+        assert cmd in section, f"missing command reference: {cmd}"
+    for flag in ["--acceptance-file", "--verify-file", "--text-file", "--diverges"]:
+        assert flag in section, f"missing flag: {flag}"
+
+
+def test_skill_sizes_the_ask_between_a_bare_task_and_a_brief():
+    low = _briefs_section().lower()
+    assert "a bare task is enough" in low
+    assert "use a brief" in low
+    for trigger in ["recon is needed", "pick to make", "more than one task", "changes a decision"]:
+        assert trigger in low, f"missing brief trigger: {trigger}"
+    assert "review" in low and "offer" in low
