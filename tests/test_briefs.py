@@ -210,3 +210,43 @@ def test_task_show_prints_the_cited_brief_between_the_task_and_the_constraints(t
     plain = json.loads(_ok(["task", "show", "T-01", "--json"]).output)
     assert plain["briefs"] == []
     assert "B-01" not in _ok(["task", "show", "T-01"]).output
+
+
+# --- decisions in a brief -----------------------------------------------------
+
+
+def test_decision_add_into_a_brief_and_decision_list(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)                     # D-01 Use SQLite
+    _ok(["brief", "add", "Feedback form"])
+
+    added = _ok(["decision", "add", "--brief", "B-01", "--diverges",
+                 "--text", "No tablet layout", "--rationale", "no tablet users"])
+    listed = _ok(["decision", "list"]).output
+    only_divergences = _ok(["decision", "list", "--diverges"]).output
+
+    assert added.output.strip() == "Recorded D-02 in B-01. Diverges from the reference design."
+    brief_text = (_briefs_dir(tmp_path) / "B-01-feedback-form.md").read_text()
+    assert "### D-02 — No tablet layout\n- Rationale: no tablet users\n- Diverges: yes\n" in brief_text
+    assert listed.splitlines() == [
+        "D-01  brainstorm  Use SQLite",
+        "D-02  B-01        diverges  No tablet layout",
+    ]
+    assert only_divergences.splitlines() == ["D-02  B-01  diverges  No tablet layout"]
+
+
+def test_decision_list_json_and_all(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _ok(["brief", "add", "Feedback form"])
+    _ok(["decision", "add", "--brief", "B-01", "--text", "Post to /feedback"])        # D-02
+    _ok(["decision", "add", "--text", "Post to /api/feedback", "--supersedes", "D-02"])  # D-03
+
+    active = json.loads(_ok(["decision", "list", "--json"]).output)
+    everything = _ok(["decision", "list", "--all"]).output
+
+    assert [(d["id"], d["source"], d["diverges"]) for d in active] == [
+        ("D-01", "brainstorm", False), ("D-03", "brainstorm", False),
+    ]
+    assert "D-02  B-01        Post to /feedback  [superseded by D-03]" in everything
+    assert "No divergences recorded." in _ok(["decision", "list", "--diverges"]).output

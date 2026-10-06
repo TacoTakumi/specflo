@@ -53,6 +53,7 @@ READ_OPERATIONS = frozenset({
     "frontier", "task_brief", "current_task_id", "milestone_progress",
     "milestone_detail", "list_pools", "build_checkpoint", "build_status",
     "show_document", "export_project", "review_scope", "review_prompt",
+    "list_decisions",
 })
 MUTATING_OPERATIONS = frozenset(wire.OPERATIONS) - READ_OPERATIONS
 # Derived writes render what a mutation already recorded (the checkpoint,

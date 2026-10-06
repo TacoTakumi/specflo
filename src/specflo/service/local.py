@@ -289,10 +289,20 @@ class LocalProjectService:
         *,
         rationale: str | None = None,
         supersedes: str | None = None,
+        brief: str | None = None,
+        diverges: bool = False,
     ) -> Decision:
         return brainstorm.add_decision(
             self.root, self.cfg, slug, text, rationale=rationale, supersedes=supersedes,
-            actor=self.actor,
+            actor=self.actor, brief_id=brief, diverges=diverges,
+        )
+
+    def list_decisions(
+        self, slug: str, *, diverges: bool = False, include_superseded: bool = False
+    ) -> list[Decision]:
+        return brainstorm.list_decisions(
+            self.root, self.cfg, slug, diverges_only=diverges,
+            include_superseded=include_superseded,
         )
 
     # --- spec: requirements -----------------------------------------------

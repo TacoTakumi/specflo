@@ -173,8 +173,17 @@ class ProjectService(Protocol):
         *,
         rationale: str | None = None,
         supersedes: str | None = None,
+        brief: str | None = None,
+        diverges: bool = False,
     ) -> Decision:
-        """Append a decision with the next id."""
+        """Append a decision with the next project-wide id, to the brainstorm
+        or to brief ``brief``; ``diverges`` marks a divergence from the reference design."""
+        ...
+
+    def list_decisions(
+        self, slug: str, *, diverges: bool = False, include_superseded: bool = False
+    ) -> list[Decision]:
+        """The decisions across the brainstorm and every brief, in document order."""
         ...
 
     # --- spec: requirements -----------------------------------------------

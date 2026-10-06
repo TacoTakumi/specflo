@@ -16,11 +16,12 @@ from pathlib import Path
 
 from .config import SpecfloConfig
 from .errors import SpecfloError, refuse_duplicate, require_one_line
-from . import markdown
+from . import briefs as briefs_mod, markdown
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
 
 BRAINSTORM_FILENAME = "brainstorm.md"
+BRAINSTORM_SOURCE = "brainstorm"
 
 _DECISION_ID_RE = re.compile(r"^### (D-\d+) —", re.MULTILINE)
 
@@ -62,6 +63,102 @@ class Decision:
     rationale: str
     supersedes: str | None
     status: str
+    # Where the decision lives: "brainstorm", or the B-NN of a brief inside
+    # the project. One D-NN sequence runs across all of them.
+    source: str = BRAINSTORM_SOURCE
+    # An approved divergence from the reference design the project follows.
+    diverges: bool = False
+
+
+DIVERGES_FIELD = "Diverges"
+_DECISION_HEAD_RE = re.compile(r"^### (D-\d+) — (.*)$")
+
+
+def decision_documents(root: Path, cfg: SpecfloConfig, slug: str) -> list[tuple[str, Path]]:
+    """Every document that holds decisions, as ``(source, path)``: the
+    brainstorm first, then each brief in id order."""
+    documents = []
+    path = brainstorm_path(root, cfg, slug)
+    if path.is_file():
+        documents.append((BRAINSTORM_SOURCE, path))
+    documents.extend(briefs_mod.brief_files(root, cfg, slug))
+    return documents
+
+
+def _decision_numbers(doc: str) -> list[int]:
+    return [
+        int(m.group(1)[2:])
+        for _, line, in_fence in markdown.iter_lines_with_fence(doc)
+        if not in_fence and (m := _DECISION_HEAD_RE.match(line.rstrip("\r\n")))
+    ]
+
+
+def next_decision_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:
+    """The next D-NN across the brainstorm and every brief of the project."""
+    numbers = [
+        n for _, path in decision_documents(root, cfg, slug)
+        for n in _decision_numbers(path.read_text())
+    ]
+    return f"D-{(max(numbers) if numbers else 0) + 1:02d}"
+
+
+def _decision_entries(doc: str, source: str) -> list[Decision]:
+    """Every decision entry of ``doc`` in document order, superseded ones included."""
+    entries: list[Decision] = []
+    fields: dict[str, str] = {}
+    head: tuple[str, str] | None = None
+
+    def close() -> None:
+        if head is None:
+            return
+        status = fields.get("Status", "active")
+        supersedes = fields.get("Supersedes")
+        entries.append(Decision(
+            id=head[0], text=head[1], rationale=fields.get("Rationale", "—"),
+            supersedes=supersedes, status=status, source=source,
+            diverges=fields.get(DIVERGES_FIELD, "").strip().casefold() == "yes",
+        ))
+
+    for _, raw, in_fence in markdown.iter_lines_with_fence(doc):
+        line = raw.rstrip("\r\n")
+        if in_fence:
+            continue
+        if m := _DECISION_HEAD_RE.match(line):
+            close()
+            head, fields = (m.group(1), m.group(2).strip()), {}
+        elif line.startswith("## "):
+            close()
+            head, fields = None, {}
+        elif head is not None and (f := re.match(r"^- ([A-Za-z ]+): (.*)$", line)):
+            fields.setdefault(f.group(1), f.group(2).strip())
+    close()
+    return entries
+
+
+def list_decisions(
+    root: Path, cfg: SpecfloConfig, slug: str,
+    diverges_only: bool = False, include_superseded: bool = False,
+) -> list[Decision]:
+    """The project's decisions across the brainstorm and every brief, in
+    document order; active ones only unless ``include_superseded``."""
+    found = [
+        d for source, path in decision_documents(root, cfg, slug)
+        for d in _decision_entries(path.read_text(), source)
+    ]
+    if not include_superseded:
+        found = [d for d in found if "superseded by" not in d.status]
+    if diverges_only:
+        found = [d for d in found if d.diverges]
+    return found
+
+
+def _document_holding(root: Path, cfg: SpecfloConfig, slug: str, decision_id: str) -> Path | None:
+    """The document that holds decision ``decision_id``, or None."""
+    head = re.compile(rf"^### {re.escape(decision_id)} —", re.MULTILINE)
+    for _, path in decision_documents(root, cfg, slug):
+        if head.search(path.read_text()):
+            return path
+    return None
 
 
 def brainstorm_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
@@ -96,40 +193,59 @@ def add_decision(
     supersedes: str | None = None,
     today: str | None = None,
     actor: str | None = None,
+    brief_id: str | None = None,
+    diverges: bool = False,
 ) -> Decision:
-    """Append a decision to the Decisions section and return it.
+    """Append a decision to a Decisions section and return it.
 
-    Assigns the next ``D-NN`` id. If ``supersedes`` is given, the named decision
-    is marked superseded (kept in place) and linked from the new entry.
-    ``actor`` names the identity adding it, written as an ``Actor`` line; a
-    local add passes none and writes none.
+    The decision goes into the brainstorm, or into brief ``brief_id`` when one
+    is named. Either way it takes the next ``D-NN`` across the brainstorm and
+    every brief, so one sequence runs through the project. If ``supersedes``
+    is given, the named decision is marked superseded in place, whichever
+    document holds it, and linked from the new entry. ``diverges`` marks an
+    approved divergence from the reference design. ``actor`` names the
+    identity adding it, written as an ``Actor`` line; a local add passes none
+    and writes none.
     """
     require_one_line("A decision's text", text)
     require_one_line("A decision's rationale", rationale)
-    path = brainstorm_path(root, cfg, slug)
-    if not path.is_file():
-        raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
+    if brief_id is not None:
+        path = briefs_mod.brief_path(root, cfg, slug, brief_id)
+        where = brief_id
+    else:
+        path = brainstorm_path(root, cfg, slug)
+        where = "brainstorm.md"
+        if not path.is_file():
+            raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
     with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Decisions" not in doc:
-            raise SpecfloError("Malformed brainstorm.md: no '## Decisions' section.")
+            raise SpecfloError(f"Malformed {where}: no '## Decisions' section.")
 
-        if supersedes is not None and not re.search(
-            rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
-        ):
-            raise SpecfloError(f"No decision {supersedes} to supersede.")
+        holder = None
+        if supersedes is not None:
+            holder = _document_holding(root, cfg, slug, supersedes)
+            if holder is None:
+                raise SpecfloError(f"No decision {supersedes} to supersede.")
 
-        titles = markdown.entry_titles(doc, "D-")
-        active = {d: titles[d] for d in active_decision_ids(doc) if d in titles}
-        refuse_duplicate("decision", text, active, supersedes, "brainstorm")
+        active = {
+            d.id: d.text for d in list_decisions(root, cfg, slug)
+        }
+        refuse_duplicate("decision", text, active, supersedes, where)
 
-        new_id = markdown.next_id(doc, "D-")
+        new_id = next_decision_id(root, cfg, slug)
         rationale_text = rationale if rationale else "—"
 
-        if supersedes is not None:
+        if holder is not None and holder == path:
             doc = markdown.mark_superseded(doc, supersedes, new_id)
+        elif holder is not None:
+            with locked(lock_path_for(root, slug, holder)):
+                other = markdown.mark_superseded(holder.read_text(), supersedes, new_id)
+                holder.write_text(markdown.bump_updated(other, today))
 
         entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
+        if diverges:
+            entry_lines.append(f"- {DIVERGES_FIELD}: yes")
         if supersedes is not None:
             entry_lines.append(f"- Supersedes: {supersedes}")
         if actor:
@@ -146,6 +262,8 @@ def add_decision(
         rationale=rationale_text,
         supersedes=supersedes,
         status="active",
+        source=brief_id if brief_id is not None else BRAINSTORM_SOURCE,
+        diverges=diverges,
     )
 
 

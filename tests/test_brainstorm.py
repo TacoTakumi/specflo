@@ -296,3 +296,96 @@ def test_research_section_is_not_required_by_validate(root, cfg, project):
     brainstorm.add_decision(root, cfg, project, text="Use SQLite", rationale="simplest")
     _fill_out_of_scope(root, cfg, project)
     assert brainstorm.validate_brainstorm(root, cfg, project) == []
+
+
+# --- decisions inside a brief (B-NN) -----------------------------------------
+
+
+def _brief_in(root, cfg, project, title="Feedback form"):
+    from specflo import briefs
+    return briefs.add_brief(root, cfg, project, title, sha="abc1234", today="2026-10-06")
+
+
+def test_a_brief_decision_takes_the_next_project_wide_id(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use SQLite", today="2026-06-16")   # D-01
+    brainstorm.add_decision(root, cfg, project, "Use uv", today="2026-06-16")       # D-02
+    created = _brief_in(root, cfg, project)
+
+    in_brief = brainstorm.add_decision(
+        root, cfg, project, "Drop the RN tablet layout", rationale="no tablet users",
+        brief_id="B-01", diverges=True, today="2026-10-06",
+    )
+    back_in_brainstorm = brainstorm.add_decision(root, cfg, project, "Use ruff", today="2026-10-06")
+
+    assert (in_brief.id, in_brief.source, in_brief.diverges) == ("D-03", "B-01", True)
+    assert (back_in_brainstorm.id, back_in_brainstorm.source, back_in_brainstorm.diverges) == (
+        "D-04", "brainstorm", False
+    )
+    brief_text = created.path.read_text()
+    entry = (
+        "### D-03 — Drop the RN tablet layout\n"
+        "- Rationale: no tablet users\n- Diverges: yes\n- Status: active\n"
+    )
+    assert brief_text.index("## Decisions") < brief_text.index(entry) < brief_text.index("## Contract")
+    assert "updated: 2026-10-06" in brief_text
+    brainstorm_text = brainstorm.brainstorm_path(root, cfg, project).read_text()
+    assert "### D-04 — Use ruff" in brainstorm_text and "D-03" not in brainstorm_text
+
+
+def test_a_brief_decision_needs_an_existing_brief(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+
+    with pytest.raises(SpecfloError, match="No brief B-09"):
+        brainstorm.add_decision(root, cfg, project, "x", brief_id="B-09")
+
+
+def test_supersedes_works_across_the_brainstorm_and_the_briefs(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use SQLite", today="2026-06-16")         # D-01
+    created = _brief_in(root, cfg, project)
+    brainstorm.add_decision(root, cfg, project, "Post to /feedback", brief_id="B-01")    # D-02
+
+    from_brainstorm = brainstorm.add_decision(
+        root, cfg, project, "Post to /api/feedback", supersedes="D-02", today="2026-10-07"
+    )                                                                                     # D-03
+    from_brief = brainstorm.add_decision(
+        root, cfg, project, "Use Postgres", supersedes="D-01", brief_id="B-01"
+    )                                                                                     # D-04
+
+    assert (from_brainstorm.id, from_brief.id) == ("D-03", "D-04")
+    assert "- Status: superseded by D-03" in created.path.read_text()
+    assert "- Status: superseded by D-04" in brainstorm.brainstorm_path(root, cfg, project).read_text()
+    with pytest.raises(SpecfloError, match="No decision D-09"):
+        brainstorm.add_decision(root, cfg, project, "y", supersedes="D-09", brief_id="B-01")
+
+
+def test_list_decisions_runs_across_documents_with_filters(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use SQLite")                                   # D-01
+    _brief_in(root, cfg, project)
+    brainstorm.add_decision(root, cfg, project, "Drop tablets", brief_id="B-01", diverges=True)  # D-02
+    _brief_in(root, cfg, project, "Help sheet")
+    brainstorm.add_decision(root, cfg, project, "One sheet", brief_id="B-02")                    # D-03
+    brainstorm.add_decision(root, cfg, project, "Two sheets", brief_id="B-02", supersedes="D-03")  # D-04
+
+    active = brainstorm.list_decisions(root, cfg, project)
+    everything = brainstorm.list_decisions(root, cfg, project, include_superseded=True)
+    divergences = brainstorm.list_decisions(root, cfg, project, diverges_only=True)
+
+    assert [(d.id, d.source) for d in active] == [
+        ("D-01", "brainstorm"), ("D-02", "B-01"), ("D-04", "B-02")
+    ]
+    assert [d.id for d in everything] == ["D-01", "D-02", "D-03", "D-04"]
+    assert everything[2].status == "superseded by D-04"
+    assert everything[3].supersedes == "D-03"
+    assert [d.id for d in divergences] == ["D-02"]
+
+
+def test_a_duplicate_decision_is_refused_across_documents(root, cfg, project):
+    brainstorm.start_brainstorm(root, cfg, project, today="2026-06-16")
+    brainstorm.add_decision(root, cfg, project, "Use SQLite")
+    _brief_in(root, cfg, project)
+
+    with pytest.raises(SpecfloError):
+        brainstorm.add_decision(root, cfg, project, "use  sqlite", brief_id="B-01")

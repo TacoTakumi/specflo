@@ -1414,7 +1414,7 @@ def brainstorm_start(
 
 @decision_app.command(
     "add",
-    epilog='Example: specflo decision add --text "Use SQLite" --rationale "simplest"',
+    epilog='Example: specflo decision add --text "Use SQLite" --rationale "simplest"  |  --brief B-01 --diverges',
 )
 def decision_add(
     text: str = typer.Option(..., "--text", help="The decision (one line)."),
@@ -1422,27 +1422,69 @@ def decision_add(
     supersedes: str = typer.Option(
         None, "--supersedes", metavar="D-NN", help="The decision this replaces."
     ),
+    brief: str = typer.Option(
+        None, "--brief", metavar="B-NN",
+        help="Record the decision in this brief instead of the brainstorm.",
+    ),
+    diverges: bool = typer.Option(
+        False, "--diverges", help="An approved divergence from the reference design."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Append a decision (D-NN) to the active project's brainstorm.md."""
+    """Append a decision (D-NN) to the active project's brainstorm.md, or to a brief."""
     root = _require_root()
     cfg = config.load_config(root)
     svc = _service(root, cfg)
     slug = _require_active(cfg)
     try:
         decision = svc.add_decision(
-            slug, text, rationale=rationale, supersedes=supersedes
+            slug, text, rationale=rationale, supersedes=supersedes,
+            brief=brief, diverges=diverges,
         )
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     if json_output:
-        typer.echo(json.dumps({"id": decision.id, "supersedes": decision.supersedes}))
+        typer.echo(json.dumps({
+            "id": decision.id, "supersedes": decision.supersedes,
+            "source": decision.source, "diverges": decision.diverges,
+        }))
     else:
-        message = f"Recorded {decision.id}."
+        where = f" in {decision.source}" if brief else ""
+        message = f"Recorded {decision.id}{where}."
         if decision.supersedes:
             message += f" Supersedes {decision.supersedes}."
+        if decision.diverges:
+            message += " Diverges from the reference design."
         typer.echo(message)
+
+
+@decision_app.command("list", epilog="Example: specflo decision list --diverges")
+def decision_list(
+    diverges: bool = typer.Option(
+        False, "--diverges", help="Only the approved divergences from the reference design."
+    ),
+    all_: bool = typer.Option(False, "--all", help="Include superseded decisions."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List the decisions across the brainstorm and every brief, with where each lives."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        decisions = svc.list_decisions(slug, diverges=diverges, include_superseded=all_)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps([dataclasses.asdict(d) for d in decisions]))
+        return
+    if not decisions:
+        typer.echo("No divergences recorded." if diverges else "No decisions recorded.")
+        return
+    width = max(len(d.source) for d in decisions)
+    for d in decisions:
+        mark = "diverges  " if d.diverges else ""
+        tail = f"  [{d.status}]" if "superseded by" in d.status else ""
+        typer.echo(f"{d.id}  {d.source:<{width}}  {mark}{d.text}{tail}")
 
 
 @gate_app.command(
