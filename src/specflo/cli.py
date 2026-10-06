@@ -1897,15 +1897,15 @@ def plan_graph(
 
 @task_app.command(
     "add",
-    epilog='Example: specflo task add --text "Build X" --acceptance "X works" --verify "uv run pytest" --from REQ-01',
+    epilog='Example: specflo task add --text "Build X" --acceptance "X works" --verify "uv run pytest" --from REQ-01  |  --from B-01',
 )
 def task_add(
     text: str = typer.Option(..., "--text", help="The task title (one line)."),
     acceptance: str = typer.Option(..., "--acceptance", help="Pass/fail acceptance criterion (required)."),
     verify: str = typer.Option(..., "--verify", help="Verification command or step (required)."),
     from_: list[str] = typer.Option(
-        None, "--from", metavar="REQ-NN",
-        help="Requirement(s) this task implements (repeatable; >=1 unless --fixes).",
+        None, "--from", metavar="REQ-NN|B-NN",
+        help="Requirement(s) or brief(s) this task implements (repeatable; >=1 unless --fixes).",
     ),
     fixes: list[str] = typer.Option(
         None, "--fixes", metavar="F-NN", help="A review finding this task fixes (repeatable)."
@@ -2031,7 +2031,7 @@ def task_edit(
     files: str = typer.Option(None, "--files", help="Rewrite Files (comma-separated)."),
     needs: str = typer.Option(None, "--needs", help="Rewrite Needs (comma-separated pools)."),
     implements: str = typer.Option(
-        None, "--implements", metavar="REQ-NN[,REQ-MM]", help="Rewrite Implements."
+        None, "--implements", metavar="REQ-NN[,B-NN]", help="Rewrite Implements (requirements and briefs)."
     ),
     add_depends_on: list[str] = typer.Option(
         None, "--add-depends-on", metavar="T-NN", help="Add a dependency (repeatable)."
@@ -2372,7 +2372,7 @@ def task_show(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Show a task's brief: acceptance, verify, its cited REQ-NN sections, and Global constraints."""
+    """Show a task's brief: acceptance, verify, its cited REQ-NN sections and briefs, and Global constraints."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:

@@ -104,6 +104,17 @@ def read_brief(root: Path, cfg: SpecfloConfig, slug: str, brief_id: str) -> str:
     return brief_path(root, cfg, slug, brief_id).read_text()
 
 
+def is_brief_id(ref: str) -> bool:
+    """Whether ``ref`` names a brief (B-NN) rather than a requirement or finding."""
+    return bool(_ID_RE.match(ref or ""))
+
+
+def brief_body(doc: str) -> str:
+    """The brief from its ``# B-NN - title`` heading on: everything but the frontmatter."""
+    match = re.search(r"^# B-\d+ - .*$", doc, re.MULTILINE)
+    return doc[match.start():].rstrip() if match else doc.rstrip()
+
+
 def brief_title(doc: str) -> str:
     """The title from the brief's ``# B-NN - title`` heading; "" when absent."""
     match = re.search(r"^# B-\d+ - (.+)$", doc, re.MULTILINE)

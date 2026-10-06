@@ -17,7 +17,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from . import markdown, spec as spec_mod
+from . import briefs as briefs_mod, markdown, spec as spec_mod
 from .config import SpecfloConfig
 from .errors import SpecfloError, refuse_duplicate, require_one_line
 from .locking import lock_path_for, locked
@@ -435,14 +435,21 @@ def validate_plan(
         active_reqs = spec_mod.active_requirement_ids(spec_doc)
         smap = spec_mod.supersession_map(spec_doc)
         covered: set[str] = set()
+        known_briefs = {bid for bid, _ in briefs_mod.brief_files(root, cfg, slug)}
         for t in active:
             # A fix task names the findings it fixes instead; it covers no requirement.
             if not t.implements and not t.fixes:
                 issues.append(
                     f"{t.id} implements no requirement and fixes no finding "
-                    f"(needs Implements: REQ-NN or Fixes: F-NN)."
+                    f"(needs Implements: REQ-NN or B-NN, or Fixes: F-NN)."
                 )
-            for req in t.implements:
+            # A brief citation stands on its own: it covers no requirement, and
+            # the brief must be one of the project's.
+            reqs, cited_briefs = split_citations(t.implements)
+            for brief_id in cited_briefs:
+                if brief_id not in known_briefs:
+                    issues.append(f"{t.id} implements {brief_id}, which is not a brief of this project.")
+            for req in reqs:
                 resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
                 if resolved is None:
                     issues.append(f"{t.id} implements {req}, which is not an active requirement.")
@@ -521,7 +528,7 @@ def validate_plan(
             milestone_reqs = {
                 resolved
                 for t in active if t.milestone in order
-                for r in t.implements
+                for r in split_citations(t.implements)[0]
                 if (resolved := spec_mod.resolve_requirement(r, active_reqs, smap)) is not None
             }
             for req in active_reqs:
@@ -680,14 +687,32 @@ def complete_plan(
     path.write_text(doc)
 
 
+def split_citations(implements: list[str]) -> tuple[list[str], list[str]]:
+    """A task's Implements split into its requirement ids and its brief ids."""
+    requirements = [r for r in implements if not briefs_mod.is_brief_id(r)]
+    cited_briefs = [r for r in implements if briefs_mod.is_brief_id(r)]
+    return requirements, cited_briefs
+
+
 def check_implements(
     root: Path, cfg: SpecfloConfig, slug: str, implements: list[str]
 ) -> None:
-    """Raise SpecfloError unless every id in *implements* is an active requirement.
+    """Raise SpecfloError unless every id in *implements* is an active requirement
+    or a brief of the project.
 
     Shared by :func:`add_task` and :func:`edit_task` so a task cannot be edited
     into citing a requirement `task add` would have refused.
     """
+    implements, cited_briefs = split_citations(implements)
+    known_briefs = {bid for bid, _ in briefs_mod.brief_files(root, cfg, slug)}
+    for brief_id in cited_briefs:
+        if brief_id not in known_briefs:
+            raise SpecfloError(
+                f"Cannot implement {brief_id}: no such brief in this project "
+                "(make one with `specflo brief add`)."
+            )
+    if not implements:
+        return
     sp = spec_mod.spec_path(root, cfg, slug)
     if not sp.is_file():
         raise SpecfloError("Cannot link requirements: no spec.md for this project.")
@@ -729,9 +754,9 @@ def add_task(
     """Append a task to the Tasks section and return it.
 
     Mints the next ``T-NN``. ``acceptance``/``verify`` are mandatory; ``implements``
-    must name ≥1 active requirement in ``spec.md`` unless ``fixes`` names ≥1
-    review finding the task fixes, written as its ``- Fixes:`` field; a task
-    with neither is refused. ``depends_on`` and ``supersedes`` must reference
+    must name ≥1 active requirement in ``spec.md`` or brief of the project
+    unless ``fixes`` names ≥1 review finding the task fixes, written as its
+    ``- Fixes:`` field; a task with neither is refused. ``depends_on`` and ``supersedes`` must reference
     existing tasks. ``milestone``, when given, must
     name a milestone present in ``## Milestones`` and is written as the task's
     single ``- Milestone:`` field. ``actor`` names the identity adding it,
@@ -758,8 +783,8 @@ def add_task(
         depends_on = depends_on or []
         if not implements and not fixes:
             raise SpecfloError(
-                "A task must implement at least one requirement (--from REQ-NN) "
-                "or fix at least one finding (--fixes F-NN)."
+                "A task must implement at least one requirement or brief "
+                "(--from REQ-NN, --from B-NN) or fix at least one finding (--fixes F-NN)."
             )
 
         if implements:
@@ -1842,7 +1867,7 @@ def milestone_detail_from_doc(doc: str, milestone_id: str) -> dict | None:
     ]
     done = sum(1 for t in members if t.progress == "done")
     total = len(members)
-    reqs = sorted({r for t in members for r in t.implements})
+    reqs = sorted({r for t in members for r in split_citations(t.implements)[0]})
     return {
         "id": m.id, "title": m.title, "exit_items": m.exit_items,
         "members": [{"id": t.id, "text": t.text, "progress": t.progress} for t in members],
@@ -1892,8 +1917,8 @@ def current_task_id(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
 def render_task_brief(brief: dict) -> str:
     """Render a :func:`task_brief` payload as the text block ``task show`` prints.
 
-    Header, acceptance, verify, the cited REQ-NN sections and the plan's Global
-    constraints — everything the brief carries *except* the soft milestone
+    Header, acceptance, verify, the cited REQ-NN sections, the cited briefs and
+    the plan's Global constraints — everything the brief carries *except* the soft milestone
     boundary beat, which is a user-facing prompt its callers append themselves.
     One renderer, so the reseed payload's inlined brief (pi-extension REQ-19) and
     ``specflo task show`` cannot drift.
@@ -1950,6 +1975,10 @@ def render_task_brief(brief: dict) -> str:
         lines.append(req["section"].rstrip() if req["section"]
                      else f"### {req['id']} - (not found in spec)")
         lines.append("")
+    for cited in brief.get("briefs", []):
+        lines.append(cited["body"] if cited["body"] is not None
+                     else f"# {cited['id']} - (brief file not found)")
+        lines.append("")
     if brief["global_constraints"]:
         lines.append("## Global constraints")
         lines.append(brief["global_constraints"])
@@ -1964,7 +1993,8 @@ def task_brief(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str | None = None
 ) -> dict:
     """Assemble the progressive-disclosure brief for one task: its own entry, the
-    full text of each cited REQ-NN section, and the plan's Global constraints.
+    full text of each cited REQ-NN section, each cited brief (B-NN), and the
+    plan's Global constraints.
 
     ``task_id`` defaults to the first ``next_actionable`` task. Raises
     SpecfloError if there is no such active task.
@@ -1992,7 +2022,7 @@ def task_brief(
                 # surface must still surface the final milestone's Exit checklist
                 # as the all-complete boundary beat rather than error out (REQ-14).
                 return {
-                    "task": None, "requirements": [],
+                    "task": None, "requirements": [], "briefs": [],
                     "global_constraints": constraints,
                     "execution": execution,
                     "working_ahead": None, "boundary": boundary,
@@ -2017,7 +2047,19 @@ def task_brief(
     active_reqs = spec_mod.active_requirement_ids(spec_doc)
     smap = spec_mod.supersession_map(spec_doc)
     requirements = []
-    for req in task.implements:
+    cited_reqs, cited_briefs = split_citations(task.implements)
+    briefs = []
+    for brief_id in cited_briefs:
+        try:
+            brief_doc = briefs_mod.read_brief(root, cfg, slug, brief_id)
+        except SpecfloError:
+            briefs.append({"id": brief_id, "title": "", "body": None})
+        else:
+            briefs.append({
+                "id": brief_id, "title": briefs_mod.brief_title(brief_doc),
+                "body": briefs_mod.brief_body(brief_doc),
+            })
+    for req in cited_reqs:
         resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
         if resolved is not None and resolved != req:
             # superseded citation: present the ultimate active superseder's
@@ -2041,6 +2083,7 @@ def task_brief(
             "notes": task.notes,
         },
         "requirements": requirements,
+        "briefs": briefs,
         "global_constraints": constraints,
         "execution": execution,
         "working_ahead": (

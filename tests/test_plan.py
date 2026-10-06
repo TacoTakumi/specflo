@@ -2573,3 +2573,103 @@ def test_edit_task_depends_refuses_a_new_cycle_even_on_an_already_cyclic_plan(ro
     _, changed = plan.edit_task(root, cfg, project, fourth.id,
                                 add_depends_on=[first.id], today="2026-08-30")
     assert changed == ["depends_on"]
+
+
+# --- tasks that cite a brief (B-NN) ------------------------------------------
+
+
+def _brief_in(root, cfg, project, title="Feedback form"):
+    from specflo import briefs
+    return briefs.add_brief(root, cfg, project, title, sha="abc1234", today="2026-10-06")
+
+
+def test_a_task_cites_a_brief_in_place_of_a_requirement(root, cfg, project):
+    _good_plan(root, cfg, project)                       # T-01 REQ-01, T-02 REQ-02
+    _brief_in(root, cfg, project)                        # B-01
+
+    task = plan.add_task(root, cfg, project, "add the form", acceptance="form posts",
+                         verify="uv run pytest", implements=["B-01"], today="2026-10-06")
+
+    assert task.id == "T-03" and task.implements == ["B-01"]
+    assert "- Implements: B-01\n" in _ppath(root, cfg, project).read_text()
+    assert plan.validate_plan(root, cfg, project) == []
+
+
+def test_a_task_may_cite_a_requirement_and_a_brief_together(root, cfg, project):
+    _good_plan(root, cfg, project)
+    _brief_in(root, cfg, project)
+
+    plan.add_task(root, cfg, project, "add the form", acceptance="form posts",
+                  verify="uv run pytest", implements=["REQ-02", "B-01"], today="2026-10-06")
+
+    assert plan.validate_plan(root, cfg, project) == []
+    brief = plan.task_brief(root, cfg, project, "T-03")
+    assert [r["id"] for r in brief["requirements"]] == ["REQ-02"]
+    assert [b["id"] for b in brief["briefs"]] == ["B-01"]
+
+
+def test_an_unknown_brief_is_refused_on_add_and_on_edit(root, cfg, project):
+    _good_plan(root, cfg, project)
+    _brief_in(root, cfg, project)
+
+    with pytest.raises(SpecfloError, match="no such brief"):
+        plan.add_task(root, cfg, project, "add the form", acceptance="form posts",
+                      verify="uv run pytest", implements=["B-09"], today="2026-10-06")
+    with pytest.raises(SpecfloError, match="no such brief"):
+        plan.edit_task(root, cfg, project, "T-01", implements="B-09")
+    plan.edit_task(root, cfg, project, "T-01", implements="REQ-01, B-01")
+    assert "- Implements: REQ-01, B-01\n" in _ppath(root, cfg, project).read_text()
+
+
+def test_validate_flags_a_task_citing_a_brief_the_project_does_not_have(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    _plan_with_entries(root, cfg, project, [
+        _raw_task_entry("T-01", implements="REQ-01"),
+        _raw_task_entry("T-02", implements="B-07"),
+    ])
+
+    issues = plan.validate_plan(root, cfg, project)
+
+    assert issues == ["T-02 implements B-07, which is not a brief of this project."]
+
+
+def test_task_brief_carries_the_cited_brief_and_renders_it_before_constraints(root, cfg, project):
+    _spec_with_reqs(root, cfg, project, n=1)
+    plan.start_plan(root, cfg, project, today="2026-06-22")
+    ppath = _ppath(root, cfg, project)
+    ppath.write_text(ppath.read_text().replace(
+        "## Global constraints\n"
+        "<!-- optional; project-wide invariants copied verbatim from the spec,"
+        " implicitly part of every task -->",
+        "## Global constraints\n- Python 3.12; use uv."))
+    plan.add_task(root, cfg, project, "build a", acceptance="a works",
+                  verify="uv run pytest", implements=["REQ-01"], today="2026-06-22")   # T-01
+    _brief_in(root, cfg, project)
+    plan.add_task(root, cfg, project, "add the form", acceptance="form posts",
+                  verify="uv run pytest", implements=["B-01"], today="2026-10-06")     # T-02
+
+    brief = plan.task_brief(root, cfg, project, "T-02")
+    rendered = plan.render_task_brief(brief)
+
+    assert brief["requirements"] == []
+    assert brief["briefs"][0]["title"] == "Feedback form"
+    assert brief["briefs"][0]["body"].startswith("# B-01 - Feedback form\n")
+    assert "sha: abc1234" not in brief["briefs"][0]["body"]
+    assert rendered.index("Acceptance: form posts") < rendered.index("# B-01 - Feedback form")
+    assert rendered.index("## Facts") < rendered.index("## Global constraints")
+    # a task that cites only requirements renders exactly as before
+    plain = plan.task_brief(root, cfg, project, "T-01")
+    assert plain["briefs"] == [] and "B-01" not in plan.render_task_brief(plain)
+
+
+def test_task_brief_names_a_cited_brief_whose_file_is_gone(root, cfg, project):
+    _good_plan(root, cfg, project)
+    created = _brief_in(root, cfg, project)
+    plan.add_task(root, cfg, project, "add the form", acceptance="form posts",
+                  verify="uv run pytest", implements=["B-01"], today="2026-10-06")
+    created.path.unlink()
+
+    brief = plan.task_brief(root, cfg, project, "T-03")
+
+    assert brief["briefs"] == [{"id": "B-01", "title": "", "body": None}]
+    assert "# B-01 - (brief file not found)" in plan.render_task_brief(brief)

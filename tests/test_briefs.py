@@ -1,5 +1,6 @@
 """Briefs inside a running project: the ask, facts, decisions and contract for one feature."""
 
+import json
 import subprocess
 
 from typer.testing import CliRunner
@@ -151,3 +152,61 @@ def test_brief_set_refuses_an_unknown_section_or_brief(tmp_path, monkeypatch):
 def test_the_brief_verbs_are_service_operations():
     assert wire.OPERATIONS["add_brief"].slug_scoped
     assert wire.OPERATIONS["set_brief_section"].slug_scoped
+
+
+# --- tasks that cite a brief ---------------------------------------------------
+
+
+def _plan_text(tmp_path):
+    return (tmp_path / "docs" / "projects" / "thing" / "plan.md").read_text()
+
+
+def test_task_add_from_a_brief_needs_no_requirement(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _ok(["brief", "add", "Feedback form"])
+
+    result = _ok(["task", "add", "--text", "add the form", "--acceptance", "form posts",
+                  "--verify", "true", "--from", "B-01"])
+
+    assert result.output.strip() == "Recorded T-02 (implements B-01)."
+    assert "- Implements: B-01\n" in _plan_text(tmp_path)
+    assert _ok(["validate", "plan"]).output.startswith("ok")
+
+
+def test_task_add_from_an_unknown_brief_is_refused(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+
+    result = runner.invoke(app, ["task", "add", "--text", "add the form", "--acceptance", "x",
+                                 "--verify", "true", "--from", "B-09"])
+
+    assert result.exit_code != 0
+    assert "B-09" in result.output and "specflo brief add" in result.output
+    assert "T-02" not in _plan_text(tmp_path)
+
+
+def test_task_show_prints_the_cited_brief_between_the_task_and_the_constraints(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _ok(["section", "set", "plan", "Global constraints", "--stdin"], stdin="- Flutter 3.")
+    _ok(["brief", "add", "Feedback form"])
+    _ok(["brief", "set", "B-01", "Facts", "--stdin"], stdin="- the RN app posts to /feedback")
+    _ok(["task", "add", "--text", "add the form", "--acceptance", "form posts",
+         "--verify", "true", "--from", "B-01"])
+
+    shown = _ok(["task", "show", "T-02"]).output
+
+    task_block = shown.index("Acceptance: form posts")
+    brief_heading = shown.index("# B-01 - Feedback form")
+    facts = shown.index("- the RN app posts to /feedback")
+    constraints = shown.index("## Global constraints")
+    assert task_block < brief_heading < facts < constraints
+    assert "sha:" not in shown
+
+    as_json = json.loads(_ok(["task", "show", "T-02", "--json"]).output)
+    assert as_json["briefs"][0]["id"] == "B-01"
+    assert "- the RN app posts to /feedback" in as_json["briefs"][0]["body"]
+    plain = json.loads(_ok(["task", "show", "T-01", "--json"]).output)
+    assert plain["briefs"] == []
+    assert "B-01" not in _ok(["task", "show", "T-01"]).output
