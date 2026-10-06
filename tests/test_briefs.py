@@ -355,3 +355,31 @@ def test_review_start_brief_opens_past_a_spent_budget(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert _round_frontmatter(tmp_path, 3)["kind"] == "brief"
+
+
+# --- a project's briefs travel with it ----------------------------------------
+
+
+def test_export_and_import_carry_the_briefs_directory(tmp_path, monkeypatch):
+    from specflo.service.local import LocalProjectService
+    monkeypatch.chdir(tmp_path)
+    _project_at_execute(runner, app, tmp_path)
+    _ok(["brief", "add", "Feedback form"])
+    _ok(["brief", "set", "B-01", "Facts", "--stdin"], stdin="- posts to /feedback\n")
+    target = tmp_path / "elsewhere"
+    config.init_config(target)
+    exporter = LocalProjectService(tmp_path, config.load_config(tmp_path))
+    importer = LocalProjectService(target, config.load_config(target))
+
+    files = exporter.export_project("thing")
+    hashes = importer.import_project("thing", files)
+
+    assert "briefs/B-01-feedback-form.md" in files and "briefs/B-01-feedback-form.md" in hashes
+    copied = target / "docs" / "projects" / "thing" / "briefs" / "B-01-feedback-form.md"
+    assert copied.read_text() == files["briefs/B-01-feedback-form.md"]
+    assert "- posts to /feedback" in copied.read_text()
+    (tmp_path / "docs" / "projects" / "thing" / "briefs" / "stray").mkdir()
+    import pytest
+    from specflo.errors import SpecfloError
+    with pytest.raises(SpecfloError, match="'briefs/stray', which is not a plain file"):
+        exporter.export_project("thing")

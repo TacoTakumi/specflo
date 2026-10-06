@@ -38,6 +38,26 @@ _COMPLETERS = {
 RELAYING_ACTOR = "agent"
 
 
+def _exported_text(slug: str, path: Path, name: str) -> str:
+    """The text of one file an export carries, or a refusal naming it."""
+    if path.is_symlink() or not path.is_file():
+        raise SpecfloError(
+            f"Project {slug!r} holds {name!r}, which is not a plain file;"
+            " move it out of the project directory first, since only plain"
+            " files travel."
+        )
+    try:
+        # The bytes as they are, not newline-translated text: what is
+        # hashed and compared is what the file holds.
+        return path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError:
+        raise SpecfloError(
+            f"Project {slug!r} holds {name!r}, which is not UTF-8 text;"
+            " move it out of the project directory first, since only text"
+            " files travel."
+        ) from None
+
+
 class LocalProjectService:
     """A ``ProjectService`` over the projects under ``root``.
 
@@ -199,27 +219,22 @@ class LocalProjectService:
         Only plain UTF-8 files travel. A subdirectory, a symlink, or a file
         that is not UTF-8 text is refused by name before anything is sent,
         because a promotion removes the whole directory once the daemon has
-        confirmed what it received, and nothing may be lost on the way.
+        confirmed what it received, and nothing may be lost on the way. The
+        one subdirectory that travels is ``briefs/``, the project's briefs,
+        each as ``briefs/<name>``; its files are held to the same rule.
         """
         directory = projects.load_project(self.root, self.cfg, slug).path
         files = {}
         for path in sorted(directory.iterdir()):
-            if path.is_symlink() or not path.is_file():
-                raise SpecfloError(
-                    f"Project {slug!r} holds {path.name!r}, which is not a plain file;"
-                    " move it out of the project directory first, since only plain"
-                    " files travel."
-                )
-            try:
-                # The bytes as they are, not newline-translated text: what is
-                # hashed and compared is what the file holds.
-                files[path.name] = path.read_bytes().decode("utf-8")
-            except UnicodeDecodeError:
-                raise SpecfloError(
-                    f"Project {slug!r} holds {path.name!r}, which is not UTF-8 text;"
-                    " move it out of the project directory first, since only text"
-                    " files travel."
-                ) from None
+            if (
+                path.name == briefs.BRIEFS_DIRNAME
+                and path.is_dir() and not path.is_symlink()
+            ):
+                for inner in sorted(path.iterdir()):
+                    name = f"{path.name}/{inner.name}"
+                    files[name] = _exported_text(slug, inner, name)
+                continue
+            files[path.name] = _exported_text(slug, path, path.name)
         return files
 
     def import_project(self, slug: str, files: dict[str, str]) -> dict[str, str]:
@@ -233,9 +248,12 @@ class LocalProjectService:
         if directory.exists():
             raise SpecfloError(f"Project {slug!r} already exists.")
         for name in files:
+            # A brief travels as briefs/<name>: the one path with a directory
+            # in it, and that directory is the project's briefs.
+            plain = name.removeprefix(f"{briefs.BRIEFS_DIRNAME}/")
             if (
-                not name.strip() or name.startswith(".") or "/" in name or "\\" in name
-                or any(ord(char) < 32 or ord(char) == 127 for char in name)
+                not plain.strip() or plain.startswith(".") or "/" in plain or "\\" in plain
+                or any(ord(char) < 32 or ord(char) == 127 for char in plain)
             ):
                 raise SpecfloError(f"Invalid file name {name!r}: expected a plain file name.")
         if projects.PROJECT_FILENAME not in files:
@@ -258,6 +276,7 @@ class LocalProjectService:
             hashes = {}
             for name, text in files.items():
                 target = staging / name
+                target.parent.mkdir(exist_ok=True)
                 target.write_bytes(text.encode("utf-8"))
                 hashes[name] = hashlib.sha256(target.read_bytes()).hexdigest()
             staging.rename(directory)

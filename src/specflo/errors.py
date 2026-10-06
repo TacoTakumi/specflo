@@ -29,22 +29,26 @@ def require_one_line(what: str, value: str | None) -> None:
 
 
 def refuse_duplicate(
-    kind: str, text: str, active: dict[str, str], supersedes: str | None, doc: str
+    kind: str, text: str, active: dict[str, str], supersedes: str | None, doc: str,
+    look: str | None = None,
 ) -> None:
     """Refuse ``text`` when an active entry of the same kind already holds it.
 
     ``active`` maps each active entry's ID to its text; case and runs of
     whitespace are ignored. The entry ``supersedes`` names may hold the same
     text, since the new entry replaces it. A model that loops adds the same
-    entry again and again, so the message says so and names the next step.
+    entry again and again, so the message says so and names the next step:
+    ``specflo doc show <doc>``, or the command ``look`` when the entries live
+    in more than one document.
     """
     key = " ".join(text.split()).casefold()
+    see = look or f"specflo doc show {doc}"
     for entry_id, existing in active.items():
         if entry_id != supersedes and " ".join(existing.split()).casefold() == key:
             raise SpecfloError(
                 f"Not recorded: {entry_id} already records this {kind}. Do not add "
                 f"it again. If you ran this command before, you may be in a loop: "
-                f"stop, run `specflo doc show {doc}` to see what is recorded, and go "
+                f"stop, run `{see}` to see what is recorded, and go "
                 f"on to the next step. To replace {entry_id}, pass "
                 f"`--supersedes {entry_id}`."
             )

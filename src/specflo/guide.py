@@ -127,8 +127,16 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Emit the auto-mode handoff payload (opt-in unattended run)."},
     {"name": "brainstorm start", "group": "brainstorm", "args": "",
      "summary": "Create the brainstorm.md artifact."},
-    {"name": "decision add", "group": "brainstorm", "args": "",
-     "summary": "Record a brainstorm decision (D-NN)."},
+    {"name": "decision add", "group": "brainstorm", "args": "[--brief <B-NN>] [--diverges]",
+     "summary": "Record a decision (D-NN) in the brainstorm, or in a brief; --diverges "
+                "marks an approved divergence from the reference design."},
+    {"name": "decision list", "group": "brainstorm", "args": "[--diverges] [--all]",
+     "summary": "List the decisions across the brainstorm and every brief."},
+    {"name": "brief add", "group": "execute", "args": "<title>",
+     "summary": "Start a brief (B-NN) inside a running project for one feature's "
+                "ask, facts, decisions and contract."},
+    {"name": "brief set", "group": "execute", "args": "<B-NN> <section>",
+     "summary": "Replace one prose section of a brief (--file or --stdin)."},
     {"name": "spec start", "group": "spec", "args": "",
      "summary": "Create the spec.md artifact."},
     {"name": "requirement add", "group": "spec", "args": "",
@@ -170,7 +178,7 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mark a task blocked."},
     {"name": "task reopen", "group": "execute", "args": "<T-NN>",
      "summary": "Return a task to pending."},
-    {"name": "review start", "group": "review", "args": "[--full] [--over-budget] [--harden]",
+    {"name": "review start", "group": "review", "args": "[--full] [--over-budget] [--harden] [--brief <B-NN>]",
      "summary": "Mint the next review round (review-N.md) and print its scope; --harden "
                 "opens a harden round: a fresh review of the whole scope, outside the "
                 "round budget."},

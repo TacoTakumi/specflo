@@ -2671,11 +2671,14 @@ def review_start(
     _refresh_checkpoint(svc, slug)
     locator, reported = _artifact_report(root, slug, path)
     if json_output:
-        typer.echo(json.dumps({
+        payload = {
             "locator": locator, "path": reported, "created": created, "kind": scope["kind"],
-            "brief": scope.get("brief"),
             "scope": scope["scope"], "range": scope["range"], "items": scope["items"],
-        }))
+        }
+        # Only a brief round names its brief: a gate or harden round prints as it always did.
+        if scope.get("brief"):
+            payload["brief"] = scope["brief"]
+        typer.echo(json.dumps(payload))
         return
     note = "" if created else " (already open)"
     typer.echo(f"{locator}{note}")

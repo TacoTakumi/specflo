@@ -168,7 +168,7 @@ def test_a_task_that_neither_implements_nor_fixes_fails_plan_validation(planned)
     path.write_text(path.read_text().replace("- Fixes: F-02\n", ""))
     assert plan.validate_plan(root, cfg, slug) == [
         "T-02 implements no requirement and fixes no finding "
-        "(needs Implements: REQ-NN or Fixes: F-NN)."
+        "(needs Implements: REQ-NN or B-NN, or Fixes: F-NN)."
     ]
 
 

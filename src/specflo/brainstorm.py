@@ -214,13 +214,13 @@ def add_decision(
         where = brief_id
     else:
         path = brainstorm_path(root, cfg, slug)
-        where = "brainstorm.md"
+        where = BRAINSTORM_SOURCE
         if not path.is_file():
             raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
     with locked(lock_path_for(root, slug, path)):
         doc = path.read_text()
         if "## Decisions" not in doc:
-            raise SpecfloError(f"Malformed {where}: no '## Decisions' section.")
+            raise SpecfloError(f"Malformed {path.name}: no '## Decisions' section.")
 
         holder = None
         if supersedes is not None:
@@ -231,7 +231,12 @@ def add_decision(
         active = {
             d.id: d.text for d in list_decisions(root, cfg, slug)
         }
-        refuse_duplicate("decision", text, active, supersedes, where)
+        # Decisions live in the brainstorm and in every brief, so the hint
+        # names the list that spans them when the add is into a brief.
+        refuse_duplicate(
+            "decision", text, active, supersedes, where,
+            look="specflo decision list" if brief_id is not None else None,
+        )
 
         new_id = next_decision_id(root, cfg, slug)
         rationale_text = rationale if rationale else "—"

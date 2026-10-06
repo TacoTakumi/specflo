@@ -128,6 +128,14 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert any("Out of scope" in issue for issue in svc.validate_artifact(slug, "brainstorm"))
     title = svc.set_section(slug, "brainstorm", "Out of scope / Deferred", "No auth.\n")
     assert title == "Out of scope / Deferred"
+
+    # a brief inside the project: its sections and its decisions
+    brief = svc.add_brief(slug, "Tidy help", sha="abc1234")
+    assert brief.id == "B-01" and brief.path.name == "B-01-tidy-help.md"
+    assert svc.set_brief_section(slug, brief.id, "Ask", "Make the help tidy.\n") == "Ask"
+    in_brief = svc.add_decision(slug, "Drop the banner", brief=brief.id, diverges=True)
+    assert (in_brief.id, in_brief.source, in_brief.diverges) == ("D-02", brief.id, True)
+    assert [d.id for d in svc.list_decisions(slug, diverges=True)] == [in_brief.id]
     assert "No auth." in svc.show_document(slug, "brainstorm")
     assert svc.validate_artifact(slug, "brainstorm") == []
     svc.complete_artifact(slug, "brainstorm")
@@ -196,9 +204,15 @@ def _drive_every_operation(service, projects_root, reported=None):
     )
     assert svc.active_dependents(slug, second.id) == [third.id]
     assert svc.rewire_dependency(slug, second.id, replacement.id) == [third.id]
-    for task_id in (replacement.id, third.id):
+    cited = svc.add_task(
+        slug, "Tidy the help text", "help is tidy", "uv run pytest", [brief.id],
+        milestone=milestone.id,
+    )
+    assert svc.task_brief(slug, cited.id)["briefs"][0]["id"] == brief.id
+    for task_id in (replacement.id, third.id, cited.id):
         svc.start_task(slug, task_id)
         svc.done_task(slug, task_id)
+    assert svc.briefs_completed_by(slug, cited.id) == [brief.id]
     assert svc.task_brief(slug)["task"] is None
 
     # review: the execute gate reads the round
@@ -279,12 +293,14 @@ def _drive_every_operation(service, projects_root, reported=None):
     # the project as a set of files, and a second project made from them
     files = svc.export_project(slug)
     assert set(files) >= {"project.md", "brainstorm.md", "spec.md", "plan.md", "checkpoint.md", "review-1.md"}
+    assert "briefs/B-01-tidy-help.md" in files
     # an import is refused unless the project file names the slug it lands under
     copied = {**files, "project.md": files["project.md"].replace(f"slug: {slug}", "slug: copy", 1)}
     assert svc.import_project("copy", copied) == {
         name: hashlib.sha256(text.encode()).hexdigest() for name, text in copied.items()
     }
     assert svc.show_document("copy", "spec") == copied["spec.md"]
+    assert [d.id for d in svc.list_decisions("copy", diverges=True)] == [in_brief.id]
 
     # a light project moves up a level, never down
     quick = svc.create_project("Quick", level="quick")
@@ -558,8 +574,9 @@ def test_structural_cli_never_touches_a_file_itself():
 
 
 def test_structural_cli_reads_text_only_from_the_callers_own_file():
-    """``section set --file`` and ``review done --file`` read the caller's
-    input file, never an artifact; no other command reads text at all. What
+    """``section set --file``, ``brief set --file``, the long task fields'
+    ``--*-file`` and ``review done --file`` read the caller's input file,
+    never an artifact; no other command reads text at all. What
     they read travels as text, so a hosted project's service opens no file
     the client named."""
     import ast
@@ -572,7 +589,7 @@ def test_structural_cli_reads_text_only_from_the_callers_own_file():
         for node in ast.walk(fn)
         if isinstance(node, ast.Attribute) and node.attr == "read_text"
     })
-    assert readers == ["review_done", "section_set"]
+    assert readers == ["_long_field", "_section_body", "review_done"]
 
 
 def test_structural_cli_obtains_its_service_from_the_one_resolver():
