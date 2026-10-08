@@ -565,7 +565,9 @@ def run_one(
     normlog.dump(log, normlog_path)
     metric_values = _safe(lambda: metrics.compute(log), "metrics")
     diag = _safe(lambda: diagnostics.diagnose(
-        log, workdir=sealed.path, protected=[str(p) for p in protected], own_dirs=[str(run_dir)],
+        log, workdir=sealed.path, own_dirs=[str(run_dir)],
+        # Earlier runs' trees and logs hold finished solutions; only this run's own are exempt.
+        protected=[str(p) for p in (*protected, Path(work_root).resolve(), Path(runs_dir).resolve())],
         initial_dirs=initial_dirs, complete=outcome.end_reason == lifecycle.END_COMPLETE), "diagnostics")
     grade_values = grade_tree(sealed.path, run.level, grade)
     telemetry_values = run_telemetry(llama_swap_log, outcome.started_at, outcome.ended_at)

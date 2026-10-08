@@ -193,6 +193,29 @@ def test_the_run_passes_its_own_run_dir_to_the_contamination_check(synthetic, mo
     assert seen["own_dirs"] == [str(path.parent)]
 
 
+def test_the_run_protects_sibling_workdirs_and_run_dirs_but_not_its_own(synthetic, monkeypatch):
+    seen = {}
+    real = run.diagnostics.diagnose
+
+    def spy(log, **kw):
+        seen.update(kw)
+        return real(log, **kw)
+
+    monkeypatch.setattr(run.diagnostics, "diagnose", spy)
+    path, _ = run.run_one(**synthetic)
+    work_root, runs_dir = synthetic["work_root"].resolve(), synthetic["runs_dir"].resolve()
+    assert {str(work_root), str(runs_dir)} <= set(seen["protected"])
+    assert Path(seen["workdir"]).parent == work_root and seen["own_dirs"] == [str(path.parent)]
+    def reads(path: str) -> dict:
+        call = {"name": "read", "id": "c1", "time": 1.0, "is_error": False, "arguments": {"path": path}}
+        return real({"requests": [], "tool_calls": [call]}, **seen)
+
+    assert reads(f"{work_root}/other--pi--quick--000/tinytodo/store.py")["contaminated"] is True
+    assert reads(f"{runs_dir}/other--pi--quick--000/record.json")["contaminated"] is True
+    assert reads(f"{seen['workdir']}/tinytodo/store.py")["contaminated"] is False
+    assert reads(f"{path.parent}/harness.out")["contaminated"] is False
+
+
 # -- the record -------------------------------------------------------------------------
 
 
