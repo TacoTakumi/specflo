@@ -1,0 +1,13 @@
+[project]
+name = "tinytodo"
+version = "0.3.0"
+description = "A small command-line to-do list that keeps its tasks in a JSON file."
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+tinytodo = "tinytodo.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
