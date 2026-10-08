@@ -175,6 +175,13 @@ def test_bad_run_field_is_rejected_naming_it(config, field, kwargs):
         ("entries", "entries: {}\nharnesses: [pi]\nlevels: {quick: {}}\n"),
         ("entries.a.engine", "entries: {a: {}}\nharnesses: [pi]\nlevels: {quick: {}}\n"),
         ("harnesses", "entries: {a: {engine: llama.cpp}}\nlevels: {quick: {}}\n"),
+        ("engines", "entries: {a: {engine: llama.cpp}}\nharnesses: [pi]\nlevels: {quick: {}}\nengines: [x]\n"),
+        ("engines.llama.cpp", "entries: {a: {engine: llama.cpp}}\nharnesses: [pi]\nlevels: {quick: {}}\n"
+                              "engines: {llama.cpp: 2}\n"),
+        ("engines.llama.cpp.limit_factor", "entries: {a: {engine: llama.cpp}}\nharnesses: [pi]\nlevels: {quick: {}}\n"
+                                           "engines: {llama.cpp: {limit_factor: 0}}\n"),
+        ("engines.llama.cpp.limit_factor", "entries: {a: {engine: llama.cpp}}\nharnesses: [pi]\nlevels: {quick: {}}\n"
+                                           "engines: {llama.cpp: {limit_factor: fast}}\n"),
     ],
 )
 def test_bad_config_is_rejected_naming_field(tmp_path, field, text):
@@ -183,6 +190,16 @@ def test_bad_config_is_rejected_naming_field(tmp_path, field, text):
     with pytest.raises(arms.ArmError) as exc:
         arms.load_config(path)
     assert exc.value.field == field
+
+
+
+def test_limit_factor_is_the_entry_engines_factor_or_one(tmp_path):
+    path = tmp_path / "arms.yaml"
+    path.write_text("entries: {a: {engine: llama.cpp}, b: {engine: strata}}\nharnesses: [pi]\nlevels: {quick: {}}\n"
+                    "engines: {llama.cpp: {limit_factor: 2.5}}\n")
+    config = arms.load_config(path)
+    assert arms.limit_factor(config, "a") == 2.5
+    assert arms.limit_factor(config, "b") == 1.0
 
 
 # --- mb.py dispatcher ---------------------------------------------------

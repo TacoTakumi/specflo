@@ -3,11 +3,15 @@
 A run is one arm (an entry id and a harness), one level and one run index.
 `validate_run` refuses a run with any of these missing or unknown, before
 anything talks to llama-swap.
+
+An optional `engines` mapping holds per-engine settings. `limit_factor` scales
+a level's wall-clock cap and stall limit for runs on that engine's entries, so
+a slower engine gets the same headroom as the one the limits were set on.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +35,7 @@ class Config:
     entries: dict[str, dict[str, Any]]
     harnesses: tuple[str, ...]
     levels: dict[str, dict[str, Any]]
+    engines: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -68,11 +73,27 @@ def load_config(path: Path | str = DEFAULT_CONFIG) -> Config:
     if not isinstance(levels, dict):
         raise ArmError("levels", "missing mapping")
     _check_names("levels", levels, LEVELS)
+    engines = data.get("engines") or {}
+    if not isinstance(engines, dict):
+        raise ArmError("engines", "expected a mapping of engine names")
+    for engine, spec in engines.items():
+        if not isinstance(spec, dict):
+            raise ArmError(f"engines.{engine}", "expected a mapping")
+        factor = spec.get("limit_factor", 1)
+        if isinstance(factor, bool) or not isinstance(factor, (int, float)) or factor <= 0:
+            raise ArmError(f"engines.{engine}.limit_factor", f"expected a positive number, got {factor!r}")
     return Config(
         entries=entries,
         harnesses=tuple(harnesses),
         levels={name: spec or {} for name, spec in levels.items()},
+        engines=engines,
     )
+
+
+def limit_factor(config: Config, entry: str) -> float:
+    """The factor that scales the level limits for runs on this entry's engine (1 when unset)."""
+    engine = config.entries.get(entry, {}).get("engine")
+    return float(config.engines.get(engine, {}).get("limit_factor", 1))
 
 
 def _known(field: str, value: Any, known: Any) -> str:

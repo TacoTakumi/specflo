@@ -131,23 +131,27 @@ def next_run_index(
 
 
 def resolve_limits(
-    level: str, config: arms.Config, *, wall_clock: float | None = None, stall: float | None = None
+    level: str, config: arms.Config, *, entry: str | None = None,
+    wall_clock: float | None = None, stall: float | None = None,
 ) -> tuple[lifecycle.Limits, dict[str, str]]:
     """The level limits: the arguments, else the arm config's level settings, else the provisional ones.
 
-    Returns the limits and where each came from.
+    The entry's engine limit factor scales the config and provisional values;
+    arguments are taken as given. Returns the limits and where each came from.
     """
     spec = config.levels.get(level, {})
     fallback = dict(zip((lifecycle.WALL_CLOCK_KEY, lifecycle.STALL_KEY), PROVISIONAL_LIMITS[level]))
+    factor = arms.limit_factor(config, entry) if entry is not None else 1.0
+    scaled = f" x{factor:g}" if factor != 1 else ""
     values: dict[str, float] = {}
     source: dict[str, str] = {}
     for key, given in ((lifecycle.WALL_CLOCK_KEY, wall_clock), (lifecycle.STALL_KEY, stall)):
         if given is not None:
             values[key], source[key] = given, "argument"
         elif spec.get(key) is not None:
-            values[key], source[key] = spec[key], "arm config"
+            values[key], source[key] = spec[key] * factor, "arm config" + scaled
         else:
-            values[key], source[key] = fallback[key], "provisional default"
+            values[key], source[key] = fallback[key] * factor, "provisional default" + scaled
     limits = lifecycle.level_limits(
         level, config=config, wall_clock=values[lifecycle.WALL_CLOCK_KEY], stall=values[lifecycle.STALL_KEY])
     return limits, source
@@ -530,7 +534,7 @@ def run_one(
     config = config or arms.load_config()
     run = arms.validate_run(config, entry=entry, harness=harness, level=level, run_index=run_index)
     settings = lifecycle.AutoSettings(autonomy, pass_cap)
-    limits, limits_source = resolve_limits(run.level, config, wall_clock=wall_clock, stall=stall)
+    limits, limits_source = resolve_limits(run.level, config, entry=run.entry, wall_clock=wall_clock, stall=stall)
     name = run_name(run)
     run_dir = Path(runs_dir).resolve() / name
     if run_dir.exists():

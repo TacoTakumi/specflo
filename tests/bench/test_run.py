@@ -340,3 +340,18 @@ def test_limits_come_from_arguments_then_the_arm_config_then_the_provisional_def
     limits, source = run.resolve_limits("quick", config, wall_clock=10, stall=5)
     assert limits == lifecycle.Limits(10.0, 5.0) and set(source.values()) == {"argument"}
 
+
+def test_an_engine_limit_factor_scales_the_config_and_provisional_limits_but_not_arguments():
+    config = arms.Config(entries={"slow": {"engine": "llama.cpp"}, "fast": {"engine": "strata"}},
+                         harnesses=arms.HARNESSES,
+                         levels={"quick": {"stall_limit": 120}, "fast": {}, "full": {}},
+                         engines={"llama.cpp": {"limit_factor": 2.5}})
+    limits, source = run.resolve_limits("quick", config, entry="slow")
+    assert limits == lifecycle.Limits(run.PROVISIONAL_LIMITS["quick"][0] * 2.5, 300.0)
+    assert source == {"wall_clock": "provisional default x2.5", "stall_limit": "arm config x2.5"}
+    limits, source = run.resolve_limits("quick", config, entry="slow", wall_clock=10)
+    assert limits.wall_clock == 10.0 and source["wall_clock"] == "argument"
+    limits, source = run.resolve_limits("quick", config, entry="fast")
+    assert limits == lifecycle.Limits(run.PROVISIONAL_LIMITS["quick"][0], 120.0)
+    assert source == {"wall_clock": "provisional default", "stall_limit": "arm config"}
+
