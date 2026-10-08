@@ -5,8 +5,9 @@
 (the global state file, installed in the run copy as `.claude.json` so the
 first-run onboarding never shows) and `frozen.json` (the real binary, the
 llama-swap base URL and where the deny rules come from). The Claude Code
-version is not pinned: the launcher reads it from the binary and the run
-record carries it. It holds no credential; the launcher refuses a dir that does.
+version is not pinned: the launcher resolves the binary link to its file at
+launch, reads the version from it and uses that file for every pass, and the
+run record carries it. It holds no credential; the launcher refuses a dir that does.
 
 Each run gets a copy in its own run directory, which becomes CLAUDE_CONFIG_DIR,
 so Claude Code's own writes (sessions, history, state) never reach the repo or
@@ -257,7 +258,9 @@ def build_launch(
     if entry not in arms.load_config().entries:
         raise LaunchError(f"entry {entry!r} is not an entry of the arm config")
     frozen = load_frozen(config_dir)
-    binary = claude_bin or frozen.claude_bin
+    # The link (~/.local/bin/claude) moves when Claude Code updates; every pass
+    # of this run uses the file it points to now.
+    binary = str(Path(claude_bin or frozen.claude_bin).expanduser().resolve())
     check_real_binary(binary)
     found = claude_version(binary)
 

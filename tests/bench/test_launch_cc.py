@@ -184,6 +184,23 @@ def test_argv_runs_the_real_binary_with_never_prompt_mode(launch, tmp_path: Path
     assert launch.cwd == tmp_path / "work"
 
 
+def test_a_linked_binary_is_resolved_once_so_an_update_of_the_link_does_not_move_the_run(
+        tmp_path: Path, stub_version):
+    versions = tmp_path / "versions"
+    versions.mkdir()
+    first = Path(fake_claude(tmp_path, "2.1.294")).rename(versions / "2.1.294")
+    link = tmp_path / "local-bin" / "claude"
+    link.parent.mkdir()
+    link.symlink_to(first)
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    with launch_cc.build_launch(ENTRY, workdir=workdir, run_dir=tmp_path / "run",
+                                claude_bin=str(link)) as launch:
+        link.unlink()
+        link.symlink_to(Path(fake_claude(tmp_path, "2.1.295")))
+        assert launch.argv[0] == str(first)
+
+
 def test_wrapper_script_is_refused(tmp_path: Path, stub_version):
     wrapper = tmp_path / "claude"
     wrapper.write_text("#!/bin/bash\nexec ~/.local/bin/claude --append-system-prompt-file x \"$@\"\n")
