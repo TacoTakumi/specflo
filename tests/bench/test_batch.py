@@ -9,13 +9,16 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from modelbench import arms, batch, cmd_batch, cmd_records, probe, record, run
 
-LLAMA = "swift15-flash-next-iq4xs-mtp-vision"
-STRATA = "swift15-flash-next-iq4xs-strata-2x3090"
+# The shipped matrices: the pilot runs on FIRST (Strata), and the first round
+# runs the FIRST block, then the SECOND (llama.cpp).
+FIRST = "swift15-flash-next-iq4xs-strata-2x3090"
+SECOND = "swift15-flash-next-iq4xs-mtp-vision"
 TZ = timezone(timedelta(hours=-3))
 EVENING = datetime(2026, 10, 8, 21, 0, tzinfo=TZ)
 
@@ -84,7 +87,7 @@ def fake_probe(effort_by_entry: dict[tuple[str, str], str] | None = None):
         calls.append((entry, harness))
         effort = efforts.get((entry, harness), "xhigh")
         return probe.ProbeResult(
-            harness=harness, entry=entry, engine="strata" if entry == STRATA else "llama.cpp",
+            harness=harness, entry=entry, engine="strata" if entry == FIRST else "llama.cpp",
             api=probe.API_OF_HARNESS[harness], sent={},
             received=probe.Received(thinking=True, effort=effort, source="template default"),
             reasoning_chars=40)
@@ -106,7 +109,7 @@ def go(plan, config, dirs, *, runner, probe_fn, clock=lambda: EVENING):
 def test_first_round_dry_run_lists_two_entry_blocks_and_sixty_runs(config, dirs):
     matrix = batch.load_matrix("first-round", config)
     plan = batch.make_plan(matrix, config, runs_dir=dirs[0], work_root=dirs[1])
-    assert [b.entry for b in plan.blocks] == [LLAMA, STRATA]
+    assert [b.entry for b in plan.blocks] == [FIRST, SECOND]
     assert plan.to_start == 60 and matrix.total == 60
     for block in plan.blocks:
         assert {p.entry for p in block.runs} == {block.entry}
@@ -119,7 +122,7 @@ def test_first_round_dry_run_lists_two_entry_blocks_and_sixty_runs(config, dirs)
 
 def test_pilot_is_one_block_of_six_runs(config, dirs):
     plan = batch.make_plan(batch.load_matrix("pilot", config), config, runs_dir=dirs[0], work_root=dirs[1])
-    assert len(plan.blocks) == 1 and plan.blocks[0].entry == LLAMA
+    assert len(plan.blocks) == 1 and plan.blocks[0].entry == FIRST
     assert [(p.harness, p.level) for p in plan.blocks[0].runs] == [
         ("pi", "quick"), ("claude-code", "quick"), ("pi", "fast"), ("claude-code", "fast"),
         ("pi", "full"), ("claude-code", "full")]
@@ -153,13 +156,13 @@ def test_unknown_matrix_and_bad_field_are_refused(config, tmp_path, dirs, capsys
 
 
 def test_valid_records_fill_cells_and_invalid_ones_do_not(config, dirs):
-    write_record(dirs[0], make_record(LLAMA, "pi", "quick", 0))
-    write_record(dirs[0], make_record(LLAMA, "claude-code", "quick", 0, valid=False))
+    write_record(dirs[0], make_record(FIRST, "pi", "quick", 0))
+    write_record(dirs[0], make_record(FIRST, "claude-code", "quick", 0, valid=False))
     plan = batch.make_plan(batch.load_matrix("pilot", config), config, runs_dir=dirs[0], work_root=dirs[1])
     names = [p.name for p in plan.blocks[0].runs]
-    assert f"{LLAMA}--pi--quick--000" not in names and not any("--pi--quick--" in n for n in names)
+    assert f"{FIRST}--pi--quick--000" not in names and not any("--pi--quick--" in n for n in names)
     # the invalid record's cell gets a new run at the next index
-    assert f"{LLAMA}--claude-code--quick--001" in names
+    assert f"{FIRST}--claude-code--quick--001" in names
     assert plan.recorded == 1 and plan.to_start == 5
 
 
@@ -182,7 +185,7 @@ def test_rerun_after_an_interruption_starts_only_the_missing_runs(config, dirs):
     assert outcome.exit_code == 0
     assert not set(second.calls) & set(first.calls[:2])
     # the interrupted run's dir is left alone; its cell takes the next index
-    assert f"{LLAMA}--pi--fast--001" in second.calls and interrupted.is_dir()
+    assert f"{FIRST}--pi--fast--001" in second.calls and interrupted.is_dir()
     assert len(second.calls) == 4
     assert all(c.ok for c in batch.check_cells(matrix, dirs[0]))
 
@@ -221,14 +224,14 @@ def test_night_runs_from_noon_to_noon():
 
 
 def test_a_second_full_level_claude_code_run_in_one_night_is_skipped(config, dirs):
-    write_record(dirs[0], make_record(STRATA, "claude-code", "full", 0, started=EVENING - timedelta(hours=2)))
+    write_record(dirs[0], make_record(SECOND, "claude-code", "full", 0, started=EVENING - timedelta(hours=2)))
     plan = batch.make_plan(batch.load_matrix("pilot", config), config, runs_dir=dirs[0], work_root=dirs[1])
     runner = FakeRunner(dirs[0], lambda: EVENING)
     outcome, lines = go(plan, config, dirs, runner=runner, probe_fn=fake_probe())
     assert len(runner.calls) == 5 and not any("claude-code--full" in c for c in runner.calls)
-    assert outcome.night_skipped == [f"{LLAMA}--claude-code--full--000"] and outcome.exit_code == 0
+    assert outcome.night_skipped == [f"{FIRST}--claude-code--full--000"] and outcome.exit_code == 0
     skip = [line for line in lines if line.startswith("  skip ")]
-    assert len(skip) == 1 and f"{STRATA}--claude-code--full--000" in skip[0]
+    assert len(skip) == 1 and f"{SECOND}--claude-code--full--000" in skip[0]
     assert "already started this night" in skip[0]
 
 
@@ -237,12 +240,12 @@ def test_one_batch_starts_one_full_level_claude_code_run_per_night(config, dirs)
     plan = batch.make_plan(matrix, config, runs_dir=dirs[0], work_root=dirs[1])
     runner = FakeRunner(dirs[0], lambda: EVENING)
     outcome, _ = go(plan, config, dirs, runner=runner, probe_fn=fake_probe())
-    assert [c for c in runner.calls if "claude-code--full" in c] == [f"{LLAMA}--claude-code--full--000"]
+    assert [c for c in runner.calls if "claude-code--full" in c] == [f"{FIRST}--claude-code--full--000"]
     assert len(outcome.night_skipped) == 9 and len(runner.calls) == 51
 
 
 def test_a_run_from_the_previous_night_does_not_block(config, dirs):
-    write_record(dirs[0], make_record(LLAMA, "claude-code", "full", 0, started=EVENING - timedelta(hours=10)))
+    write_record(dirs[0], make_record(FIRST, "claude-code", "full", 0, started=EVENING - timedelta(hours=10)))
     plan = batch.make_plan(batch.load_matrix("pilot", config), config, runs_dir=dirs[0], work_root=dirs[1])
     runner = FakeRunner(dirs[0], lambda: EVENING)
     outcome, _ = go(plan, config, dirs, runner=runner, probe_fn=fake_probe())
@@ -261,33 +264,33 @@ def test_a_batch_that_runs_into_a_new_night_starts_another(config, dirs):
 
 
 def test_a_probe_mismatch_refuses_that_harness_in_the_second_block(config, dirs):
-    probe_fn = fake_probe({(STRATA, "claude-code"): "low"})
+    probe_fn = fake_probe({(SECOND, "claude-code"): "low"})
     plan = batch.make_plan(batch.load_matrix("first-round", config), config, runs_dir=dirs[0], work_root=dirs[1])
     runner = FakeRunner(dirs[0], lambda: EVENING)
     outcome, lines = go(plan, config, dirs, runner=runner, probe_fn=probe_fn)
     assert outcome.exit_code == 1 and len(outcome.refused) == 15
-    assert all(f"{STRATA}--claude-code" in name for name in outcome.refused)
-    assert any(f"{STRATA}--pi--" in c for c in runner.calls)
-    assert not any(f"{STRATA}--claude-code" in c for c in runner.calls)
+    assert all(f"{SECOND}--claude-code" in name for name in outcome.refused)
+    assert any(f"{SECOND}--pi--" in c for c in runner.calls)
+    assert not any(f"{SECOND}--claude-code" in c for c in runner.calls)
     assert any(line.startswith("  refused: claude-code: refusing to compare") for line in lines)
-    assert probe_fn.calls == [(LLAMA, "pi"), (LLAMA, "claude-code"), (STRATA, "pi"), (STRATA, "claude-code")]
-    stored = batch.load_probe(dirs[0] / batch.PROBES_DIR_NAME, STRATA, "claude-code")
+    assert probe_fn.calls == [(FIRST, "pi"), (FIRST, "claude-code"), (SECOND, "pi"), (SECOND, "claude-code")]
+    stored = batch.load_probe(dirs[0] / batch.PROBES_DIR_NAME, SECOND, "claude-code")
     assert stored is not None and stored.received.effort == "low"
 
 
 def test_a_resumed_second_block_compares_with_the_stored_probe(config, dirs):
     matrix = batch.load_matrix("first-round", config)
     probes = dirs[0] / batch.PROBES_DIR_NAME
-    batch.save_probe(probes, fake_probe({(LLAMA, "pi"): "medium"})(LLAMA, "pi"), EVENING)
+    batch.save_probe(probes, fake_probe({(FIRST, "pi"): "medium"})(FIRST, "pi"), EVENING)
     for harness in matrix.harnesses:
         for level in matrix.levels:
             for i in range(matrix.runs):
-                write_record(dirs[0], make_record(LLAMA, harness, level, i, started=EVENING - timedelta(days=3)))
+                write_record(dirs[0], make_record(FIRST, harness, level, i, started=EVENING - timedelta(days=3)))
     plan = batch.make_plan(matrix, config, runs_dir=dirs[0], work_root=dirs[1])
     assert len(plan.blocks[0].runs) == 0
     probe_fn = fake_probe()
     outcome, _ = go(plan, config, dirs, runner=FakeRunner(dirs[0], lambda: EVENING), probe_fn=probe_fn)
-    assert probe_fn.calls == [(STRATA, "pi"), (STRATA, "claude-code")]
+    assert probe_fn.calls == [(SECOND, "pi"), (SECOND, "claude-code")]
     assert len(outcome.refused) == 15 and all("--pi--" in n for n in outcome.refused)
 
 
@@ -295,7 +298,7 @@ def test_dry_run_runs_no_probe(config, dirs):
     plan = batch.make_plan(batch.load_matrix("pilot", config), config, runs_dir=dirs[0], work_root=dirs[1])
     lines = batch.describe_plan(plan, runs_dir=dirs[0], now=EVENING)
     assert [line for line in lines if line.startswith("  probe ")] == [
-        f"  probe pi on {LLAMA}", f"  probe claude-code on {LLAMA}"]
+        f"  probe pi on {FIRST}", f"  probe claude-code on {FIRST}"]
     assert not (dirs[0] / batch.PROBES_DIR_NAME).exists()
 
 
@@ -310,13 +313,13 @@ def check(argv: list[str], dirs, capsys) -> tuple[int, str]:
 def test_check_counts_each_cell_and_fails_when_one_is_short(dirs, capsys):
     for harness, level in [("pi", "quick"), ("pi", "fast"), ("pi", "full"),
                            ("claude-code", "quick"), ("claude-code", "fast")]:
-        write_record(dirs[0], make_record(LLAMA, harness, level, 0))
+        write_record(dirs[0], make_record(FIRST, harness, level, 0))
     code, out = check(["--matrix", "pilot"], dirs, capsys)
     assert code == 1
-    assert f"{LLAMA} / pi / quick: 1/1 valid  ok" in out
-    assert f"{LLAMA} / claude-code / full: 0/1 valid  SHORT" in out
+    assert f"{FIRST} / pi / quick: 1/1 valid  ok" in out
+    assert f"{FIRST} / claude-code / full: 0/1 valid  SHORT" in out
     assert "check: FAIL - 1 cell(s) short, 0 invalid record(s)" in out
-    write_record(dirs[0], make_record(LLAMA, "claude-code", "full", 0))
+    write_record(dirs[0], make_record(FIRST, "claude-code", "full", 0))
     code, out = check(["--matrix", "pilot"], dirs, capsys)
     assert code == 0 and out.rstrip().endswith("check: ok")
 
@@ -324,25 +327,25 @@ def test_check_counts_each_cell_and_fails_when_one_is_short(dirs, capsys):
 def test_check_fails_on_an_invalid_record_even_when_the_cell_is_full(dirs, capsys):
     for harness in ("pi", "claude-code"):
         for level in ("quick", "fast", "full"):
-            write_record(dirs[0], make_record(LLAMA, harness, level, 1))
-    write_record(dirs[0], make_record(LLAMA, "claude-code", "quick", 0, valid=False))
-    (dirs[0] / f"{LLAMA}--pi--full--002").mkdir()
+            write_record(dirs[0], make_record(FIRST, harness, level, 1))
+    write_record(dirs[0], make_record(FIRST, "claude-code", "quick", 0, valid=False))
+    (dirs[0] / f"{FIRST}--pi--full--002").mkdir()
     code, out = check(["--matrix", "pilot"], dirs, capsys)
     assert code == 1
-    assert f"{LLAMA} / claude-code / quick: 1/1 valid, 1 invalid  INVALID" in out
-    assert f"invalid {LLAMA}--claude-code--quick--000: invalid harness-exit" in out
-    assert f"no record: {LLAMA}--pi--full--002" in out
+    assert f"{FIRST} / claude-code / quick: 1/1 valid, 1 invalid  INVALID" in out
+    assert f"invalid {FIRST}--claude-code--quick--000: invalid harness-exit" in out
+    assert f"no record: {FIRST}--pi--full--002" in out
     assert "check: FAIL - 0 cell(s) short, 1 invalid record(s)" in out
 
 
 def test_check_treats_schema_failures_and_mismatched_records_as_invalid(dirs, capsys):
-    path = write_record(dirs[0], make_record(LLAMA, "pi", "quick", 0))
+    path = write_record(dirs[0], make_record(FIRST, "pi", "quick", 0))
     rec = json.loads(path.read_text())
     del rec["score"]
     path.write_text(json.dumps(rec))
-    write_record(dirs[0], make_record(LLAMA, "pi", "fast", 0))
-    moved = dirs[0] / f"{LLAMA}--pi--fast--003"
-    (dirs[0] / f"{LLAMA}--pi--fast--000").rename(moved)
+    write_record(dirs[0], make_record(FIRST, "pi", "fast", 0))
+    moved = dirs[0] / f"{FIRST}--pi--fast--003"
+    (dirs[0] / f"{FIRST}--pi--fast--000").rename(moved)
     code, out = check([], dirs, capsys)
     assert code == 1
     assert "schema: score: missing" in out
@@ -353,8 +356,29 @@ def test_check_treats_schema_failures_and_mismatched_records_as_invalid(dirs, ca
 def test_check_without_records_dir_and_the_listing(dirs, capsys):
     code, out = check(["--matrix", "first-round"], dirs, capsys)
     assert code == 1 and "check: FAIL - 12 cell(s) short" in out
-    write_record(dirs[0], make_record(LLAMA, "pi", "quick", 0))
+    write_record(dirs[0], make_record(FIRST, "pi", "quick", 0))
     (dirs[0] / batch.PROBES_DIR_NAME).mkdir()
     assert cmd_records.main(["--runs-dir", str(dirs[0])]) == 0
     listing = capsys.readouterr().out.splitlines()
-    assert listing == [f"{LLAMA}--pi--quick--000: valid complete, score 0.500, started {EVENING.isoformat()}"]
+    assert listing == [f"{FIRST}--pi--quick--000: valid complete, score 0.500, started {EVENING.isoformat()}"]
+
+
+def test_the_rig_probe_replaces_a_probe_dir_left_by_an_earlier_batch(tmp_path, config, monkeypatch):
+    probes = tmp_path / "probes"
+    old = batch.probe_path(probes, FIRST, "claude-code").parent
+    (old / "work").mkdir(parents=True)
+    (old / "stale.txt").write_text("from the earlier batch")
+    seen = []
+
+    def probe_at(harness, entry, *, run_dir, **_):
+        assert not Path(run_dir).exists()
+        Path(run_dir, "work").mkdir(parents=True)
+        seen.append((harness, entry))
+        return fake_probe()(entry, harness)
+
+    monkeypatch.setattr(run, "ready_entry", lambda rig, arm: None)
+    monkeypatch.setattr(probe, "probe", probe_at)
+    probe_fn = batch.rig_probe(SimpleNamespace(base_url="http://127.0.0.1:1"), config, probes)
+    assert probe_fn(FIRST, "claude-code").entry == FIRST
+    assert seen == [("claude-code", FIRST)] and not (old / "stale.txt").exists()
+

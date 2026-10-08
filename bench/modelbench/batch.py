@@ -45,6 +45,7 @@ error) stops the batch; a rerun resumes it.
 from __future__ import annotations
 
 import json
+import shutil
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -422,12 +423,19 @@ def load_probe(probes_dir: Path | str, entry: str, harness: str) -> probe.ProbeR
 
 def rig_probe(rig: run.Rig, config: arms.Config, probes_dir: Path | str,
               timeout: float = probe.DEFAULT_TIMEOUT) -> ProbeFn:
-    """The probe step on the rig: preflight, load the entry when needed, probe the harness."""
+    """The probe step on the rig: preflight, load the entry when needed, probe the harness.
+
+    A probe dir left by an earlier batch is cleared first: every batch probes
+    again, and the new probe replaces the stored one.
+    """
 
     def probe_fn(entry: str, harness: str) -> probe.ProbeResult:
         run.ready_entry(rig, arms.Run(entry, harness, next(iter(config.levels)), 0))
+        run_dir = probe_path(probes_dir, entry, harness).parent
+        if run_dir.exists():
+            shutil.rmtree(run_dir)
         return probe.probe(harness, entry, base_url=rig.base_url, timeout=timeout, config=config,
-                           run_dir=probe_path(probes_dir, entry, harness).parent)
+                           run_dir=run_dir)
 
     return probe_fn
 
