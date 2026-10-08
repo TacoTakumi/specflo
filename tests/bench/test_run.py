@@ -229,6 +229,23 @@ def test_claude_code_sessions_include_the_pass_in_flight_when_the_run_was_killed
     assert run.session_files("claude-code", run_dir) == [first, second]
 
 
+def test_an_entry_the_bench_load_evicted_is_foreign_when_the_operator_loads_it(tmp_path):
+    from .test_preflight import StubSwap
+
+    config = arms.load_config()
+    a, b = "swift15-flash-next-iq4xs-mtp-vision", "swift15-flash-next-iq4xs-strata-2x3090"
+    state = tmp_path / "loaded.json"
+    for entry in (a, b):
+        preflight.record_bench_load(state, entry)
+    with StubSwap([b]) as stub:  # the bench's load of b evicted a
+        assert [m["model"] for m in run.Rig(stub.url, state).running()] == [b]
+    assert preflight.read_bench_loaded(state) == {b}
+    with StubSwap([a]) as stub:  # the operator loads a himself
+        with pytest.raises(preflight.PreflightError) as err:
+            run.Rig(stub.url, state).preflight(arms.Run(b, "pi", "quick", 0))
+    assert err.value.foreign == [a]
+
+
 # -- the record -------------------------------------------------------------------------
 
 

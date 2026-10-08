@@ -190,7 +190,10 @@ class Rig:
         except (urllib.error.URLError, OSError, ValueError) as exc:
             raise preflight.PreflightError(f"cannot read llama-swap running list at {url}: {exc}") from exc
         running = data.get("running") if isinstance(data, dict) else None
-        return [m for m in running or [] if isinstance(m, dict)]
+        models = [m for m in running or [] if isinstance(m, dict)]
+        # A bench-loaded entry missing here was evicted, by the bench's own load or anyone's.
+        preflight.sync_bench_loaded(self.state_path, [str(m.get("model")) for m in models])
+        return models
 
 
 def ready_entry(rig: Rig, run: arms.Run) -> dict[str, Any]:

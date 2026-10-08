@@ -6,8 +6,8 @@ not load it. It sends no other request: no inference, no unload.
 
 Bench-load state file (default `bench/state/loaded-by-bench.json`): the record
 of the llama-swap entries the bench itself loaded. The runner adds an entry
-with `record_bench_load` when it loads one; preflight drops it once llama-swap no
-longer lists it as running.
+with `record_bench_load` when it loads one; every running list the bench reads
+drops it once llama-swap no longer lists it.
 Format:
 
     {"format": 1, "loaded": ["<entry id>", ...]}
@@ -70,6 +70,20 @@ def write_bench_loaded(path: Path | str, loaded: Iterable[str]) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
 
+def sync_bench_loaded(path: Path | str, running: Iterable[str]) -> set[str]:
+    """Drop from the bench-load state each entry not in `running`; return what is left.
+
+    An entry the bench loaded that is no longer running was unloaded since (a
+    swap, the bench's own next load, or a reload), so a later load of it by
+    anyone else is not the bench's.
+    """
+    recorded = read_bench_loaded(path)
+    kept = recorded & set(running)
+    if kept != recorded:
+        write_bench_loaded(path, kept)
+    return kept
+
+
 def fetch_running(base_url: str = DEFAULT_BASE_URL, timeout: float = 5.0) -> list[str]:
     """GET <base_url>/running and return the loaded model ids, in llama-swap's order."""
     url = base_url.rstrip("/") + "/running"
@@ -96,18 +110,9 @@ def preflight(
     base_url: str = DEFAULT_BASE_URL,
     state_path: Path | str = DEFAULT_STATE,
 ) -> list[str]:
-    """Return the running list, or raise PreflightError naming each foreign model.
-
-    An entry the bench loaded that is no longer running was unloaded since (by
-    a swap or a reload); it leaves the bench-load state, so a later load of it
-    by anyone else counts as foreign.
-    """
+    """Return the running list, or raise PreflightError naming each foreign model."""
     running = fetch_running(base_url)
-    recorded = read_bench_loaded(state_path)
-    bench_loaded = recorded & set(running)
-    if bench_loaded != recorded:
-        write_bench_loaded(state_path, bench_loaded)
-    foreign = foreign_models(running, run.entry, bench_loaded)
+    foreign = foreign_models(running, run.entry, sync_bench_loaded(state_path, running))
     if foreign:
         raise PreflightError(
             "refusing to start: llama-swap has models loaded that the bench did not "
