@@ -123,6 +123,18 @@ def _same(value: Any) -> str:
     return json.dumps(value, sort_keys=True, default=str)
 
 
+def _metric_values(metrics: dict) -> dict[str, float]:
+    """A run's numeric metrics by lower-case dotted name.
+
+    The harnesses spell tool names differently (Claude Code's Bash, pi's
+    bash); names that differ only in case are one metric, and their values add.
+    """
+    out: dict[str, float] = {}
+    for name, value in _numeric_leaves(metrics).items():
+        out[name.lower()] = out.get(name.lower(), 0.0) + value
+    return out
+
+
 def _numeric_leaves(node: Any, prefix: str = "") -> dict[str, float]:
     out: dict[str, float] = {}
     if isinstance(node, dict):
@@ -147,7 +159,7 @@ def summarise_arms(
             seen[key] = []
         seen[key].append(fields)
         arms[key].scores.append(float(rec["score"]))
-        arms[key].metrics.append(_numeric_leaves(rec.get("metrics") or {}))
+        arms[key].metrics.append(_metric_values(rec.get("metrics") or {}))
     for key, runs in seen.items():
         names = list(dict.fromkeys(n for f in runs for n in f))
         varying = [n for n in names if len({_same(f.get(n)) for f in runs}) > 1]
@@ -262,7 +274,7 @@ def _render(path: Path, title: str, text: str, panels: list[tuple[str, list[list
             ax.set_ylabel("held-out test pass rate")
     fig.suptitle(title, fontsize=11)
     total_h = plot_h + text_h + 0.6
-    fig.subplots_adjust(bottom=(text_h + 0.4) / total_h, top=1 - 0.5 / total_h, hspace=0.5)
+    fig.subplots_adjust(bottom=(text_h + 0.4) / total_h, top=1 - 0.9 / total_h, hspace=0.5)
     fig.text(0.01, 0.01, wrapped, fontsize=6, family="monospace", va="bottom")
     fig.savefig(path, format="png", dpi=110)
 

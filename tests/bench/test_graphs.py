@@ -117,6 +117,16 @@ def test_check_ignores_where_the_limits_came_from():
     assert graphs.check_comparison(graphs.summarise_arms(recs, ENGINES)) == "entry"
 
 
+def test_tool_calls_are_compared_without_case():
+    recs = [make_record(harness="claude-code", metrics__tool_calls={"Bash": 3, "Agent": 1}),
+            make_record(harness="pi", metrics__tool_calls={"bash": 5, "Bash": 1})]
+    arms = {a.harness: a for a in graphs.summarise_arms(recs, ENGINES)}
+    assert arms["claude-code"].metrics[0]["tool_calls.bash"] == 3.0
+    assert arms["claude-code"].metrics[0]["tool_calls.agent"] == 1.0
+    assert arms["pi"].metrics[0]["tool_calls.bash"] == 6.0
+    assert not any(k != k.lower() for a in arms.values() for m in a.metrics for k in m)
+
+
 def test_check_refuses_two_variables_naming_fields():
     recs = [make_record(ENTRY_A, "pi"), make_record(ENTRY_B, "claude-code")]
     with pytest.raises(graphs.ComparisonError) as exc:
