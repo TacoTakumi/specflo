@@ -78,6 +78,9 @@ packages = ["src/specflo"]
 path = "hatch_build.py"
 
 [dependency-groups]
+bench = [
+    "matplotlib>=3.11.2",
+]
 dev = [
     "pytest>=8.0",
     "pytest-xdist>=3.8.0",
