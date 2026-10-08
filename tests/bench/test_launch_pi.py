@@ -117,6 +117,15 @@ def test_run_copy_extensions_are_exactly_specflo_and_the_deny_list(launch):
     assert (ext / launch_pi.DENY_EXTENSION).read_bytes() == deny_src
 
 
+def test_run_copy_declares_only_the_run_entry_and_makes_it_the_default(launch):
+    models = json.loads((launch.agent_dir / launch_pi.MODELS_FILE).read_text())
+    provider = launch_pi.load_frozen().provider
+    assert [m["id"] for m in models["providers"][provider]["models"]] == [ENTRY]
+    settings = json.loads((launch.agent_dir / "settings.json").read_text())
+    assert (settings["defaultProvider"], settings["defaultModel"]) == (provider, ENTRY)
+    assert len(launch_pi.model_ids(launch_pi.FROZEN_DIR, provider)) > 1
+
+
 def test_run_copy_is_outside_the_frozen_dir(launch):
     assert launch_pi.FROZEN_DIR not in launch.agent_dir.parents
     assert launch.agent_dir != launch_pi.FROZEN_DIR
@@ -204,7 +213,7 @@ def test_installed_pi_matches_the_pin():
 
 
 def test_hash_is_stable_across_run_copies(tmp_path: Path, launch):
-    other = launch_pi.materialise(tmp_path / "run2")
+    other = launch_pi.materialise(tmp_path / "run2", entry=ENTRY)
     assert launch_pi.tree_hash(other) == launch.config_hash
     assert launch.config_hash.startswith("sha256:")
 

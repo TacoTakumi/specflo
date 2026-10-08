@@ -16,9 +16,14 @@ the specflo under test, which the run record names in `versions.specflo`; a
 committed copy would go stale without notice. The run copy also takes pi's own
 writes (sessions, trust), so a run never dirties the repo.
 
+The run copy declares only the run's entry and names it as `defaultModel`. pi
+resolves `--model` again for every new session, and when that lookup fails it
+falls back to the settings default or the first declared model; with one model
+declared, the fallback is the run's own entry, never another arm's.
+
 `config_hash` is a hash of the run copy taken before pi starts, so it covers
 the committed frozen files and the committed extension sources, and nothing pi
-writes. Two copies of the same checkout hash the same.
+writes. Two copies of the same checkout for the same entry hash the same.
 
 The deny list blocks with no prompt: deny.ts returns a block result to pi's
 tool_call event. Its rules are plain text matched as whole words, and they
@@ -153,9 +158,12 @@ def tree_hash(path: Path | str) -> str:
     return f"sha256:{digest.hexdigest()}"
 
 
-def materialise(run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR) -> Path:
+def materialise(
+    run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR, *, entry: str | None = None
+) -> Path:
     """Copy the frozen directory into `run_dir` and add the two extensions.
 
+    With `entry`, the copy declares only that model and makes it the default.
     Returns the run copy, the directory pi gets as its agent dir. Refuses a
     frozen directory holding a credential, pi's own writes or extensions of its
     own, and a run copy that already exists.
@@ -175,7 +183,22 @@ def materialise(run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR) -> Pat
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, target)
     shutil.copyfile(DENY_SOURCE, extensions / DENY_EXTENSION)
+    if entry is not None:
+        pin_entry(agent_dir, load_frozen(frozen_dir).provider, entry)
     return agent_dir
+
+
+def pin_entry(agent_dir: Path | str, provider: str, entry: str) -> None:
+    """Keep only `entry` under `provider` in the run copy's models and make it the default model."""
+    models_path = Path(agent_dir) / MODELS_FILE
+    models = json.loads(models_path.read_text(encoding="utf-8"))
+    spec = models["providers"][provider]
+    spec["models"] = [m for m in spec["models"] if isinstance(m, dict) and m.get("id") == entry]
+    models_path.write_text(json.dumps(models, indent=2) + "\n", encoding="utf-8")
+    settings_path = Path(agent_dir) / "settings.json"
+    settings = json.loads(settings_path.read_text(encoding="utf-8"))
+    settings["defaultProvider"], settings["defaultModel"] = provider, entry
+    settings_path.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
 
 
 def extension_names(agent_dir: Path | str) -> list[str]:
@@ -211,7 +234,7 @@ def build_launch(
     if found != frozen.pi_version:
         raise LaunchError(f"pi version {found} does not match the pinned {frozen.pi_version}")
 
-    agent_dir = materialise(run_dir, frozen_dir)
+    agent_dir = materialise(run_dir, frozen_dir, entry=entry)
     if extension_names(agent_dir) != sorted(EXTENSIONS):
         raise LaunchError(f"run copy extensions are {extension_names(agent_dir)}")
     config_hash = tree_hash(agent_dir)
