@@ -171,6 +171,27 @@ def test_similar_but_unprotected_paths_are_not_contaminated():
     assert _run(log)["contaminated"] is False
 
 
+def test_a_call_naming_the_runs_own_run_dir_is_not_contaminated():
+    own = "/repo/bench/runs/arm--pi--fast--001"
+    log = _log(
+        ("bash", {"command": f"ls {own}/pi-agent; readlink -f $(readlink -f {own}/bin/specflo)"}, False),
+        ("read", {"path": f"{own}/pi-agent/settings.json"}, False),
+    )
+    result = diagnostics.diagnose(log, workdir=WORKDIR, protected=[BENCH, ARCHIVE], own_dirs=[own],
+                                  initial_dirs=INITIAL, complete=True)
+    assert result["contaminated"] is False
+
+
+def test_another_runs_dir_and_the_bench_stay_protected_beside_the_runs_own_dir():
+    own = "/repo/bench/runs/arm--pi--fast--001"
+    for command in ("cat /repo/bench/runs/arm--pi--fast--000/record.json", "ls /repo/bench/fixture",
+                    f"ls {own} /repo/bench/archive"):
+        log = _log(("bash", {"command": command}, False))
+        result = diagnostics.diagnose(log, workdir=WORKDIR, protected=[BENCH, ARCHIVE], own_dirs=[own],
+                                      initial_dirs=INITIAL, complete=True)
+        assert result["contaminated"] is True, command
+
+
 def test_snapshot_dirs_lists_the_tree(tmp_path):
     (tmp_path / "src" / "pkg").mkdir(parents=True)
     (tmp_path / "src" / "pkg" / "a.py").write_text("")

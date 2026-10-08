@@ -180,6 +180,19 @@ def test_an_arm_level_and_index_that_already_ran_is_refused(synthetic):
         run.run_one(**synthetic)
 
 
+def test_the_run_passes_its_own_run_dir_to_the_contamination_check(synthetic, monkeypatch):
+    seen = {}
+    real = run.diagnostics.diagnose
+
+    def spy(log, **kw):
+        seen.update(kw)
+        return real(log, **kw)
+
+    monkeypatch.setattr(run.diagnostics, "diagnose", spy)
+    path, _ = run.run_one(**synthetic)
+    assert seen["own_dirs"] == [str(path.parent)]
+
+
 # -- the record -------------------------------------------------------------------------
 
 

@@ -24,7 +24,8 @@ Flags (see FLAGS):
 Contamination is kept apart from the flags so a scorer can drop the run: any
 tool call whose path arguments, bash command or other string arguments name a
 protected path (the bench directory, the held-out archive) counts, unless the
-path also lies inside the workdir.
+path also lies inside the workdir or one of the run's own dirs (its run dir,
+which holds its harness config, bin link and logs under the bench directory).
 
 Tool names and argument keys of both harnesses are handled: pi (read, write,
 edit, bash with `path`/`command`) and Claude Code (Read, Write, Edit, Bash,
@@ -124,9 +125,9 @@ def _strings(value: Any) -> Iterable[str]:
 
 
 def _protected_hit(
-    call: dict, workdir: str, protected: list[str]
+    call: dict, workdir: str, protected: list[str], own: list[str]
 ) -> str | None:
-    """Return the first protected path the call names, or None."""
+    """Return the first protected path the call names outside the workdir and `own`, or None."""
     args = call["arguments"]
     candidates = [_resolve(workdir, p) for p in _path_args(args)]
     for key in COMMAND_KEYS:
@@ -136,15 +137,18 @@ def _protected_hit(
                     part = part.strip(_TOKEN_STRIP)
                     if part:
                         candidates.append(_resolve(workdir, part))
+    def allowed(path: str) -> bool:
+        return any(_under(path, d) for d in (workdir, *own))
+
     for path in candidates:
         for root in protected:
-            if _under(path, root) and not _under(path, workdir):
+            if _under(path, root) and not allowed(path):
                 return root
     # An absolute protected path anywhere in a string argument, e.g. inside code.
     for text in _strings(args):
         for root in protected:
             for m in re.finditer(re.escape(root) + r"(?![\w.-])", text):
-                if not _under(_resolve(workdir, text[m.start():].split()[0]), workdir):
+                if not allowed(_resolve(workdir, text[m.start():].split()[0])):
                     return root
     return None
 
@@ -156,6 +160,7 @@ def diagnose(
     protected: Iterable[str | Path],
     initial_dirs: Iterable[str | Path],
     complete: bool,
+    own_dirs: Iterable[str | Path] = (),
 ) -> dict:
     """Return the diagnostics dict for one run's normalised log.
 
@@ -164,9 +169,12 @@ def diagnose(
     initial_dirs  directories present at run start, relative to the workdir or
                   absolute (snapshot_dirs gives this)
     complete      whether the project ended complete
+    own_dirs      the run's own dirs outside the workdir (its run dir); naming
+                  them is not contamination
     """
     work = os.path.normpath(os.path.abspath(str(workdir)))
     guarded = [os.path.normpath(os.path.abspath(str(p))) for p in protected]
+    own = [os.path.normpath(os.path.abspath(str(p))) for p in own_dirs]
     known = {work} | {_resolve(work, str(d)) for d in initial_dirs}
     calls = [item for kind, item in events(log) if kind == "tool_call"]
 
@@ -189,7 +197,7 @@ def diagnose(
         name = call["name"].lower()
         args = call["arguments"]
 
-        root = _protected_hit(call, work, guarded)
+        root = _protected_hit(call, work, guarded, own)
         if root is not None:
             contamination.append({"call_id": call["id"], "tool": call["name"], "path": root})
 
