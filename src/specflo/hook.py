@@ -160,6 +160,11 @@ def _resume(cwd: Path, *, direct: bool, directory_source: str | None) -> tuple:
         and auto.ladder_step(root, cfg, project) is None
     ):
         return "", None
+    # An auto run under way continues across a fresh session without asking:
+    # an ask-first reseed makes the agent stop and wait for a human who, in an
+    # unattended run, is not there.
+    if not direct and auto.run_under_way(root, cfg, project):
+        direct = True
     payload = service.build_checkpoint(project.slug, test_command=cfg.test_command)
     if config.hosting_remote(root, project.slug) is not None:
         payload = checkpoint.hosted_view(payload)

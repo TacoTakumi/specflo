@@ -784,3 +784,34 @@ def test_the_claude_shape_asks_the_daemon_once(tmp_path, monkeypatch):
 
     assert "could not be reached" in payload["systemMessage"]
     assert calls == [hook.REMOTE_TIMEOUT]
+
+
+def _auto_running(tmp_path, monkeypatch):
+    """An active project with an auto run under way (one `specflo auto` pass ran)."""
+    monkeypatch.chdir(tmp_path)
+    _active(tmp_path)
+    result = runner.invoke(app, ["auto"])
+    assert result.exit_code == 0, result.output
+
+
+def test_cold_reseed_continues_without_asking_while_an_auto_run_is_under_way(tmp_path, monkeypatch):
+    # A fresh session in a live auto run must not stop to ask: in an unattended
+    # run nobody answers. It still carries the checkpoint, which says what to run.
+    _auto_running(tmp_path, monkeypatch)
+    out = hook.reseed_text(tmp_path)
+    assert out.startswith(continuation.DIRECT_DIRECTIVE)
+    assert hook.CONFIRMATION_DIRECTIVE not in out
+    assert "## Do next" in out
+    context = json.loads(hook.claude_session_start_output(tmp_path))
+    assert context["hookSpecificOutput"]["additionalContext"] == out
+    for args in (["hook", "reseed"], ["hook", "reseed", "--format", "claude"]):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0
+        assert hook.CONFIRMATION_DIRECTIVE not in result.output, args
+        assert "## Do next" in result.output, args
+
+
+def test_ask_first_reseed_returns_once_the_auto_run_is_switched_off(tmp_path, monkeypatch):
+    _auto_running(tmp_path, monkeypatch)
+    assert runner.invoke(app, ["auto", "--off"]).exit_code == 0
+    assert hook.reseed_text(tmp_path).startswith(hook.CONFIRMATION_DIRECTIVE)

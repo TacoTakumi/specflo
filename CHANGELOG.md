@@ -8,6 +8,17 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.16.1]
+
+### Changed
+- **No ask-first reseed during an auto run.** While a `specflo auto` run is
+  under way, `specflo hook reseed` and the Claude Code SessionStart hook
+  (`hook reseed --format claude`) lead with the continue directive instead of
+  the ask-first one, with the same checkpoint. A fresh session in an unattended
+  run no longer stops to wait for a human who is not there. `hook reseed
+  --continue` and sessions with no live auto run are unchanged. After
+  `specflo auto --off`, a cold start asks first again.
+
 ## [0.16.0]
 
 ### Added
