@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "defaultMode": "dontAsk",
+    "allow": [
+      "Bash",
+      "Read",
+      "Edit",
+      "Write",
+      "Glob",
+      "Grep",
+      "NotebookEdit"
+    ],
+    "deny": []
+  },
+  "autoMemoryEnabled": false,
+  "includeCoAuthoredBy": false,
+  "skipWebFetchPreflight": true,
+  "enabledPlugins": {}
+}

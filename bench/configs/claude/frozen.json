@@ -1,0 +1,6 @@
+{
+  "claude_version": "2.1.293",
+  "claude_bin": "~/.local/bin/claude",
+  "base_url": "http://localhost:8080",
+  "deny_from": "../pi/frozen.json"
+}
