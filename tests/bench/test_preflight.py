@@ -126,6 +126,27 @@ def test_model_the_bench_loaded_is_not_foreign(config, tmp_path):
         ]
 
 
+def test_an_entry_unloaded_since_the_bench_loaded_it_is_foreign_when_loaded_again(config, tmp_path):
+    state = tmp_path / "loaded.json"
+    preflight.record_bench_load(state, OTHER)
+    with StubSwap([]) as stub:  # a reload or another load unloaded it
+        assert preflight.preflight(_run(config), base_url=stub.url, state_path=state) == []
+    assert preflight.read_bench_loaded(state) == set()
+    with StubSwap([OTHER]) as stub:  # the operator loads it himself
+        with pytest.raises(preflight.PreflightError) as err:
+            preflight.preflight(_run(config), base_url=stub.url, state_path=state)
+    assert err.value.foreign == [OTHER]
+
+
+def test_an_entry_still_running_from_the_bench_stays_bench_loaded(config, tmp_path):
+    state = tmp_path / "loaded.json"
+    preflight.record_bench_load(state, OTHER)
+    for _ in range(2):
+        with StubSwap([OTHER]) as stub:
+            assert preflight.preflight(_run(config), base_url=stub.url, state_path=state) == [OTHER]
+    assert preflight.read_bench_loaded(state) == {OTHER}
+
+
 def test_main_foreign_exits_nonzero_sends_only_get_running(tmp_path, capsys):
     with StubSwap([FOREIGN, "other-foreign"]) as stub:
         before = list(stub.running)
