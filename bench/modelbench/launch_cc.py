@@ -3,9 +3,10 @@
 `bench/configs/claude/` is the dedicated config directory. It holds
 `settings.json` (permissions and the few settings a run needs), `claude.json`
 (the global state file, installed in the run copy as `.claude.json` so the
-first-run onboarding never shows) and `frozen.json` (the pinned Claude Code
-version, the real binary, the llama-swap base URL and where the deny rules
-come from). It holds no credential; the launcher refuses a dir that does.
+first-run onboarding never shows) and `frozen.json` (the real binary, the
+llama-swap base URL and where the deny rules come from). The Claude Code
+version is not pinned: the launcher reads it from the binary and the run
+record carries it. It holds no credential; the launcher refuses a dir that does.
 
 Each run gets a copy in its own run directory, which becomes CLAUDE_CONFIG_DIR,
 so Claude Code's own writes (sessions, history, state) never reach the repo or
@@ -25,6 +26,11 @@ itself denies an `rm` of a critical path (root, home, the workdir) in this
 mode. `bypassPermissions` was not used: in it a critical-path removal still
 falls through to a prompt.
 
+For a llama.cpp entry, requests go through `msgshim.MessageShim`, a local
+proxy that turns Claude Code's late system messages into user messages as
+Strata does; llama.cpp's chat template refuses them otherwise. The launch owns
+the proxy: close it (or use the launch as a context manager) when the run ends.
+
 `config_hash` is a hash of the run copy taken before Claude Code starts and
 before the workdir's trust entry is added (that entry names the per-run
 workdir, so it would make every hash differ).
@@ -32,7 +38,7 @@ workdir, so it would make every hash differ).
 Model ids: every variable that names a model is set to the arm's entry, so no
 background, subagent or fallback request names another llama-swap entry and
 makes llama-swap swap models mid-run. The list was read from the strings of
-the pinned binary and the Claude Code env-var docs.
+the 2.1.293 binary and the Claude Code env-var docs.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ from typing import Any
 from specflo.hook import settings_snippet
 
 from modelbench import arms, launch_pi
+from modelbench.msgshim import NAME as SHIM_NAME, MessageShim
 from modelbench.launch_pi import LaunchError, tree_hash
 
 BENCH = Path(__file__).resolve().parents[1]
@@ -102,7 +109,6 @@ PERMISSION_MODE = "dontAsk"
 
 @dataclass(frozen=True)
 class Frozen:
-    claude_version: str
     claude_bin: str
     base_url: str
     deny: tuple[str, ...]
@@ -118,6 +124,7 @@ class CcLaunch:
     config_dir: Path
     claude_version: str
     config_hash: str
+    shim: MessageShim | None = field(default=None, repr=False)
 
     def report(self) -> dict[str, str]:
         """The fields the run record takes: `harness` goes to `versions.harness`."""
@@ -126,7 +133,19 @@ class CcLaunch:
             "claude_version": self.claude_version,
             "config_hash": self.config_hash,
             "config_dir": str(self.config_dir),
+            "request_shim": SHIM_NAME if self.shim else "none",
         }
+
+    def close(self) -> None:
+        """Stop the request proxy, if the launch has one."""
+        if self.shim:
+            self.shim.close()
+
+    def __enter__(self) -> CcLaunch:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
 
 
 def load_frozen(config_dir: Path | str = CONFIG_DIR) -> Frozen:
@@ -136,12 +155,11 @@ def load_frozen(config_dir: Path | str = CONFIG_DIR) -> Frozen:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise LaunchError(f"{path}: cannot be read ({exc})") from None
-    for name in ("claude_version", "claude_bin", "base_url", "deny_from"):
+    for name in ("claude_bin", "base_url", "deny_from"):
         if not isinstance(data.get(name), str) or not data[name]:
             raise LaunchError(f"{path}: {name} missing")
     deny = launch_pi.load_frozen((path.parent / data["deny_from"]).parent).deny
     return Frozen(
-        claude_version=data["claude_version"],
         claude_bin=str(Path(data["claude_bin"]).expanduser()),
         base_url=data["base_url"],
         deny=deny,
@@ -226,7 +244,7 @@ def build_launch(
     extra_env: Mapping[str, str] | None = None,
     config_dir: Path | str = CONFIG_DIR,
 ) -> CcLaunch:
-    """Check the binary and version, make the run copy, and build env and argv.
+    """Check the binary, read its version, make the run copy, and build env and argv.
 
     `entry` must be an entry of the arm config; `args` follow the fixed flags
     (print mode, output format, prompt: the caller's business). `base_url`
@@ -242,10 +260,6 @@ def build_launch(
     binary = claude_bin or frozen.claude_bin
     check_real_binary(binary)
     found = claude_version(binary)
-    if found != frozen.claude_version:
-        raise LaunchError(
-            f"claude version {found} does not match the pinned {frozen.claude_version}"
-        )
 
     target = materialise(run_dir, frozen.deny, config_dir)
     config_hash = tree_hash(target)
@@ -259,7 +273,9 @@ def build_launch(
     env.update(extra_env or {})
     env.update(_FIXED_ENV)
     env["CLAUDE_CONFIG_DIR"] = str(target)
-    env["ANTHROPIC_BASE_URL"] = base_url or frozen.base_url
+    upstream = base_url or frozen.base_url
+    shim = MessageShim(upstream) if arms.load_config().entries[entry]["engine"] == "llama.cpp" else None
+    env["ANTHROPIC_BASE_URL"] = shim.url if shim else upstream
     for name in MODEL_VARS:
         env[name] = entry
 
@@ -278,6 +294,7 @@ def build_launch(
         config_dir=target,
         claude_version=found,
         config_hash=config_hash,
+        shim=shim,
     )
 
 

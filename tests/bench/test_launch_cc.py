@@ -15,6 +15,7 @@ import shutil
 import stat
 import subprocess
 import threading
+from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -25,6 +26,7 @@ from specflo.hook import settings_snippet
 from modelbench import launch_cc, launch_pi
 
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
+STRATA_ENTRY = "swift15-flash-next-iq4xs-strata-2x3090"
 REAL_CLAUDE = Path.home() / ".local" / "bin" / "claude"
 HAVE_CLAUDE = REAL_CLAUDE.exists()
 
@@ -47,10 +49,10 @@ def stub_version(monkeypatch):
 
 
 @pytest.fixture
-def launch(tmp_path: Path, stub_version) -> launch_cc.CcLaunch:
+def launch(tmp_path: Path, stub_version) -> Iterator[launch_cc.CcLaunch]:
     workdir = tmp_path / "work"
     workdir.mkdir()
-    return launch_cc.build_launch(
+    with launch_cc.build_launch(
         ENTRY,
         workdir=workdir,
         run_dir=tmp_path / "run",
@@ -65,15 +67,15 @@ def launch(tmp_path: Path, stub_version) -> launch_cc.CcLaunch:
             "CLAUDE_CONFIG_DIR": "/home/x/.claude",
         },
         args=["-p", "hello"],
-    )
+    ) as launch:
+        yield launch
 
 
 # -- dedicated config dir -----------------------------------------------------
 
 
-def test_config_dir_pins_version_binary_and_base_url():
+def test_config_dir_names_binary_and_base_url():
     frozen = launch_cc.load_frozen()
-    assert frozen.claude_version == "2.1.293"
     assert frozen.claude_bin == str(REAL_CLAUDE)
     assert frozen.base_url == "http://localhost:8080"
 
@@ -146,7 +148,8 @@ def test_existing_run_copy_is_refused(launch):
 def test_env_pins_config_dir_base_url_and_every_model_id(launch):
     env = launch.env
     assert env["CLAUDE_CONFIG_DIR"] == str(launch.config_dir)
-    assert env["ANTHROPIC_BASE_URL"] == "http://localhost:8080"
+    assert env["ANTHROPIC_BASE_URL"] == launch.shim.url
+    assert launch.shim.upstream == "http://localhost:8080"
     for name in launch_cc.MODEL_VARS:
         assert env[name] == ENTRY, name
     for name in ("ANTHROPIC_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL",
@@ -197,15 +200,16 @@ def test_unknown_entry_is_refused(tmp_path: Path, stub_version):
                                claude_bin=fake_claude(tmp_path, "2.1.293"))
 
 
-# -- version pin --------------------------------------------------------------
+# -- version ------------------------------------------------------------------
 
 
-def test_version_mismatch_is_refused_before_any_copy(tmp_path: Path, stub_version):
+def test_any_version_is_accepted_and_reported(tmp_path: Path, stub_version):
     stub_version["value"] = "2.1.294"
-    with pytest.raises(launch_pi.LaunchError, match="2.1.294"):
-        launch_cc.build_launch(ENTRY, workdir=tmp_path, run_dir=tmp_path / "run",
-                               claude_bin=fake_claude(tmp_path, "2.1.294"))
-    assert not (tmp_path / "run").exists()
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    with launch_cc.build_launch(ENTRY, workdir=workdir, run_dir=tmp_path / "run",
+                                claude_bin=fake_claude(tmp_path, "2.1.294")) as launch:
+        assert launch.report()["claude_version"] == "2.1.294"
 
 
 def test_version_is_the_first_word_of_the_version_line(tmp_path: Path):
@@ -216,9 +220,9 @@ def test_version_is_the_first_word_of_the_version_line(tmp_path: Path):
 
 
 @pytest.mark.skipif(not HAVE_CLAUDE, reason="the real claude binary is not installed")
-def test_installed_claude_matches_the_pin():
+def test_installed_claude_is_the_real_binary_and_reports_a_version():
     launch_cc.check_real_binary(str(REAL_CLAUDE))
-    assert launch_cc.claude_version(str(REAL_CLAUDE)) == launch_cc.load_frozen().claude_version
+    assert launch_cc.claude_version(str(REAL_CLAUDE))
 
 
 # -- hash and record fields ---------------------------------------------------
@@ -245,6 +249,20 @@ def test_report_carries_version_and_config_hash(launch):
     assert report["harness"] == "claude-code 2.1.293"
     assert report["claude_version"] == "2.1.293"
     assert report["config_hash"] == launch.config_hash
+    assert report["request_shim"] == "late-system-to-user"
+
+
+# -- request shim ---------------------------------------------------------------
+
+
+def test_strata_entry_talks_to_llama_swap_directly(tmp_path: Path, stub_version):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    with launch_cc.build_launch(STRATA_ENTRY, workdir=workdir, run_dir=tmp_path / "run",
+                                claude_bin=fake_claude(tmp_path, "2.1.293")) as launch:
+        assert launch.shim is None
+        assert launch.env["ANTHROPIC_BASE_URL"] == "http://localhost:8080"
+        assert launch.report()["request_shim"] == "none"
 
 
 # -- deny list inside the real claude, against a stub Anthropic endpoint --------
@@ -394,6 +412,7 @@ def test_real_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
                   "--no-session-persistence", "probe the deny list"],
         )
         code, events, err = _run(launch, 90)
+        launch.close()
     finally:
         stub.close()
 
@@ -402,7 +421,9 @@ def test_real_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
     results = _tool_results(events)
     assert len(results) == 1 + len(denied), results
     env_lines = str(results[0]["content"]).splitlines()
-    assert env_lines == [str(launch.config_dir), stub.base_url, ENTRY]
+    assert env_lines == [str(launch.config_dir), launch.shim.url, ENTRY]
+    # The shim turned Claude Code's late system messages into user messages.
+    assert not [m for r in stub.requests for m in r.get("messages", []) if m.get("role") == "system"]
     for command, result in zip(denied, results[1:]):
         assert result["is_error"] is True, command
         assert "has been denied" in str(result["content"]), (command, result)
@@ -434,14 +455,14 @@ def test_rig_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
     workdir = tmp_path / "work"
     workdir.mkdir()
     bindir, _calls = _recording_specflo(tmp_path)
-    launch = launch_cc.build_launch(
+    with launch_cc.build_launch(
         ENTRY, workdir=workdir, run_dir=tmp_path / "run",
         extra_env={"PATH": f"{bindir}:{os.environ['PATH']}"},
         args=["-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
               "Use the Bash tool to run exactly this command and nothing else: "
               "git push origin main. Then reply with the tool's output."],
-    )
-    code, events, err = _run(launch, 900)
+    ) as launch:
+        code, events, err = _run(launch, 900)
 
     assert code == 0, err
     models = {e["message"].get("model") for e in events if e.get("type") == "assistant"}
