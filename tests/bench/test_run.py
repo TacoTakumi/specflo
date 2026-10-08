@@ -9,13 +9,14 @@ real specflo seeds the workdir and the real grader grades the final tree.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import sys
 from pathlib import Path
 
 import pytest
 
-from modelbench import arms, cmd_run, lifecycle, normlog, preflight, record, run, telemetry
+from modelbench import arms, cc_continue, cmd_run, launch_cc, lifecycle, normlog, preflight, record, run, telemetry
 
 BENCH = Path(__file__).resolve().parents[2] / "bench"
 SAMPLES = Path(__file__).resolve().parent / "samples"
@@ -214,6 +215,18 @@ def test_the_run_protects_sibling_workdirs_and_run_dirs_but_not_its_own(syntheti
     assert reads(f"{runs_dir}/other--pi--quick--000/record.json")["contaminated"] is True
     assert reads(f"{seen['workdir']}/tinytodo/store.py")["contaminated"] is False
     assert reads(f"{path.parent}/harness.out")["contaminated"] is False
+
+
+def test_claude_code_sessions_include_the_pass_in_flight_when_the_run_was_killed(tmp_path):
+    run_dir = tmp_path / "run"
+    project = run_dir / launch_cc.CONFIG_DIR_NAME / "projects" / "-tmp-work"
+    (project / "s1" / "subagents").mkdir(parents=True)
+    first, second = project / "s1.jsonl", project / "s2.jsonl"
+    for i, path in enumerate((first, second, project / "s1" / "subagents" / "agent-a.jsonl")):
+        path.write_text("{}\n")
+        os.utime(path, (1000 + i, 1000 + i))
+    (run_dir / cc_continue.RECORD_FILE).write_text(json.dumps({"passes": [{"session_file": str(first)}]}))
+    assert run.session_files("claude-code", run_dir) == [first, second]
 
 
 # -- the record -------------------------------------------------------------------------

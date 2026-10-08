@@ -316,8 +316,10 @@ def session_files(harness: str, run_dir: Path, report: Mapping[str, Any] | None 
     """The harness's session logs of the run, in order.
 
     pi: every session JSONL under the run copy's sessions dir. Claude Code: each
-    pass's session file from passes.json (subagent transcripts are read with
-    their session), else every session JSONL under the run copy's projects dir.
+    pass's session file from passes.json, then every other session JSONL under
+    the run copy's projects dir by modification time: passes.json is saved when
+    a pass ends, so the pass the bench killed is only found there. Subagent
+    transcripts are read with their session.
     """
     run_dir = Path(run_dir)
     report = report or {}
@@ -326,10 +328,10 @@ def session_files(harness: str, run_dir: Path, report: Mapping[str, Any] | None 
         return sorted((agent_dir / "sessions").rglob("*.jsonl"))
     passes = (_read_json(run_dir / cc_continue.RECORD_FILE) or {}).get("passes") or []
     files = [Path(p["session_file"]) for p in passes if isinstance(p, dict) and p.get("session_file")]
-    if files:
-        return files
     config_dir = Path(report.get("config_dir") or run_dir / launch_cc.CONFIG_DIR_NAME)
-    return sorted((config_dir / "projects").glob("*/*.jsonl"))
+    listed = {f.resolve() for f in files}
+    others = [f for f in (config_dir / "projects").glob("*/*.jsonl") if f.resolve() not in listed]
+    return files + sorted(others, key=lambda f: (f.stat().st_mtime, f.name))
 
 
 def normalise_one(harness: str, path: Path) -> dict:
