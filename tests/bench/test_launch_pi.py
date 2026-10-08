@@ -213,9 +213,19 @@ def test_installed_pi_matches_the_pin():
 
 
 def test_hash_is_stable_across_run_copies(tmp_path: Path, launch):
-    other = launch_pi.materialise(tmp_path / "run2", entry=ENTRY)
+    other = launch_pi.materialise(tmp_path / "run2")
     assert launch_pi.tree_hash(other) == launch.config_hash
     assert launch.config_hash.startswith("sha256:")
+
+
+def test_hash_is_the_same_for_every_entry(tmp_path: Path, launch):
+    provider = launch_pi.load_frozen().provider
+    other_entry = next(e for e in launch_pi.model_ids(launch_pi.FROZEN_DIR, provider) if e != ENTRY)
+    workdir = tmp_path / "work2"
+    workdir.mkdir()
+    other = launch_pi.build_launch(other_entry, workdir=workdir, run_dir=tmp_path / "run4",
+                                   pi_bin=fake_pi(tmp_path, "1.0.4"), base_env={"PATH": "/usr/bin:/bin"})
+    assert other.config_hash == launch.config_hash
 
 
 def test_hash_is_taken_before_pi_writes_into_the_run_copy(launch):

@@ -105,6 +105,18 @@ def test_check_accepts_one_variable_entry():
     assert graphs.check_comparison(graphs.summarise_arms(recs, ENGINES)) == "entry"
 
 
+def test_check_takes_the_harness_config_hash_as_part_of_the_harness():
+    recs = [make_record(harness=h, run_index=i, versions__harness_config_hash=f"sha256:{h}")
+            for h in ("pi", "claude-code") for i in range(2)]
+    assert graphs.check_comparison(graphs.summarise_arms(recs, ENGINES)) == "harness"
+
+
+def test_check_ignores_where_the_limits_came_from():
+    recs = [make_record(entry=e, run_index=i, settings__limits_source={"wall_clock": f"src-{e}-{i}"})
+            for e in (ENTRY_A, ENTRY_B) for i in range(2)]
+    assert graphs.check_comparison(graphs.summarise_arms(recs, ENGINES)) == "entry"
+
+
 def test_check_refuses_two_variables_naming_fields():
     recs = [make_record(ENTRY_A, "pi"), make_record(ENTRY_B, "claude-code")]
     with pytest.raises(graphs.ComparisonError) as exc:

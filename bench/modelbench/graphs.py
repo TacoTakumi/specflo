@@ -35,8 +35,11 @@ VARIABLES: dict[str, tuple[str, ...]] = {
         "versions.engine_build",
         "versions.gguf_path",
     ),
-    "harness": ("arm.harness", "versions.harness"),
+    "harness": ("arm.harness", "versions.harness", "versions.harness_config_hash"),
 }
+
+# Recorded fields that describe the record, not the arm: where the limits came from.
+NOT_COMPARED = ("settings.limits_source",)
 _VARIABLE_OF = {f: var for var, fields in VARIABLES.items() for f in fields}
 
 
@@ -111,7 +114,8 @@ def arm_fields(rec: dict, engines: dict[str, str] | None = None) -> dict[str, An
     }
     for section in ("versions", "settings"):
         for name, value in rec[section].items():
-            out[f"{section}.{name}"] = value
+            if f"{section}.{name}" not in NOT_COMPARED:
+                out[f"{section}.{name}"] = value
     return out
 
 
