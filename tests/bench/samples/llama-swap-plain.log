@@ -1,0 +1,48 @@
+[INFO] <qwen3-27b-q4km> Health check passed on http://localhost:10016/health
+0.12.004.211 I slot get_availabl: id  0 | task -1 | selected slot by LRU, t_last = -1
+0.12.004.230 I slot launch_slot_: id  0 | task 39 | processing task, is_child = 0
+0.13.004.501 I slot print_timing: id  0 | task 39 | prompt eval time =    1000.00 ms /   500 tokens (    2.00 ms per token,   500.00 tokens per second)
+0.13.004.503 I slot print_timing: id  0 | task 39 |        eval time =    1000.00 ms /    50 tokens (   20.00 ms per token,    50.00 tokens per second)
+0.13.004.503 I slot print_timing: id  0 | task 39 |       total time =    2000.00 ms /   550 tokens
+0.13.004.504 I slot print_timing: id  0 | task 39 |    graphs reused =         48
+0.13.004.505 I slot print_timing: id  0 | task 39 | draft acceptance = 0.90000 (   18 accepted /    20 generated), mean len =  2.80
+0.13.004.540 I slot      release: id  0 | task 39 | stop processing: n_tokens = 549, truncated = 0
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 4120 "pi (linux; x64)" 2.003117204s
+0.14.106.010 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.120 (> 0.100 thold), f_keep = 0.050
+0.14.106.022 I slot launch_slot_: id  0 | task 40 | processing task, is_child = 0
+0.14.506.880 I slot print_timing: id  0 | task 40 | n_gen =    100, tg =  30.02 t/s, tg_3s =  30.11 t/s
+0.15.506.990 I slot print_timing: id  0 | task 40 | prompt eval time =    1500.00 ms /   900 tokens (    1.67 ms per token,   600.00 tokens per second)
+0.15.506.992 I slot print_timing: id  0 | task 40 |        eval time =    4000.00 ms /   120 tokens (   33.33 ms per token,    30.00 tokens per second)
+0.15.506.992 I slot print_timing: id  0 | task 40 |       total time =    5500.00 ms /  1020 tokens
+0.15.506.993 I slot print_timing: id  0 | task 40 |    graphs reused =        101
+0.15.506.995 I slot print_timing: id  0 | task 40 | draft acceptance = 0.75000 (   60 accepted /    80 generated), mean len =  2.50
+0.15.507.031 I slot      release: id  0 | task 40 | stop processing: n_tokens = 1019, truncated = 0
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 18652 "pi (linux; x64)" 5.502305117s
+0.17.300.118 I slot get_availabl: id  0 | task -1 | selected slot by LCP similarity, f_sim_best = 0.857 (> 0.100 thold), f_keep = 1.000
+0.17.300.131 I slot launch_slot_: id  0 | task 41 | processing task, is_child = 0
+0.19.550.402 I slot print_timing: id  0 | task 41 | prompt eval time =     250.00 ms /   150 tokens (    1.67 ms per token,   600.00 tokens per second)
+0.19.550.404 I slot print_timing: id  0 | task 41 |        eval time =    2000.00 ms /    64 tokens (   31.25 ms per token,    32.00 tokens per second)
+0.19.550.404 I slot print_timing: id  0 | task 41 |       total time =    2250.00 ms /   214 tokens
+0.19.550.405 I slot print_timing: id  0 | task 41 |    graphs reused =         60
+0.19.550.406 I slot print_timing: id  0 | task 41 | draft acceptance = 0.50000 (   20 accepted /    40 generated), mean len =  1.50
+0.19.550.441 I slot      release: id  0 | task 41 | stop processing: n_tokens = 1113, truncated = 0
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 6033 "pi (linux; x64)" 2.252640981s
+2026/10/07 21:05:00 http: proxy error: dial tcp 127.0.0.1:10020: connect: connection refused
+[INFO] <strata-35b-a3b> Health check passed on http://localhost:10020/health
+[strata] reading the prompt: 4,096 of 6,210 tokens, 2 s so far
+[strata] thinking: 87 of max 40000 tokens, 78.4 tok/s, 1 s
+[strata] writing a tool call: bash: 160 of max 40000 tokens, 79.6 tok/s, 2 s
+[strata] done: 200 tokens in 6 s (80.0 tok/s) (stop, cancel=False), expert cache 96.1% hit (+0.8% of the routed experts over PCIe)
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 9120 "pi (linux; x64)" 6.012311044s
+[INFO] Request ::1 "GET /running HTTP/1.1" 200 836 "curl/8.5.0" 8.562941ms
+[strata] reading the prompt: 6,300 of 6,410 tokens, 1 s so far
+[strata] answering: 95 of max 40000 tokens, 90.2 tok/s, 1 s
+[strata] done: 150 tokens in 3 s (100.0 tok/s) (stop, cancel=False), expert cache 97.2% hit
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 5011 "pi (linux; x64)" 3.101227630s
+[INFO] <qwen3-27b-q4km> Health check passed on http://localhost:10016/health
+0.21.004.211 I slot launch_slot_: id  0 | task 42 | processing task, is_child = 0
+0.22.004.501 I slot print_timing: id  0 | task 42 | prompt eval time =     800.00 ms /   400 tokens (    2.00 ms per token,   500.00 tokens per second)
+0.22.004.503 I slot print_timing: id  0 | task 42 |        eval time =     500.00 ms /    25 tokens (   20.00 ms per token,    50.00 tokens per second)
+0.22.004.503 I slot print_timing: id  0 | task 42 |       total time =    1300.00 ms /   425 tokens
+0.22.004.540 I slot      release: id  0 | task 42 | stop processing: n_tokens = 424, truncated = 0
+[INFO] Request 127.0.0.1 "POST /v1/chat/completions HTTP/1.1" 200 2210 "pi (linux; x64)" 1.002117204s
