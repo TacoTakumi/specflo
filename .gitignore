@@ -31,4 +31,5 @@ specflo-feedback*
 # Model bench: run records and their raw logs, and the bench-load record of
 # the llama-swap entries the bench loaded. Both are per-machine run output.
 bench/runs/
+bench/results/
 bench/state/
