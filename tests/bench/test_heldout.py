@@ -210,3 +210,21 @@ def test_quick_heldout_passes_on_reference_solution(tmp_path: Path) -> None:
 
 def test_quick_solution_keeps_visible_suite_green(tmp_path: Path) -> None:
     assert_solution_keeps_visible_suite("quick", tmp_path)
+
+
+def test_fast_is_in_archive() -> None:
+    assert "fast" in heldout.list_levels(ARCHIVE)
+    assert heldout.level_files(ARCHIVE, "fast", "tests")
+    assert heldout.level_files(ARCHIVE, "fast", "solution")
+
+
+def test_fast_heldout_fails_on_clean_fixture(tmp_path: Path) -> None:
+    assert_level_fails_clean("fast", tmp_path)
+
+
+def test_fast_heldout_passes_on_reference_solution(tmp_path: Path) -> None:
+    assert_level_passes_solved("fast", tmp_path)
+
+
+def test_fast_solution_keeps_visible_suite_green(tmp_path: Path) -> None:
+    assert_solution_keeps_visible_suite("fast", tmp_path)
