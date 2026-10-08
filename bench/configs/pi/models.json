@@ -1,0 +1,88 @@
+{
+  "providers": {
+    "llama-swap": {
+      "baseUrl": "http://localhost:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "no-key",
+      "authHeader": false,
+      "compat": {
+        "maxTokensField": "max_tokens",
+        "thinkingFormat": "qwen-chat-template"
+      },
+      "models": [
+        {
+          "id": "swift15-flash-next-iq4xs-mtp-vision",
+          "name": "Swift 1.5 Qwen3.8-Flash-Next IQ4_XS, llama.cpp, MTP, vision (bench entry)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "xhigh"
+          },
+          "contextWindow": 262144,
+          "maxTokens": 40000,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "enable_thinking": {
+                "$var": "thinking.enabled"
+              },
+              "preserve_thinking": true,
+              "reasoning_effort": {
+                "$var": "thinking.effort",
+                "omitWhenOff": true
+              }
+            }
+          },
+          "input": [
+            "text",
+            "image"
+          ]
+        },
+        {
+          "id": "swift15-flash-next-iq4xs-strata-2x3090",
+          "name": "Swift 1.5 Qwen3.8-Flash-Next IQ4_XS, Strata 2x3090 (bench entry)",
+          "reasoning": true,
+          "thinkingLevelMap": {
+            "minimal": null,
+            "low": "low",
+            "medium": "medium",
+            "high": "xhigh"
+          },
+          "contextWindow": 262144,
+          "maxTokens": 40000,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "compat": {
+            "thinkingFormat": "chat-template",
+            "chatTemplateKwargs": {
+              "enable_thinking": {
+                "$var": "thinking.enabled"
+              },
+              "preserve_thinking": true,
+              "reasoning_effort": {
+                "$var": "thinking.effort",
+                "omitWhenOff": true
+              }
+            }
+          },
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "lastChangelogVersion": "1.0.4",
+  "defaultProvider": "llama-swap",
+  "defaultThinkingLevel": "high",
+  "compaction": {
+    "enabled": false
+  },
+  "defaultProjectTrust": "never",
+  "enableInstallTelemetry": false,
+  "quietStartup": true,
+  "packages": [],
+  "extensions": [],
+  "skills": [],
+  "prompts": [],
+  "themes": []
+}

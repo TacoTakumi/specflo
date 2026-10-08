@@ -1,0 +1,18 @@
+{
+  "pi_version": "1.0.4",
+  "provider": "llama-swap",
+  "deny": [
+    "git push",
+    "sudo",
+    "rm -r",
+    "rm -R",
+    "rm -rf",
+    "rm -fr",
+    "rm -Rf",
+    "rm -fR",
+    "rm -rfv",
+    "rm -vrf",
+    "rm -frv",
+    "rm --recursive"
+  ]
+}
