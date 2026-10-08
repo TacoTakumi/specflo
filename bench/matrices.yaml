@@ -1,0 +1,24 @@
+# Batch matrices for the model bench. A matrix names llama-swap entries,
+# harnesses and levels (all from arms.yaml) and how many valid run records
+# each cell (one entry, one harness, one level) needs. `mb.py batch` runs one
+# entry block per entry, in the order listed, so llama-swap loads each entry
+# once; `mb.py records --check --matrix NAME` checks the cells.
+matrices:
+  # One run per level per harness on the llama.cpp entry, before the first
+  # round, to set the per-level limits.
+  pilot:
+    entries:
+      - swift15-flash-next-iq4xs-mtp-vision
+    harnesses: [pi, claude-code]
+    levels: [quick, fast, full]
+    runs: 1
+
+  # Swift 1.5 Flash-Next IQ4_XS on llama.cpp and on Strata, each under pi and
+  # Claude Code: 4 arms, 3 levels, 5 runs per arm per level (60 runs).
+  first-round:
+    entries:
+      - swift15-flash-next-iq4xs-mtp-vision
+      - swift15-flash-next-iq4xs-strata-2x3090
+    harnesses: [pi, claude-code]
+    levels: [quick, fast, full]
+    runs: 5
