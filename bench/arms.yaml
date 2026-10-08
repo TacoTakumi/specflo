@@ -1,0 +1,20 @@
+# Arm config for the model bench. An arm is one llama-swap entry and one
+# harness; a run adds a level and a run index. Runs naming anything not listed
+# here are refused before any request reaches llama-swap.
+#
+# entries: llama-swap entry ids (keys of ~/AI/Engines/models-llamacpp-swap.yaml).
+entries:
+  swift15-flash-next-iq4xs-mtp-vision:
+    engine: llama.cpp
+  swift15-flash-next-iq4xs-strata-2x3090:
+    engine: strata
+
+harnesses:
+  - pi
+  - claude-code
+
+# Per-level settings (wall-clock cap, stall limit) are set from the pilot.
+levels:
+  quick: {}
+  fast: {}
+  full: {}
