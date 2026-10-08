@@ -4,21 +4,22 @@
 # entry block per entry, in the order listed, so llama-swap loads each entry
 # once; `mb.py records --check --matrix NAME` checks the cells.
 matrices:
-  # One run per level per harness on the llama.cpp entry, before the first
-  # round, to set the per-level limits.
+  # One run per level per harness on the Strata entry, before the first
+  # round, to set the per-level limits (the faster engine finishes sooner).
   pilot:
     entries:
-      - swift15-flash-next-iq4xs-mtp-vision
+      - swift15-flash-next-iq4xs-strata-2x3090
     harnesses: [pi, claude-code]
     levels: [quick, fast, full]
     runs: 1
 
   # Swift 1.5 Flash-Next IQ4_XS on llama.cpp and on Strata, each under pi and
-  # Claude Code: 4 arms, 3 levels, 5 runs per arm per level (60 runs).
+  # Claude Code: 4 arms, 3 levels, 5 runs per arm per level (60 runs). The
+  # Strata block runs first so half the matrix finishes sooner.
   first-round:
     entries:
-      - swift15-flash-next-iq4xs-mtp-vision
       - swift15-flash-next-iq4xs-strata-2x3090
+      - swift15-flash-next-iq4xs-mtp-vision
     harnesses: [pi, claude-code]
     levels: [quick, fast, full]
     runs: 5

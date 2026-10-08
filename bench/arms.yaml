@@ -13,8 +13,15 @@ harnesses:
   - pi
   - claude-code
 
-# Per-level settings (wall-clock cap, stall limit) are set from the pilot.
+# Per-level limits in seconds, set from the Strata pilot (2026-10-08): about 3x
+# the longest run at the level (quick 83 s, fast 962 s, full 1886 s), and a
+# stall limit about 15x the longest quiet gap seen (40 s between requests).
 levels:
-  quick: {}
-  fast: {}
-  full: {}
+  quick: {wall_clock: 600, stall_limit: 600}
+  fast: {wall_clock: 3000, stall_limit: 600}
+  full: {wall_clock: 6000, stall_limit: 600}
+
+# Per-engine settings. limit_factor scales the level limits for runs on that
+# engine's entries: llama.cpp quick runs took 2.0-2.5x the Strata ones.
+engines:
+  llama.cpp: {limit_factor: 2.5}
