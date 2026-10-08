@@ -340,6 +340,13 @@ def test_specflo_bin_dir_holds_only_a_link_to_specflo(tmp_path: Path):
     assert cc.specflo_bin_dir(tmp_path / "run", str(target)) == bindir
 
 
+def test_specflo_bin_dir_given_its_own_link_keeps_pointing_at_specflo(tmp_path: Path):
+    target = _script(tmp_path / "venv" / "bin" / "specflo", "print('x')\n")
+    bindir = cc.specflo_bin_dir(tmp_path / "run", str(target))
+    cc.specflo_bin_dir(tmp_path / "run", str(bindir / "specflo"))
+    assert (bindir / "specflo").resolve() == target.resolve()
+
+
 # -- the real claude binary against a stub endpoint ----------------------------------
 
 

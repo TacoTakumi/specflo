@@ -95,3 +95,29 @@ def test_existing_nonempty_destination_is_refused(tmp_path: Path) -> None:
 def test_unknown_level_is_refused(tmp_path: Path) -> None:
     with pytest.raises(wd.WorkdirError, match="level"):
         wd.make_workdir(tmp_path / "run", "harden")
+
+
+def test_auto_settings_are_in_the_one_commit(tmp_path: Path) -> None:
+    sealed = wd.make_workdir(tmp_path / "run", "quick", autonomy="autonomous", pass_cap=12)
+    assert _specflo(sealed.path, "config", "get", "autonomy").strip() == "autonomous"
+    assert _specflo(sealed.path, "config", "get", "auto_max_passes").strip() == "12"
+    assert _git(sealed.path, "rev-list", "--count", "HEAD").strip() == "1"
+    assert _git(sealed.path, "status", "--porcelain") == ""
+    committed = _git(sealed.path, "show", "HEAD:.specflo/config.yaml")
+    assert "autonomy: autonomous" in committed and "auto_max_passes: 12" in committed
+    # Setting the same values again (as the run lifecycle does) leaves the tree clean.
+    _specflo(sealed.path, "config", "set", "autonomy", "autonomous")
+    _specflo(sealed.path, "config", "set", "auto_max_passes", "12")
+    assert _git(sealed.path, "status", "--porcelain") == ""
+
+
+def test_without_auto_settings_the_config_keeps_its_defaults(tmp_path: Path) -> None:
+    sealed = wd.make_workdir(tmp_path / "run", "quick")
+    committed = _git(sealed.path, "show", "HEAD:.specflo/config.yaml").splitlines()
+    assert not any(line.startswith(("autonomy:", "auto_max_passes:")) for line in committed)
+
+
+@pytest.mark.parametrize("kwargs", [{"autonomy": "reckless"}, {"pass_cap": 0}, {"pass_cap": True}])
+def test_bad_auto_settings_are_refused(tmp_path: Path, kwargs: dict) -> None:
+    with pytest.raises(wd.WorkdirError):
+        wd.make_workdir(tmp_path / "run", "quick", **kwargs)

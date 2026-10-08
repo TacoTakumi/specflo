@@ -447,10 +447,12 @@ def specflo_bin_dir(run_dir: Path, specflo: str) -> Path:
     """
     bindir = Path(run_dir) / BIN_DIR
     bindir.mkdir(parents=True, exist_ok=True)
+    # Resolve before unlinking: `specflo` may be this very link, from an earlier call.
+    target = Path(specflo).resolve()
     link = bindir / "specflo"
     if link.is_symlink() or link.exists():
         link.unlink()
-    link.symlink_to(Path(specflo).resolve())
+    link.symlink_to(target)
     return bindir
 
 

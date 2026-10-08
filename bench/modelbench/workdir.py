@@ -12,6 +12,11 @@ The request goes where the level's first working artifact reads it:
 - quick: the brief's Goal section (a quick project works one brief.md);
 - fast and full: the brainstorm's Current understanding section.
 
+When `autonomy` and `pass_cap` are given, the specflo auto settings are set
+with `specflo config set autonomy` and `specflo config set auto_max_passes`
+before the commit, so they are part of the one commit and the agent starts on a
+clean tree. Writing the same values again later leaves the file unchanged.
+
 The request title is also the project summary. Request headings become bold
 lines, because a `#` heading inside a section body would split the artifact's
 own sections. The active-project pointer lives in `.specflo/config.yaml`, which
@@ -160,10 +165,18 @@ def make_workdir(
     fixture: Path = FIXTURE,
     levels_dir: Path = LEVELS_DIR,
     specflo: str | None = None,
+    autonomy: str | None = None,
+    pass_cap: int | None = None,
 ) -> SealedWorkdir:
-    """Copy the fixture to `dest`, seed a specflo project at `level`, commit once, check it is sealed."""
+    """Copy the fixture to `dest`, seed a specflo project at `level`, commit once, check it is sealed.
+
+    `autonomy` and `pass_cap`, when given, become the workdir's specflo auto
+    settings before the commit.
+    """
     if level not in LEVELS:
         raise WorkdirError(f"unknown level {level!r}: expected one of {', '.join(LEVELS)}")
+    if pass_cap is not None and (isinstance(pass_cap, bool) or not isinstance(pass_cap, int) or pass_cap < 1):
+        raise WorkdirError(f"pass_cap: expected a positive int, got {pass_cap!r}")
     dest = _check_destination(dest)
     request_file = levels_dir / f"{level}.md"
     if not request_file.is_file():
@@ -189,6 +202,14 @@ def make_workdir(
     slug = json.loads(_run([*sf, "status", "--json"], cwd=dest)).get("active_project")
     if not slug:
         raise WorkdirError("specflo status shows no active project after seeding")
+    settings = {"autonomy": autonomy, "auto_max_passes": None if pass_cap is None else str(pass_cap)}
+    for key, value in settings.items():
+        if value is None:
+            continue
+        _run([*sf, "config", "set", key, value], cwd=dest)
+        found = _run([*sf, "config", "get", key], cwd=dest).strip()
+        if found != value:
+            raise WorkdirError(f"specflo config get {key} reads {found!r}, not {value!r}")
 
     git = ["git", "-C", str(dest), *_GIT_CONFIG]
     _run([*git, "init", "-q"], cwd=dest, env=_GIT_ENV)

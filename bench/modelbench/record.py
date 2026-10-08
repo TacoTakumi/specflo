@@ -7,6 +7,10 @@ dotted field path; `check_record` raises RecordError with them.
 The specflo version lives in `versions.specflo`; with `settings` it makes up
 what must be equal across the arms of one comparison. `metrics`,
 `diagnostics` and `telemetry` are dicts whose inner shape their writers own.
+`lifecycle` carries how the run was watched and ended: where it ran (a herdr
+pane or headless), the end detail and the level limits it ran under.
+
+`OPTIONAL_FIELDS` are checked only when present.
 """
 
 from __future__ import annotations
@@ -16,6 +20,7 @@ from typing import Any
 from modelbench.arms import HARNESSES, LEVELS
 
 END_REASONS = ("complete", "escalated", "timeout", "stalled", "harness-exit")
+PLACEMENTS = ("herdr", "headless")
 
 _NUMBER = (int, float)
 
@@ -45,6 +50,17 @@ REQUIRED_FIELDS: dict[str, Any] = {
     "diagnostics": dict,
     "telemetry": dict,
     "logs": dict,
+    "lifecycle": {
+        "placement": str,
+        "end_detail": str,
+        "wall_clock_cap": _NUMBER,
+        "stall_limit": _NUMBER,
+    },
+}
+
+# Fields that may be absent; when present they must have this type.
+OPTIONAL_FIELDS: dict[str, Any] = {
+    "lifecycle.pane_id": (str, type(None)),
 }
 
 # Fields whose value must come from a fixed set.
@@ -52,6 +68,7 @@ ALLOWED_VALUES: dict[str, tuple[str, ...]] = {
     "arm.harness": HARNESSES,
     "level": LEVELS,
     "end_reason": END_REASONS,
+    "lifecycle.placement": PLACEMENTS,
 }
 
 
@@ -65,7 +82,7 @@ class RecordError(ValueError):
 
 def _type_name(expected: Any) -> str:
     if isinstance(expected, tuple):
-        return " or ".join(t.__name__ for t in expected)
+        return " or ".join("None" if t is type(None) else t.__name__ for t in expected)
     return expected.__name__
 
 
@@ -104,6 +121,13 @@ def validate_record(rec: Any) -> list[str]:
         return [f"record: expected dict, got {type(rec).__name__}"]
     errors: list[str] = []
     _walk(rec, REQUIRED_FIELDS, "", errors)
+    for path, expected in OPTIONAL_FIELDS.items():
+        *parents, leaf = path.split(".")
+        node = rec
+        for name in parents:
+            node = node.get(name) if isinstance(node, dict) else None
+        if isinstance(node, dict) and leaf in node and not _type_ok(node[leaf], expected):
+            errors.append(f"{path}: expected {_type_name(expected)}, got {type(node[leaf]).__name__}")
     return errors
 
 

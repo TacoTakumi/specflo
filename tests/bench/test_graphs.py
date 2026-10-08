@@ -54,6 +54,8 @@ def make_record(
         "diagnostics": {},
         "telemetry": {"available": False},
         "logs": {"session": "/runs/x/session.jsonl"},
+        "lifecycle": {"placement": "headless", "end_detail": "the specflo project is complete",
+                      "wall_clock_cap": 3600.0, "stall_limit": 900.0},
     }
     for path, value in overrides.items():
         *parents, leaf = path.split("__")

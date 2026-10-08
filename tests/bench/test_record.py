@@ -41,6 +41,13 @@ def valid_record() -> dict:
         "diagnostics": {},
         "telemetry": {"available": False},
         "logs": {"session": "/runs/x/session.jsonl"},
+        "lifecycle": {
+            "placement": "headless",
+            "end_detail": "the specflo project is complete",
+            "wall_clock_cap": 3600.0,
+            "stall_limit": 900,
+            "pane_id": None,
+        },
     }
 
 
@@ -85,6 +92,9 @@ def test_missing_required_field_fails_naming_it(path):
         ("arm.harness", "codex"),
         ("level", "medium"),
         ("settings.pass_cap", 2.5),
+        ("lifecycle.placement", "tmux"),
+        ("lifecycle.wall_clock_cap", "1h"),
+        ("lifecycle.pane_id", 7),
     ],
 )
 def test_wrong_type_or_value_fails_naming_field(path, value):
@@ -96,6 +106,20 @@ def test_wrong_type_or_value_fails_naming_field(path, value):
     node[leaf] = value
     errors = record.validate_record(rec)
     assert any(e.startswith(f"{path}:") for e in errors), errors
+
+
+@pytest.mark.parametrize("pane_id", ["w1:p7", None])
+def test_pane_id_may_be_a_string_or_none(pane_id):
+    rec = valid_record()
+    rec["lifecycle"]["pane_id"] = pane_id
+    rec["lifecycle"]["placement"] = "herdr" if pane_id else "headless"
+    assert record.validate_record(rec) == []
+
+
+def test_pane_id_may_be_absent():
+    rec = valid_record()
+    del rec["lifecycle"]["pane_id"]
+    assert record.validate_record(rec) == []
 
 
 def test_non_dict_record_fails():
