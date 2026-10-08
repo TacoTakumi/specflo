@@ -758,7 +758,10 @@ def cc_spec(spec_file: Path, env: dict[str, str], run_dir: Path) -> HarnessSpec:
             str(run_dir / launch_cc.CONFIG_DIR_NAME / "projects" / "**" / "*.jsonl"),
         ),
         on_exit=on_exit,
-        report=lambda: (_read_json(result_file) or {}).get("launch", {}),
+        # cc-result.json is written when the loop ends on its own; a run the bench
+        # kills has only the launch report the loop wrote before its first pass.
+        report=lambda: ((_read_json(result_file) or {}).get("launch")
+                        or _read_json(run_dir / cc_continue.LAUNCH_FILE) or {}),
     )
 
 

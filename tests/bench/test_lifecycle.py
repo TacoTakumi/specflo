@@ -334,6 +334,17 @@ def test_the_claude_code_child_result_decides_the_end(tmp_path: Path, mode: str,
         assert outcome.harness_report == {"harness": "claude-code test"}
 
 
+def test_a_killed_claude_code_run_reports_its_launch_from_the_early_file(tmp_path: Path):
+    bench = Bench(tmp_path)
+    spec = bench.cc("cc-streams")
+    report = {"harness": "claude-code 2.1.295", "config_hash": "sha256:x"}
+    (bench.run_dir / lc.cc_continue.LAUNCH_FILE).write_text(json.dumps(report))
+    outcome = bench.supervise(spec, wall_clock=1.0, stall=0.4)
+    assert outcome.end_reason == lc.END_TIMEOUT
+    assert not (bench.run_dir / lc.CC_RESULT_FILE).exists()
+    assert outcome.harness_report == report
+
+
 def test_claude_code_pass_streams_count_as_activity(tmp_path: Path):
     bench = Bench(tmp_path)
     outcome = bench.supervise(bench.cc("cc-streams"), wall_clock=1.0, stall=0.4)

@@ -75,6 +75,8 @@ ENDED_TIMEOUT = "timeout"
 
 PASS_ARGS = ("-p", "--output-format", "stream-json", "--verbose")
 RECORD_FILE = "passes.json"
+# The launch report, written before the first pass so a run the bench kills still has it.
+LAUNCH_FILE = "cc-launch.json"
 BIN_DIR = "bin"
 
 # Seconds a specflo call may take, and the grace a pass gets after SIGTERM.
@@ -480,6 +482,7 @@ def run(
         entry, workdir=workdir, run_dir=run_dir, base_env=env, base_url=base_url,
         extra_env={"PATH": path},
     ) as launch:
+        (run_dir / LAUNCH_FILE).write_text(json.dumps(launch.report(), indent=2) + "\n", encoding="utf-8")
         result = run_passes(
             launch, run_dir=run_dir, specflo=str(bindir / "specflo"), window=context_window(entry),
             max_passes=max_passes, wall_clock=wall_clock, threshold_percent=threshold_percent,

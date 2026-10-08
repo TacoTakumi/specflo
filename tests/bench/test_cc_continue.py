@@ -303,6 +303,32 @@ def test_an_unreadable_auto_report_ends_the_run(tmp_path: Path):
 # -- pieces -----------------------------------------------------------------------
 
 
+def test_the_launch_report_is_on_disk_before_the_first_pass(tmp_path: Path, monkeypatch):
+    run_dir = tmp_path / "run"
+    report = {"harness": "claude-code 2.1.295", "config_hash": "sha256:x", "request_shim": False}
+
+    class FakeLaunch:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def report(self):
+            return dict(report)
+
+    def killed(*_args, **_kw):
+        assert json.loads((run_dir / cc.LAUNCH_FILE).read_text()) == report
+        raise KeyboardInterrupt  # the bench ends the loop mid-pass
+
+    monkeypatch.setattr(cc.launch_cc, "build_launch", lambda *a, **kw: FakeLaunch())
+    monkeypatch.setattr(cc, "run_passes", killed)
+    with pytest.raises(KeyboardInterrupt):
+        cc.run(ENTRY, workdir=tmp_path, run_dir=run_dir, max_passes=3, wall_clock=60.0,
+               specflo=str(tmp_path / "specflo"))
+    assert json.loads((run_dir / cc.LAUNCH_FILE).read_text()) == report
+
+
 def test_seam_rule_matches_the_pi_extension():
     last = cc.Snapshot(phase="plan", done=2)
     assert cc.describe_seam(last, cc.Snapshot(phase="plan", done=2)) is None
