@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import arms, cc_continue, cmd_run, launch_cc, lifecycle, normlog, preflight, record, run, telemetry
+from modelbench import arms, cc_continue, cmd_run, launch_cc, lifecycle, normlog, preflight, probe, record, run, telemetry
 
 BENCH = Path(__file__).resolve().parents[2] / "bench"
 SAMPLES = Path(__file__).resolve().parent / "samples"
@@ -244,6 +244,23 @@ def test_an_entry_the_bench_load_evicted_is_foreign_when_the_operator_loads_it(t
         with pytest.raises(preflight.PreflightError) as err:
             run.Rig(stub.url, state).preflight(arms.Run(b, "pi", "quick", 0))
     assert err.value.foreign == [a]
+
+
+def test_a_failed_load_drops_the_bench_loaded_entry_it_evicted(tmp_path, monkeypatch):
+    from .test_preflight import StubSwap
+
+    a, b = "swift15-flash-next-iq4xs-mtp-vision", "swift15-flash-next-iq4xs-strata-2x3090"
+    state = tmp_path / "loaded.json"
+    preflight.record_bench_load(state, a)
+    with StubSwap([a]) as stub:
+        def evict_and_fail(base_url, entry, timeout):
+            stub.running = []  # a was evicted, then b failed to load
+            raise probe.ProbeError(f"{entry} did not load")
+
+        monkeypatch.setattr(probe, "load_entry", evict_and_fail)
+        with pytest.raises(probe.ProbeError):
+            run.ready_entry(run.Rig(stub.url, state), arms.Run(b, "pi", "quick", 0))
+    assert preflight.read_bench_loaded(state) == set()
 
 
 # -- the record -------------------------------------------------------------------------

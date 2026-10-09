@@ -475,6 +475,8 @@ def fake_rig(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(preflight, "record_bench_load", lambda path, entry: calls.append(("record", entry)))
     monkeypatch.setattr(probe, "load_entry", lambda base, entry, timeout: calls.append(("load", entry)))
     monkeypatch.setattr(probe, "probe", fake_probe)
+    monkeypatch.setattr(preflight, "fetch_running", lambda base_url: [])
+    monkeypatch.setattr(preflight, "sync_bench_loaded", lambda path, running: calls.append(("sync",)))
     return calls, efforts, config
 
 
@@ -485,9 +487,9 @@ def test_cli_probes_each_entry_once_loaded_and_reports_same(fake_rig, tmp_path: 
     assert code == 0, out
     assert calls == [
         ("preflight", LLAMA), ("record", LLAMA), ("load", LLAMA),
-        ("probe", "pi", LLAMA), ("probe", "claude-code", LLAMA),
+        ("probe", "pi", LLAMA), ("probe", "claude-code", LLAMA), ("sync",),
         ("preflight", STRATA), ("record", STRATA), ("load", STRATA),
-        ("probe", "pi", STRATA), ("probe", "claude-code", STRATA),
+        ("probe", "pi", STRATA), ("probe", "claude-code", STRATA), ("sync",),
     ]
     assert "pi: same on both engines (reasoning on, effort xhigh)" in out
     assert "claude-code: same on both engines (reasoning on, effort xhigh)" in out
@@ -519,6 +521,26 @@ def test_cli_stops_on_a_preflight_refusal(monkeypatch, tmp_path: Path, capsys):
     monkeypatch.setattr(preflight, "preflight", refuse)
     assert cmd_probe.main(["--out", str(tmp_path)]) == 2
     assert "other-model" in capsys.readouterr().err
+
+
+def test_cli_drops_from_the_bench_load_state_the_entry_the_next_load_evicted(monkeypatch, tmp_path: Path):
+    from .test_preflight import StubSwap
+
+    state = tmp_path / "loaded.json"
+    with StubSwap([]) as stub:
+        def load(base_url, entry, timeout):
+            stub.running = [entry]  # each entry uses the whole rig, so the load evicts the other
+
+        monkeypatch.setattr(probe, "load_entry", load)
+        monkeypatch.setattr(probe, "probe", lambda harness, entry, **kw: result(harness, entry))
+        argv = ["--harness", "pi", "--entry", LLAMA, "--entry", STRATA,
+                "--base-url", stub.url, "--state", str(state), "--out", str(tmp_path / "out")]
+        assert cmd_probe.main(argv) == 0
+        assert preflight.read_bench_loaded(state) == {STRATA}
+        stub.running = [LLAMA]  # the operator loads it himself
+        with pytest.raises(preflight.PreflightError) as err:
+            preflight.preflight(arms.Run(STRATA, "pi", "quick", 0), base_url=stub.url, state_path=state)
+    assert err.value.foreign == [LLAMA]
 
 
 def test_cli_refuses_an_unknown_entry(tmp_path: Path, capsys):

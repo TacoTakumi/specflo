@@ -6,8 +6,8 @@ not load it. It sends no other request: no inference, no unload.
 
 Bench-load state file (default `bench/state/loaded-by-bench.json`): the record
 of the llama-swap entries the bench itself loaded. The runner adds an entry
-with `record_bench_load` when it loads one; every running list the bench reads
-drops it once llama-swap no longer lists it.
+with `record_bench_load` when it loads one (`bench_load` wraps a load); every
+running list the bench reads drops it once llama-swap no longer lists it.
 Format:
 
     {"format": 1, "loaded": ["<entry id>", ...]}
@@ -23,12 +23,13 @@ shows the entry served it.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
 
 from modelbench import arms
 
@@ -120,6 +121,29 @@ def preflight(
             foreign,
         )
     return running
+
+
+@contextlib.contextmanager
+def bench_load(
+    run: arms.Run,
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    state_path: Path | str = DEFAULT_STATE,
+) -> Iterator[list[str]]:
+    """Preflight `run` and record its entry as bench-loaded when it is not running.
+
+    The block loads the entry. When the block ends, however it ends, the state
+    drops each entry llama-swap no longer runs, since the load can evict an
+    entry the bench loaded before. Yields the preflight's running list.
+    """
+    running = preflight(run, base_url=base_url, state_path=state_path)
+    if run.entry not in running:
+        record_bench_load(state_path, run.entry)
+    try:
+        yield running
+    finally:
+        with contextlib.suppress(PreflightError):
+            sync_bench_loaded(state_path, fetch_running(base_url))
 
 
 def request_model_ids(log: dict[str, Any]) -> set[str]:

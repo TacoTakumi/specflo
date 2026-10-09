@@ -464,12 +464,6 @@ def test_rig_pi_blocks_git_push_with_no_prompt(tmp_path: Path):
     from modelbench import preflight
 
     run = arms.Run(entry=ENTRY, harness="pi", level="quick", run_index=0)
-    # Refuses when llama-swap holds a model the bench did not load. When the
-    # entry is not loaded yet, pi's request loads it, so the bench records it.
-    running = preflight.preflight(run)
-    if ENTRY not in running:
-        preflight.record_bench_load(preflight.DEFAULT_STATE, ENTRY)
-
     workdir = tmp_path / "work"
     workdir.mkdir()
     launch = launch_pi.build_launch(
@@ -483,9 +477,13 @@ def test_rig_pi_blocks_git_push_with_no_prompt(tmp_path: Path):
         ],
         extra_env=_HERMETIC,
     )
-    proc = launch_pi.start(launch, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                           stderr=subprocess.PIPE, text=True)
-    out, err = proc.communicate(timeout=900)
+    # Refuses when llama-swap holds a model the bench did not load. When the
+    # entry is not loaded yet, pi's request loads it, so the bench records it,
+    # and drops the entries that load evicted when the block ends.
+    with preflight.bench_load(run):
+        proc = launch_pi.start(launch, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, text=True)
+        out, err = proc.communicate(timeout=900)
 
     assert proc.returncode == 0, err
     events = [json.loads(line) for line in out.splitlines() if line.startswith("{")]

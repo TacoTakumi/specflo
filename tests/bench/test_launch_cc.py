@@ -462,17 +462,13 @@ def test_rig_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
     from modelbench import arms, preflight
 
     run = arms.Run(entry=ENTRY, harness="claude-code", level="quick", run_index=0)
-    # Refuses when llama-swap holds a model the bench did not load. When the
-    # entry is not loaded yet, Claude Code's request loads it, so the bench
-    # records it.
-    running = preflight.preflight(run)
-    if ENTRY not in running:
-        preflight.record_bench_load(preflight.DEFAULT_STATE, ENTRY)
-
     workdir = tmp_path / "work"
     workdir.mkdir()
     bindir, _calls = _recording_specflo(tmp_path)
-    with launch_cc.build_launch(
+    # Refuses when llama-swap holds a model the bench did not load. When the
+    # entry is not loaded yet, Claude Code's request loads it, so the bench
+    # records it, and drops the entries that load evicted when the block ends.
+    with preflight.bench_load(run), launch_cc.build_launch(
         ENTRY, workdir=workdir, run_dir=tmp_path / "run",
         extra_env={"PATH": f"{bindir}:{os.environ['PATH']}"},
         args=["-p", "--output-format", "stream-json", "--verbose", "--no-session-persistence",

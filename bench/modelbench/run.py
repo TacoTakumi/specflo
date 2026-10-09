@@ -46,6 +46,7 @@ reason.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import shlex
@@ -200,7 +201,13 @@ def ready_entry(rig: Rig, run: arms.Run) -> dict[str, Any]:
     """Preflight, load the entry when needed, and return its /running item."""
     if run.entry not in rig.preflight(run):
         rig.record_load(run.entry)
-        rig.load(run.entry)
+        try:
+            rig.load(run.entry)
+        except Exception:
+            # A failed load can still have evicted an entry the bench loaded before.
+            with contextlib.suppress(preflight.PreflightError):
+                rig.running()
+            raise
     for item in rig.running():
         if item.get("model") == run.entry:
             return item

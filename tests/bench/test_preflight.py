@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -145,6 +146,21 @@ def test_an_entry_still_running_from_the_bench_stays_bench_loaded(config, tmp_pa
         with StubSwap([OTHER]) as stub:
             assert preflight.preflight(_run(config), base_url=stub.url, state_path=state) == [OTHER]
     assert preflight.read_bench_loaded(state) == {OTHER}
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_a_bench_load_drops_the_entries_it_evicted_when_it_ends(config, tmp_path, raises):
+    state = tmp_path / "loaded.json"
+    preflight.record_bench_load(state, OTHER)
+    with StubSwap([OTHER]) as stub:
+        with pytest.raises(RuntimeError) if raises else contextlib.nullcontext():
+            with preflight.bench_load(_run(config), base_url=stub.url, state_path=state) as running:
+                assert running == [OTHER]
+                assert preflight.read_bench_loaded(state) == {OTHER, ENTRY}
+                stub.running = [ENTRY]  # the load of the entry evicted OTHER
+                if raises:
+                    raise RuntimeError("the block failed")
+    assert preflight.read_bench_loaded(state) == {ENTRY}
 
 
 def test_main_foreign_exits_nonzero_sends_only_get_running(tmp_path, capsys):

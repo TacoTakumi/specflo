@@ -428,10 +428,6 @@ def test_rig_claude_crosses_a_phase_boundary_with_a_fresh_context(tmp_path_facto
     from modelbench import arms, preflight, workdir
 
     run = arms.Run(entry=ENTRY, harness="claude-code", level="fast", run_index=0)
-    running = preflight.preflight(run)
-    if ENTRY not in running:
-        preflight.record_bench_load(preflight.DEFAULT_STATE, ENTRY)
-
     base = tmp_path_factory.mktemp("cc-continue")
     sealed = workdir.make_workdir(base / "work", "fast")
     run_dir = base / "run"
@@ -445,15 +441,18 @@ def test_rig_claude_crosses_a_phase_boundary_with_a_fresh_context(tmp_path_facto
         if record.phase_before != start_phase:
             raise _Enough
 
-    try:
-        result, launch_report = cc.run(
-            ENTRY, workdir=sealed.path, run_dir=run_dir, max_passes=RIG_PASSES,
-            wall_clock=RIG_WALL_CLOCK, threshold_percent=0, on_pass=report,
-        )
-        passes = result.passes
-    except _Enough:
-        record = json.loads((run_dir / cc.RECORD_FILE).read_text())
-        passes = [cc.PassRecord(**p) for p in record["passes"]]
+    # The bench records the entry the first pass loads, and drops the entries
+    # that load evicted when the block ends.
+    with preflight.bench_load(run):
+        try:
+            result, launch_report = cc.run(
+                ENTRY, workdir=sealed.path, run_dir=run_dir, max_passes=RIG_PASSES,
+                wall_clock=RIG_WALL_CLOCK, threshold_percent=0, on_pass=report,
+            )
+            passes = result.passes
+        except _Enough:
+            record = json.loads((run_dir / cc.RECORD_FILE).read_text())
+            passes = [cc.PassRecord(**p) for p in record["passes"]]
     print(json.dumps([vars(p) for p in passes], indent=2), flush=True)
 
     assert len(passes) >= 2, passes

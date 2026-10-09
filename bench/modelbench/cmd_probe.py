@@ -90,18 +90,16 @@ def main(argv: list[str]) -> int:
     for entry in entries:
         run = arms.Run(entry=entry, harness=harnesses[0], level=next(iter(config.levels)), run_index=0)
         try:
-            running = preflight.preflight(run, base_url=args.base_url, state_path=args.state)
-            if entry not in running:
-                preflight.record_bench_load(args.state, entry)
-            probe.load_entry(args.base_url, entry, timeout=args.timeout)
-            for harness in harnesses:
-                result = probe.probe(
-                    harness, entry, base_url=args.base_url, run_dir=out / f"{harness}--{entry}",
-                    prompt=args.prompt, timeout=args.timeout, config=config,
-                )
-                results.append(result)
-                if not args.json:
-                    print(describe(result), flush=True)
+            with preflight.bench_load(run, base_url=args.base_url, state_path=args.state):
+                probe.load_entry(args.base_url, entry, timeout=args.timeout)
+                for harness in harnesses:
+                    result = probe.probe(
+                        harness, entry, base_url=args.base_url, run_dir=out / f"{harness}--{entry}",
+                        prompt=args.prompt, timeout=args.timeout, config=config,
+                    )
+                    results.append(result)
+                    if not args.json:
+                        print(describe(result), flush=True)
         except (preflight.PreflightError, probe.ProbeError) as exc:
             print(f"mb.py probe: {exc}", file=sys.stderr)
             return 2
