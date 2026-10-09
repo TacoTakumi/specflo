@@ -1,6 +1,7 @@
 """Comparison check and graphs with disclosures, from synthetic run records."""
 
 import copy
+import html
 import json
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pytest
 
 pytest.importorskip("matplotlib")
 
-from modelbench import cmd_graph, graphs  # noqa: E402
+from modelbench import cmd_graph, graphs, index_page  # noqa: E402
 
 ENTRY_A = "swift15-flash-next-iq4xs-mtp-vision"
 ENTRY_B = "swift15-flash-next-iq4xs-strata-2x3090"
@@ -215,6 +216,36 @@ def test_graph_api_returns_disclosures(tmp_path):
         assert image.exists() and image.stat().st_size > 0
         assert "runs=3" in disclosure
         assert image.with_suffix(".txt").read_text() == disclosure
+
+
+def test_graph_writes_an_index_page_with_explanations(tmp_path):
+    recs = harness_pair("quick") + harness_pair("fast", runs=2)
+    rec_dir = write_records(tmp_path / "records", recs)
+    out = tmp_path / "out"
+    assert cmd_graph.main(["--records", str(rec_dir), "--out", str(out)]) == 0
+    page = (out / "index.html").read_text()
+    pngs = sorted(out.glob("*.png"))
+    assert pngs
+    for png in pngs:
+        assert f'src="{png.name}"' in page, png.name
+        for line in png.with_suffix(".txt").read_text().splitlines():
+            assert html.escape(line) in page, line
+    assert page.index('id="level-quick"') < page.index('id="level-fast"')
+    for heading in ("How to read a graph", "What the metrics mean", "Level: quick", "Level: fast"):
+        assert heading in page, heading
+    for name in index_page.METRIC_TEXT:
+        assert f"<dt>{name}</dt>" in page, name
+    # The harness rows differ between the arms and are marked; a shared setting is not.
+    assert '<tr class="differs"><th>arm.harness</th>' in page
+    assert "<tr><th>settings.context_window</th>" in page
+
+
+def test_index_page_lists_graphs_of_earlier_runs(tmp_path):
+    graphs.generate(harness_pair("quick"), tmp_path, ENGINES)
+    (tmp_path / "full-by-entry-pi-pass-rate.png").write_bytes(b"png")
+    page = index_page.render_index(tmp_path)
+    assert 'src="full-by-entry-pi-pass-rate.png"' in page
+    assert "No disclosure file beside these graphs." in page
 
 
 def test_graph_of_two_variable_arms_exits_nonzero(tmp_path, capsys):

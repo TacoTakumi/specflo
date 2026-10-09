@@ -147,7 +147,10 @@ uv run --group bench bench/mb.py graph --records bench/runs --out bench/results/
 ```
 
 Writes a pass-rate graph and a metrics graph per level, each a PNG with its
-disclosure under the plot and in a `.txt` beside it. The arms of a comparison
+disclosure under the plot and in a `.txt` beside it, and an `index.html` in
+the output directory. The page shows every graph in that directory with its
+arms as a table, and explains the bench, how to read a graph, each level and
+each metric. The arms of a comparison
 may differ in one variable only: the entry (with its engine, build and GGUF)
 or the harness (with its version). Any other difference, such as a setting or
 the specflo version, is refused with exit 1 and nothing is written.

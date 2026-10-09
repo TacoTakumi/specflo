@@ -9,7 +9,8 @@ refused, as is a field that differs between runs of the same arm.
 Invalid runs (`valid` false) and contaminated runs (`diagnostics.contaminated`
 truthy) are left out of every pass rate and graph; the disclosure counts them.
 Each graph is a PNG with its disclosure drawn under the plot and also written
-beside it as a .txt file. matplotlib (the `bench` dependency group) is
+beside it as a .txt file, and `index.html` in the output directory shows
+every graph there with explanations. matplotlib (the `bench` dependency group) is
 imported only when drawing.
 """
 
@@ -24,6 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from modelbench.arms import LEVELS
+from modelbench.index_page import write_index
 from modelbench.record import validate_record
 
 # The fields that move with each comparable variable.
@@ -329,4 +331,5 @@ def generate(
             _render(image, f"{level}: {what} {compared}", text, panels, labels)
             image.with_suffix(".txt").write_text(text)
             written.append((image, text))
+    write_index(out)
     return written
