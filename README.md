@@ -853,6 +853,16 @@ loaded machine, set `SPECFLO_TEST_WAIT_SCALE` to a number above 0 (default 1)
 to multiply every limit and settle pause of that helper, for example
 `SPECFLO_TEST_WAIT_SCALE=3 uv run pytest`.
 
+## Model bench
+
+`bench/` holds a model bench that measures how well a local model drives
+specflo. It runs a seeded specflo project (quick, fast or full) unattended
+under pi or Claude Code against a model served by llama-swap, grades the
+final tree with a held-out test suite and graphs the pass rates with behaviour
+metrics. Each comparison changes one variable: the model, the engine or the
+harness. See [BENCH.md](https://github.com/TacoTakumi/specflo/blob/main/BENCH.md)
+for how it works and how to run it.
+
 ## License
 
 [GPL-3.0-or-later](https://github.com/TacoTakumi/specflo/blob/main/LICENSE). Copyright (C) 2026 TacoTakumi.
