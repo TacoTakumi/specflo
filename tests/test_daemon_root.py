@@ -219,7 +219,6 @@ def test_first_run_prompt_keeps_stdout_to_the_secret(cli_home, tmp_path, monkeyp
 
     assert result.exit_code == 0, result.output
     assert "Daemon root" in result.stderr
-    assert "Daemon root" not in result.stdout
-    # The test runner echoes the typed answer to stdout; a terminal does not.
-    secret = result.stdout.strip().splitlines()[-1]
-    assert auth.identity_for(tmp_path / "typed", secret) == "requester"
+    lines = result.stdout.splitlines()
+    assert len(lines) == 1, result.stdout
+    assert auth.identity_for(tmp_path / "typed", lines[0]) == "requester"
