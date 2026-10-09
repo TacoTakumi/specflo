@@ -3,6 +3,7 @@
 import copy
 import html
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -238,6 +239,20 @@ def test_graph_writes_an_index_page_with_explanations(tmp_path):
     # The harness rows differ between the arms and are marked; a shared setting is not.
     assert '<tr class="differs"><th>arm.harness</th>' in page
     assert "<tr><th>settings.context_window</th>" in page
+
+
+def test_index_page_takes_the_specflo_look_with_a_theme_switch_and_no_script(tmp_path):
+    page = index_page.render_index(tmp_path)
+
+    assert "--accent:       light-dark(#0e7c7b, #4cc3bd);" in page
+    assert "github-markdown-css v5.9.0 | MIT License" in page
+    assert '<header class="site-header">' in page
+    assert re.search(r'<a class="brand" href="#top">\s*<svg[^>]*>.*?</svg>\s*specflo\s*</a>', page, re.S)
+    radios = re.findall(r'<input type="radio" name="theme" value="(\w+)"( checked)?>', page)
+    assert radios == [("auto", " checked"), ("light", ""), ("dark", "")]
+    for theme in ("light", "dark"):
+        assert f':root:has(input[name="theme"][value="{theme}"]:checked) {{ color-scheme: {theme}; }}' in page
+    assert "<script" not in page
 
 
 def test_index_page_lists_graphs_of_earlier_runs(tmp_path):

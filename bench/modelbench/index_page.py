@@ -7,15 +7,20 @@ level with each comparison's arms as a table and its graphs, and what each
 metric means. It reads the directory, not the records, so graphs written by
 earlier `mb.py graph` runs into the same directory are on the page too.
 
-The page is plain HTML with one inline stylesheet. Every colour is a token on
-:root with the token names of the agent-wiki viewer (--bg, --fg, --accent and
-so on), so a later design can replace the stylesheet alone.
+The page is plain HTML with no script. It inlines the specflo web UI's two
+stylesheets from the installed specflo package (the frame, specflo.css, and
+the vendored github-markdown.css), so it looks like the daemon's pages and
+still stands alone when the directory is copied elsewhere; its own rules
+follow them and use only their tokens. The header's Auto/Light/Dark switch is
+three radio inputs that set the colour scheme through :has(); with no server
+behind a file, the choice lasts until the page is reloaded.
 """
 
 from __future__ import annotations
 
 import re
 from html import escape
+from importlib.resources import files
 from pathlib import Path
 
 from modelbench.arms import LEVELS
@@ -54,31 +59,29 @@ METRIC_TEXT = {
     "wall_time_s": "Seconds from the first event of the session to the last.",
 }
 
+# The daemon's assets directory, read without importing the web application.
+_ASSETS = files("specflo.daemon") / "assets"
+SHARED_STYLESHEETS = ("github-markdown.css", "specflo.css")
+
+THEMES = ("auto", "light", "dark")
+
 _STYLE = """
-:root {
-  color-scheme: light dark;
-  --bg:           light-dark(#ffffff, #17191c);
-  --bg-muted:     light-dark(#f6f7f9, #1f2226);
-  --fg:           light-dark(#1f2329, #dde0e5);
-  --fg-muted:     light-dark(#5c6570, #9aa1ab);
-  --border:       light-dark(#d5d9de, #353a41);
-  --border-muted: light-dark(#e4e7eb, #2b2f35);
-  --accent:       light-dark(#5b4fd6, #a99fff);
-}
-:root {
-  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
-  --radius: 6px;
-  --gutter: 32px;
-  --ui: system-ui, -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
-}
-@media (max-width: 767px) { :root { --gutter: 16px; } }
-body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 var(--ui); }
-main { max-width: 1180px; margin: 0 auto; padding: 24px var(--gutter) 64px; }
-h1, h2, h3 { line-height: 1.25; }
-h2 { margin-top: 2.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
-a { color: var(--accent); }
-code { font-family: var(--mono); font-size: .9em; background: var(--bg-muted); padding: .1em .3em; border-radius: 4px; }
+/* The theme switch: radio inputs in the header, styled as the daemon's buttons. */
+:root:has(input[name="theme"][value="light"]:checked) { color-scheme: light; }
+:root:has(input[name="theme"][value="dark"]:checked) { color-scheme: dark; }
+.theme label { font-size: 12px; color: var(--fg-muted); background: var(--bg); padding: 4px 9px; cursor: pointer; }
+.theme label + label { border-left: 1px solid var(--border); }
+.theme label:has(input:checked) { color: var(--fg); background: var(--bg-muted); font-weight: 600; }
+.theme label:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.theme input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.bench-name { color: var(--fg-muted); font-size: 14px; padding-left: 12px; border-left: 1px solid var(--border); }
+.site-header .theme { margin-left: auto; }
+
+/* The page */
+main { font-size: 15px; line-height: 1.55; padding-top: 8px; }
+h2 { font-size: 20px; margin-top: 2.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+h3 { font-size: 16px; }
+code { font-size: .9em; background: var(--bg-muted); padding: .1em .3em; border-radius: 4px; }
 .muted { color: var(--fg-muted); }
 nav ul { padding-left: 1.2em; }
 dl.glossary dt { font-family: var(--mono); font-weight: 600; margin-top: .8em; }
@@ -97,6 +100,32 @@ figcaption { color: var(--fg-muted); margin-top: .4em; }
 details { margin: .5em 0; }
 pre { font-family: var(--mono); font-size: 12px; background: var(--bg-muted); padding: 8px; border-radius: var(--radius); overflow-x: auto; white-space: pre-wrap; }
 """
+
+
+def stylesheet() -> str:
+    """The shared stylesheets as the installed specflo package holds them, then the page's own rules."""
+    shared = "\n".join((_ASSETS / name).read_text(encoding="utf-8") for name in SHARED_STYLESHEETS)
+    return f"{shared}\n{_STYLE}"
+
+
+def _header() -> str:
+    radios = "".join(
+        f'<label><input type="radio" name="theme" value="{theme}"{" checked" if theme == "auto" else ""}>'
+        f"{theme.capitalize()}</label>"
+        for theme in THEMES
+    )
+    return f"""<header class="site-header">
+<div class="container">
+<a class="brand" href="#top">
+<svg viewBox="0 0 30 22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square">
+<path d="M3 4l7 7-7 7M12 4l7 7-7 7M24 3v16"/>
+</svg>
+specflo
+</a>
+<span class="bench-name">Model bench</span>
+<div class="theme" role="radiogroup" aria-label="Theme">{radios}</div>
+</div>
+</header>"""
 
 
 def _code(text: str) -> str:
@@ -213,15 +242,16 @@ def render_index(out_dir: Path | str) -> str:
     body = "\n".join(sections) or '<p class="muted">No graphs in this directory.</p>'
     title = f"Model bench: {out.name}"
     return f"""<!doctype html>
-<html lang="en">
+<html lang="en" id="top">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)}</title>
-<style>{_STYLE}</style>
+<style>{stylesheet()}</style>
 </head>
 <body>
-<main>
+{_header()}
+<main class="container">
 <h1>{escape(title)}</h1>
 <p>The specflo model bench measures how well a local model drives specflo. Each
 run seeds a specflo project in a small Python repo (tinytodo, a to-do CLI), runs
