@@ -39,6 +39,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   switch in its header. The choice is kept in a `specflo_theme` cookie for a
   year; Auto follows the browser. The switch works with no script and needs
   no sign-in, so the sign-in page has it too.
+- **A saved daemon root.** `specflo serve` and its subcommands no longer need
+  `--root`. The root comes from `--root`, then the `SPECFLO_DAEMON_ROOT`
+  environment variable, then the root saved in `~/.specflo/settings.yaml`.
+  With none set, a command on a terminal asks for the root (default
+  `~/specflo-daemon`) and saves the answer; off a terminal it fails and names
+  the fix. `specflo serve root [<dir>]` saves a root, or prints the root in
+  force and where it came from.
 
 ### Changed
 - **No ask-first reseed during an auto run.** While a `specflo auto` run is
