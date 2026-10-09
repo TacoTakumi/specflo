@@ -124,3 +124,31 @@ def test_the_switch_sends_the_browser_back_to_the_page_it_is_on(client, root):
     html = client.get(web.HOME_PATH + "?a=1&b=2").text
 
     assert '<input type="hidden" name="next" value="/?a=1&amp;b=2">' in html
+
+
+def switch_next(html):
+    return re.search(r'<input type="hidden" name="next" value="([^"]*)">', html).group(1)
+
+
+@pytest.mark.parametrize("path", [
+    web.TAKE_PATH.format(slug="nothing"),
+    web.CHAT_PATH.format(slug="nothing"),
+    web.START_AGENT_PATH.format(slug="nothing"),
+    web.START_PROJECT_PATH.format(slug="nothing", item_id=1),
+])
+def test_a_page_that_answers_a_post_sends_the_switch_home(client, root, path):
+    # A post without the session secret is refused with a page; a GET of the
+    # posted path would not be that page, or no page at all.
+    sign_in(client, root)
+
+    response = client.post(path, data={})
+
+    assert response.status_code == 403
+    assert switch_next(response.text) == web.HOME_PATH
+
+
+def test_a_refused_sign_in_post_sends_the_switch_home(client):
+    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": "wrong"})
+
+    assert response.status_code == 400
+    assert switch_next(response.text) == web.HOME_PATH

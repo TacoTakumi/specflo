@@ -196,13 +196,17 @@ class ThemeMiddleware:
         if scope["type"] == "http":
             conn = HTTPConnection(scope)
             theme = conn.cookies.get(THEME_COOKIE)
-            raw = scope.get("raw_path")
-            path = raw.decode("latin-1") if raw else quote(scope["path"])
-            query = scope.get("query_string", b"").decode("latin-1")
-            _page_theme.set((
-                theme if theme in THEMES else "auto",
-                f"{path}?{query}" if query else path,
-            ))
+            # The switch sends the browser back with a GET, so only a page
+            # that answers a GET is one to come back to; a page that answers
+            # a post (a refusal, an error) sends it home.
+            if scope["method"] in ("GET", "HEAD"):
+                raw = scope.get("raw_path")
+                path = raw.decode("latin-1") if raw else quote(scope["path"])
+                query = scope.get("query_string", b"").decode("latin-1")
+                back = f"{path}?{query}" if query else path
+            else:
+                back = HOME_PATH
+            _page_theme.set((theme if theme in THEMES else "auto", back))
         await self.app(scope, receive, send)
 
 
