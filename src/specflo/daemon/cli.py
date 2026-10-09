@@ -52,14 +52,10 @@ def serve(
     ),
 ) -> None:
     """Start the daemon on <dir>, bound to loopback unless --bind says otherwise."""
-    if ctx.invoked_subcommand == "root":
-        # Showing or setting the root must work when none is set yet.
-        ctx.obj = {"option": root}
-        return
-    root = _daemon_root(root)
-    ctx.obj = {"root": root}
+    ctx.obj = _RootOnDemand(option=root)
     if ctx.invoked_subcommand is not None:
         return
+    root = ctx.obj["root"]
     try:
         import uvicorn
 
@@ -71,6 +67,22 @@ def serve(
     application = create_app(root, url=url)
     typer.echo(f"specflo daemon: root {root}, listening on {url}")
     uvicorn.run(application, host=bind, port=port)
+
+
+class _RootOnDemand(dict):
+    """The serve context object: the ``--root`` option, and the root on first read.
+
+    The callback runs before Click parses a subcommand's own arguments, so it
+    cannot tell ``--help`` from real work. The root is found, and a terminal
+    asked for it, only when a command body reads ``ctx.obj["root"]``: help
+    never asks, and ``serve root`` reads only the option.
+    """
+
+    def __missing__(self, key: str) -> Path:
+        if key != "root":
+            raise KeyError(key)
+        self["root"] = root = _daemon_root(self["option"])
+        return root
 
 
 def _stdin_is_terminal() -> bool:

@@ -192,3 +192,19 @@ def test_root_command_with_nothing_set_says_so_without_asking(cli_home, monkeypa
     assert "No daemon root is set" in shown.stderr
     assert "Daemon root" not in shown.output
     assert not settings.settings_path(cli_home).exists()
+
+
+# --- help -------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("terminal", [True, False])
+@pytest.mark.parametrize("command", [["token", "add"], ["pool", "validate"]])
+def test_help_on_a_subcommand_needs_no_root(cli_home, monkeypatch, terminal, command):
+    monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: terminal)
+
+    result = _serve(*command, "--help")
+
+    assert result.exit_code == 0, result.output
+    assert "Usage:" in result.stdout
+    assert "Daemon root" not in result.output
+    assert not settings.settings_path(cli_home).exists()
