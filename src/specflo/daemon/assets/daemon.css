@@ -12,6 +12,9 @@
 .site-nav a { color: var(--fg); padding: 4px 8px; border-radius: var(--radius); }
 .site-nav a:hover { text-decoration: none; background: var(--bg-hover); }
 .identity { margin-left: auto; color: var(--fg-muted); }
+/* The switch keeps to the right edge; the identity, when shown, takes that place. */
+.site-header .theme { margin-left: auto; }
+.identity + .theme { margin-left: 0; }
 .identity strong { color: var(--fg); font-weight: 600; }
 @media (max-width: 767px) {
   .identity { display: none; }
@@ -59,7 +62,7 @@ main th:last-child { border-top-right-radius: var(--radius); }
 main td { padding: 8px 12px; vertical-align: top; border-top: 1px solid var(--border-muted); }
 main tbody tr:first-child td { border-top: 0; }
 main tbody tr:hover { background: var(--bg-hover); }
-main td.num { text-align: right; font-variant-numeric: tabular-nums; }
+main td.num { font-variant-numeric: tabular-nums; }
 main td ul { margin: 0; padding-left: 18px; }
 main td form { margin: 0; }
 main td button { font-size: 12px; padding: 2px 10px; min-height: 26px; }

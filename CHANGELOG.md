@@ -8,6 +8,26 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.17.0]
+
+### Added
+- **Theme switch in the daemon web UI.** Every page has an Auto/Light/Dark
+  switch in its header. The choice is kept in a `specflo_theme` cookie for a
+  year; Auto follows the browser. The switch works with no script and needs
+  no sign-in, so the sign-in page has it too.
+
+### Changed
+- **Daemon web UI look.** The pages take the Agent Wiki viewer's style with
+  a teal accent: a header with an accent top bar, the specflo mark and
+  wordmark, the Products and Pool links and the signed-in identity, and
+  bordered tables, forms and transcript on one set of light and dark colour
+  tokens. The daemon serves the frame stylesheet (`specflo.css`), its own
+  rules (`daemon.css`) and a vendored github-markdown-css 5.9.0 (MIT, notice
+  in `daemon/assets/LICENSES.md`) from `/assets`.
+- **Bench index page.** `mb.py graph` writes `index.html` with the same
+  stylesheets inlined, the specflo header and an Auto/Light/Dark switch made
+  of radio inputs; the choice lasts until the page is reloaded.
+
 ## [0.16.1]
 
 ### Added
