@@ -33,6 +33,7 @@ from . import status as status_view
 from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
+from .bench.cli import bench_app
 from .daemon.cli import serve_app
 from .daemon import workitems as workitems_module
 from .daemon.products import RemoteProducts
@@ -232,6 +233,9 @@ app.add_typer(config_app, name="config")
 # imports no web framework, so registering it costs nothing without the
 # serve extra.
 app.add_typer(serve_app, name="serve")
+
+# The model bench: its command modules load only when a bench command runs.
+app.add_typer(bench_app, name="bench")
 
 remote_app = typer.Typer(help="Register the daemons this checkout can reach.")
 app.add_typer(remote_app, name="remote")

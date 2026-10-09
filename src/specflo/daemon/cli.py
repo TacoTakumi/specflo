@@ -82,7 +82,7 @@ class _RootOnDemand(dict):
     def __missing__(self, key: str) -> Path:
         if key != "root":
             raise KeyError(key)
-        self["root"] = root = _daemon_root(self["option"])
+        self["root"] = root = daemon_root(self["option"])
         return root
 
 
@@ -90,7 +90,7 @@ def _stdin_is_terminal() -> bool:
     return sys.stdin.isatty()
 
 
-def _daemon_root(option: Path | None) -> Path:
+def daemon_root(option: Path | None) -> Path:
     """The root in force; with none set, ask a terminal and save the answer.
 
     Off a terminal a question would hang a script or an agent, so the command

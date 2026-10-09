@@ -78,7 +78,7 @@ from specflo.bench import (
 )
 from specflo.bench import workdir as wd
 
-# Relative to the current directory until the command line passes the bench home.
+# `specflo bench` passes a path under the bench home; this serves a direct call.
 RUNS_DIR = Path("bench") / "runs"
 WORK_ROOT = Path(tempfile.gettempdir()) / "modelbench"
 LLAMA_SWAP_LOG = Path.home() / "AI" / "Engines" / "logs" / "llama-swap.log"

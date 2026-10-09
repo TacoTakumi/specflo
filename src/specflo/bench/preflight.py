@@ -34,7 +34,7 @@ from typing import Any, Iterable, Iterator
 from specflo.bench import arms
 
 DEFAULT_BASE_URL = "http://localhost:8080"
-# Relative to the current directory until the command line passes the bench home.
+# `specflo bench` passes a path under the bench home; this serves a direct call.
 DEFAULT_STATE = Path("bench") / "state" / "loaded-by-bench.json"
 STATE_FORMAT = 1
 
