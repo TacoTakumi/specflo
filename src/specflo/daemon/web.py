@@ -27,12 +27,15 @@ import logging
 import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextvars import ContextVar
 from pathlib import Path
 from urllib.parse import parse_qs, quote
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.requests import HTTPConnection
+from starlette.types import ASGIApp, Receive, Scope, Send
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sse_starlette import EventSourceResponse
 from starlette.concurrency import run_in_threadpool
@@ -53,6 +56,8 @@ from .workitems import FULL_DEV_PATH, WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
+# Where the header's theme switch posts; like sign-in, it needs no session.
+THEME_PATH = "/theme"
 ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
 PROJECT_PATH = "/projects/{slug}"
@@ -87,6 +92,11 @@ NEW_TEAM_PATH = TEAMS_PATH + "/new"
 EDIT_TEAM_PATH = TEAMS_PATH + "/{name}/edit"
 DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
 SESSION_COOKIE = "specflo_session"
+# The theme switch's choice lives in this cookie for a year; auto follows the
+# browser's colour scheme.
+THEME_COOKIE = "specflo_theme"
+THEMES = ("auto", "light", "dark")
+THEME_TTL = 365 * 24 * 60 * 60
 # How long a session lives, in seconds; the cookie carries the same limit.
 SESSION_TTL = 12 * 60 * 60
 
@@ -112,6 +122,8 @@ _templates = Environment(
 _templates.globals.update(
     home_path=HOME_PATH,
     signin_path=SIGNIN_PATH,
+    theme_path=THEME_PATH,
+    themes=THEMES,
     assets_path=ASSETS_PATH,
     pool_path=POOL_PATH,
     identities=BROWSER_IDENTITIES,
@@ -168,10 +180,57 @@ def current_session(request: Request) -> str:
     return entry[0]
 
 
+# The theme the request's cookie chose and the path it asked for, as the
+# middleware below set them for this request. Every page reads them here, so
+# no route has to pass the request on to render().
+_page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=("auto", HOME_PATH))
+
+
+class ThemeMiddleware:
+    """Set the request's theme and path for render() before the route runs."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http":
+            conn = HTTPConnection(scope)
+            theme = conn.cookies.get(THEME_COOKIE)
+            raw = scope.get("raw_path")
+            path = raw.decode("latin-1") if raw else quote(scope["path"])
+            query = scope.get("query_string", b"").decode("latin-1")
+            _page_theme.set((
+                theme if theme in THEMES else "auto",
+                f"{path}?{query}" if query else path,
+            ))
+        await self.app(scope, receive, send)
+
+
 def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
-    """The page ``template`` renders with ``context``."""
-    html = _templates.get_template(template).render(**context)
-    return HTMLResponse(html, status_code=status_code)
+    """The page ``template`` renders with ``context`` and the request's theme.
+
+    The page depends on the theme cookie as well as the session one, so the
+    response varies on Cookie.
+    """
+    theme, path = _page_theme.get()
+    html = _templates.get_template(template).render(theme=theme, theme_next=path, **context)
+    return HTMLResponse(html, status_code=status_code, headers={"Vary": "Cookie"})
+
+
+def same_site_path(target: str) -> str:
+    """``target`` when it is a path on this site, else home.
+
+    A path starts with a single / and holds no backslash or control
+    character, so the browser cannot read it as another host.
+    """
+    if (
+        not target.startswith("/")
+        or target.startswith("//")
+        or "\\" in target
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in target)
+    ):
+        return HOME_PATH
+    return target
 
 
 def _to_sign_in(request: Request, exc: SignInRequired) -> RedirectResponse:
@@ -216,6 +275,30 @@ async def sign_in(request: Request) -> Response:
         SESSION_COOKIE,
         secret,
         max_age=SESSION_TTL,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=request.url.scheme == "https",
+    )
+    return response
+
+
+@front_door.post(THEME_PATH, include_in_schema=False)
+async def set_theme(request: Request) -> Response:
+    """Keep the posted theme in its cookie and go back to the page it came from.
+
+    It changes no state of the daemon, only the browser's own preference, so
+    it asks for no session: the sign-in page carries the switch too.
+    """
+    form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
+    theme = form.get("theme", [""])[0]
+    if theme not in THEMES:
+        return render("error.html", status_code=400, identity=None, message="No such theme.")
+    response = RedirectResponse(same_site_path(form.get("next", [""])[0]), status_code=303)
+    response.set_cookie(
+        THEME_COOKIE,
+        theme,
+        max_age=THEME_TTL,
         httponly=True,
         samesite="lax",
         path="/",
@@ -848,3 +931,4 @@ def install(app: FastAPI) -> None:
     app.include_router(pool_manage.team_pages)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")
+    app.add_middleware(ThemeMiddleware)
