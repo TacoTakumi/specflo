@@ -31,6 +31,9 @@ CONTROLS = {
     "delete team": "team_delete_url(",
 }
 FRONT_DOOR = "signin_path"
+# The header's theme switch sets the browser's own cookie and nothing else;
+# it posts with no session, as the sign-in form does.
+THEME_SWITCH = "theme_path"
 # htmx 4 aborts a request after this many milliseconds unless told otherwise.
 HTMX_DEFAULT_TIMEOUT_MS = 60_000
 # Verbs that make an element post on its own, without a form.
@@ -50,18 +53,22 @@ def test_the_mutating_controls_are_exactly_the_listed_ones_and_the_front_door():
             if FRONT_DOOR in action:
                 seen.setdefault("sign in", []).append(path.name)
                 continue
+            if THEME_SWITCH in action:
+                seen.setdefault("theme", []).append(path.name)
+                continue
             names = [name for name, helper in CONTROLS.items() if helper in action]
             assert len(names) == 1, (path.name, action)
             seen.setdefault(names[0], []).append(path.name)
-    assert set(seen) == set(CONTROLS) | {"sign in"}, seen
+    assert set(seen) == set(CONTROLS) | {"sign in", "theme"}, seen
     assert seen["sign in"] == ["signin.html"]
+    assert seen["theme"] == ["base.html"]
 
 
 def test_every_form_but_the_front_door_posts_and_carries_the_session_secret():
     for path in TEMPLATES:
         for tag, body in forms(path.read_text()):
             assert 'method="post"' in tag, (path.name, tag)
-            if FRONT_DOOR in tag:
+            if FRONT_DOOR in tag or THEME_SWITCH in tag:
                 continue
             assert '<input type="hidden" name="session" value="{{ session }}">' in body, (path.name, tag)
 
@@ -115,9 +122,9 @@ def test_the_transcript_line_renders_author_time_and_text_inside_the_monospace_r
     region = re.search(r'<div id="transcript" class="transcript".*?</div>', project, re.S).group(0)
     assert '{% include "chat_line.html" %}' in region
 
-    base = (web.TEMPLATES_DIR / "base.html").read_text()
-    rule = re.search(r"\.transcript\s*\{([^}]*)\}", base)
-    assert rule and "monospace" in rule.group(1)
+    sheet = (web.ASSETS_DIR / "daemon.css").read_text()
+    rule = re.search(r"\.transcript\s*\{([^}]*)\}", sheet)
+    assert rule and "var(--mono)" in rule.group(1)
 
 
 def test_the_four_mutating_routes_share_one_session_guard():

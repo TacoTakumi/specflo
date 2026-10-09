@@ -85,6 +85,11 @@ PORTER = definitions.AgentDefinition(
 )
 
 
+def page_body(html):
+    """The page's own content: its <main>, without the header every page shares."""
+    return re.search(r"<main\b[^>]*>(.*)</main>", html, re.S).group(1)
+
+
 def edit_url(name: str) -> str:
     return f"{LIST}/{name}/edit"
 
@@ -508,7 +513,7 @@ def test_such_an_entry_is_listed_with_its_fault_and_has_no_form(root, kind):
     assert f"{odd}: definition 'odd': file: not a regular file" in shown(listed)
     assert f'href="{edit_url("odd")}"' not in listed.text
     assert form.status_code == 409
-    assert "not a regular file" in shown(form) and "<form" not in form.text
+    assert "not a regular file" in shown(form) and "<form" not in page_body(form.text)
 
 
 @pytest.mark.parametrize("kind", KINDS)

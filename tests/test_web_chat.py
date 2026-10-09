@@ -437,9 +437,9 @@ def test_a_fresh_page_renders_every_entry_as_one_line_in_the_monospace_region(re
         (2, seat.agent_name(slug), entries[1].time, "Tell me what fails.\nOne case at a time."),
         (3, chat.STATE_KIND, entries[2].time, chat.IDLE),
     ]
-    base = (web.TEMPLATES_DIR / "base.html").read_text()
-    rule = re.search(r"\.transcript\s*\{([^}]*)\}", base)
-    assert rule and "monospace" in rule.group(1)
+    sheet = (web.ASSETS_DIR / "daemon.css").read_text()
+    rule = re.search(r"\.transcript\s*\{([^}]*)\}", sheet)
+    assert rule and "var(--mono)" in rule.group(1)
 
 
 def test_the_page_connects_the_region_to_the_stream_from_the_last_rendered_id(requester, root, slug, idle_agent):

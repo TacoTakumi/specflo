@@ -1,0 +1,33 @@
+/* specflo daemon stylesheet: the daemon's own parts, on the tokens of
+   specflo.css. A colour the frame lacks is one more light-dark() token in
+   the block below, the only place a colour literal may sit here. */
+
+/* ---------- Colour tokens ---------- */
+:root {
+  --danger:       light-dark(#cf222e, #f85149);
+}
+
+/* ---------- Header ---------- */
+.site-nav { display: flex; gap: 4px; }
+.site-nav a { color: var(--fg); padding: 4px 8px; border-radius: var(--radius); }
+.site-nav a:hover { text-decoration: none; background: var(--bg-hover); }
+.identity { margin-left: auto; color: var(--fg-muted); }
+.identity strong { color: var(--fg); font-weight: 600; }
+@media (max-width: 767px) {
+  .identity { display: none; }
+}
+
+/* ---------- Messages ---------- */
+.error { color: var(--danger); }
+
+/* ---------- Forms ---------- */
+fieldset { border: 1px solid var(--border); border-radius: var(--radius); }
+label { display: block; margin: 8px 0; }
+
+/* ---------- Transcript ---------- */
+.transcript { font: 13px/1.45 var(--mono); background: var(--bg-muted); color: var(--fg);
+  border: 1px solid var(--border); padding: 12px 16px; border-radius: var(--radius); overflow-x: auto; }
+.transcript .line { white-space: pre-wrap; }
+.transcript .author { color: var(--accent); font-weight: 600; }
+.transcript time { color: var(--fg-muted); }
+.transcript .line-state .text { color: var(--fg-muted); font-style: italic; }

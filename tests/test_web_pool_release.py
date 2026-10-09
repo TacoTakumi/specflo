@@ -44,6 +44,11 @@ CAUSE = "released by developer"
 SECTIONS = ("pools", "waiting", "members", "leases", "accounts", "standing", "transitions")
 
 
+def page_body(html):
+    """The page's own content: its <main>, without the header every page shares."""
+    return re.search(r"<main\b[^>]*>(.*)</main>", html, re.S).group(1)
+
+
 def controls(html: str, name: str = "leases") -> dict[str, tuple[str, dict[str, str]]]:
     """The release forms of the section *name*, by the lease of the row each
     stands in: the URL it posts to and the hidden fields it carries."""
@@ -105,7 +110,7 @@ def test_the_developers_page_shows_one_control_on_each_active_lease_and_on_nothi
         if name != "leases":
             assert "<form" not in section(html, name), name
             assert "<button" not in section(html, name), name
-    assert html.count("<form") == 1
+    assert page_body(html).count("<form") == 1
 
 
 def test_the_requesters_page_shows_no_control(pool_rig, busy):
@@ -114,7 +119,7 @@ def test_the_requesters_page_shows_no_control(pool_rig, busy):
     html = page(client)
 
     assert list(rows(html, "leases", "lease")) == [busy["granted"].lease_id]
-    assert "<form" not in html and "<button" not in html
+    assert "<form" not in page_body(html) and "<button" not in page_body(html)
     assert client.cookies[web.SESSION_COOKIE] not in html
 
 

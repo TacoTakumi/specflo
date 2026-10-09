@@ -1,37 +1,40 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="{{ theme }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}specflo{% endblock %}</title>
-  <style>
-    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: #1f2328; background: #fafafa; }
-    header { display: flex; align-items: baseline; gap: 1rem; padding: 0.75rem 1.25rem; background: #fff; border-bottom: 1px solid #d0d7de; }
-    header .brand { font-weight: 600; color: inherit; text-decoration: none; }
-    header .identity { margin-left: auto; color: #57606a; }
-    main { max-width: 60rem; margin: 0 auto; padding: 1.25rem; }
-    .error { color: #a40e26; }
-    fieldset { border: 1px solid #d0d7de; border-radius: 4px; }
-    label { display: block; margin: 0.5rem 0; }
-    button { padding: 0.4rem 0.9rem; }
-    .transcript { font: 13px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #1f2328; color: #e6edf3; padding: 0.75rem 1rem; border-radius: 4px; overflow-x: auto; }
-    .transcript .line { white-space: pre-wrap; }
-    .transcript .author { color: #7ee787; }
-    .transcript time { color: #8b949e; }
-    .transcript .line-state .text { color: #d2a8ff; }
-  </style>
+  <link rel="stylesheet" href="{{ assets_path }}/github-markdown.css">
+  <link rel="stylesheet" href="{{ assets_path }}/specflo.css">
+  <link rel="stylesheet" href="{{ assets_path }}/daemon.css">
   <script src="{{ assets_path }}/htmx.min.js"></script>
   <script src="{{ assets_path }}/hx-sse.js"></script>
 </head>
 <body>
-  <header>
-    <a class="brand" href="{{ home_path }}">specflo</a>
-    {% if identity %}
-    <a class="nav" href="{{ pool_path }}">Pool</a>
-    <span class="identity">signed in as <strong>{{ identity }}</strong></span>
-    {% endif %}
+  <header class="site-header">
+    <div class="container">
+      <a class="brand" href="{{ home_path }}">
+        <svg viewBox="0 0 30 22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square">
+          <path d="M3 4l7 7-7 7M12 4l7 7-7 7M24 3v16"/>
+        </svg>
+        specflo
+      </a>
+      {% if identity %}
+      <nav class="site-nav" aria-label="Site">
+        <a href="{{ home_path }}">Products</a>
+        <a href="{{ pool_path }}">Pool</a>
+      </nav>
+      <span class="identity">signed in as <strong>{{ identity }}</strong></span>
+      {% endif %}
+      <form class="theme" method="post" action="{{ theme_path }}" aria-label="Theme">
+        <input type="hidden" name="next" value="{{ theme_next }}">
+        {% for value in themes %}
+        <button name="theme" value="{{ value }}" aria-pressed="{{ 'true' if value == theme else 'false' }}">{{ value | capitalize }}</button>
+        {% endfor %}
+      </form>
+    </div>
   </header>
-  <main>
+  <main class="container">
     {% block content %}{% endblock %}
   </main>
 </body>

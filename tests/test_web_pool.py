@@ -410,7 +410,7 @@ def test_the_navigation_links_the_page_for_a_signed_in_identity_only(tmp_path):
     assert link not in TestClient(app).get(web.SIGNIN_PATH).text
     home = signed_in(app).get(web.HOME_PATH)
     assert home.status_code == 200
-    assert link in re.search(r"<header>(.*?)</header>", home.text, re.S).group(1)
+    assert link in re.search(r"<header\b[^>]*>(.*?)</header>", home.text, re.S).group(1)
 
 
 def test_the_only_route_that_changes_the_pool_is_the_release_of_a_lease():

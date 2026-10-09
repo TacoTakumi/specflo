@@ -7,6 +7,8 @@ session, so the sign-in page carries the switch too. Every page depends on
 the cookie, so every page varies on it.
 """
 
+import re
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -77,3 +79,48 @@ def test_a_signed_in_page_varies_on_the_cookie(client, root):
     sign_in(client, root)
 
     assert "Cookie" in client.get(web.HOME_PATH).headers["vary"]
+
+
+# --- what the pages show -----------------------------------------------------------
+
+
+def switch(html):
+    """The theme the page's <html> names and the pressed button of its switch."""
+    named = re.search(r'<html lang="en" data-theme="([^"]+)">', html).group(1)
+    form = re.search(rf'<form class="theme" method="post" action="{web.THEME_PATH}"[^>]*>(.*?)</form>', html, re.S).group(1)
+    pressed = re.findall(r'<button name="theme" value="([^"]+)" aria-pressed="true">', form)
+    buttons = re.findall(r'<button name="theme" value="([^"]+)"', form)
+    return named, pressed, buttons
+
+
+@pytest.mark.parametrize("cookie, expected", [
+    (None, "auto"), ("auto", "auto"), ("light", "light"), ("dark", "dark"), ("sepia", "auto"),
+])
+def test_the_sign_in_page_follows_the_cookie(client, cookie, expected):
+    if cookie is not None:
+        client.cookies.set(web.THEME_COOKIE, cookie)
+
+    named, pressed, buttons = switch(client.get(web.SIGNIN_PATH).text)
+
+    assert named == expected
+    assert pressed == [expected]
+    assert buttons == list(web.THEMES)
+
+
+@pytest.mark.parametrize("cookie, expected", [(None, "auto"), ("dark", "dark"), ("bogus", "auto")])
+def test_a_signed_in_page_follows_the_cookie(client, root, cookie, expected):
+    sign_in(client, root)
+    if cookie is not None:
+        client.cookies.set(web.THEME_COOKIE, cookie)
+
+    named, pressed, _ = switch(client.get(web.HOME_PATH).text)
+
+    assert (named, pressed) == (expected, [expected])
+
+
+def test_the_switch_sends_the_browser_back_to_the_page_it_is_on(client, root):
+    sign_in(client, root)
+
+    html = client.get(web.HOME_PATH + "?a=1&b=2").text
+
+    assert '<input type="hidden" name="next" value="/?a=1&amp;b=2">' in html

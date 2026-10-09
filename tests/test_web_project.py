@@ -89,6 +89,11 @@ def artifacts(html):
 MUTATING = ("<form", "<button", "<input", "<select", "<textarea", 'method="post"', "hx-post", "hx-put", "hx-patch", "hx-delete")
 
 
+def page_body(html):
+    """The page's own content: its <main>, without the header every page shares."""
+    return re.search(r"<main\b[^>]*>(.*)</main>", html, re.S).group(1)
+
+
 def test_the_page_shows_where_the_project_stands_and_who_it_waits_on(client, root):
     slug = seed(root)
 
@@ -218,7 +223,7 @@ def test_an_artifact_not_yet_created_says_so(client, root):
 def test_the_page_has_no_form_or_mutating_control_without_a_gate_to_take(client, root):
     slug = seed(root)
 
-    html = page(client, slug).text.lower()
+    html = page_body(page(client, slug).text).lower()
 
     for marker in MUTATING:
         assert marker not in html, marker
@@ -274,7 +279,7 @@ def test_the_take_control_is_offered_only_to_the_identity_the_gate_waits_on(clie
 
     assert take_form(page(client, slug).text) is None
     for marker in MUTATING:
-        assert marker not in page(client, slug).text.lower(), marker
+        assert marker not in page_body(page(client, slug).text).lower(), marker
 
     service(root).take_gate(slug)
     gated(root, slug, role="developer")
