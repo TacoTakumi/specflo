@@ -35,8 +35,8 @@
     <tr data-product="{{ card.product.slug }}">
       <td><a href="{{ product_url(card.product.slug) }}">{{ card.product.name }}</a></td>
       <td>{{ card.summary }}</td>
-      <td class="count">{{ card.open_items }}</td>
-      <td class="count">{{ card.active_projects }}</td>
+      <td class="num">{{ card.open_items }}</td>
+      <td class="num">{{ card.active_projects }}</td>
     </tr>
     {% endfor %}
   </tbody>

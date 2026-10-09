@@ -84,3 +84,28 @@ def test_every_stylesheet_a_page_links_is_served(client):
     html = client.get(web.SIGNIN_PATH).text
     for href in re.findall(r'<link rel="stylesheet" href="([^"]+)">', html):
         assert client.get(href).status_code == 200, href
+
+
+# --- colours come from the tokens --------------------------------------------------
+
+COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?)\(")
+
+
+def test_no_template_holds_a_colour():
+    for path in sorted(web.TEMPLATES_DIR.glob("*.html")):
+        assert not COLOUR.findall(path.read_text()), path.name
+
+
+def test_the_daemon_stylesheet_holds_colours_only_in_its_token_block():
+    sheet = (web.ASSETS_DIR / "daemon.css").read_text()
+    tokens = re.search(r"/\* -+ Colour tokens -+ \*/\s*:root \{[^}]*\}", sheet)
+    assert tokens, "daemon.css has no token block"
+    for line in tokens.group(0).splitlines()[2:-1]:
+        assert re.fullmatch(r"\s*--[a-z-]+:\s*light-dark\(#[0-9a-f]{6}, #[0-9a-f]{6}\);", line), line
+    rest = sheet.replace(tokens.group(0), "")
+    assert not COLOUR.findall(rest)
+
+
+def test_a_number_cell_is_not_styled_as_the_frames_count_pill():
+    for path in sorted(web.TEMPLATES_DIR.glob("*.html")):
+        assert '<td class="count"' not in path.read_text(), path.name

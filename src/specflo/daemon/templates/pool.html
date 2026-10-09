@@ -49,9 +49,9 @@
       {% for row in view.pools %}
       <tr data-pool="{{ row.pool.name }}">
         <td>{{ row.pool.name }}</td>
-        <td class="count">{{ row.pool.size }}</td>
-        <td class="count">{{ row.in_use }}</td>
-        <td class="count">{{ row.waiting }}</td>
+        <td class="num">{{ row.pool.size }}</td>
+        <td class="num">{{ row.in_use }}</td>
+        <td class="num">{{ row.waiting }}</td>
         <td>{{ limit(row.pool.idle_default) }}</td>
         <td>{{ limit(row.pool.idle_max) }}</td>
         <td>{{ limit(row.pool.preempt_after) or "never" }}</td>
@@ -119,7 +119,7 @@
         <td>{{ row.member.backing }}</td>
         <td>{{ row.runs_on }}</td>
         <td>{{ row.member.egress }}</td>
-        <td class="count">{{ row.in_use }} of {{ row.member.capacity }}</td>
+        <td class="num">{{ row.in_use }} of {{ row.member.capacity }}</td>
         <td>{% if row.reloads %}{{ row.reloads | length }} - last {{ row.reloads[-1].model }} at <time datetime="{{ row.reloads[-1].time }}">{{ row.reloads[-1].time }}</time>{% else %}0{% endif %}</td>
       </tr>
       {% endfor %}
@@ -194,11 +194,11 @@
       {% for row in view.accounts %}
       <tr data-account="{{ row.account.name }}">
         <td>{{ row.account.name }}</td>
-        <td class="count">{{ row.account.cap }}</td>
-        <td class="count">{{ row.in_use }}</td>
-        <td class="count">{{ amount(row.figures.usage) if row.figures else "" }}</td>
-        <td class="count">{{ amount(row.figures.limit) if row.figures else "" }}</td>
-        <td class="count">{{ amount(row.figures.remaining) if row.figures else "" }}</td>
+        <td class="num">{{ row.account.cap }}</td>
+        <td class="num">{{ row.in_use }}</td>
+        <td class="num">{{ amount(row.figures.usage) if row.figures else "" }}</td>
+        <td class="num">{{ amount(row.figures.limit) if row.figures else "" }}</td>
+        <td class="num">{{ amount(row.figures.remaining) if row.figures else "" }}</td>
         <td>{% if row.open %}open{% elif row.reopen %}closed until {{ row.reopen }}{% else %}closed, with no time set for it to reopen{% endif %}</td>
         <td>{% if row.figures %}<time datetime="{{ row.figures.read_at }}">{{ row.figures.read_at }}</time>{% if row.figures.read_error %} <span class="error">{{ row.figures.read_error }}</span>{% endif %}{% else %}never{% endif %}</td>
       </tr>
