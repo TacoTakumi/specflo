@@ -52,6 +52,10 @@ def serve(
     ),
 ) -> None:
     """Start the daemon on <dir>, bound to loopback unless --bind says otherwise."""
+    if ctx.invoked_subcommand == "root":
+        # Showing or setting the root must work when none is set yet.
+        ctx.obj = {"option": root}
+        return
     root = _daemon_root(root)
     ctx.obj = {"root": root}
     if ctx.invoked_subcommand is not None:
@@ -100,6 +104,36 @@ def _daemon_root(option: Path | None) -> Path:
         f"Saved {saved} as the daemon root in {settings.settings_path()}.", err=True
     )
     return saved
+
+
+@serve_app.command(
+    "root",
+    epilog="Example: specflo serve root ~/specflo-daemon",
+)
+def root_command(
+    ctx: typer.Context,
+    directory: Path | None = typer.Argument(
+        None, metavar="[<dir>]", help="The directory to save as the daemon root."
+    ),
+) -> None:
+    """Save <dir> as the daemon root, or print the root in force and its source."""
+    try:
+        if directory is not None:
+            saved = settings.save_daemon_root(directory)
+            typer.echo(saved)
+            typer.secho(f"Saved in {settings.settings_path()}.", err=True)
+            return
+        found = settings.resolve_daemon_root(ctx.obj["option"])
+    except SpecfloError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if found is None:
+        typer.secho(
+            "No daemon root is set. Set one with `specflo serve root <dir>`.", err=True
+        )
+        return
+    typer.echo(found[0])
+    typer.secho(f"From {found[1]}.", err=True)
 
 
 @token_app.command(

@@ -157,3 +157,38 @@ def test_serve_off_a_terminal_fails_with_the_command_that_sets_the_root(cli_home
     assert result.exit_code == 1
     assert "specflo serve root" in result.stderr
     assert not settings.settings_path(cli_home).exists()
+
+
+# --- serve root -------------------------------------------------------------
+
+
+def test_root_command_saves_then_shows_the_root_and_its_file(cli_home, tmp_path):
+    saved = _serve("root", str(tmp_path / "chosen"))
+    shown = _serve("root")
+
+    assert saved.exit_code == 0, saved.output
+    data = yaml.safe_load(settings.settings_path(cli_home).read_text())
+    assert data == {settings.DAEMON_ROOT_KEY: str((tmp_path / "chosen").resolve())}
+    assert shown.exit_code == 0, shown.output
+    assert shown.stdout.strip() == str((tmp_path / "chosen").resolve())
+    assert str(settings.settings_path(cli_home)) in shown.stderr
+
+
+def test_root_command_names_the_env_when_it_is_in_force(cli_home, tmp_path, monkeypatch):
+    monkeypatch.setenv(settings.DAEMON_ROOT_ENV, str(tmp_path / "env"))
+
+    shown = _serve("root")
+
+    assert shown.stdout.strip() == str(tmp_path / "env")
+    assert settings.DAEMON_ROOT_ENV in shown.stderr
+
+
+def test_root_command_with_nothing_set_says_so_without_asking(cli_home, monkeypatch):
+    monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: True)
+
+    shown = _serve("root")
+
+    assert shown.exit_code == 0, shown.output
+    assert "No daemon root is set" in shown.stderr
+    assert "Daemon root" not in shown.output
+    assert not settings.settings_path(cli_home).exists()
