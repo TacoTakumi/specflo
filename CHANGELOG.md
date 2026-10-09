@@ -11,26 +11,6 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.17.0]
 
 ### Added
-- **Theme switch in the daemon web UI.** Every page has an Auto/Light/Dark
-  switch in its header. The choice is kept in a `specflo_theme` cookie for a
-  year; Auto follows the browser. The switch works with no script and needs
-  no sign-in, so the sign-in page has it too.
-
-### Changed
-- **Daemon web UI look.** The pages take the Agent Wiki viewer's style with
-  a teal accent: a header with an accent top bar, the specflo mark and
-  wordmark, the Products and Pool links and the signed-in identity, and
-  bordered tables, forms and transcript on one set of light and dark colour
-  tokens. The daemon serves the frame stylesheet (`specflo.css`), its own
-  rules (`daemon.css`) and a vendored github-markdown-css 5.9.0 (MIT, notice
-  in `daemon/assets/LICENSES.md`) from `/assets`.
-- **Bench index page.** `mb.py graph` writes `index.html` with the same
-  stylesheets inlined, the specflo header and an Auto/Light/Dark switch made
-  of radio inputs; the choice lasts until the page is reloaded.
-
-## [0.16.1]
-
-### Added
 - **Model bench.** `bench/` holds a development tool, not part of the
   installed package, that measures how well a local model drives specflo. A
   run seeds a specflo project at the quick, fast or full level in a small
@@ -52,6 +32,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   directory. The page shows every graph in the directory with its arms as a
   table, and explains the bench, how to read a graph, each level and each
   metric.
+  It inlines the specflo web stylesheets, has the specflo header and an
+  Auto/Light/Dark switch made of radio inputs; the choice lasts until the
+  page is reloaded.
+- **Theme switch in the daemon web UI.** Every page has an Auto/Light/Dark
+  switch in its header. The choice is kept in a `specflo_theme` cookie for a
+  year; Auto follows the browser. The switch works with no script and needs
+  no sign-in, so the sign-in page has it too.
 
 ### Changed
 - **No ask-first reseed during an auto run.** While a `specflo auto` run is
@@ -61,6 +48,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   run no longer stops to wait for a human who is not there. `hook reseed
   --continue` and sessions with no live auto run are unchanged. After
   `specflo auto --off`, a cold start asks first again.
+- **Daemon web UI look.** The pages take the Agent Wiki viewer's style with
+  a teal accent: a header with an accent top bar, the specflo mark and
+  wordmark, the Products and Pool links and the signed-in identity, and
+  bordered tables, forms and transcript on one set of light and dark colour
+  tokens. The daemon serves the frame stylesheet (`specflo.css`), its own
+  rules (`daemon.css`) and a vendored github-markdown-css 5.9.0 (MIT, notice
+  in `daemon/assets/LICENSES.md`) from `/assets`.
 
 ## [0.16.0]
 
