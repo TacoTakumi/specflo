@@ -10,7 +10,7 @@ Invalid runs (`valid` false) and contaminated runs (`diagnostics.contaminated`
 truthy) are left out of every pass rate and graph; the disclosure counts them.
 Each graph is a PNG with its disclosure drawn under the plot and also written
 beside it as a .txt file, and `index.html` in the output directory shows
-every graph there with explanations. matplotlib (the `bench` dependency group) is
+every graph there with explanations. matplotlib (the `bench` extra) is
 imported only when drawing.
 """
 
@@ -252,6 +252,16 @@ def _mean_and_points(ax: Any, labels: list[str], values: list[list[float]]) -> N
     ax.grid(axis="y", alpha=0.3)
 
 
+def _require_matplotlib() -> None:
+    try:
+        import matplotlib  # noqa: F401
+    except ImportError:
+        raise GraphError(
+            "graphs need matplotlib: install the bench extra,"
+            " `pip install 'specflo[bench]'` (or `uv sync --extra bench`)"
+        ) from None
+
+
 def _render(path: Path, title: str, text: str, panels: list[tuple[str, list[list[float]]]], labels: list[str]) -> None:
     import matplotlib
 
@@ -293,6 +303,7 @@ def generate(
     records. Every comparison is checked before anything is written.
     Return (image path, disclosure text) per graph.
     """
+    _require_matplotlib()
     if arms is not None:
         wanted = set(arms)
         records = [r for r in records if (r["arm"]["entry"], r["arm"]["harness"]) in wanted]

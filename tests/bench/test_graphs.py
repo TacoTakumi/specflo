@@ -1,6 +1,7 @@
 """Comparison check and graphs with disclosures, from synthetic run records."""
 
 import copy
+import sys
 import html
 import json
 import re
@@ -304,3 +305,16 @@ def test_schema_invalid_record_exits_nonzero(tmp_path, capsys):
     rc = cmd_graph.main(["--records", str(rec_dir), "--out", str(tmp_path / "out")])
     assert rc != 0
     assert "settings.pass_cap" in capsys.readouterr().err
+
+
+def test_graph_without_matplotlib_names_the_bench_extra(tmp_path, monkeypatch, capsys):
+    from specflo.bench import cmd_graph
+
+    monkeypatch.setitem(sys.modules, "matplotlib", None)
+    rec_dir = write_records(tmp_path / "records", copy.deepcopy(harness_pair()))
+
+    code = cmd_graph.main(["--records", str(rec_dir), "--out", str(tmp_path / "out")])
+
+    assert code == 1
+    assert "specflo[bench]" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()

@@ -1017,6 +1017,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+bench = [
+    { name = "matplotlib" },
+]
 serve = [
     { name = "fastapi" },
     { name = "jinja2" },
@@ -1025,9 +1028,6 @@ serve = [
 ]
 
 [package.dev-dependencies]
-bench = [
-    { name = "matplotlib" },
-]
 dev = [
     { name = "fastapi" },
     { name = "jinja2" },
@@ -1044,16 +1044,16 @@ requires-dist = [
     { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.141.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "jinja2", marker = "extra == 'serve'", specifier = ">=3.1" },
+    { name = "matplotlib", marker = "extra == 'bench'", specifier = ">=3.11.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruamel-yaml", specifier = ">=0.18" },
     { name = "sse-starlette", marker = "extra == 'serve'", specifier = ">=3.4" },
     { name = "typer", specifier = ">=0.12" },
     { name = "uvicorn", marker = "extra == 'serve'", specifier = ">=0.52.4" },
 ]
-provides-extras = ["serve"]
+provides-extras = ["serve", "bench"]
 
 [package.metadata.requires-dev]
-bench = [{ name = "matplotlib", specifier = ">=3.11.2" }]
 dev = [
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "jinja2", specifier = ">=3.1" },
