@@ -110,7 +110,8 @@ def _daemon_root(option: Path | None) -> Path:
             err=True,
         )
         raise typer.Exit(code=1)
-    answer = typer.prompt("Daemon root", default=settings.DEFAULT_DAEMON_ROOT)
+    # On stderr: stdout carries what the command prints, such as a token secret.
+    answer = typer.prompt("Daemon root", default=settings.DEFAULT_DAEMON_ROOT, err=True)
     saved = settings.save_daemon_root(answer)
     typer.secho(
         f"Saved {saved} as the daemon root in {settings.settings_path()}.", err=True

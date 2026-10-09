@@ -208,3 +208,18 @@ def test_help_on_a_subcommand_needs_no_root(cli_home, monkeypatch, terminal, com
     assert "Usage:" in result.stdout
     assert "Daemon root" not in result.output
     assert not settings.settings_path(cli_home).exists()
+
+
+def test_first_run_prompt_keeps_stdout_to_the_secret(cli_home, tmp_path, monkeypatch):
+    monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: True)
+
+    result = runner.invoke(
+        app, ["serve", "token", "add", "requester"], input=f"{tmp_path / 'typed'}\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Daemon root" in result.stderr
+    assert "Daemon root" not in result.stdout
+    # The test runner echoes the typed answer to stdout; a terminal does not.
+    secret = result.stdout.strip().splitlines()[-1]
+    assert auth.identity_for(tmp_path / "typed", secret) == "requester"
