@@ -7,9 +7,15 @@ answer saved, and anything else is refused with the command that sets it.
 
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from specflo import settings
+from specflo.cli import app
 from specflo.config import find_root
+from specflo.daemon import auth
+from specflo.daemon import cli as serve_cli
+
+runner = CliRunner()
 
 
 @pytest.fixture
@@ -75,3 +81,79 @@ def test_resolve_settings_file_does_not_make_the_home_a_specflo_root(home, tmp_p
     below.mkdir(parents=True)
 
     assert find_root(below) is None
+
+
+# --- serve ------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli_home(home, monkeypatch):
+    """The home every serve call in the test reads, with no root in the env."""
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv(settings.DAEMON_ROOT_ENV, raising=False)
+    return home
+
+
+def _serve(*args):
+    return runner.invoke(app, ["serve", *args])
+
+
+def _has_tokens(root):
+    return (root / auth.TOKENS_FILENAME).is_file()
+
+
+def test_serve_option_wins_and_is_not_saved(cli_home, tmp_path, monkeypatch):
+    _save(cli_home, tmp_path / "saved")
+    monkeypatch.setenv(settings.DAEMON_ROOT_ENV, str(tmp_path / "env"))
+    before = settings.settings_path(cli_home).read_text()
+
+    result = _serve("--root", str(tmp_path / "opt"), "token", "add", "requester")
+
+    assert result.exit_code == 0, result.output
+    assert _has_tokens(tmp_path / "opt")
+    assert not _has_tokens(tmp_path / "env") and not _has_tokens(tmp_path / "saved")
+    assert settings.settings_path(cli_home).read_text() == before
+
+
+def test_serve_env_wins_over_the_saved_root(cli_home, tmp_path, monkeypatch):
+    _save(cli_home, tmp_path / "saved")
+    monkeypatch.setenv(settings.DAEMON_ROOT_ENV, str(tmp_path / "env"))
+
+    result = _serve("token", "add", "requester")
+
+    assert result.exit_code == 0, result.output
+    assert _has_tokens(tmp_path / "env") and not _has_tokens(tmp_path / "saved")
+
+
+def test_serve_reads_the_saved_root(cli_home, tmp_path):
+    _save(cli_home, tmp_path / "saved")
+
+    result = _serve("token", "add", "requester")
+
+    assert result.exit_code == 0, result.output
+    assert _has_tokens(tmp_path / "saved")
+
+
+@pytest.mark.parametrize("answer", ["typed", ""])
+def test_serve_asks_a_terminal_and_saves_the_answer(cli_home, tmp_path, monkeypatch, answer):
+    monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: True)
+    typed = tmp_path / "typed"
+    expected = typed if answer else cli_home / "specflo-daemon"
+
+    result = runner.invoke(
+        app, ["serve", "token", "add", "requester"], input=f"{typed if answer else ''}\n"
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Daemon root" in result.output
+    assert _has_tokens(expected)
+    saved = yaml.safe_load(settings.settings_path(cli_home).read_text())
+    assert saved == {settings.DAEMON_ROOT_KEY: str(expected.resolve())}
+
+
+def test_serve_off_a_terminal_fails_with_the_command_that_sets_the_root(cli_home):
+    result = _serve("token", "add", "requester")
+
+    assert result.exit_code == 1
+    assert "specflo serve root" in result.stderr
+    assert not settings.settings_path(cli_home).exists()

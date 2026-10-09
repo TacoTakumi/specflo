@@ -6,10 +6,12 @@ other specflo command works without the ``serve`` extra installed.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import typer
 
+from .. import settings
 from ..errors import SpecfloError
 from ..pool.cli_admin import pool_app
 from . import DEFAULT_BIND, DEFAULT_PORT, auth, prepare_root
@@ -34,11 +36,13 @@ serve_app.add_typer(pool_app, name="pool")
 @serve_app.callback(epilog="Example: specflo serve --root ~/specflo-daemon --port 8741")
 def serve(
     ctx: typer.Context,
-    root: Path = typer.Option(
-        ...,
+    root: Path | None = typer.Option(
+        None,
         "--root",
         metavar="<dir>",
-        help="The daemon root: holds its projects directory and state store.",
+        help="The daemon root: holds its projects directory and state store."
+        f" Default: ${settings.DAEMON_ROOT_ENV}, else the root saved in"
+        f" ~/.specflo/{settings.SETTINGS_FILENAME}.",
     ),
     bind: str = typer.Option(
         DEFAULT_BIND, "--bind", metavar="<host>", help="Address to listen on."
@@ -48,6 +52,7 @@ def serve(
     ),
 ) -> None:
     """Start the daemon on <dir>, bound to loopback unless --bind says otherwise."""
+    root = _daemon_root(root)
     ctx.obj = {"root": root}
     if ctx.invoked_subcommand is not None:
         return
@@ -62,6 +67,39 @@ def serve(
     application = create_app(root, url=url)
     typer.echo(f"specflo daemon: root {root}, listening on {url}")
     uvicorn.run(application, host=bind, port=port)
+
+
+def _stdin_is_terminal() -> bool:
+    return sys.stdin.isatty()
+
+
+def _daemon_root(option: Path | None) -> Path:
+    """The root in force; with none set, ask a terminal and save the answer.
+
+    Off a terminal a question would hang a script or an agent, so the command
+    fails and names the one that sets the root.
+    """
+    try:
+        found = settings.resolve_daemon_root(option)
+    except SpecfloError as exc:
+        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if found is not None:
+        return found[0]
+    if not _stdin_is_terminal():
+        typer.secho(
+            "error: no daemon root is set. Set one with `specflo serve root <dir>`,"
+            f" or pass --root <dir> or set ${settings.DAEMON_ROOT_ENV}.",
+            fg=typer.colors.RED,
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    answer = typer.prompt("Daemon root", default=settings.DEFAULT_DAEMON_ROOT)
+    saved = settings.save_daemon_root(answer)
+    typer.secho(
+        f"Saved {saved} as the daemon root in {settings.settings_path()}.", err=True
+    )
+    return saved
 
 
 @token_app.command(
