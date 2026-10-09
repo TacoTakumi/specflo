@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from modelbench import arms, preflight
+from specflo.bench import arms, preflight
 
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 OTHER = "swift15-flash-next-iq4xs-strata-2x3090"

@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import arms, launch_pi
+from specflo.bench import arms, launch_pi
 
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 HAVE_PI = shutil.which("pi") is not None
@@ -461,7 +461,7 @@ def test_real_pi_blocks_git_push_with_no_prompt(tmp_path: Path):
 @pytest.mark.timeout(1200)
 def test_rig_pi_blocks_git_push_with_no_prompt(tmp_path: Path):
     """A real model through llama-swap asks for `git push` and gets a block."""
-    from modelbench import preflight
+    from specflo.bench import preflight
 
     run = arms.Run(entry=ENTRY, harness="pi", level="quick", run_index=0)
     workdir = tmp_path / "work"

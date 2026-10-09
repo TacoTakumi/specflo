@@ -10,7 +10,7 @@ counts when <runs dir>/<run name>/record.json exists, passes the schema, has
 `valid: true` and names the arm, level and index of its directory. Every
 other record is invalid: it does not count, and the batch adds a new run
 index to the cell in its place. Any valid record of the cell counts, whichever
-batch (or single `mb.py run`) wrote it.
+batch (or single `specflo bench run`) wrote it.
 
 Resume: the plan is made from the records on disk, so a rerun after an
 interruption starts only the runs the cells still lack. A run killed mid-way
@@ -54,10 +54,11 @@ from typing import Any
 
 import yaml
 
-from modelbench import arms, launch_pi, lifecycle, preflight, probe, record, run
-from modelbench import workdir as wd
+from specflo.bench import DATA
+from specflo.bench import arms, launch_pi, lifecycle, preflight, probe, record, run
+from specflo.bench import workdir as wd
 
-DEFAULT_MATRICES = Path(__file__).resolve().parents[1] / "matrices.yaml"
+DEFAULT_MATRICES = DATA / "matrices.yaml"
 PROBES_DIR_NAME = "probes"
 PROBE_FILE = "probe.json"
 
@@ -65,7 +66,7 @@ NIGHT_START_HOUR = 12
 NIGHT_HARNESS = "claude-code"
 NIGHT_LEVEL = "full"
 
-# Errors that stop the batch: the same ones `mb.py run` reports.
+# Errors that stop the batch: the same ones `specflo bench run` reports.
 STOP_ERRORS = (arms.ArmError, run.RunError, preflight.PreflightError, probe.ProbeError,
                lifecycle.LifecycleError, launch_pi.LaunchError, wd.WorkdirError, OSError)
 
@@ -545,7 +546,7 @@ def summary(outcome: Outcome, plan: Plan, runs_dir: Path | str = run.RUNS_DIR) -
     short = [c for c in check_cells(plan.matrix, runs_dir) if c.valid < c.required]
     if short:
         lines.append(f"{len(short)} cell(s) still short; rerun the batch to fill them "
-                     "(`mb.py records --check --matrix " + plan.matrix.name + "`)")
+                     "(`specflo bench records --check --matrix " + plan.matrix.name + "`)")
     return lines
 
 

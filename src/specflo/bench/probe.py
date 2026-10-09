@@ -61,7 +61,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from modelbench import arms, launch_cc, launch_pi
+from specflo.bench import arms, launch_cc, launch_pi
 
 ENGINES = ("llama.cpp", "strata")
 API_OF_HARNESS = {"pi": "openai", "claude-code": "anthropic"}

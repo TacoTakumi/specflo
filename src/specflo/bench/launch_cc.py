@@ -53,14 +53,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from specflo.bench import DATA
 from specflo.hook import settings_snippet
 
-from modelbench import arms, launch_pi
-from modelbench.msgshim import NAME as SHIM_NAME, MessageShim
-from modelbench.launch_pi import LaunchError, tree_hash
+from specflo.bench import arms, launch_pi
+from specflo.bench.msgshim import NAME as SHIM_NAME, MessageShim
+from specflo.bench.launch_pi import LaunchError, tree_hash
 
-BENCH = Path(__file__).resolve().parents[1]
-CONFIG_DIR = BENCH / "configs" / "claude"
+CONFIG_DIR = DATA / "configs" / "claude"
 FROZEN_FILE = "frozen.json"
 SETTINGS_FILE = "settings.json"
 STATE_TEMPLATE = "claude.json"

@@ -24,9 +24,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from modelbench.arms import LEVELS
-from modelbench.index_page import write_index
-from modelbench.record import validate_record
+from specflo.bench.arms import LEVELS
+from specflo.bench.index_page import write_index
+from specflo.bench.record import validate_record
 
 # The fields that move with each comparable variable.
 VARIABLES: dict[str, tuple[str, ...]] = {

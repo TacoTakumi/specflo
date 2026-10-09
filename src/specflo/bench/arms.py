@@ -17,9 +17,11 @@ from typing import Any
 
 import yaml
 
+from specflo.bench import DATA
+
 HARNESSES = ("pi", "claude-code")
 LEVELS = ("quick", "fast", "full")
-DEFAULT_CONFIG = Path(__file__).resolve().parents[1] / "arms.yaml"
+DEFAULT_CONFIG = DATA / "arms.yaml"
 
 
 class ArmError(ValueError):

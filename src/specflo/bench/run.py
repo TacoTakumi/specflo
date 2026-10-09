@@ -58,7 +58,8 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
-from modelbench import (
+from specflo.bench import PACKAGE
+from specflo.bench import (
     arms,
     cc_continue,
     diagnostics,
@@ -75,10 +76,10 @@ from modelbench import (
     record,
     telemetry,
 )
-from modelbench import workdir as wd
+from specflo.bench import workdir as wd
 
-BENCH = wd.BENCH
-RUNS_DIR = BENCH / "runs"
+# Relative to the current directory until the command line passes the bench home.
+RUNS_DIR = Path("bench") / "runs"
 WORK_ROOT = Path(tempfile.gettempdir()) / "modelbench"
 LLAMA_SWAP_LOG = Path.home() / "AI" / "Engines" / "logs" / "llama-swap.log"
 
@@ -299,7 +300,7 @@ def engine_info(item: Mapping[str, Any], engine: str, *, commit: Callable[[str],
     }
 
 
-def specflo_tree_hash(root: Path = wd.REPO / "src" / "specflo") -> str:
+def specflo_tree_hash(root: Path = PACKAGE.parent) -> str:
     """sha256 over the specflo source files under test (caches left out), so uncommitted edits show."""
     digest = hashlib.sha256()
     for path in sorted(p for p in root.rglob("*") if p.is_file()):
@@ -534,7 +535,7 @@ def run_one(
     headless: bool = False,
     specflo: str | None = None,
     grade: Callable[..., grader.GradeResult] = grader.grade,
-    protected: Sequence[Path | str] = (BENCH, grader.ARCHIVE),
+    protected: Sequence[Path | str] = (PACKAGE, grader.ARCHIVE),
     **lifecycle_kw: Any,
 ) -> tuple[Path, dict[str, Any]]:
     """Run one arm at one level and index to a checked run record; returns its path and the record.
@@ -586,7 +587,7 @@ def run_one(
 
     rec = assemble_record(
         run, outcome, engine=engine, context_window=context_window,
-        specflo_version=wd.repo_version(), specflo_tree=specflo_tree_hash(), sealed=sealed,
+        specflo_version=wd.specflo_version(), specflo_tree=specflo_tree_hash(), sealed=sealed,
         run_dir=run_dir, sessions=sessions, log=log, normalise_errors=normalise_errors,
         normlog_path=normlog_path, metric_values=metric_values, diag=diag, grade=grade_values,
         telemetry_values=telemetry_values, limits_source=limits_source, llama_swap_log=llama_swap_log,

@@ -1,4 +1,4 @@
-"""`mb.py grade --tree DIR --level LEVEL`: grade a final tree and print the result as JSON.
+"""`specflo bench grade --tree DIR --level LEVEL`: grade a final tree and print the result as JSON.
 
 The JSON's `score` (passed / total held-out tests) is the run record's `score`.
 Exits 1 with a message on stderr when the tree cannot be graded.
@@ -11,11 +11,11 @@ import json
 import sys
 from pathlib import Path
 
-from modelbench import grader, heldout
+from specflo.bench import grader, heldout
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="mb.py grade", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="specflo bench grade", description=__doc__.splitlines()[0])
     parser.add_argument("--tree", required=True, type=Path, help="the run's final tree")
     parser.add_argument("--level", required=True, help="quick, fast or full")
     parser.add_argument("--archive", type=Path, default=grader.ARCHIVE, help="held-out archive")
@@ -36,7 +36,7 @@ def main(argv: list[str]) -> int:
             workdirs=args.workdir, keep=args.keep, timeout=args.timeout,
         )
     except (grader.GraderError, heldout.HeldoutError, OSError) as exc:
-        print(f"mb.py grade: {exc}", file=sys.stderr)
+        print(f"specflo bench grade: {exc}", file=sys.stderr)
         return 1
     print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
     return 0

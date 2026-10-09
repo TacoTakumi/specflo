@@ -31,10 +31,11 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from modelbench import arms
+from specflo.bench import arms
 
 DEFAULT_BASE_URL = "http://localhost:8080"
-DEFAULT_STATE = Path(__file__).resolve().parents[1] / "state" / "loaded-by-bench.json"
+# Relative to the current directory until the command line passes the bench home.
+DEFAULT_STATE = Path("bench") / "state" / "loaded-by-bench.json"
 STATE_FORMAT = 1
 
 

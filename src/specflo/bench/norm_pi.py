@@ -28,7 +28,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from modelbench import normlog
+from specflo.bench import normlog
 
 _SIDE_ENTRY_CLASS = {"usage": "background", "compaction": "compaction", "branch_summary": "compaction"}
 

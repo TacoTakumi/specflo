@@ -86,8 +86,8 @@ from specflo import auto as sf_auto
 from specflo.agent.herdr import HerdrAdapter, HerdrError, HerdrPlacement
 from specflo.projects import COMPLETE_STATUS
 
-from modelbench import arms, cc_continue, launch_cc, launch_pi, record
-from modelbench.workdir import REPO, find_specflo
+from specflo.bench import arms, cc_continue, launch_cc, launch_pi, record
+from specflo.bench.workdir import find_specflo
 
 END_COMPLETE = "complete"
 END_ESCALATED = "escalated"
@@ -267,7 +267,7 @@ def specflo_verdict(
 
 
 def _venv_bin_dirs() -> set[str]:
-    dirs = {os.path.normpath(REPO / ".venv" / "bin")}
+    dirs: set[str] = set()
     if sys.prefix != sys.base_prefix:
         dirs.add(os.path.normpath(Path(sys.prefix) / "bin"))
         dirs.add(os.path.normpath(os.path.dirname(sys.executable)))
@@ -731,8 +731,8 @@ def _read_json(path: Path) -> dict | None:
 
 
 _CC_BOOT = (
-    "import sys; sys.path.insert(0, {bench!r}); "
-    "from modelbench.lifecycle import cc_child_main; sys.exit(cc_child_main(sys.argv[1]))"
+    "import sys; "
+    "from specflo.bench.lifecycle import cc_child_main; sys.exit(cc_child_main(sys.argv[1]))"
 )
 
 
@@ -749,7 +749,7 @@ def cc_spec(spec_file: Path, env: dict[str, str], run_dir: Path) -> HarnessSpec:
 
     return HarnessSpec(
         harness="claude-code",
-        argv=[sys.executable, "-c", _CC_BOOT.format(bench=str(launch_pi.BENCH)), str(spec_file)],
+        argv=[sys.executable, "-c", _CC_BOOT, str(spec_file)],
         env=dict(env),
         cwd=run_dir,  # not the workdir: `python -c` puts its cwd on sys.path
         activity_globs=(

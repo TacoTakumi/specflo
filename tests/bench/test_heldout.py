@@ -17,12 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import heldout
+from specflo.bench import heldout
+from specflo.bench import DATA
 
 REPO = Path(__file__).resolve().parents[2]
-BENCH = REPO / "bench"
-FIXTURE = BENCH / "fixture"
-ARCHIVE = BENCH / "heldout.tar.gz"
+FIXTURE = DATA / "fixture"
+ARCHIVE = DATA / "heldout.tar.gz"
 SKIP_DIRS = {".git", ".venv", "__pycache__", ".pytest_cache", "node_modules"}
 
 

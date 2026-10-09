@@ -8,9 +8,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-BENCH = Path(__file__).resolve().parents[2] / "bench"
-FIXTURE = BENCH / "fixture"
-LEVELS_DIR = BENCH / "fixture-levels"
+from specflo.bench import DATA
+FIXTURE = DATA / "fixture"
+LEVELS_DIR = DATA / "fixture-levels"
 LEVELS = ("quick", "fast", "full")
 
 

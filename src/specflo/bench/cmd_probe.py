@@ -1,4 +1,4 @@
-"""`mb.py probe [--harness H]... [--entry E]...`: the reasoning setting each engine gets through each harness.
+"""`specflo bench probe [--harness H]... [--entry E]...`: the reasoning setting each engine gets through each harness.
 
 For each entry (loaded once, after preflight) and each harness, the harness
 runs one short prompt through a capturing proxy; the probe prints what the
@@ -19,7 +19,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from modelbench import arms, preflight, probe
+from specflo.bench import arms, preflight, probe
 
 
 def _on(value: bool | None) -> str:
@@ -55,7 +55,7 @@ def verdicts(results: list[probe.ProbeResult]) -> list[tuple[str, str | None]]:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="mb.py probe", description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(prog="specflo bench probe", description=__doc__.splitlines()[0])
     parser.add_argument("--harness", action="append", choices=arms.HARNESSES,
                         help="harness to probe (repeat; default: every harness of the arm config)")
     parser.add_argument("--entry", action="append",
@@ -74,13 +74,13 @@ def main(argv: list[str]) -> int:
     try:
         config = arms.load_config(args.config)
     except (arms.ArmError, OSError) as exc:
-        print(f"mb.py probe: {exc}", file=sys.stderr)
+        print(f"specflo bench probe: {exc}", file=sys.stderr)
         return 2
     harnesses = args.harness or list(config.harnesses)
     entries = args.entry or list(config.entries)
     for entry in entries:
         if entry not in config.entries:
-            print(f"mb.py probe: entry {entry!r} is not an entry of the arm config", file=sys.stderr)
+            print(f"specflo bench probe: entry {entry!r} is not an entry of the arm config", file=sys.stderr)
             return 2
     out = args.out or Path(tempfile.mkdtemp(prefix="mb-probe-"))
     out.mkdir(parents=True, exist_ok=True)
@@ -101,7 +101,7 @@ def main(argv: list[str]) -> int:
                     if not args.json:
                         print(describe(result), flush=True)
         except (preflight.PreflightError, probe.ProbeError) as exc:
-            print(f"mb.py probe: {exc}", file=sys.stderr)
+            print(f"specflo bench probe: {exc}", file=sys.stderr)
             return 2
 
     found = verdicts(results)

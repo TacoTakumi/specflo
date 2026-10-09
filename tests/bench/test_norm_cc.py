@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-from modelbench import norm_cc, normlog
+from specflo.bench import norm_cc, normlog
 
 SAMPLES = Path(__file__).resolve().parent / "samples"
 SESSION = SAMPLES / "cc-session.jsonl"

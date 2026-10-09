@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import telemetry
+from specflo.bench import telemetry
 
 SAMPLES = Path(__file__).parent / "samples"
 START = "2026-10-07T21:00:00-03:00"

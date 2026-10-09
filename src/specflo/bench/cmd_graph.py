@@ -1,4 +1,4 @@
-"""`mb.py graph`: pass-rate and behaviour-metric graphs with disclosures.
+"""`specflo bench graph`: pass-rate and behaviour-metric graphs with disclosures.
 
 Exits 1, naming the fields, when the arms of a comparison differ in more than
 one variable or in a setting; nothing is written then.
@@ -10,7 +10,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from modelbench import arms, graphs
+from specflo.bench import arms, graphs
 
 
 def _arm(value: str) -> tuple[str, str]:
@@ -21,7 +21,7 @@ def _arm(value: str) -> tuple[str, str]:
 
 
 def main(argv: list[str]) -> int:
-    parser = argparse.ArgumentParser(prog="mb.py graph", description=__doc__)
+    parser = argparse.ArgumentParser(prog="specflo bench graph", description=__doc__)
     parser.add_argument("--records", required=True, type=Path, help="directory of run records")
     parser.add_argument("--out", required=True, type=Path, help="directory for the images")
     parser.add_argument(
@@ -39,7 +39,7 @@ def main(argv: list[str]) -> int:
         records = graphs.load_records(args.records)
         written = graphs.generate(records, args.out, engines, args.arm)
     except (graphs.GraphError, arms.ArmError) as exc:
-        print(f"mb.py graph: {exc}", file=sys.stderr)
+        print(f"specflo bench graph: {exc}", file=sys.stderr)
         return 1
     for image, _ in written:
         print(image)

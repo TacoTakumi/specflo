@@ -21,9 +21,9 @@ any other non-regular member.
 To add a level: unpack to a tmp dir outside the repo, add `<level>/tests` and
 `<level>/solution`, pack back, then delete the tmp dir. From the shell:
 
-    uv run python bench/modelbench/heldout.py unpack bench/heldout.tar.gz /tmp/h
-    uv run python bench/modelbench/heldout.py pack /tmp/h bench/heldout.tar.gz
-    uv run python bench/modelbench/heldout.py list bench/heldout.tar.gz
+    python -m specflo.bench.heldout unpack src/specflo/bench/data/heldout.tar.gz /tmp/h
+    python -m specflo.bench.heldout pack /tmp/h src/specflo/bench/data/heldout.tar.gz
+    python -m specflo.bench.heldout list src/specflo/bench/data/heldout.tar.gz
 """
 
 from __future__ import annotations

@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from modelbench.arms import HARNESSES, LEVELS
+from specflo.bench.arms import HARNESSES, LEVELS
 
 END_REASONS = ("complete", "escalated", "timeout", "stalled", "harness-exit")
 PLACEMENTS = ("herdr", "headless")

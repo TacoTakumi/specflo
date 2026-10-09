@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import cc_continue as cc
-from modelbench import launch_cc, norm_cc
+from specflo.bench import cc_continue as cc
+from specflo.bench import launch_cc, norm_cc
 
 from .test_launch_cc import ENTRY, HAVE_CLAUDE, AnthropicStub
 
@@ -425,7 +425,7 @@ def test_rig_claude_crosses_a_phase_boundary_with_a_fresh_context(tmp_path_facto
     Every seam ends the pass (threshold 0), so the first phase advance is a
     clear; the run stops after the first pass that starts in a later phase.
     """
-    from modelbench import arms, preflight, workdir
+    from specflo.bench import arms, preflight, workdir
 
     run = arms.Run(entry=ENTRY, harness="claude-code", level="fast", run_index=0)
     base = tmp_path_factory.mktemp("cc-continue")

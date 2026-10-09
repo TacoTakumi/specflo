@@ -35,7 +35,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from modelbench import normlog
+from specflo.bench import normlog
 
 _USAGE_KEYS = (
     "input_tokens",

@@ -50,14 +50,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from specflo.bench import DATA, PACKAGE
 from specflo.extension_install import extension_source, installable_files
 
-BENCH = Path(__file__).resolve().parents[1]
-FROZEN_DIR = BENCH / "configs" / "pi"
+FROZEN_DIR = DATA / "configs" / "pi"
 FROZEN_FILE = "frozen.json"
 MODELS_FILE = "models.json"
 
-DENY_SOURCE = BENCH.parent / "src" / "specflo" / "pool" / "pi_extension" / "deny.ts"
+DENY_SOURCE = PACKAGE.parent / "pool" / "pi_extension" / "deny.ts"
 SPECFLO_EXTENSION = "specflo"
 DENY_EXTENSION = "specflo-pool-deny.ts"
 EXTENSIONS = (SPECFLO_EXTENSION, DENY_EXTENSION)

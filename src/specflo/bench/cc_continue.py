@@ -59,8 +59,8 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any, TextIO
 
-from modelbench import launch_cc, launch_pi
-from modelbench.workdir import find_specflo
+from specflo.bench import launch_cc, launch_pi
+from specflo.bench.workdir import find_specflo
 
 END_PASS_LIMIT = "pass-limit"
 END_WALL_CLOCK = "wall-clock"

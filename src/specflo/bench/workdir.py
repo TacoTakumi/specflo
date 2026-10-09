@@ -40,10 +40,11 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parents[2]
-BENCH = REPO / "bench"
-FIXTURE = BENCH / "fixture"
-LEVELS_DIR = BENCH / "fixture-levels"
+from specflo import __version__
+from specflo.bench import DATA, PACKAGE
+
+FIXTURE = DATA / "fixture"
+LEVELS_DIR = DATA / "fixture-levels"
 LEVELS = ("quick", "fast", "full")
 
 # The specflo artifact and section that carry the level's request.
@@ -88,13 +89,9 @@ def find_specflo() -> str:
     return found
 
 
-def repo_version() -> str:
-    """This repo's specflo version, read from src/specflo/__init__.py."""
-    text = (REPO / "src" / "specflo" / "__init__.py").read_text(encoding="utf-8")
-    match = re.search(r'^__version__\s*=\s*["\']([^"\']+)["\']', text, re.M)
-    if match is None:
-        raise WorkdirError("no __version__ in src/specflo/__init__.py")
-    return match.group(1)
+def specflo_version() -> str:
+    """The version of the installed specflo, which the runs put under test."""
+    return __version__
 
 
 def tree_files(root: Path) -> set[str]:
@@ -124,8 +121,8 @@ def foreign_files(workdir: Path, fixture: Path = FIXTURE) -> list[str]:
 
 def _check_destination(dest: Path) -> Path:
     resolved = dest.resolve()
-    if resolved == REPO or REPO in resolved.parents:
-        raise WorkdirError(f"workdir must be outside the repo ({REPO}): {resolved}")
+    if resolved == PACKAGE or PACKAGE in resolved.parents:
+        raise WorkdirError(f"workdir must be outside the bench package ({PACKAGE}): {resolved}")
     if resolved.exists() and (not resolved.is_dir() or any(resolved.iterdir())):
         raise WorkdirError(f"workdir exists and is not empty: {resolved}")
     return resolved
@@ -184,8 +181,8 @@ def make_workdir(
     request = request_file.read_text(encoding="utf-8")
     specflo = specflo or find_specflo()
     version = _run([specflo, "--version"]).strip()
-    if repo_version() not in version.split():
-        raise WorkdirError(f"{specflo} reports {version!r}, not this repo's {repo_version()}")
+    if specflo_version() not in version.split():
+        raise WorkdirError(f"{specflo} reports {version!r}, not the installed {specflo_version()}")
 
     if dest.exists():
         dest.rmdir()

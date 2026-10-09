@@ -5,7 +5,7 @@
 writes one page: what the bench measures, how to read a graph, a section per
 level with each comparison's arms as a table and its graphs, and what each
 metric means. It reads the directory, not the records, so graphs written by
-earlier `mb.py graph` runs into the same directory are on the page too.
+earlier `specflo bench graph` runs into the same directory are on the page too.
 
 The page is plain HTML with no script. It inlines the specflo web UI's two
 stylesheets from the installed specflo package (the frame, specflo.css, and
@@ -23,7 +23,7 @@ from html import escape
 from importlib.resources import files
 from pathlib import Path
 
-from modelbench.arms import LEVELS
+from specflo.bench.arms import LEVELS
 
 INDEX_NAME = "index.html"
 

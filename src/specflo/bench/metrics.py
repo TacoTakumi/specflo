@@ -24,7 +24,7 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
-from modelbench import normlog
+from specflo.bench import normlog
 
 TURN_CLASSES = ("main", "subagent")
 

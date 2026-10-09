@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from modelbench import arms, batch, cmd_batch, cmd_records, probe, record, run
+from specflo.bench import arms, batch, cmd_batch, cmd_records, probe, record, run
 
 # The shipped matrices: the pilot runs on FIRST (Strata), and the first round
 # runs the FIRST block, then the SECOND (llama.cpp).

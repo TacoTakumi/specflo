@@ -1,16 +1,12 @@
-"""Run-record schema, arm config and the mb.py dispatcher."""
+"""Run-record schema and arm config."""
 
 import copy
-import subprocess
-import sys
-import types
 from pathlib import Path
 
 import pytest
 
-from modelbench import arms, record
+from specflo.bench import arms, record
 
-BENCH = Path(__file__).resolve().parents[2] / "bench"
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 
 
@@ -131,7 +127,7 @@ def test_non_dict_record_fails():
 
 @pytest.fixture
 def config() -> arms.Config:
-    return arms.load_config(BENCH / "arms.yaml")
+    return arms.load_config(arms.DEFAULT_CONFIG)
 
 
 def test_shipped_config_knows_both_entries(config):
@@ -200,33 +196,3 @@ def test_limit_factor_is_the_entry_engines_factor_or_one(tmp_path):
     config = arms.load_config(path)
     assert arms.limit_factor(config, "a") == 2.5
     assert arms.limit_factor(config, "b") == 1.0
-
-
-# --- mb.py dispatcher ---------------------------------------------------
-
-
-def test_dispatcher_calls_the_command_main(monkeypatch):
-    import mb
-
-    seen = []
-    fake = types.ModuleType("modelbench.cmd_fake")
-    fake.main = lambda argv: seen.append(argv) or 7
-    monkeypatch.setitem(sys.modules, "modelbench.cmd_fake", fake)
-    assert mb.main(["fake", "--x", "1"]) == 7
-    assert seen == [["--x", "1"]]
-
-
-def test_dispatcher_rejects_unknown_command(capsys):
-    import mb
-
-    assert mb.main(["no_such_cmd"]) != 0
-    assert "no_such_cmd" in capsys.readouterr().err
-
-
-def test_dispatcher_script_exits_nonzero_on_unknown_and_empty():
-    for argv in (["no_such_cmd"], []):
-        proc = subprocess.run(
-            [sys.executable, str(BENCH / "mb.py"), *argv], capture_output=True, text=True
-        )
-        assert proc.returncode != 0
-        assert proc.stderr.strip()

@@ -2,7 +2,7 @@
 
 import json
 
-from modelbench import metrics, normlog
+from specflo.bench import metrics, normlog
 
 
 def _req(rid: str, start: float, end: float, out: int, cls: str) -> dict:

@@ -10,7 +10,7 @@ import pytest
 
 pytest.importorskip("matplotlib")
 
-from modelbench import cmd_graph, graphs, index_page  # noqa: E402
+from specflo.bench import cmd_graph, graphs, index_page  # noqa: E402
 
 ENTRY_A = "swift15-flash-next-iq4xs-mtp-vision"
 ENTRY_B = "swift15-flash-next-iq4xs-strata-2x3090"
@@ -304,17 +304,3 @@ def test_schema_invalid_record_exits_nonzero(tmp_path, capsys):
     rc = cmd_graph.main(["--records", str(rec_dir), "--out", str(tmp_path / "out")])
     assert rc != 0
     assert "settings.pass_cap" in capsys.readouterr().err
-
-
-def test_mb_dispatches_graph(tmp_path):
-    import subprocess
-    import sys
-
-    bench = Path(__file__).resolve().parents[2] / "bench"
-    rec_dir = write_records(tmp_path / "records", copy.deepcopy(harness_pair()))
-    proc = subprocess.run(
-        [sys.executable, str(bench / "mb.py"), "graph", "--records", str(rec_dir), "--out", str(tmp_path / "out")],
-        capture_output=True, text=True,
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert list((tmp_path / "out").glob("*.png"))

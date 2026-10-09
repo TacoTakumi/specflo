@@ -4,7 +4,7 @@ import copy
 
 import pytest
 
-from modelbench import normlog
+from specflo.bench import normlog
 
 
 def _log() -> dict:

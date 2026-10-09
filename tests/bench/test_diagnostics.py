@@ -1,6 +1,6 @@
 """Diagnostics and contamination flags read from a normalised session log."""
 
-from modelbench import diagnostics, normlog
+from specflo.bench import diagnostics, normlog
 
 WORKDIR = "/runs/w1"
 BENCH = "/repo/bench"

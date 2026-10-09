@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import arms, cmd_probe, preflight, probe
+from specflo.bench import arms, cmd_probe, preflight, probe
 
 LLAMA = "swift15-flash-next-iq4xs-mtp-vision"
 STRATA = "swift15-flash-next-iq4xs-strata-2x3090"
@@ -546,12 +546,6 @@ def test_cli_drops_from_the_bench_load_state_the_entry_the_next_load_evicted(mon
 def test_cli_refuses_an_unknown_entry(tmp_path: Path, capsys):
     assert cmd_probe.main(["--entry", "nope", "--out", str(tmp_path)]) == 2
     assert "nope" in capsys.readouterr().err
-
-
-def test_mb_dispatches_probe():
-    import mb
-
-    assert mb.main(["probe", "--entry", "nope"]) == 2
 
 
 # -- rig -------------------------------------------------------------------------------

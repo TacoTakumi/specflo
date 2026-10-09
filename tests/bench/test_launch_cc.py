@@ -23,7 +23,7 @@ import pytest
 
 from specflo.hook import settings_snippet
 
-from modelbench import launch_cc, launch_pi
+from specflo.bench import launch_cc, launch_pi
 
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 STRATA_ENTRY = "swift15-flash-next-iq4xs-strata-2x3090"
@@ -459,7 +459,7 @@ def test_real_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
 @pytest.mark.timeout(1200)
 def test_rig_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
     """A real model through llama-swap asks for `git push` and gets a denial."""
-    from modelbench import arms, preflight
+    from specflo.bench import arms, preflight
 
     run = arms.Run(entry=ENTRY, harness="claude-code", level="quick", run_index=0)
     workdir = tmp_path / "work"

@@ -9,7 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import workdir as wd
+from specflo.bench import PACKAGE
+from specflo.bench import workdir as wd
 
 LEVELS = ("quick", "fast", "full")
 
@@ -77,10 +78,10 @@ def test_status_shows_active_project_at_level_carrying_its_request(
     assert title in _specflo(sealed.path, "doc", "show", "project")
 
 
-@pytest.mark.parametrize("inside", ["", "bench", "bench/fixture/work"])
-def test_destination_inside_the_repo_is_refused(inside: str) -> None:
-    dest = wd.REPO / inside / "sealed-run-should-not-exist"
-    with pytest.raises(wd.WorkdirError, match="outside the repo"):
+@pytest.mark.parametrize("inside", ["", "data", "data/fixture/work"])
+def test_destination_inside_the_bench_package_is_refused(inside: str) -> None:
+    dest = PACKAGE / inside / "sealed-run-should-not-exist"
+    with pytest.raises(wd.WorkdirError, match="outside the bench package"):
         wd.make_workdir(dest, "quick")
     assert not dest.exists()
 

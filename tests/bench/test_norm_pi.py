@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import norm_pi, normlog
+from specflo.bench import norm_pi, normlog
 
 SAMPLE = Path(__file__).parent / "samples" / "pi-session.jsonl"
 

@@ -10,12 +10,12 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import cmd_grade, grader, heldout
+from specflo.bench import cmd_grade, grader, heldout
+from specflo.bench import DATA
+from specflo.bench import PACKAGE as BENCH_PACKAGE
 
-REPO = Path(__file__).resolve().parents[2]
-BENCH = REPO / "bench"
-FIXTURE = BENCH / "fixture"
-ARCHIVE = BENCH / "heldout.tar.gz"
+FIXTURE = DATA / "fixture"
+ARCHIVE = DATA / "heldout.tar.gz"
 LEVELS = ("quick", "fast", "full")
 
 
@@ -107,12 +107,12 @@ def test_planted_conftest_does_not_lift_a_full_level_score(tmp_path: Path) -> No
 # The grading directory
 
 
-def test_grading_dir_is_outside_the_workdir_and_repo(tmp_path: Path) -> None:
+def test_grading_dir_is_outside_the_workdir_and_the_bench_package(tmp_path: Path) -> None:
     tree = _clean_tree(tmp_path)
     result = grader.grade(tree, "quick")
     graded = Path(result.grading_dir).resolve()
     assert tree.resolve() not in graded.parents and graded != tree.resolve()
-    assert REPO not in graded.parents
+    assert BENCH_PACKAGE not in graded.parents
     assert not graded.exists(), "grading dir is removed unless kept"
 
 
@@ -130,10 +130,10 @@ def test_grading_dir_inside_another_workdir_is_refused(tmp_path: Path) -> None:
         grader.grade(tree, "quick", grading_dir=other / "g", workdirs=[other])
 
 
-def test_grading_dir_inside_the_repo_is_refused(tmp_path: Path) -> None:
-    with pytest.raises(grader.GraderError, match="repo"):
-        grader.grade(_clean_tree(tmp_path), "quick", grading_dir=REPO / "bench" / "grading-x")
-    assert not (REPO / "bench" / "grading-x").exists()
+def test_grading_dir_inside_the_bench_package_is_refused(tmp_path: Path) -> None:
+    with pytest.raises(grader.GraderError, match="bench package"):
+        grader.grade(_clean_tree(tmp_path), "quick", grading_dir=BENCH_PACKAGE / "grading-x")
+    assert not (BENCH_PACKAGE / "grading-x").exists()
 
 
 def test_grading_dir_that_is_not_empty_is_refused(tmp_path: Path) -> None:

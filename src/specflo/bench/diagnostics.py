@@ -43,7 +43,7 @@ import shlex
 from pathlib import Path
 from typing import Any, Iterable
 
-from modelbench.normlog import events
+from specflo.bench.normlog import events
 
 FLAGS = (
     "write-outside-workdir",

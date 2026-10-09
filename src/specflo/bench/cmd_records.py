@@ -1,4 +1,4 @@
-"""`mb.py records [--check] [--matrix NAME]`: the run records under the runs dir, and the matrix check.
+"""`specflo bench records [--check] [--matrix NAME]`: the run records under the runs dir, and the matrix check.
 
 Without `--check`: one line per run dir (valid, invalid or incomplete, with
 end reason and score).
@@ -20,7 +20,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from modelbench import arms, batch, run
+from specflo.bench import arms, batch, run
 
 
 def _line(item: batch.RunDir) -> str:
@@ -63,7 +63,7 @@ def check_all(runs_dir: Path) -> tuple[list[str], int]:
 
 
 def main(argv: list[str]) -> int:
-    p = argparse.ArgumentParser(prog="mb.py records", description=__doc__.splitlines()[0])
+    p = argparse.ArgumentParser(prog="specflo bench records", description=__doc__.splitlines()[0])
     p.add_argument("--check", action="store_true", help="check the records (per matrix cell with --matrix)")
     p.add_argument("--matrix", default=None, help="matrix name in the matrix file")
     p.add_argument("--matrices", default=str(batch.DEFAULT_MATRICES), help="matrix file")
@@ -82,7 +82,7 @@ def main(argv: list[str]) -> int:
         try:
             matrix = batch.load_matrix(args.matrix, arms.load_config(args.config), args.matrices)
         except (arms.ArmError, batch.MatrixError, OSError) as exc:
-            print(f"mb.py records: {exc}", file=sys.stderr)
+            print(f"specflo bench records: {exc}", file=sys.stderr)
             return 2
         lines, code = check_matrix(matrix, args.runs_dir)
     for line in lines:

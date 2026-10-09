@@ -43,12 +43,12 @@ from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from modelbench import heldout
+from specflo.bench import DATA
+from specflo.bench import PACKAGE as BENCH_PACKAGE
+from specflo.bench import heldout
 
-REPO = Path(__file__).resolve().parents[2]
-BENCH = REPO / "bench"
-FIXTURE = BENCH / "fixture"
-ARCHIVE = BENCH / "heldout.tar.gz"
+FIXTURE = DATA / "fixture"
+ARCHIVE = DATA / "heldout.tar.gz"
 PACKAGE = "tinytodo"
 OUTCOMES = ("passed", "failed", "error", "skipped", "missing")
 DEFAULT_TIMEOUT = 600.0
@@ -124,10 +124,10 @@ def _inside(path: Path, root: Path) -> bool:
 
 
 def check_grading_dir(grading_dir: Path, workdirs: Iterable[Path]) -> Path:
-    """Return the resolved grading dir, or raise if it is in the repo, in a workdir, or not empty."""
+    """Return the resolved grading dir, or raise if it is in the bench package, in a workdir, or not empty."""
     resolved = grading_dir.resolve()
-    if _inside(resolved, REPO):
-        raise GraderError(f"grading dir must be outside the repo ({REPO}): {resolved}")
+    if _inside(resolved, BENCH_PACKAGE):
+        raise GraderError(f"grading dir must be outside the bench package ({BENCH_PACKAGE}): {resolved}")
     for workdir in workdirs:
         root = Path(workdir).resolve()
         if _inside(resolved, root) or _inside(root, resolved):

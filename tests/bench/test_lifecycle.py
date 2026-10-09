@@ -21,10 +21,12 @@ from pathlib import Path
 import pytest
 from specflo.agent.herdr import HerdrAdapter
 
-from modelbench import arms, cc_continue, launch_pi, record
-from modelbench import lifecycle as lc
-from modelbench import workdir as wd
+from specflo.bench import arms, cc_continue, launch_pi, record
+from specflo.bench import lifecycle as lc
+from specflo.bench import workdir as wd
 
+# The venv these tests run in: the one the harness env drops.
+VENV = Path(sys.prefix)
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 
 STUB_SPECFLO = r'''
@@ -473,8 +475,8 @@ def test_auto_settings_are_checked():
 
 
 def test_the_harness_env_puts_specflo_first_and_drops_the_bench_venv(tmp_path: Path):
-    venv_bin = str(wd.REPO / ".venv" / "bin")
-    base = {"PATH": os.pathsep.join([venv_bin, "/usr/bin", "/bin"]), "VIRTUAL_ENV": str(wd.REPO / ".venv"),
+    venv_bin = str(VENV / "bin")
+    base = {"PATH": os.pathsep.join([venv_bin, "/usr/bin", "/bin"]), "VIRTUAL_ENV": str(VENV),
             "HOME": "/home/x"}
     env, report = lc.harness_env(base, tmp_path / "bin")
     assert env["PATH"].split(os.pathsep) == [str(tmp_path / "bin"), "/usr/bin", "/bin"]
@@ -498,8 +500,8 @@ def test_a_run_records_the_level_autonomy_and_pass_cap(tmp_path: Path):
     harness = str(_script(tmp_path / "harness.py", HARNESS))
     arm = arms.Run(entry=ENTRY, harness="pi", level="quick", run_index=0)
     run_dir = tmp_path / "run"
-    base = dict(os.environ, VIRTUAL_ENV=str(wd.REPO / ".venv"),
-                PATH=os.pathsep.join([str(wd.REPO / ".venv" / "bin"), os.environ["PATH"]]))
+    base = dict(os.environ, VIRTUAL_ENV=str(VENV),
+                PATH=os.pathsep.join([str(VENV / "bin"), os.environ["PATH"]]))
     outcome = lc.run(
         arm, workdir=sealed.path, run_dir=run_dir, settings=lc.AutoSettings("autonomous", 9),
         limits=lc.Limits(30.0, 10.0), herdr=None, base_env=base, poll=0.05, stop_grace=1.0,
@@ -516,7 +518,7 @@ def test_a_run_records_the_level_autonomy_and_pass_cap(tmp_path: Path):
     env = json.loads((run_dir / "env.json").read_text())
     path = env["PATH"].split(os.pathsep)
     assert path[0] == str(run_dir / cc_continue.BIN_DIR)
-    assert str(wd.REPO / ".venv" / "bin") not in path
+    assert str(VENV / "bin") not in path
     assert "VIRTUAL_ENV" not in env
     assert env["SPECFLO_BIN"] == str(run_dir / cc_continue.BIN_DIR / "specflo")
     saved = json.loads((run_dir / lc.RECORD_FILE).read_text())

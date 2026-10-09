@@ -16,9 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from modelbench import arms, cc_continue, cmd_run, launch_cc, lifecycle, normlog, preflight, probe, record, run, telemetry
+from specflo.bench import arms, cc_continue, cmd_run, launch_cc, lifecycle, normlog, preflight, probe, record, run, telemetry
 
-BENCH = Path(__file__).resolve().parents[2] / "bench"
 SAMPLES = Path(__file__).resolve().parent / "samples"
 ENTRY = "swift15-flash-next-iq4xs-mtp-vision"
 

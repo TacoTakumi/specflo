@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
-from modelbench.msgshim import MessageShim, late_system_to_user
+from specflo.bench.msgshim import MessageShim, late_system_to_user
 
 
 def test_late_system_messages_become_user_messages_in_place():
