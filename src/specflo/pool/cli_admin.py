@@ -191,7 +191,7 @@ def pool_reload(
     ),
 ) -> None:
     """Ask the running daemon to read its pool directory again, as the developer."""
-    from .. import config
+    from .. import config, settings
     from ..errors import SpecfloError
     from .cli_lease import pick_remote
 
@@ -219,11 +219,23 @@ def pool_reload(
         f"The daemon on remote '{registered.name}' (process {read['pid']}) read "
         f"{read['directory']} again, and it is in force: {held}."
     )
-    expected = pool_dir(ctx.obj["root"])
+    # The reload needs no daemon root, so the note only compares against one
+    # already known and never asks for one.
+    if "root" in ctx.obj:
+        known = ctx.obj["root"]
+    else:
+        try:
+            found = settings.resolve_daemon_root(ctx.obj.get("option"))
+        except SpecfloError:
+            found = None
+        if found is None:
+            return
+        known = found[0]
+    expected = pool_dir(known)
     if Path(read["directory"]) != expected and Path(read["directory"]) != expected.resolve():
         typer.secho(
             "note: that is the daemon's own pool directory, not the pool directory under "
-            f"--root, {expected}.",
+            f"the daemon root, {expected}.",
             fg=typer.colors.YELLOW, err=True,
         )
 

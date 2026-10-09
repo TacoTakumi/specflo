@@ -839,6 +839,25 @@ def test_after_a_hand_edit_and_the_reload_verb_a_new_team_is_leased_by_the_same_
     assert [r["operation"] for r in audit_records(pool_daemon["root"])].count("pool_reload") == 3
 
 
+@pytest.mark.parametrize("terminal", [True, False])
+def test_the_reload_verb_with_no_daemon_root_set_reloads_and_asks_nothing(
+    checkout, pool_rig, pool_daemon, tmp_path, monkeypatch, terminal
+):
+    from specflo import settings
+    from specflo.daemon import cli as serve_cli
+
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv(settings.DAEMON_ROOT_ENV, raising=False)
+    monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: terminal)
+
+    reloaded = runner.invoke(app, ["serve", "pool", "reload"], input="\n")
+
+    assert reloaded.exit_code == 0, reloaded.output
+    assert "remote 'home'" in " ".join(reloaded.output.split())
+    assert "Daemon root" not in reloaded.output and "note:" not in reloaded.output
+    assert not settings.settings_path(tmp_path / "home").exists()
+
+
 def test_the_reload_verb_prints_every_fault_and_the_old_configuration_serves_on(
     checkout, pool_rig, pool_daemon
 ):
@@ -886,4 +905,4 @@ def test_the_reload_verb_says_when_the_daemon_read_another_directory(
     assert reloaded.exit_code == 0, reloaded.output
     output = " ".join(reloaded.output.split())
     assert str(cli_admin.pool_dir(pool_daemon["root"])) in output
-    assert "not the pool directory under --root" in output
+    assert "not the pool directory under the daemon root" in output
