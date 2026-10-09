@@ -10,6 +10,29 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ## [0.16.1]
 
+### Added
+- **Model bench.** `bench/` holds a development tool, not part of the
+  installed package, that measures how well a local model drives specflo. A
+  run seeds a specflo project at the quick, fast or full level in a small
+  fixture repo (tinytodo), runs it unattended under `specflo auto` with pi or
+  Claude Code against a llama-swap entry, and grades the final tree with a
+  held-out test suite the agent never sees. Each run writes a record with the
+  score, behaviour metrics (turns, output tokens per turn, tool calls, tool
+  errors, wall time), diagnostics and server telemetry. A run that names
+  another model id is invalid, and a run whose tool calls touch the bench or
+  the held-out tests is contaminated. Both are left out of every result.
+  `bench/mb.py` has the commands `run`, `batch` (a matrix of arms, levels and
+  run indexes), `records`, `probe`, `grade` and `graph`. `graph` draws
+  pass-rate and metrics graphs for comparisons that change one variable only
+  (the entry or the harness), each with a full disclosure of versions and
+  settings, and refuses any other comparison. matplotlib is in a new `bench`
+  dependency group. `BENCH.md` explains the bench and how to run it, and the
+  README links to it.
+- **Bench index page.** `mb.py graph` also writes `index.html` in its output
+  directory. The page shows every graph in the directory with its arms as a
+  table, and explains the bench, how to read a graph, each level and each
+  metric.
+
 ### Changed
 - **No ask-first reseed during an auto run.** While a `specflo auto` run is
   under way, `specflo hook reseed` and the Claude Code SessionStart hook
