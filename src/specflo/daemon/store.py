@@ -12,8 +12,8 @@ Named users, the tokens minted for them and their browser sessions are
 held here the same way and for the same reason: no SQL on those tables
 lives anywhere but in a backend. A token's owner is a user name or the
 built-in agent, which has no user row, so tokens carry no foreign key to
-users; removing a user drops their tokens and sessions in the same
-transaction instead.
+users; removing a user drops their tokens, sessions and failed sign-ins
+in the same transaction instead.
 
 Standard library only: sqlite3 ships with Python, so the store works
 wherever the daemon root does, with or without the serve extra. A store is
@@ -174,7 +174,10 @@ class Store(Protocol):
         """Replace the role of ``name``; the updated user, or None if unknown."""
 
     def remove_user(self, name: str) -> bool:
-        """Drop ``name`` with its tokens and sessions in one transaction; whether there was one."""
+        """Drop ``name`` with its tokens, sessions and failed sign-ins; whether there was one.
+
+        One transaction drops them all, so a user is never left half removed.
+        """
 
     def add_token(self, token: Token) -> None:
         """Insert ``token``; raises :class:`Conflict` on a taken hash or owner and name."""
@@ -213,6 +216,15 @@ class Store(Protocol):
 
     def remove_expired_sessions(self, now: float) -> int:
         """Drop every session whose expiry is at or before ``now``; how many went."""
+
+    def add_signin_failure(self, user: str, at: float) -> None:
+        """Record a failed password sign-in of ``user`` at ``at``; an unknown user raises ValueError."""
+
+    def list_signin_failures(self, user: str) -> list[float]:
+        """When each failed password sign-in of ``user`` still held happened, oldest first."""
+
+    def clear_signin_failures(self, user: str, *, before: float | None = None) -> int:
+        """Drop the failed sign-ins of ``user``, or only those before ``before``; how many went."""
 
     def close(self) -> None:
         """Release the backend's resources."""
@@ -270,6 +282,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     written REAL NOT NULL
 );
 CREATE INDEX IF NOT EXISTS sessions_by_user ON sessions (user);
+CREATE TABLE IF NOT EXISTS signin_failures (
+    user TEXT NOT NULL REFERENCES users(name),
+    at   REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS signin_failures_by_user ON signin_failures (user, at);
 """
 
 # Columns added after their table's first shape, as (table, column, type):
@@ -447,6 +464,7 @@ class SqliteStore:
         with self.connection:
             self.connection.execute("DELETE FROM tokens WHERE owner = ?", (name,))
             self.connection.execute("DELETE FROM sessions WHERE user = ?", (name,))
+            self.connection.execute("DELETE FROM signin_failures WHERE user = ?", (name,))
             changed = self.connection.execute(
                 "DELETE FROM users WHERE name = ?", (name,)
             ).rowcount
@@ -544,6 +562,31 @@ class SqliteStore:
         with self.connection:
             return self.connection.execute(
                 "DELETE FROM sessions WHERE expires <= ?", (now,)
+            ).rowcount
+
+    def add_signin_failure(self, user: str, at: float) -> None:
+        try:
+            with self.connection:
+                self.connection.execute(
+                    "INSERT INTO signin_failures (user, at) VALUES (?, ?)", (user, at)
+                )
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"No user {user!r} to record a failed sign-in for.") from exc
+
+    def list_signin_failures(self, user: str) -> list[float]:
+        rows = self.connection.execute(
+            "SELECT at FROM signin_failures WHERE user = ? ORDER BY at", (user,)
+        ).fetchall()
+        return [row["at"] for row in rows]
+
+    def clear_signin_failures(self, user: str, *, before: float | None = None) -> int:
+        with self.connection:
+            if before is None:
+                return self.connection.execute(
+                    "DELETE FROM signin_failures WHERE user = ?", (user,)
+                ).rowcount
+            return self.connection.execute(
+                "DELETE FROM signin_failures WHERE user = ? AND at < ?", (user, before)
             ).rowcount
 
     def close(self) -> None:

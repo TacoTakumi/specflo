@@ -35,7 +35,7 @@ import time
 from pathlib import Path
 
 from ..errors import SpecfloError
-from .store import ROLES, Conflict, Session, User, open_store
+from .store import ROLES, Conflict, Session, Store, User, open_store
 
 IDENTITIES = ("requester", "developer", "agent")
 # The identities a person at a browser or a CLI acts as; the agent has no
@@ -59,6 +59,16 @@ SCRYPT_MAX_MEMORY = 256 * 1024 * 1024
 # write moves nothing, so a page that asks many times a minute writes once.
 SESSION_TTL = 12 * 60 * 60
 SESSION_WRITE_EVERY = 60
+# Password sign-in for a user is refused for SIGNIN_LOCK_WINDOW seconds
+# after the last of SIGNIN_LOCK_FAILURES wrong passwords that fall within
+# that many seconds of each other.
+SIGNIN_LOCK_FAILURES = 5
+SIGNIN_LOCK_WINDOW = 15 * 60
+# What a refused sign-in says while the lockout holds.
+SIGNIN_LOCKED = (
+    "Too many wrong passwords: sign-in for this user is locked for"
+    f" {SIGNIN_LOCK_WINDOW // 60} minutes. Try again later."
+)
 
 # A user name: 1 to 64 characters from a-z 0-9 . _ - @, starting with a
 # letter or digit. Short and plain, so it is safe in a URL, a log line and a
@@ -71,6 +81,10 @@ USER_NAME_RULE = (
 # Names no user may take: 'agent' is the built-in principal the working
 # agents act as, and a user by that name would be mistaken for them.
 RESERVED_USER_NAMES = ("agent",)
+
+
+class SignInLocked(SpecfloError):
+    """Password sign-in for this user is refused for now: too many wrong passwords."""
 
 
 def tokens_path(root: Path) -> Path:
@@ -212,7 +226,8 @@ def set_password(root: Path, name: str, password: str | None) -> User:
 
     Every session of the user ends with it, so a browser signed in under
     the old password, or before the account went proxy-only, must sign in
-    again. An empty password and an unknown user are refused.
+    again; the user's failed sign-ins go too, so a lockout ends at once.
+    An empty password and an unknown user are refused.
     """
     if password is not None and not password:
         raise SpecfloError("A password may not be empty.")
@@ -223,6 +238,7 @@ def set_password(root: Path, name: str, password: str | None) -> User:
         # old password just before the change is still among those dropped.
         user = store.set_user_password(name, password_hash)
         store.remove_user_sessions(name)
+        store.clear_signin_failures(name)
     if user is None:
         raise SpecfloError(f"No user named {name!r}.")
     return user
@@ -270,25 +286,57 @@ def session_user(root: Path, secret: str, now: float | None = None) -> User | No
         return store.get_user(session.user)
 
 
-def check_password(root: Path, name: str, password: str) -> User | None:
+def check_password(root: Path, name: str, password: str, now: float | None = None) -> User | None:
     """The user ``name`` (in any case) when ``password`` is theirs, else None.
 
     An unknown name, a proxy-only user and a wrong password all answer None,
     and each costs one scrypt run, so neither the answer nor how long it
     takes tells which. A right password over a hash made under older
     parameters replaces that hash with one under today's.
+
+    A wrong password for a user who has one is recorded at ``now``, and a
+    right one clears the record. Raises :class:`SignInLocked`, without
+    checking the password or recording anything, while the user is locked
+    out, and on the wrong password that locks them. Only this password path
+    consults the lockout: a token or a proxy sign-in never does.
     """
+    now = time.time() if now is None else now
     with open_store(root) as store:
         user = store.get_user(name.lower())
+        if user is not None and _locked(store, user.name, now):
+            raise SignInLocked(SIGNIN_LOCKED)
     if user is None or user.password_hash is None:
         verify_password(password, _decoy_hash())
         return None
     if not verify_password(password, user.password_hash):
-        return None
-    if needs_rehash(user.password_hash):
         with open_store(root) as store:
+            # Failures older than the window can never count again: each
+            # check measures back from a failure no older than this one.
+            store.clear_signin_failures(user.name, before=now - SIGNIN_LOCK_WINDOW)
+            store.add_signin_failure(user.name, now)
+            if _locked(store, user.name, now):
+                raise SignInLocked(SIGNIN_LOCKED)
+        return None
+    with open_store(root) as store:
+        store.clear_signin_failures(user.name)
+        if needs_rehash(user.password_hash):
             user = store.set_user_password(user.name, hash_password(password)) or user
     return user
+
+
+def _locked(store: Store, user: str, now: float) -> bool:
+    """Whether password sign-in for ``user`` is refused at ``now``.
+
+    It is while the last failure is under :data:`SIGNIN_LOCK_WINDOW` old and
+    it closes a run of :data:`SIGNIN_LOCK_FAILURES` within that window.
+    Nothing is recorded while a lockout holds, so the last failure is the
+    one that locked, and the lockout ends a window after it.
+    """
+    failures = store.list_signin_failures(user)
+    if not failures or now >= failures[-1] + SIGNIN_LOCK_WINDOW:
+        return False
+    last = failures[-1]
+    return sum(1 for at in failures if at > last - SIGNIN_LOCK_WINDOW) >= SIGNIN_LOCK_FAILURES
 
 
 @functools.cache

@@ -49,7 +49,10 @@ from ..errors import ProjectNotFound, SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
-from .auth import SESSION_TTL, check_password, hash_token, open_session, resume_session
+from .auth import (
+    SESSION_TTL, SIGNIN_LOCKED, SignInLocked, check_password, hash_token, open_session,
+    resume_session,
+)
 from . import seat
 from .products import Products
 from . import chat, chatlog
@@ -117,6 +120,8 @@ OPEN_STATUSES = ("open", "in-progress")
 WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
 
 SIGNIN_FAILED = "That user name and password do not sign in."
+# SIGNIN_LOCKED, what a sign-in says while the user is locked out after too
+# many wrong passwords, comes from the auth module, which keeps the count.
 # What the sign-in page says on a root with no user yet.
 NO_USERS = (
     "No user exists yet. Whoever runs the daemon adds the first one with"
@@ -346,7 +351,13 @@ async def sign_in(request: Request) -> Response:
     password = form.get("password", [""])[0]
     root = request.app.state.root
     # A password check is a scrypt run; it waits off the event loop.
-    user = await run_in_threadpool(check_password, root, name, password) if name else None
+    try:
+        user = (
+            await run_in_threadpool(check_password, root, name, password, _now()) if name else None
+        )
+    except SignInLocked:
+        # 429: the refusal is for too many attempts, not for this one's content.
+        return _sign_in_form(root, status_code=429, error=SIGNIN_LOCKED, name=name)
     if user is None:
         return _sign_in_form(root, status_code=400, error=SIGNIN_FAILED, name=name)
     secret = await run_in_threadpool(open_session, root, user.name, "password", _now())
