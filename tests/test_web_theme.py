@@ -94,7 +94,7 @@ def switch(html):
 
 
 @pytest.mark.parametrize("cookie, expected", [
-    (None, "auto"), ("auto", "auto"), ("light", "light"), ("dark", "dark"), ("sepia", "auto"),
+    (None, "dark"), ("auto", "auto"), ("light", "light"), ("dark", "dark"), ("sepia", "dark"),
 ])
 def test_the_sign_in_page_follows_the_cookie(client, cookie, expected):
     if cookie is not None:
@@ -107,7 +107,7 @@ def test_the_sign_in_page_follows_the_cookie(client, cookie, expected):
     assert buttons == list(web.THEMES)
 
 
-@pytest.mark.parametrize("cookie, expected", [(None, "auto"), ("dark", "dark"), ("bogus", "auto")])
+@pytest.mark.parametrize("cookie, expected", [(None, "dark"), ("dark", "dark"), ("bogus", "dark")])
 def test_a_signed_in_page_follows_the_cookie(client, root, cookie, expected):
     sign_in(client, root)
     if cookie is not None:

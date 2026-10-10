@@ -119,6 +119,8 @@ SESSION_COOKIE = "specflo_session"
 # browser's colour scheme.
 THEME_COOKIE = "specflo_theme"
 THEMES = ("auto", "light", "dark")
+# A browser that never chose a theme, or names one the switch does not offer.
+DEFAULT_THEME = "dark"
 THEME_TTL = 365 * 24 * 60 * 60
 # The key under the request's state that marks a response whose request
 # moved the session's expiry. How long a session lives, SESSION_TTL, comes
@@ -393,7 +395,7 @@ class SessionCookieMiddleware:
 # The theme the request's cookie chose and the path it asked for, as the
 # middleware below set them for this request. Every page reads them here, so
 # no route has to pass the request on to render().
-_page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=("auto", HOME_PATH))
+_page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=(DEFAULT_THEME, HOME_PATH))
 # The request's session cookie, which the header's sign-out form echoes on
 # every page, as the middleware below set it for this request.
 _page_session: ContextVar[str] = ContextVar("page_session", default="")
@@ -426,7 +428,7 @@ class ThemeMiddleware:
                 back = f"{path}?{query}" if query else path
             else:
                 back = HOME_PATH
-            _page_theme.set((theme if theme in THEMES else "auto", back))
+            _page_theme.set((theme if theme in THEMES else DEFAULT_THEME, back))
             _page_session.set(conn.cookies.get(SESSION_COOKIE, ""))
             _page_state.set(scope.setdefault("state", {}))
             app = scope.get("app")
