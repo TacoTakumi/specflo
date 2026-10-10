@@ -61,6 +61,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--runs-dir", type=Path, default=run.RUNS_DIR, help="where run records and raw logs go")
     p.add_argument("--work-root", type=Path, default=run.WORK_ROOT, help="where sealed workdirs go")
     p.add_argument("--llama-swap-log", type=Path, default=run.LLAMA_SWAP_LOG, help="llama-swap log")
+    p.add_argument("--home", type=Path, default=None,
+                   help="the bench home: kept out of the workdir and protected from the agent")
     return p
 
 
@@ -98,6 +100,7 @@ def main(argv: list[str]) -> int:
             autonomy=args.autonomy, pass_cap=args.pass_cap, wall_clock=args.wall_clock,
             stall=args.stall_limit, rig=run.Rig(args.base_url, args.state), runs_dir=args.runs_dir,
             work_root=args.work_root, llama_swap_log=args.llama_swap_log, headless=args.headless,
+            home=args.home,
         )
     except arms.ArmError as exc:
         print(f"specflo bench run: {exc}", file=sys.stderr)

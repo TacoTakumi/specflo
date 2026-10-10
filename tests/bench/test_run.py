@@ -437,3 +437,30 @@ def test_an_engine_limit_factor_scales_the_config_and_provisional_limits_but_not
     assert limits == lifecycle.Limits(run.PROVISIONAL_LIMITS["quick"][0], 120.0)
     assert source == {"wall_clock": "provisional default", "stall_limit": "arm config"}
 
+
+
+def test_the_run_protects_the_installed_bench_and_the_bench_home(synthetic, monkeypatch, tmp_path):
+    seen = {}
+    real = run.diagnostics.diagnose
+
+    def spy(log, **kw):
+        seen.update(kw)
+        return real(log, **kw)
+
+    monkeypatch.setattr(run.diagnostics, "diagnose", spy)
+    home = tmp_path / "R" / "bench"
+    run.run_one(**synthetic, home=home)
+
+    def reads(path: str) -> dict:
+        call = {"name": "read", "id": "c1", "time": 1.0, "is_error": False, "arguments": {"path": path}}
+        return real({"requests": [], "tool_calls": [call]}, **seen)
+
+    assert reads(str(run.grader.ARCHIVE))["contaminated"] is True
+    assert reads(str(run.PACKAGE / "grader.py"))["contaminated"] is True
+    assert reads(f"{home.resolve()}/arms.yaml")["contaminated"] is True
+
+
+def test_a_work_root_inside_the_bench_home_is_refused(synthetic, tmp_path):
+    home = tmp_path / "R" / "bench"
+    with pytest.raises(run.wd.WorkdirError, match="bench home"):
+        run.run_one(**{**synthetic, "work_root": home / "work"}, home=home)

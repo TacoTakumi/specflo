@@ -259,3 +259,10 @@ def test_cmd_grade_unknown_level_exits_one(tmp_path: Path, capsys: pytest.Captur
     code = cmd_grade.main(["--tree", str(_clean_tree(tmp_path)), "--level", "huge"])
     assert code == 1
     assert "level" in capsys.readouterr().err
+
+
+def test_grading_dir_inside_a_forbidden_root_is_refused(tmp_path: Path) -> None:
+    home = tmp_path / "R" / "bench"
+    with pytest.raises(grader.GraderError, match="bench home"):
+        grader.grade(_clean_tree(tmp_path), "quick", grading_dir=home / "g", forbidden=[home])
+    assert not (home / "g").exists()

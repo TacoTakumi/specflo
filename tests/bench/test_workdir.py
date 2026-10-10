@@ -122,3 +122,11 @@ def test_without_auto_settings_the_config_keeps_its_defaults(tmp_path: Path) -> 
 def test_bad_auto_settings_are_refused(tmp_path: Path, kwargs: dict) -> None:
     with pytest.raises(wd.WorkdirError):
         wd.make_workdir(tmp_path / "run", "quick", **kwargs)
+
+
+def test_destination_inside_a_forbidden_root_is_refused(tmp_path: Path) -> None:
+    home = tmp_path / "R" / "bench"
+    dest = home / "work" / "run"
+    with pytest.raises(wd.WorkdirError, match="outside the bench home"):
+        wd.make_workdir(dest, "quick", forbidden=[home])
+    assert not dest.exists()

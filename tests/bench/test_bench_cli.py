@@ -82,9 +82,10 @@ def test_root_option_names_the_daemon_root(home, tmp_path):
 @pytest.mark.parametrize(
     "command, expected",
     [
-        ("run", {"--config": "arms.yaml", "--state": "state/loaded-by-bench.json", "--runs-dir": "runs"}),
+        ("run", {"--config": "arms.yaml", "--state": "state/loaded-by-bench.json", "--runs-dir": "runs",
+                 "--home": "."}),
         ("batch", {"--config": "arms.yaml", "--matrices": "matrices.yaml",
-                   "--state": "state/loaded-by-bench.json", "--runs-dir": "runs"}),
+                   "--state": "state/loaded-by-bench.json", "--runs-dir": "runs", "--home": "."}),
         ("records", {"--config": "arms.yaml", "--matrices": "matrices.yaml", "--runs-dir": "runs"}),
         ("probe", {"--config": "arms.yaml", "--state": "state/loaded-by-bench.json"}),
         ("graph", {"--config": "arms.yaml", "--records": "runs", "--out": "results/latest"}),
@@ -96,7 +97,7 @@ def test_each_command_defaults_its_paths_to_the_bench_home(home, seen, command, 
     assert result.exit_code == 0, result.output
     flags = _flags(seen[command])
     assert {flag: flags[flag] for flag in expected} == {
-        flag: str(home / path) for flag, path in expected.items()
+        flag: str(home / path) if path != "." else str(home) for flag, path in expected.items()
     }
 
 

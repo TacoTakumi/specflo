@@ -35,8 +35,9 @@ Where things go:
 The record's `logs` names every one of these paths.
 
 Validity: a run is valid when the model ids its requests recorded are exactly
-the arm's entry, no tool call named a protected path (the bench dir and the
-held-out archive) and the tree could be graded. `validity` says which check
+the arm's entry, no tool call named a protected path (the installed bench
+package and its held-out archive, the bench home, and other runs' workdirs and
+run dirs) and the tree could be graded. `validity` says which check
 failed.
 
 Telemetry: when the llama-swap log has no stamped line, or no server timing
@@ -47,6 +48,7 @@ reason.
 from __future__ import annotations
 
 import contextlib
+import functools
 import hashlib
 import json
 import shlex
@@ -536,6 +538,7 @@ def run_one(
     specflo: str | None = None,
     grade: Callable[..., grader.GradeResult] = grader.grade,
     protected: Sequence[Path | str] = (PACKAGE, grader.ARCHIVE),
+    home: Path | str | None = None,
     **lifecycle_kw: Any,
 ) -> tuple[Path, dict[str, Any]]:
     """Run one arm at one level and index to a checked run record; returns its path and the record.
@@ -543,7 +546,10 @@ def run_one(
     Refuses (arms.ArmError) a missing or unknown entry, harness, level or run
     index before anything else. `lifecycle_kw` passes through to
     `lifecycle.run` (tests pass `builders`, `poll`, `stop_grace`, `base_env`).
+    `home`, the bench home, is kept out of the workdir and the grading dir and
+    is a protected path.
     """
+    home_dirs = [Path(home).resolve()] if home is not None else []
     config = config or arms.load_config()
     run = arms.validate_run(config, entry=entry, harness=harness, level=level, run_index=run_index)
     settings = lifecycle.AutoSettings(autonomy, pass_cap)
@@ -558,7 +564,7 @@ def run_one(
     engine = engine_info(ready_entry(rig, run), config.entries[run.entry]["engine"])
     context_window = cc_continue.context_window(run.entry)
     sealed = wd.make_workdir(Path(work_root) / name, run.level, specflo=specflo,
-                             autonomy=settings.autonomy, pass_cap=settings.pass_cap)
+                             autonomy=settings.autonomy, pass_cap=settings.pass_cap, forbidden=home_dirs)
     initial_dirs = diagnostics.snapshot_dirs(sealed.path)
     run_dir.mkdir(parents=True)
     if headless:
@@ -580,9 +586,9 @@ def run_one(
     diag = _safe(lambda: diagnostics.diagnose(
         log, workdir=sealed.path, own_dirs=[str(run_dir)],
         # Earlier runs' trees and logs hold finished solutions; only this run's own are exempt.
-        protected=[str(p) for p in (*protected, Path(work_root).resolve(), Path(runs_dir).resolve())],
+        protected=[str(p) for p in (*protected, *home_dirs, Path(work_root).resolve(), Path(runs_dir).resolve())],
         initial_dirs=initial_dirs, complete=outcome.end_reason == lifecycle.END_COMPLETE), "diagnostics")
-    grade_values = grade_tree(sealed.path, run.level, grade)
+    grade_values = grade_tree(sealed.path, run.level, functools.partial(grade, forbidden=home_dirs))
     telemetry_values = run_telemetry(llama_swap_log, outcome.started_at, outcome.ended_at)
 
     rec = assemble_record(

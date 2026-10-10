@@ -58,10 +58,11 @@ def home_defaults(command: str, home: Path, args: list[str]) -> list[str]:
         "--state": home / "state" / "loaded-by-bench.json",
         "--runs-dir": home / "runs",
         "--records": home / "runs",
+        "--home": home,
     }
     wanted = {
-        "run": ("--config", "--state", "--runs-dir"),
-        "batch": ("--config", "--matrices", "--state", "--runs-dir"),
+        "run": ("--config", "--state", "--runs-dir", "--home"),
+        "batch": ("--config", "--matrices", "--state", "--runs-dir", "--home"),
         "records": ("--config", "--matrices", "--runs-dir"),
         "probe": ("--config", "--state"),
         "graph": ("--config", "--records"),

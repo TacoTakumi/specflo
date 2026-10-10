@@ -123,11 +123,14 @@ def _inside(path: Path, root: Path) -> bool:
     return path == root or root in path.parents
 
 
-def check_grading_dir(grading_dir: Path, workdirs: Iterable[Path]) -> Path:
+def check_grading_dir(grading_dir: Path, workdirs: Iterable[Path], forbidden: Iterable[Path] = ()) -> Path:
     """Return the resolved grading dir, or raise if it is in the bench package, in a workdir, or not empty."""
     resolved = grading_dir.resolve()
     if _inside(resolved, BENCH_PACKAGE):
         raise GraderError(f"grading dir must be outside the bench package ({BENCH_PACKAGE}): {resolved}")
+    for root in (Path(r).resolve() for r in forbidden):
+        if _inside(resolved, root):
+            raise GraderError(f"grading dir must be outside the bench home ({root}): {resolved}")
     for workdir in workdirs:
         root = Path(workdir).resolve()
         if _inside(resolved, root) or _inside(root, resolved):
@@ -232,6 +235,7 @@ def grade(
     package: str = PACKAGE,
     grading_dir: str | Path | None = None,
     workdirs: Iterable[str | Path] = (),
+    forbidden: Iterable[str | Path] = (),
     keep: bool = False,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> GradeResult:
@@ -246,12 +250,12 @@ def grade(
     if grading_dir is None:
         grading = Path(tempfile.mkdtemp(prefix="mb-grade-"))
         try:
-            check_grading_dir(grading, roots)
+            check_grading_dir(grading, roots, [Path(f) for f in forbidden])
         except GraderError:
             shutil.rmtree(grading, ignore_errors=True)
             raise
     else:
-        grading = check_grading_dir(Path(grading_dir), roots)
+        grading = check_grading_dir(Path(grading_dir), roots, [Path(f) for f in forbidden])
         grading.mkdir(parents=True, exist_ok=True)
     grading = grading.resolve()
     try:

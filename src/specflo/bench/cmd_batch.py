@@ -38,6 +38,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--runs-dir", type=Path, default=run.RUNS_DIR, help="where run records and probes go")
     p.add_argument("--work-root", type=Path, default=run.WORK_ROOT, help="where sealed workdirs go")
     p.add_argument("--llama-swap-log", type=Path, default=run.LLAMA_SWAP_LOG, help="llama-swap log")
+    p.add_argument("--home", type=Path, default=None,
+                   help="the bench home: kept out of the workdirs and protected from the agent")
     p.add_argument("--probe-timeout", type=float, default=probe.DEFAULT_TIMEOUT,
                    help="seconds per model load and per probe")
     return p
@@ -60,7 +62,7 @@ def main(argv: list[str]) -> int:
     run_fn = functools.partial(
         run.run_one, config=config, autonomy=run.AUTONOMY, pass_cap=run.PASS_CAP, rig=rig,
         runs_dir=args.runs_dir, work_root=args.work_root, llama_swap_log=args.llama_swap_log,
-        headless=args.headless,
+        headless=args.headless, home=args.home,
     )
     probe_fn = batch.rig_probe(rig, config, args.runs_dir / batch.PROBES_DIR_NAME, timeout=args.probe_timeout)
     out = functools.partial(print, flush=True)

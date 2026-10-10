@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
+from collections.abc import Iterable
 from pathlib import Path
 
 from specflo import __version__
@@ -119,10 +120,13 @@ def foreign_files(workdir: Path, fixture: Path = FIXTURE) -> list[str]:
     return foreign
 
 
-def _check_destination(dest: Path) -> Path:
+def _check_destination(dest: Path, forbidden: Iterable[Path] = ()) -> Path:
     resolved = dest.resolve()
     if resolved == PACKAGE or PACKAGE in resolved.parents:
         raise WorkdirError(f"workdir must be outside the bench package ({PACKAGE}): {resolved}")
+    for root in (Path(r).resolve() for r in forbidden):
+        if resolved == root or root in resolved.parents:
+            raise WorkdirError(f"workdir must be outside the bench home ({root}): {resolved}")
     if resolved.exists() and (not resolved.is_dir() or any(resolved.iterdir())):
         raise WorkdirError(f"workdir exists and is not empty: {resolved}")
     return resolved
@@ -164,6 +168,7 @@ def make_workdir(
     specflo: str | None = None,
     autonomy: str | None = None,
     pass_cap: int | None = None,
+    forbidden: Iterable[Path] = (),
 ) -> SealedWorkdir:
     """Copy the fixture to `dest`, seed a specflo project at `level`, commit once, check it is sealed.
 
@@ -174,7 +179,7 @@ def make_workdir(
         raise WorkdirError(f"unknown level {level!r}: expected one of {', '.join(LEVELS)}")
     if pass_cap is not None and (isinstance(pass_cap, bool) or not isinstance(pass_cap, int) or pass_cap < 1):
         raise WorkdirError(f"pass_cap: expected a positive int, got {pass_cap!r}")
-    dest = _check_destination(dest)
+    dest = _check_destination(dest, forbidden)
     request_file = levels_dir / f"{level}.md"
     if not request_file.is_file():
         raise WorkdirError(f"no request for level {level!r}: {request_file}")
