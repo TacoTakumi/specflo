@@ -40,7 +40,7 @@ def test_readme_proxy_section_warns_trusted_address_signs_in_as_anyone():
 
 def test_readme_proxy_section_drops_never_can_claim():
     section = _readme_proxy_section()
-    para_start = section.index("Keep the daemon bound to the loopback address")
+    para_start = section.index("keep the daemon bound to the loopback address")
     paragraph = section[para_start:].split("\n\n", 1)[0]
     assert "never can" not in _flat(paragraph)
 
@@ -49,3 +49,23 @@ def test_daemon_signin_paragraph_warns_trusted_address_signs_in_as_anyone():
     paragraph = _flat(_daemon_signin_paragraph())
     assert "sign in as any user" in paragraph
     assert "agents" in paragraph
+
+
+def test_readme_proxy_section_advises_another_host_only():
+    # A second address on the same host does not keep local processes out:
+    # any local process can connect from any local address.
+    section = _flat(_readme_proxy_section())
+    assert "another host or address" not in section
+    assert "any local address" in section
+
+
+def test_readme_proxy_section_says_a_remote_proxy_leaves_the_port_reachable():
+    section = _flat(_readme_proxy_section())
+    assert "proxy on another host the daemon must listen on an address" in section
+    assert "firewall" in section
+
+
+def test_daemon_signin_paragraph_advises_another_host_only():
+    paragraph = _flat(_daemon_signin_paragraph())
+    assert "another host or address" not in paragraph
+    assert "on another host" in paragraph
