@@ -70,3 +70,36 @@ def test_a_non_ascii_file_in_files_is_not_noted(tmp_path, monkeypatch):
     assert json.loads(result.output)["files"] == ["src/caf\u00e9.py"]
     assert json.loads(result.output)["outside_files"] == []
     assert task(tmp_path, cfg, ids[0]).notes == []
+
+
+def test_a_name_that_is_not_utf8_lands_and_is_shown_escaped(started):
+    import os
+
+    from specflo import plan
+
+    root, cfg, task_id, path = started
+    raw = os.path.join(os.fsencode(path / "src"), b"caf\xe9.py")
+    with open(raw, "wb") as handle:
+        handle.write(b"x = 1\n")
+    document = plan.plan_path(root, cfg, SLUG)
+
+    result = runner.invoke(app, ["task", "land", task_id, "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["outside_files"] == ["src/caf\\xe9.py"]
+    assert "src/caf\\xe9.py" in task(root, cfg, task_id).notes[0]["text"]
+    assert document.stat().st_size > 0
+
+
+def test_a_refusal_naming_a_name_that_is_not_utf8_prints(started):
+    import os
+
+    root, cfg, task_id, path = started
+    for where in (path, root):
+        with open(os.path.join(os.fsencode(where / "src"), b"caf\xe9.py"), "wb") as handle:
+            handle.write(b"x = %d\n" % len(str(where)))
+
+    result = runner.invoke(app, ["task", "land", task_id])
+
+    assert result.exit_code != 0
+    assert "src/caf\\xe9.py" in result.output and "uncommitted" in result.output

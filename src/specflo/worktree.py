@@ -71,6 +71,12 @@ def _run(
     return result
 
 
+def shown(name: str) -> str:
+    """``name`` as text that is always valid UTF-8: the bytes of a file name
+    that are not UTF-8 are written as ``\\xNN`` escapes."""
+    return name.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+
+
 def current_branch(root: Path) -> str | None:
     """The branch the checkout is on, or None for a detached HEAD.
 
@@ -301,7 +307,7 @@ def _replay(root: Path, base_sha: str, tip: str, squashed: str, base_branch: str
     )
     lines = result.stdout.split("\0")
     if result.returncode == 1:
-        conflicts = list(dict.fromkeys(line for line in lines[1:] if line))
+        conflicts = list(dict.fromkeys(shown(line) for line in lines[1:] if line))
         raise SpecfloError(
             f"The task's change conflicts with {base_branch} in {', '.join(conflicts)}."
             " Nothing was landed. Resolve it in the worktree against"
@@ -388,7 +394,7 @@ def land(
     touched = changed_paths(root, base_sha, tree)
     guarded = _under(top, projects_dir) if projects_dir is not None else None
     if guarded is not None:
-        documents = [f for f in touched if f == guarded or f.startswith(guarded + "/")]
+        documents = [shown(f) for f in touched if f == guarded or f.startswith(guarded + "/")]
         if documents:
             raise SpecfloError(
                 f"The task changes {', '.join(documents)}, under {guarded}: project"
@@ -400,7 +406,7 @@ def land(
         tree = _replay(root, base_sha, tip, squashed, base_branch)
     sha = git(root, "commit-tree", tree, "-p", tip, "-m", message)
     files = changed_paths(root, tip, sha)
-    dirty = sorted(set(files) & _uncommitted(root))
+    dirty = sorted(shown(f) for f in set(files) & _uncommitted(root))
     if dirty:
         raise SpecfloError(
             f"The checkout has uncommitted changes to {', '.join(dirty)}, which the"
@@ -409,4 +415,4 @@ def land(
     git(root, "merge", "--ff-only", "-q", sha)
     remove(root, path, branch)
     prefix = git(root, "rev-parse", "--show-prefix").rstrip("/") or "."
-    return Landed(sha, [posixpath.relpath(f, prefix) for f in files])
+    return Landed(sha, [shown(posixpath.relpath(f, prefix)) for f in files])
