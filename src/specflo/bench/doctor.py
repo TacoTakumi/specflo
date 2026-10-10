@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -105,6 +106,8 @@ def _harnesses(config: arms.Config | None, versions: Mapping[str, Callable[[], s
             checks.append(Check("ok", f"harness {name}", versions[name]()))
         except LaunchError as exc:
             checks.append(Check("skip", f"harness {name}", f"not usable: {exc}"))
+        except subprocess.TimeoutExpired as exc:
+            checks.append(Check("skip", f"harness {name}", f"not usable: `{' '.join(map(str, exc.cmd))}` timed out"))
     if all(c.status == "skip" for c in checks):
         checks.append(Check(
             "fail", "harnesses", f"none of {', '.join(names)} is installed",

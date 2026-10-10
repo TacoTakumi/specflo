@@ -2,6 +2,7 @@
 
 import json
 import socket
+import subprocess
 import sys
 import threading
 import types
@@ -368,3 +369,20 @@ def test_llama_swap_bad_port_in_the_url_fails_naming_the_url(home):
 
     assert check.status == "fail"
     assert f"{url}/v1/models" in check.detail
+
+
+def _timed_out():
+    raise subprocess.TimeoutExpired(["--version"], 60)
+
+
+@pytest.mark.parametrize("hung", ["pi", "claude-code"])
+def test_harness_version_lookup_that_times_out_is_a_skip(home, hung):
+    versions = {**NO_HARNESS, hung: _timed_out}
+
+    checks = _harnesses(bench_doctor.run_checks(
+        None, base_url=_closed_url(), versions=versions, herdr_available=lambda: True
+    ))
+
+    [check] = [c for c in checks if c.subject == f"harness {hung}"]
+    assert check.status == "skip"
+    assert "timed out" in check.detail
