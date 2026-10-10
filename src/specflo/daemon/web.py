@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import ipaddress
 import logging
 import secrets
 import time
@@ -109,8 +110,10 @@ TOKENS_PATH = "/tokens"
 REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
 # The change password page, which only a session opened with a password has.
 PASSWORD_PATH = "/password"
-# How a session opened on the sign-in form records its method in the store.
+# How a session opened on the sign-in form records its method in the store,
+# and how one opened from the name a trusted reverse proxy sent records it.
 PASSWORD_METHOD = "password"
+PROXY_METHOD = "proxy"
 SESSION_COOKIE = "specflo_session"
 # The theme switch's choice lives in this cookie for a year; auto follows the
 # browser's colour scheme.
@@ -121,6 +124,10 @@ THEME_TTL = 365 * 24 * 60 * 60
 # moved the session's expiry. How long a session lives, SESSION_TTL, comes
 # from the auth module; the cookie carries the same limit.
 SESSION_REFRESH_STATE = "session_refresh"
+# The key under the request's state holding the secret of a session this
+# request opened itself, from a proxy's header: the browser has no cookie for
+# it yet, so a form the response carries must echo this secret instead.
+SESSION_OPENED_STATE = "session_opened"
 
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
@@ -211,14 +218,79 @@ def current_user(request: Request) -> User:
     one, or one whose user is gone, counts as none. A request that moved the
     session's expiry marks the request's state, so the response refreshes
     the cookie.
+
+    With no live session, a trusted proxy's header naming an existing user
+    signs that user in: see :func:`_proxy_sign_in`.
     """
-    secret = request.cookies.get(SESSION_COOKIE, "")
+    # A session this request already opened from the header is the live one,
+    # so a second look in the same request opens no other.
+    secret = session_secret(request)
     live = resume_session(request.app.state.root, secret, _now())
     if live is None:
-        raise SignInRequired()
+        named = proxy_user_name(request)
+        user = _proxy_sign_in(request, named) if named is not None else None
+        if user is None:
+            raise SignInRequired()
+        return user
     user, moved = live
     if moved:
         setattr(request.state, SESSION_REFRESH_STATE, secret)
+    # A header naming another user than the live session's is not acted on
+    # yet: the live session stands.
+    return user
+
+
+def proxy_user_name(request: HTTPConnection) -> str | None:
+    """The user name a trusted reverse proxy sent on ``request``, lowercased, or None.
+
+    None while the root's proxy sign-in is off, and for a peer outside the
+    trusted networks. The peer is the socket peer, ``request.client``, and
+    only that: X-Forwarded-For, Forwarded and the like are never read, as
+    any client can send them. A peer that is not an IP address, or that is
+    missing, is untrusted. The header is read by its configured name only;
+    an underscore spelling of it is another header and is ignored. A header
+    sent more than once, or empty, names no one.
+    """
+    setting = getattr(request.app.state, "proxy_auth", None)
+    if setting is None or not setting.enabled:
+        return None
+    if request.client is None or not _trusted_peer(request.client.host, setting.trusted):
+        return None
+    values = request.headers.getlist(setting.header)
+    if len(values) != 1:
+        return None
+    return values[0].strip().lower() or None
+
+
+def _trusted_peer(host: str, trusted) -> bool:
+    """Whether the peer address ``host`` lies inside one of the ``trusted`` networks."""
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    # A dual-stack socket reports an IPv4 peer as ::ffff:a.b.c.d; it is the
+    # same peer, so it is checked as its IPv4 address.
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return any(address in network for network in trusted)
+
+
+def _proxy_sign_in(request: Request, name: str) -> User | None:
+    """Sign in the user ``name`` a trusted proxy sent, with no form; None if there is none.
+
+    A session opened with the method 'proxy' goes on the request's state:
+    the response sets its cookie whichever route made it, and the forms it
+    carries echo its secret. No password is checked, so the password
+    lockout never applies. A name no user has is treated as no header.
+    """
+    root = request.app.state.root
+    with open_store(root) as store:
+        user = store.get_user(name)
+    if user is None:
+        return None
+    secret = open_session(root, user.name, PROXY_METHOD, _now())
+    setattr(request.state, SESSION_REFRESH_STATE, secret)
+    setattr(request.state, SESSION_OPENED_STATE, secret)
     return user
 
 
@@ -282,6 +354,10 @@ _page_session: ContextVar[str] = ContextVar("page_session", default="")
 # The daemon root of the request's application, so render() can look up how
 # the request's session was opened; None outside a request.
 _page_root: ContextVar[Path | None] = ContextVar("page_root", default=None)
+# The request's state, the dict itself, so render() sees a session the route
+# opened from a proxy's header after the middleware ran: a sync route runs
+# in a copy of this context, but the dict it holds is the request's own.
+_page_state: ContextVar[dict | None] = ContextVar("page_state", default=None)
 
 
 class ThemeMiddleware:
@@ -306,6 +382,7 @@ class ThemeMiddleware:
                 back = HOME_PATH
             _page_theme.set((theme if theme in THEMES else "auto", back))
             _page_session.set(conn.cookies.get(SESSION_COOKIE, ""))
+            _page_state.set(scope.setdefault("state", {}))
             app = scope.get("app")
             _page_root.set(getattr(getattr(app, "state", None), "root", None))
         await self.app(scope, receive, send)
@@ -321,7 +398,8 @@ def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
     the header of a signed-in page whether to link the change password page.
     """
     theme, path = _page_theme.get()
-    context.setdefault("session", _page_session.get())
+    state = _page_state.get() or {}
+    context.setdefault("session", state.get(SESSION_OPENED_STATE) or _page_session.get())
     if context.get("identity") and "password_session" not in context:
         root = _page_root.get()
         context["password_session"] = (
@@ -855,8 +933,13 @@ class _NotWaitedOn(Exception):
 
 
 def session_secret(request: Request) -> str:
-    """The live session's cookie value: the secret a mutating form must echo back."""
-    return request.cookies.get(SESSION_COOKIE, "")
+    """The live session's cookie value: the secret a mutating form must echo back.
+
+    For a session this request opened from a proxy's header, the browser
+    has no cookie yet: it is that session's secret, which the response sets.
+    """
+    opened = getattr(request.state, SESSION_OPENED_STATE, None)
+    return opened or request.cookies.get(SESSION_COOKIE, "")
 
 
 def session_refused(request: Request, fields: dict[str, str], identity: str | None) -> HTMLResponse | None:
