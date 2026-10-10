@@ -161,7 +161,7 @@ def test_a_release_is_audited_with_the_acting_identity_and_a_refusal_is_not(
     assert runner.invoke(app, ["lease", "release", granted["lease"]]).exit_code == 0
 
     record = audit_records(pool_daemon["root"])[-1]
-    assert record["identity"] == "developer"
+    assert record["user"] == "developer"
     assert record["operation"] == "lease_release"
     assert record["id"] == granted["lease"]
     assert token not in json.dumps(record)

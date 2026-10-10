@@ -492,7 +492,8 @@ def announce_take(root: Path, project: Project) -> bool:
 def start_project_agent(
     root: Path,
     slug: str,
-    identity: str,
+    user: str,
+    role: str,
     *,
     url: str = DEFAULT_URL,
     pi_cmd: str | None = None,
@@ -502,7 +503,8 @@ def start_project_agent(
 
     This is the operation behind the start-agent control on a project whose
     agent is dead or was never started. An agent still serving is refused,
-    so the control cannot start a second one beside it.
+    so the control cannot start a second one beside it. The start is
+    audited as ``user`` acting under ``role``.
     """
     slug = validate_slug(slug)
     with _start_lock(slug):
@@ -513,7 +515,7 @@ def start_project_agent(
         name = start_agent(
             root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
         )
-    audit(root, identity, "start_agent", slug, None)
+    audit(root, user, role, "start_agent", slug, None)
     return name
 
 
@@ -558,7 +560,8 @@ class Started:
 def start_project(
     root: Path,
     item_id: int,
-    identity: str,
+    user: str,
+    role: str,
     *,
     url: str = DEFAULT_URL,
     pi_cmd: str | None = None,
@@ -566,22 +569,23 @@ def start_project(
 ) -> Started:
     """Spawn the work item's hosted project, scaffold its seat, and start its agent.
 
-    The three steps run in that order as ``identity``. The spawn runs under
-    the root lock like the spawn route and is audited as one; the start is
+    The three steps run in that order as ``user`` acting under ``role``:
+    the user's name is the actor, and both go in the audit. The spawn runs
+    under the root lock like the spawn route and is audited as one; the start is
     audited once the agent answers. A spawn the work item refuses (another
     dev path, a project already spawned) stops before any seat exists. A
     start that fails leaves the spawned project and its seat and raises,
     so the failure is reported and the project can get its agent later.
     """
-    service = LocalProjectService(root, config.load_config(root), actor=identity, hosted=True)
+    service = LocalProjectService(root, config.load_config(root), actor=user, hosted=True)
     with project_lock(root, None), open_store(root) as store:
         spawned = WorkItems(store).spawn(item_id, service)
-        audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
+        audit(root, user, role, "workitem_spawn", spawned.project.slug, str(item_id))
     slug = spawned.project.slug
     with _start_lock(slug):
         workspace = scaffold(root, slug, url, seat_token(root, slug))
         name = start_agent(
             root, slug, pi_cmd=pi_cmd if pi_cmd is not None else DEFAULT_PI_CMD, subscribe=subscribe
         )
-    audit(root, identity, "start_project", slug, str(item_id))
+    audit(root, user, role, "start_project", slug, str(item_id))
     return Started(spawned=spawned, seat=workspace, agent=name)

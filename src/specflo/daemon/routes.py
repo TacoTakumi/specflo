@@ -6,10 +6,12 @@ operation on one project runs under that project's lock, so concurrent
 mutations are serialized and never mint a duplicate id or lose an entry; the
 operations that address the root rather than a project share a root lock.
 
-Every request runs as the identity behind its token: the service is built
-with that identity as its actor, so an entry added through the daemon
-carries an Actor line, and every mutation that succeeds appends one audit
-record (time, identity, project, operation, minted id) to the daemon root.
+Every request runs as the user behind its token: the service is built with
+the user's name as its actor, so an entry added through the daemon carries
+an Actor line naming who added it, and a gate names who opened and who took
+it. The role decides only what the request may do. Every mutation that
+succeeds appends one audit record (time, user, role, project, operation,
+minted id) to the daemon root.
 
 An operation only some roles may run is checked against the role table
 before the service sees it: a role without the permission is a 403, and
@@ -114,8 +116,8 @@ def current_principal(request: Request) -> tuple[str, str]:
 def current_identity(request: Request) -> str:
     """The role the request's bearer token acts under; 401 without a valid one.
 
-    The role, not the user's name: the role checks and the actor stamped on
-    an entry read it as the identity.
+    The role, not the user's name: a route that only checks what the request
+    may do reads this; one that acts or audits reads the principal.
     """
     return current_principal(request)[1]
 
@@ -146,11 +148,14 @@ def project_lock(root: Path, slug: str | None) -> threading.RLock:
     return lock
 
 
-def audit(root: Path, identity: str, operation: str, project: str | None, minted) -> None:
-    """Append one record for a mutation that succeeded."""
+def audit(
+    root: Path, user: str, role: str, operation: str, project: str | None, minted
+) -> None:
+    """Append one record for a mutation that succeeded, by ``user`` acting under ``role``."""
     record = {
         "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
-        "identity": identity,
+        "user": user,
+        "role": role,
         "project": project,
         "operation": operation,
         "id": minted,
@@ -183,15 +188,18 @@ def _changed(operation: wire.Operation, result) -> bool:
 AGENT_HOOKS = frozenset({"advance_project", "take_gate"})
 
 
-def _agent_hook(name: str, root: Path, identity: str, slug: str | None, result) -> None:
-    """What the project's agent hears of a mutation that succeeded."""
+def _agent_hook(
+    name: str, root: Path, principal: tuple[str, str], slug: str | None, result
+) -> None:
+    """What the project's agent hears of a mutation that succeeded; a stop is
+    audited as the ``principal`` (name, role) whose advance caused it."""
     # The seat module builds on this one's lock and audit, so it is reached
     # here, not at import.
     from . import seat
 
     if name == "advance_project":
         if seat.release_on_advance(root, result) is not None:
-            audit(root, identity, "stop_agent", slug, None)
+            audit(root, *principal, "stop_agent", slug, None)
     elif name == "take_gate":
         seat.announce_take(root, result)
 
@@ -233,24 +241,25 @@ def _check_access(root: Path, operation: wire.Operation, identity: str, kwargs: 
     return kwargs
 
 
-def _service(root: Path, identity: str) -> LocalProjectService:
-    """The local service a request runs as: its identity as actor, its projects hosted."""
-    return LocalProjectService(root, load_config(root), actor=identity, hosted=True)
+def _service(root: Path, user: str) -> LocalProjectService:
+    """The local service a request runs as: its user's name as actor, its projects hosted."""
+    return LocalProjectService(root, load_config(root), actor=user, hosted=True)
 
 
 def _handler(operation: wire.Operation):
     def handle(
         request: Request,
         body: dict = Body(default_factory=dict),
-        identity: str = Depends(current_identity),
+        principal: tuple[str, str] = Depends(current_principal),
     ) -> dict:
+        user, role = principal
         try:
             kwargs = wire.decode_args(operation, body)
         except wire.WireError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         root = request.app.state.root
-        kwargs = _check_access(root, operation, identity, kwargs)
-        service = _service(root, identity)
+        kwargs = _check_access(root, operation, role, kwargs)
+        service = _service(root, user)
         slug = kwargs.get("slug") if operation.slug_scoped else None
         # The slug is the one part of a request that becomes a path under the
         # daemon root, so it is checked here for every operation that names
@@ -273,9 +282,9 @@ def _handler(operation: wire.Operation):
                 )
             if operation.name in AUDITED_OPERATIONS and _changed(operation, result):
                 project = slug or getattr(result, "slug", None)
-                audit(root, identity, operation.name, project, _minted(result, kwargs))
+                audit(root, user, role, operation.name, project, _minted(result, kwargs))
             if operation.name in AGENT_HOOKS:
-                _agent_hook(operation.name, root, identity, slug, result)
+                _agent_hook(operation.name, root, principal, slug, result)
         # The boundary: what leaves here describes the daemon's projects, so a
         # path is written relative to the root and the host's layout stays home.
         return {"result": wire.encode(result, root)}
@@ -324,7 +333,7 @@ def _refused(exc: SpecfloError) -> HTTPException:
 def product_add(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(body, required=("name",), optional=("slug", "repo"))
     root = request.app.state.root
@@ -335,7 +344,7 @@ def product_add(
             )
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "product_add", None, product.slug)
+        audit(root, *principal, "product_add", None, product.slug)
     return {"result": wire.encode(product)}
 
 
@@ -360,7 +369,7 @@ def product_set_vision(
     request: Request,
     slug: str,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(body, required=("vision",))
     root = request.app.state.root
@@ -369,7 +378,7 @@ def product_set_vision(
             product = Products(store).set_vision(slug, fields["vision"])
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "product_set_vision", None, slug)
+        audit(root, *principal, "product_set_vision", None, slug)
     return {"result": wire.encode(product)}
 
 
@@ -401,7 +410,7 @@ def product_piece_add(
     request: Request,
     slug: str,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(body, required=("name",))
     root = request.app.state.root
@@ -410,13 +419,13 @@ def product_piece_add(
             pieces = Products(store).add_piece(slug, fields["name"])
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "product_piece_add", None, f"{slug}/{fields['name']}")
+        audit(root, *principal, "product_piece_add", None, f"{slug}/{fields['name']}")
     return {"result": pieces}
 
 
 @router.delete(PIECES_PATH + "/{name}")
 def product_piece_remove(
-    request: Request, slug: str, name: str, identity: str = Depends(current_identity)
+    request: Request, slug: str, name: str, principal: tuple[str, str] = Depends(current_principal)
 ) -> dict:
     root = request.app.state.root
     with project_lock(root, None), open_store(root) as store:
@@ -424,7 +433,7 @@ def product_piece_remove(
             pieces = Products(store).remove_piece(slug, name)
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "product_piece_remove", None, f"{slug}/{name}")
+        audit(root, *principal, "product_piece_remove", None, f"{slug}/{name}")
     return {"result": pieces}
 
 
@@ -435,7 +444,7 @@ def product_piece_remove(
 def workitem_add(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(
         body, required=("product", "title"), optional=("kind", "issue", "dev_path", "piece")
@@ -453,7 +462,7 @@ def workitem_add(
             )
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "workitem_add", None, str(item.id))
+        audit(root, *principal, "workitem_add", None, str(item.id))
     return {"result": wire.encode(item)}
 
 
@@ -487,7 +496,7 @@ def workitem_set_status(
     request: Request,
     item_id: int,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(body, required=("status",))
     root = request.app.state.root
@@ -496,7 +505,7 @@ def workitem_set_status(
             item = WorkItems(store).set_status(item_id, fields["status"])
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "workitem_set_status", None, str(item_id))
+        audit(root, *principal, "workitem_set_status", None, str(item_id))
     return {"result": wire.encode(item)}
 
 
@@ -504,7 +513,7 @@ def workitem_set_status(
 def workitem_start_project(
     request: Request,
     item_id: int,
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     """Spawn the item's project, scaffold its seat, and start its agent: one operation."""
     # The seat module builds on this one's lock and audit, so it is imported
@@ -516,7 +525,7 @@ def workitem_start_project(
     pumps = getattr(request.app.state, "pumps", None)
     try:
         started = seat.start_project(
-            root, item_id, identity, url=url, subscribe=pumps.subscribe if pumps is not None else None
+            root, item_id, *principal, url=url, subscribe=pumps.subscribe if pumps is not None else None
         )
     except seat.AgentStartError as exc:
         # The CLI's words can name paths under the root; they go to the log,
@@ -533,15 +542,15 @@ def workitem_spawn(
     request: Request,
     item_id: int,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     fields = _fields(body, required=(), optional=("name",))
     root = request.app.state.root
-    service = _service(root, identity)
+    service = _service(root, principal[0])
     with project_lock(root, None), open_store(root) as store:
         try:
             spawned = WorkItems(store).spawn(item_id, service, name=fields.get("name"))
         except SpecfloError as exc:
             raise _refused(exc)
-        audit(root, identity, "workitem_spawn", spawned.project.slug, str(item_id))
+        audit(root, *principal, "workitem_spawn", spawned.project.slug, str(item_id))
     return {"result": wire.encode(spawned, root)}

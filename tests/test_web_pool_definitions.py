@@ -325,7 +325,7 @@ def test_a_save_writes_the_file_reloads_the_running_pool_and_is_audited(pool_rig
     assert app.state.pool is service
     assert service.config.definitions == (saved,)
     records = audit_records(pool_rig.root)
-    assert [(r["identity"], r["operation"], r["id"]) for r in records] == [
+    assert [(r["user"], r["operation"], r["id"]) for r in records] == [
         ("developer", "definition_save", "rebaser"),
         ("developer", "pool_reload", None),
     ]
@@ -465,7 +465,7 @@ def test_deleting_a_definition_no_pool_binds_removes_the_file_and_reloads(root):
     assert sorted(d.name for d in app.state.pool.config.definitions) == [
         "hermes-rebaser", "landscape-scanner", "model-update-checker", "worker",
     ]
-    assert [(r["identity"], r["operation"], r["id"]) for r in audit_records(root)] == [
+    assert [(r["user"], r["operation"], r["id"]) for r in audit_records(root)] == [
         ("developer", "definition_delete", "critic"),
         ("developer", "pool_reload", None),
     ]

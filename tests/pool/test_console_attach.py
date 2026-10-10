@@ -493,7 +493,7 @@ def test_attach_as_the_developer_binds_the_host_and_the_waiting_request_is_grant
         with pytest.raises(RuntimeError, match="already bound"):
             host.pool_bind("another-pool")
     records = [r for r in audit_records(console_daemon["root"]) if r["id"] == SLOT]
-    assert [(r["identity"], r["operation"]) for r in records] == [("developer", "console_attach")]
+    assert [(r["user"], r["operation"]) for r in records] == [("developer", "console_attach")]
 
 
 def test_attach_prints_json_when_asked(console_daemon, pool_rig):

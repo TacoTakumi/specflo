@@ -215,7 +215,7 @@ def put_file(
             (directory / relative).unlink()
         else:
             _replace(directory / relative, text)
-        audit(app.state.root, identity, operation, None, named)
+        audit(app.state.root, identity, identity, operation, None, named)
         reload_pool(app, identity)
     return []
 

@@ -344,7 +344,7 @@ def test_overlapping_starts_for_one_project_run_one_after_the_other(root, monkey
 
     def attempt():
         try:
-            outcomes.append(seat.start_project_agent(root, slug, "developer", url="http://127.0.0.1:8741"))
+            outcomes.append(seat.start_project_agent(root, slug, "developer", "developer", url="http://127.0.0.1:8741"))
         except SpecfloError as exc:
             outcomes.append(str(exc))
 
@@ -469,10 +469,10 @@ def test_starting_the_agent_again_keeps_the_seats_token(root, agent_rig):
     config.write_value(root, config.field_for("agent_transport"), "rpc")
     url = "http://127.0.0.1:8741"
 
-    first = seat.start_project_agent(root, "login-fix", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("one"))
+    first = seat.start_project_agent(root, "login-fix", "developer", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("one"))
     token = config.load_remote(seat.seat_dir(root, "login-fix"), seat.REMOTE_NAME).token
     assert agent_rig["cli"]("stop", first).returncode == 0
-    second = seat.start_project_agent(root, "login-fix", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("two"))
+    second = seat.start_project_agent(root, "login-fix", "developer", "developer", url=url, pi_cmd=agent_rig["stub_cmd"]("two"))
 
     assert second == first
     assert config.load_remote(seat.seat_dir(root, "login-fix"), seat.REMOTE_NAME).token == token
@@ -485,7 +485,7 @@ def test_a_seat_whose_token_the_daemon_does_not_know_gets_a_fresh_one(root, agen
     config.write_value(root, config.field_for("agent_transport"), "rpc")
     assert auth.identity_for(root, "agent-secret") is None
 
-    seat.start_project_agent(root, slug, "developer", url="http://127.0.0.1:8741", pi_cmd=agent_rig["stub_cmd"]("fresh"))
+    seat.start_project_agent(root, slug, "developer", "developer", url="http://127.0.0.1:8741", pi_cmd=agent_rig["stub_cmd"]("fresh"))
 
     token = config.load_remote(seat.seat_dir(root, slug), seat.REMOTE_NAME).token
     assert token != "agent-secret" and auth.principal_for(root, token) == ("agent", "agent")
@@ -675,7 +675,7 @@ def test_advancing_out_of_brainstorm_over_the_daemon_stops_the_agent_and_clears_
     assert seat.agent_mapping(root) == {}
     listed = json.loads(agent_rig["cli"]("list", "--json").stdout)
     assert not any(item["name"] == name and item["alive"] for item in listed)
-    operations = [(record["identity"], record["operation"], record["project"]) for record in audit_records(root)]
+    operations = [(record["user"], record["operation"], record["project"]) for record in audit_records(root)]
     assert operations[-2:] == [("developer", "advance_project", slug), ("developer", "stop_agent", slug)]
 
 

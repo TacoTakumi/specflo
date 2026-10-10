@@ -66,7 +66,7 @@ def audit_records(root):
     if not path.is_file():
         return []
     return [
-        (r["identity"], r["project"], r["operation"], r["id"])
+        (r["user"], r["project"], r["operation"], r["id"])
         for r in (json.loads(line) for line in path.read_text().splitlines())
     ]
 

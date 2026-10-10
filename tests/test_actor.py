@@ -207,7 +207,7 @@ def test_the_agent_takes_a_gate_for_the_human_it_relays(daemon_root):
     assert taken.gate.taken_by == "rob" and taken.gate.taken_at
     assert taken.gate.opened_by == "agent"
     records = [json.loads(line) for line in (daemon_root / routes.AUDIT_FILENAME).read_text().splitlines()]
-    assert [(r["operation"], r["identity"]) for r in records[-2:]] == [
+    assert [(r["operation"], r["user"]) for r in records[-2:]] == [
         ("open_gate", "agent"), ("take_gate", "agent"),
     ]
 
@@ -245,7 +245,7 @@ def test_daemon_appends_one_audit_record_per_mutation(daemon_root):
         for line in (daemon_root / routes.AUDIT_FILENAME).read_text().splitlines()
     ]
 
-    assert [(r["identity"], r["project"], r["operation"], r["id"]) for r in records] == [
+    assert [(r["user"], r["project"], r["operation"], r["id"]) for r in records] == [
         ("requester", project.slug, "create_project", None),
         ("requester", "thing", "start_brainstorm", None),
         ("requester", "thing", "add_decision", first.id),

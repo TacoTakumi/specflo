@@ -372,5 +372,5 @@ async def release_lease(
             message=f"No lease {lease_id!r}.",
         )
     if released is not None:
-        audit(request.app.state.root, identity, "lease_release", None, released)
+        audit(request.app.state.root, identity, identity, "lease_release", None, released)
     return RedirectResponse(POOL_PATH, status_code=303)

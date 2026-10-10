@@ -292,7 +292,7 @@ def test_a_reload_is_audited_with_the_developer_identity(served, pool_rig):
     assert served.reload().status_code == 200
 
     (record,) = audit_records(pool_rig.root)
-    assert (record["identity"], record["operation"]) == ("developer", "pool_reload")
+    assert (record["user"], record["operation"]) == ("developer", "pool_reload")
 
 
 @pytest.mark.parametrize("identity", ["requester", "agent"])
@@ -385,7 +385,7 @@ def test_the_reload_is_one_function_that_answers_with_the_faults(served, pool_ri
 
     write_workers(pool_rig)
     assert pool_routes.reload_pool(served.application, "developer") == ()
-    assert [r["identity"] for r in audit_records(pool_rig.root)] == ["developer"]
+    assert [r["user"] for r in audit_records(pool_rig.root)] == ["developer"]
 
 
 # -- what the daemon reads while it serves -------------------------------------

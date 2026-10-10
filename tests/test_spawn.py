@@ -79,7 +79,7 @@ def audit_records(root):
     if not path.is_file():
         return []
     return [
-        (r["identity"], r["project"], r["operation"], r["id"])
+        (r["user"], r["project"], r["operation"], r["id"])
         for r in (json.loads(line) for line in path.read_text().splitlines())
     ]
 
@@ -347,7 +347,7 @@ def rpc_rig(root, tmp_path, monkeypatch):
 def test_start_project_spawns_scaffolds_and_starts_the_agent(root, rpc_rig):
     seed(root)
 
-    started = seat.start_project(root, 1, "requester", url="http://127.0.0.1:8741", pi_cmd=rpc_rig["pi_cmd"])
+    started = seat.start_project(root, 1, "requester", "requester", url="http://127.0.0.1:8741", pi_cmd=rpc_rig["pi_cmd"])
 
     slug = started.spawned.project.slug
     assert slug == "fix-the-login" and started.spawned.item.project == slug
@@ -367,12 +367,12 @@ def test_start_project_spawns_scaffolds_and_starts_the_agent(root, rpc_rig):
 
 def test_a_second_start_is_refused_naming_the_project_and_changes_nothing(root, rpc_rig):
     seed(root)
-    seat.start_project(root, 1, "requester", pi_cmd=rpc_rig["pi_cmd"])
+    seat.start_project(root, 1, "requester", "requester", pi_cmd=rpc_rig["pi_cmd"])
     before = audit_records(root)
     mapping = seat.agent_mapping(root)
 
     with pytest.raises(SpecfloError, match="already spawned project 'fix-the-login'"):
-        seat.start_project(root, 1, "requester", pi_cmd=rpc_rig["pi_cmd"])
+        seat.start_project(root, 1, "requester", "requester", pi_cmd=rpc_rig["pi_cmd"])
 
     assert audit_records(root) == before and seat.agent_mapping(root) == mapping
     assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
@@ -383,7 +383,7 @@ def test_a_failed_agent_start_leaves_the_spawned_project_and_reports_it(root, rp
     monkeypatch.setenv("SPECFLO_AGENT_START_TIMEOUT", "1")
 
     with pytest.raises(seat.AgentStartError):
-        seat.start_project(root, 1, "requester", pi_cmd=f"{sys.executable} -c 'import sys; sys.exit(3)'")
+        seat.start_project(root, 1, "requester", "requester", pi_cmd=f"{sys.executable} -c 'import sys; sys.exit(3)'")
 
     assert [p.slug for p in service(root).list_projects()] == ["fix-the-login"]
     with store_module.open_store(root) as store:
@@ -397,7 +397,7 @@ def test_start_project_refuses_what_spawn_refuses_before_any_seat(root, rpc_rig)
     seed(root)
 
     with pytest.raises(SpecfloError, match="dev path 'one-prompt'"):
-        seat.start_project(root, 2, "requester", pi_cmd=rpc_rig["pi_cmd"])
+        seat.start_project(root, 2, "requester", "requester", pi_cmd=rpc_rig["pi_cmd"])
 
     assert not (root / seat.SEATS_DIRNAME).exists()
     assert service(root).list_projects() == [] and audit_records(root) == []

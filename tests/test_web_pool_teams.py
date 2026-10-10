@@ -275,7 +275,7 @@ def test_a_created_team_is_a_file_the_validator_accepts_and_the_running_pool_hol
     # the running service, in the same process, holds what the files say now
     assert app.state.pool is service
     assert service.config.teams == (BUILD, replace(REVIEW, notes="Review each change."))
-    assert [(r["identity"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
+    assert [(r["user"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
         ("developer", "team_save", "build"),
         ("developer", "pool_reload", None),
     ]
@@ -421,7 +421,7 @@ def test_a_save_writes_the_file_reloads_the_running_pool_and_is_audited(team_roo
     assert listed(team_root) == ["review.md"]
     assert app.state.pool is service
     assert service.config.teams == (saved,)
-    assert [(r["identity"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
+    assert [(r["user"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
         ("developer", "team_save", "review"),
         ("developer", "pool_reload", None),
     ]
@@ -477,7 +477,7 @@ def test_deleting_a_team_removes_the_file_and_reloads(team_root):
     assert response.headers["location"] == LIST
     assert listed(team_root) == []
     assert app.state.pool.config.teams == ()
-    assert [(r["identity"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
+    assert [(r["user"], r["operation"], r["id"]) for r in audit_records(team_root)] == [
         ("developer", "team_delete", "review"),
         ("developer", "pool_reload", None),
     ]

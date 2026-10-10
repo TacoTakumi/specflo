@@ -301,7 +301,7 @@ def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
         faults = tuple(errors) or service.swap(config, _in_the_way)
     app.state.pool_errors = faults
     if not faults:
-        audit(root, identity, "pool_reload", None, None)
+        audit(root, identity, identity, "pool_reload", None, None)
     return faults
 
 
@@ -420,7 +420,7 @@ def _look(asked: waiting.Waiting, root: Path, identity: str) -> Grant | teamleas
     if grant is not None:
         team = isinstance(grant, teamlease.TeamGrant)
         granted = grant.team_lease_id if team else grant.lease_id
-        audit(root, identity, "lease_request", None, granted)
+        audit(root, identity, identity, "lease_request", None, granted)
     return grant
 
 
@@ -726,13 +726,13 @@ def lease_release(
         ended = service.end_lease(lease_id, "released")
     except RunnerError as exc:
         # The lease has ended all the same, and this identity ended it.
-        audit(request.app.state.root, identity, "lease_release", None, lease_id)
+        audit(request.app.state.root, identity, identity, "lease_release", None, lease_id)
         raise _member_failed(f"pool '{lease.pool}'", exc)
     except SpecfloError as exc:
         raise _refused(exc)
     # A lease that ended some other way in between was not released by this call.
     if ended.state == "released":
-        audit(request.app.state.root, identity, "lease_release", None, lease_id)
+        audit(request.app.state.root, identity, identity, "lease_release", None, lease_id)
     return {"result": {"lease_id": lease_id, "state": ended.state, "held": True}}
 
 
@@ -761,14 +761,14 @@ def _team_release(
         ended = teamlease.release_team(service, team_lease_id)
     except RunnerError as exc:
         # Every member lease has ended all the same, and this identity ended them.
-        audit(request.app.state.root, identity, "lease_release", None, team_lease_id)
+        audit(request.app.state.root, identity, identity, "lease_release", None, team_lease_id)
         raise _member_failed(f"team lease '{team_lease_id}'", exc)
     except SpecfloError as exc:
         raise _refused(exc)
     # Members that ended some other way in between were not released by this call.
     released = [end for end in ended if end.state == "released"]
     if released:
-        audit(request.app.state.root, identity, "lease_release", None, team_lease_id)
+        audit(request.app.state.root, identity, identity, "lease_release", None, team_lease_id)
     state = "released" if released else ended[-1].state
     return {"result": {"lease_id": team_lease_id, "state": state, "held": True}}
 
@@ -811,7 +811,7 @@ def console_attach(
         attached = console.attach(service, slot, agent)
     except SpecfloError as exc:
         raise _refused(exc)
-    audit(request.app.state.root, identity, "console_attach", None, slot)
+    audit(request.app.state.root, identity, identity, "console_attach", None, slot)
     return {"result": {
         "slot": attached.slot, "agent": attached.agent, "state": console.ATTACHED,
     }}
@@ -832,7 +832,7 @@ def console_detach(
         state = console.detach(service, slot)
     except SpecfloError as exc:
         raise _refused(exc)
-    audit(request.app.state.root, identity, "console_detach", None, slot)
+    audit(request.app.state.root, identity, identity, "console_detach", None, slot)
     return {"result": {"slot": slot, "state": state}}
 
 

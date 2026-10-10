@@ -429,7 +429,7 @@ def test_a_grant_is_audited_with_the_acting_identity_and_a_refusal_is_not(
     granted = request("rebasers")
 
     (record,) = audit_records(pool_daemon["root"])
-    assert record["identity"] == "developer"
+    assert record["user"] == "developer"
     assert record["operation"] == "lease_request"
     assert record["id"] == granted["lease"]
     # the record, like the store, never holds the token
@@ -563,7 +563,7 @@ def test_a_requester_that_goes_away_while_the_member_starts_leaves_no_lease_out(
     assert ": " not in cause
     # the request made a lease, and the record says whose request it was
     (record,) = audit_records(pool_daemon["root"])
-    assert (record["identity"], record["operation"], record["id"]) == (
+    assert (record["user"], record["operation"], record["id"]) == (
         "developer", "lease_request", row.id,
     )
     # the slots are free now, not when the lease would have run out of idle time

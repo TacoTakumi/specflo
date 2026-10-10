@@ -192,6 +192,6 @@ def test_a_mutation_by_the_agent_is_audited_as_agent(root, client):
     ]
     decision = [r for r in records if r["operation"] == "add_decision"]
     assert len(decision) == 1
-    assert decision[0]["identity"] == "agent"
+    assert decision[0]["user"] == "agent"
     assert decision[0]["project"] == "audited"
-    assert {r["identity"] for r in records} == {"agent"}
+    assert {r["user"] for r in records} == {"agent"}

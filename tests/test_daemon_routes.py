@@ -7,6 +7,7 @@ values the local service returns. Mutations to one project are serialized,
 so concurrent adds mint distinct sequential ids and lose nothing.
 """
 
+import json
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -19,6 +20,7 @@ from fastapi.testclient import TestClient
 from specflo import daemon
 from specflo.daemon import auth
 from specflo.daemon.app import create_app
+from specflo.daemon.products import PRODUCTS_PATH
 from specflo.plan import Task
 from specflo.projects import Project
 from specflo.review import ClosedRound
@@ -344,9 +346,9 @@ def test_the_review_reads_are_read_operations_and_its_writes_are_audited():
 
 
 @pytest.fixture
-def relay(root, client):
-    """Clients for rob (a developer), ann (a requester) and the agent, and a
-    hosted project whose gate waits on the developer."""
+def named(root):
+    """Clients for rob (a developer), ann (a requester) and the agent, each on
+    a personal token."""
     auth.add_user(root, "rob", "developer", None)
     auth.add_user(root, "ann", "requester", None)
 
@@ -355,9 +357,15 @@ def relay(root, client):
         user.headers["Authorization"] = f"Bearer {auth.mint_user_token(root, owner, 'seat-x')}"
         return user
 
+    return {"rob": bearer("rob"), "ann": bearer("ann"), "agent": bearer("agent")}
+
+
+@pytest.fixture
+def relay(client, named):
+    """The named clients, and a hosted project whose gate waits on the developer."""
     call(client, "create_project", name="Thing")
     call(client, "open_gate", slug="thing", role="developer", note="Open points")
-    return {"rob": bearer("rob"), "ann": bearer("ann"), "agent": bearer("agent")}
+    return named
 
 
 def test_the_relay_records_the_user_the_agent_takes_for(relay):
@@ -390,4 +398,73 @@ def test_the_relay_refuses_a_user_who_passes_by(relay, taker):
 
 
 def test_the_relay_check_leaves_a_take_without_by_alone(relay):
-    assert call(relay["rob"], "take_gate", slug="thing").gate.taken_by == "developer"
+    assert call(relay["rob"], "take_gate", slug="thing").gate.taken_by == "rob"
+
+
+# --- who acted: the user's name as actor, the name and role in the audit -----
+# The actor stamped on an entry and a gate is the name behind the token; the
+# role decides only what the token may do. The audit keeps both.
+
+
+def audit_records(root):
+    path = root / "audit.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+
+
+def test_a_decision_added_with_a_users_token_carries_the_users_name_as_actor(root, named):
+    call(named["rob"], "create_project", name="Thing")
+    call(named["rob"], "start_brainstorm", slug="thing")
+
+    call(named["rob"], "add_decision", slug="thing", text="Hosted")
+
+    document = (root / daemon.PROJECTS_DIRNAME / "thing" / "brainstorm.md").read_text()
+    assert "- Actor: rob" in document and "- Actor: developer" not in document
+
+
+def test_a_gate_records_the_user_who_opened_it_and_the_user_who_took_it(named):
+    call(named["rob"], "create_project", name="Thing")
+    call(named["rob"], "open_gate", slug="thing", role="requester", note="Open points")
+
+    taken = call(named["ann"], "take_gate", slug="thing")
+
+    assert (taken.gate.opened_by, taken.gate.taken_by) == ("rob", "ann")
+    assert not taken.gate.is_open
+
+
+def test_a_mutation_appends_an_audit_record_with_the_user_and_the_role(root, named):
+    project = call(named["rob"], "create_project", name="Thing")
+
+    record = audit_records(root)[-1]
+
+    assert (record["user"], record["role"], record["operation"], record["project"]) == (
+        "rob", "developer", "create_project", project.slug,
+    )
+    assert "identity" not in record
+    assert set(record) == {"time", "user", "role", "project", "operation", "id"}
+
+
+def test_an_agent_mutation_is_audited_as_the_agent_user_and_role(root, named):
+    call(named["agent"], "create_project", name="Thing")
+    call(named["agent"], "open_gate", slug="thing", role="developer")
+
+    records = audit_records(root)
+
+    assert [(r["user"], r["role"], r["operation"]) for r in records] == [
+        ("agent", "agent", "create_project"), ("agent", "agent", "open_gate"),
+    ]
+
+
+def test_a_relayed_take_is_audited_as_the_agent_and_recorded_for_the_user(root, relay):
+    taken = call(relay["agent"], "take_gate", slug="thing", by="ann")
+
+    assert taken.gate.taken_by == "ann"
+    record = audit_records(root)[-1]
+    assert (record["user"], record["role"], record["operation"]) == ("agent", "agent", "take_gate")
+
+
+def test_a_product_mutation_is_audited_with_the_user_and_the_role(root, named):
+    response = named["rob"].post(PRODUCTS_PATH, json={"name": "Thing"})
+
+    assert response.status_code == 200, response.text
+    record = audit_records(root)[-1]
+    assert (record["user"], record["role"], record["operation"]) == ("rob", "developer", "product_add")

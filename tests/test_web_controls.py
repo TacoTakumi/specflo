@@ -10,11 +10,18 @@ renders author, time and text per entry inside the monospace region.
 """
 
 import inspect
+import json
 import re
 
 import pytest
+from fastapi.testclient import TestClient
 
-from specflo.daemon import web
+from specflo import daemon
+from specflo.daemon import auth, routes, web
+from specflo.daemon.app import create_app
+from specflo.service import wire
+
+from conftest import web_sign_in
 
 TEMPLATES = sorted(web.TEMPLATES_DIR.glob("*.html"))
 
@@ -134,3 +141,33 @@ def test_the_four_mutating_routes_share_one_session_guard():
     assert "compare_digest" in inspect.getsource(web.session_refused)
     for route in (web.start_project, web.take_gate, web.start_agent, web.post_message):
         assert "session_refused(" in inspect.getsource(route), route.__name__
+
+
+# --- who takes: the signed-in user's name, not the role -----------------------
+
+
+def test_a_gate_opened_by_one_user_and_taken_on_the_page_by_another_records_both(tmp_path):
+    root = daemon.prepare_root(tmp_path / "daemon")
+    auth.add_user(root, "rob", "developer", None)
+    rob = TestClient(create_app(root))
+    rob.headers["Authorization"] = f"Bearer {auth.mint_user_token(root, 'rob', 'seat-x')}"
+    for operation, body in (
+        ("create_project", {"name": "Thing"}),
+        ("open_gate", {"slug": "thing", "role": "requester", "note": "Open points"}),
+    ):
+        assert rob.post(wire.route_path(operation), json=body).status_code == 200
+    ann = TestClient(create_app(root), follow_redirects=False)
+    web_sign_in(ann, root, "requester", "ann")
+
+    response = ann.post(
+        web.TAKE_PATH.format(slug="thing"), data={"session": ann.cookies[web.SESSION_COOKIE]}
+    )
+
+    assert response.status_code == 303, response.text
+    loaded = rob.post(wire.route_path("load_project"), json={"slug": "thing"}).json()["result"]
+    assert (loaded["gate"]["opened_by"], loaded["gate"]["taken_by"]) == ("rob", "ann")
+    record = json.loads((root / routes.AUDIT_FILENAME).read_text().splitlines()[-1])
+    assert (record["user"], record["role"], record["operation"], record["project"]) == (
+        "ann", "requester", "take_gate", "thing",
+    )
+    assert "identity" not in record

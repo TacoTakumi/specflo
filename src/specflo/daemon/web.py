@@ -655,7 +655,7 @@ def product_page(
 
 @pages.post(START_PROJECT_PATH, include_in_schema=False)
 async def start_project(
-    request: Request, slug: str, item_id: int, identity: str = Depends(current_session)
+    request: Request, slug: str, item_id: int, user: User = Depends(current_user)
 ) -> Response:
     """Start a project on the product's work item: spawn, seat, agent, as one operation.
 
@@ -663,7 +663,9 @@ async def start_project(
     must belong to the product named in the path; what the operation
     refuses (another dev path, a project already spawned) is a 409 page,
     and an agent that fails to start is a 502 page with the project made.
+    The project is started as the signed-in user, by name and role.
     """
+    identity = user.role
     fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
@@ -681,7 +683,8 @@ async def start_project(
         # daemon back, and the pump it subscribes may wait on an old pump's
         # thread, so it runs off the event loop the daemon answers on.
         started = await run_in_threadpool(
-            seat.start_project, root, item_id, identity, url=url, subscribe=pumps.subscribe
+            seat.start_project, root, item_id, user.name, user.role, url=url,
+            subscribe=pumps.subscribe,
         )
     except seat.AgentStartError as exc:
         _log.warning("start-project for item %s: %s", item_id, exc)
@@ -840,15 +843,17 @@ async def form_fields(request: Request) -> dict[str, str]:
 
 @pages.post(TAKE_PATH, include_in_schema=False)
 async def take_gate(
-    request: Request, slug: str, identity: str = Depends(current_session)
+    request: Request, slug: str, user: User = Depends(current_user)
 ) -> Response:
-    """Take the project's open gate as the signed-in identity.
+    """Take the project's open gate as the signed-in user.
 
     The form echoes the session secret; a post without it is a cross-site
-    post and is refused before anything is read. The take runs through the
+    post and is refused before anything is read. The gate must wait on the
+    user's role; the take records the user's name. It runs through the
     same operation as the CLI verb, under the project's lock, and is
     audited like a take over the API.
     """
+    identity = user.role
     fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
@@ -858,7 +863,7 @@ async def take_gate(
         validate_slug(slug)
     except SpecfloError:
         return _missing(identity, f"No project {slug!r}.")
-    service = LocalProjectService(root, load_config(root), actor=identity, hosted=True)
+    service = LocalProjectService(root, load_config(root), actor=user.name, hosted=True)
 
     def take() -> None:
         # The gate is checked on the record as it stands under the lock,
@@ -872,7 +877,7 @@ async def take_gate(
             if gate.role != identity:
                 raise _NotWaitedOn(gate.role)
             project = service.take_gate(slug)
-            audit(root, identity, "take_gate", slug, None)
+            audit(root, user.name, user.role, "take_gate", slug, None)
             # The announcement waits on the agent's socket; the take runs
             # off the event loop, so the wait stalls this request alone.
             seat.announce_take(root, project)
@@ -893,15 +898,17 @@ async def take_gate(
 
 @pages.post(START_AGENT_PATH, include_in_schema=False)
 async def start_agent(
-    request: Request, slug: str, identity: str = Depends(current_session)
+    request: Request, slug: str, user: User = Depends(current_user)
 ) -> Response:
     """Start the project's agent again, for a project whose agent is dead or was never started.
 
     The form echoes the session secret like every mutating form. The
     project must be one with an agent to show; one whose agent discovery
     finds serving is refused, as a 409 page, so the control cannot start a
-    second agent beside it. A start that fails is a 502 page.
+    second agent beside it. A start that fails is a 502 page. The start
+    is audited as the signed-in user, by name and role.
     """
+    identity = user.role
     fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
@@ -920,7 +927,8 @@ async def start_agent(
 
     try:
         await run_in_threadpool(
-            seat.start_project_agent, root, slug, identity, url=url, subscribe=pumps.subscribe
+            seat.start_project_agent, root, slug, user.name, user.role, url=url,
+            subscribe=pumps.subscribe,
         )
     except seat.AgentStartError as exc:
         _log.warning("start-agent for %s: %s", slug, exc)

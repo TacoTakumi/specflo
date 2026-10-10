@@ -313,7 +313,7 @@ def test_taking_through_the_page_closes_the_gate_as_the_session_identity(client,
     assert gate_section(html) is None and take_form(html) is None
     assert facts(html)["Waiting on"] == "developer"
     last = audit_records(root)[-1]
-    assert last["identity"] == "developer" and last["operation"] == "take_gate"
+    assert last["user"] == "developer" and last["operation"] == "take_gate"
     assert last["project"] == slug
 
 
@@ -619,7 +619,7 @@ def test_the_control_starts_the_agent_and_the_page_then_shows_it_serving(client,
     assert start_agent_form(html) is None
     assert f"{name} is idle." in agent_section(html)
     last = audit_records(root)[-1]
-    assert (last["identity"], last["operation"], last["project"]) == ("developer", "start_agent", slug)
+    assert (last["user"], last["operation"], last["project"]) == ("developer", "start_agent", slug)
 
 
 def test_the_control_runs_the_start_off_the_event_loop_so_the_daemon_keeps_answering(client, root, monkeypatch):

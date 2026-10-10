@@ -159,7 +159,7 @@ def test_the_release_is_audited_with_the_developer_and_the_lease(pool_rig, lease
     release(signed_in(leased["app"]), grant.lease_id)
 
     (record,) = audit_records(pool_rig.root)
-    assert record["identity"] == "developer"
+    assert record["user"] == "developer"
     assert record["operation"] == "lease_release"
     assert record["id"] == grant.lease_id
     assert record["project"] is None
@@ -181,7 +181,7 @@ def test_the_control_on_a_member_lease_of_a_team_releases_the_whole_team(pool_ri
         assert causes(pool_rig, member.lease_id)[-1] == ("released", CAUSE)
         assert wait_until(lambda: not pid_alive(status["pi_pid"]))
     (record,) = audit_records(pool_rig.root)
-    assert (record["identity"], record["operation"]) == ("developer", "lease_release")
+    assert (record["user"], record["operation"]) == ("developer", "lease_release")
     assert record["id"] == team.team_lease_id
 
 
@@ -208,7 +208,7 @@ def test_the_control_records_the_developer_for_every_member_of_a_team_one_member
     for member in team.members:
         assert causes(pool_rig, member.lease_id)[-1] == ("released", CAUSE)
     (record,) = audit_records(pool_rig.root)
-    assert (record["identity"], record["id"]) == ("developer", team.team_lease_id)
+    assert (record["user"], record["id"]) == ("developer", team.team_lease_id)
 
 
 # -- refusals: the lease stays active --------------------------------------------------
@@ -357,7 +357,7 @@ def test_a_member_that_does_not_stop_is_the_logs_matter_and_the_release_is_audit
     assert lease_state(pool_rig, grant.lease_id) == "released"
     assert causes(pool_rig, grant.lease_id)[-1] == ("released", CAUSE)
     (record,) = audit_records(pool_rig.root)
-    assert (record["identity"], record["id"]) == ("developer", grant.lease_id)
+    assert (record["user"], record["id"]) == ("developer", grant.lease_id)
     assert MARKER in caplog.text
     # what the runner said can hold host paths and member output: the log's alone
     assert MARKER not in response.text
