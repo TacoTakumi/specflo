@@ -155,13 +155,19 @@ def graph(ctx: typer.Context) -> None:
 def doctor(
     ctx: typer.Context,
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+    base_url: str | None = typer.Option(
+        None, "--base-url", metavar="<url>", help="llama-swap. Default: as `bench run` has it."
+    ),
 ) -> None:
     """Check the bench setup: each problem names its fix. Exits 1 when a check fails."""
     from specflo.doctor import render
 
     from . import doctor as bench_doctor
 
-    checks = bench_doctor.run_checks(ctx.obj["option"])
+    given = {"base_url": base_url}
+    checks = bench_doctor.run_checks(
+        ctx.obj["option"], **{name: value for name, value in given.items() if value is not None}
+    )
     failed = any(c.status == "fail" for c in checks)
     if json_output:
         typer.echo(json.dumps({"ok": not failed, "checks": [c.to_dict() for c in checks]}))
