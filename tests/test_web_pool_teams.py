@@ -740,7 +740,7 @@ BROWSER_POSTS = {
     # The tokens section of the user page: the signed-in user's own personal tokens.
     web.TOKENS_PATH,
     web.REVOKE_TOKEN_PATH,
-    # The change password page of a session opened with a password.
+    # The user page's change password form, for a session opened with a password.
     web.PASSWORD_PATH,
     web.START_PROJECT_PATH,
     web.TAKE_PATH,

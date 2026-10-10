@@ -118,7 +118,7 @@ def test_a_proxy_session_gets_no_change_password_link(root):
     response = client.get(web.HOME_PATH, headers={HEADER: "rob"})
 
     assert response.status_code == 200
-    assert web.PASSWORD_PATH not in response.text
+    assert web.PASSWORD_SECTION not in response.text
 
 
 def test_the_live_proxy_session_is_used_on_later_requests(root):

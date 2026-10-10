@@ -112,8 +112,13 @@ REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
 # The tokens section of the user page, and the old tokens page that leads there.
 TOKENS_SECTION = USER_PATH + "#tokens"
 OLD_TOKENS_PATH = "/tokens"
-# The change password page, which only a session opened with a password has.
-PASSWORD_PATH = "/password"
+# Where the user page's change password form posts; only a session opened
+# with a password has the form.
+PASSWORD_PATH = USER_PATH + "/password"
+# The password section of the user page, and the old change password page
+# that leads there.
+PASSWORD_SECTION = USER_PATH + "#password"
+OLD_PASSWORD_PATH = "/password"
 # How a session opened on the sign-in form records its method in the store,
 # and how one opened from the name a trusted reverse proxy sent records it.
 PASSWORD_METHOD = "password"
@@ -1178,16 +1183,19 @@ async def post_message(
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
-def _user_page(user: User, root: Path, minted: tuple[str, str] | None = None) -> HTMLResponse:
+def _user_page(
+    user: User, root: Path, minted: tuple[str, str] | None = None, status_code: int = 200, **context,
+) -> HTMLResponse:
     """The user page of ``user``; ``minted`` is a new token's (name, secret), shown this once.
 
-    The response that carries a secret is never cached, so a back button
-    or a shared cache cannot show it again.
+    ``refused`` or ``changed`` in ``context`` say how a password change went.
+    The response that carries a secret is never cached, so a back button or
+    a shared cache cannot show it again.
     """
     response = render(
-        "user.html", identity=user.role, user=user.name,
+        "user.html", status_code=status_code, identity=user.role, user=user.name,
         tokens=list_user_tokens(root, user.name), minted=minted,
-        shown_once=SHOWN_ONCE, no_tokens=NO_TOKENS,
+        shown_once=SHOWN_ONCE, no_tokens=NO_TOKENS, **context,
     )
     if minted is not None:
         response.headers["Cache-Control"] = "no-store"
@@ -1262,14 +1270,6 @@ async def revoke_token(request: Request, user: User = Depends(current_user)) -> 
     return RedirectResponse(TOKENS_SECTION, status_code=303)
 
 
-def _password_page(user: User, status_code: int = 200, **context) -> HTMLResponse:
-    """The change password page of ``user``; ``refused`` or ``changed`` say how a post went."""
-    return render(
-        "password.html", status_code=status_code, identity=user.role, user=user.name,
-        password_session=True, **context,
-    )
-
-
 def _change_password(root: Path, name: str, current: str, new: str, keep: str) -> str | None:
     """Replace the password of ``name`` when ``current`` is theirs; the refusal, or None.
 
@@ -1294,22 +1294,21 @@ def _change_password(root: Path, name: str, current: str, new: str, keep: str) -
     return None
 
 
-@pages.get(PASSWORD_PATH, include_in_schema=False)
-def password_page(request: Request, user: User = Depends(current_user)) -> Response:
-    """The change password form, for a session opened with a password; a 404 page for any other."""
-    if session_method(request.app.state.root, session_secret(request)) != PASSWORD_METHOD:
-        return _missing(user.role, "No such page.")
-    return _password_page(user)
+@pages.get(OLD_PASSWORD_PATH, include_in_schema=False)
+def old_password_page(identity: str = Depends(current_session)) -> Response:
+    """The old change password page, now the password section of the user page."""
+    return RedirectResponse(PASSWORD_SECTION, status_code=303)
 
 
 @pages.post(PASSWORD_PATH, include_in_schema=False)
 async def change_password(request: Request, user: User = Depends(current_user)) -> Response:
     """Change the signed-in user's password, keeping this session and ending their others.
 
-    Only a session opened with a password has the page; any other gets the
-    same 404 page as the form. The form echoes the session secret like every
+    Only a session opened with a password has the form; a post from any
+    other gets a 404 page. The form echoes the session secret like every
     mutating form. A new password that is empty or not typed the same twice,
-    and a wrong current password, are refused beside the form as a 400 page,
+    and a wrong current password, are refused beside the form on the user
+    page with a 400,
     and nothing changes. The change is audited as the user, by name and
     role, with no password or hash in the record.
     """
@@ -1324,16 +1323,16 @@ async def change_password(request: Request, user: User = Depends(current_user)) 
         return refused
     new = fields.get("new", "")
     if not new:
-        return _password_page(user, status_code=400, refused=PASSWORD_EMPTY)
+        return _user_page(user, root, status_code=400, refused=PASSWORD_EMPTY)
     if new != fields.get("again", ""):
-        return _password_page(user, status_code=400, refused=PASSWORDS_DIFFER)
+        return _user_page(user, root, status_code=400, refused=PASSWORDS_DIFFER)
     refusal = await run_in_threadpool(
         _change_password, root, user.name, fields.get("current", ""), new, hash_token(secret)
     )
     if refusal is not None:
-        return _password_page(user, status_code=400, refused=refusal)
+        return _user_page(user, root, status_code=400, refused=refusal)
     audit(root, user.name, user.role, "change_password", None, None)
-    return _password_page(user, changed=PASSWORD_CHANGED)
+    return _user_page(user, root, changed=PASSWORD_CHANGED)
 
 
 @pages.post(SIGNOUT_PATH, include_in_schema=False)

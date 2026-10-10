@@ -1,19 +1,21 @@
-"""The user page: the signed-in user's theme switch and personal tokens on one page.
+"""The user page: the signed-in user's theme switch, personal tokens and password on one page.
 
-The old My tokens page sends the browser to the page's tokens section. A
-browser with no session is sent to sign-in, from the page and from the old
-path alike.
+The password section is there only for a session opened with a password.
+The old My tokens and change password pages send the browser to the
+matching section. A browser with no session is sent to sign-in, from the
+page and from the old paths alike.
 """
 
 from __future__ import annotations
 
 import re
+import time
 
 import pytest
 from fastapi.testclient import TestClient
 
 from specflo import daemon
-from specflo.daemon import web
+from specflo.daemon import auth, web
 from specflo.daemon.app import create_app
 
 from conftest import web_sign_in
@@ -35,13 +37,21 @@ def signed_in(app, root, name="rob", role="developer"):
     return client
 
 
+def proxy_signed_in(app, root, name="rob", role="developer"):
+    """A client on a session opened as a proxy sign-in opens one: no password asked."""
+    web_sign_in(TestClient(app, follow_redirects=False), root, role, name)
+    client = TestClient(app, follow_redirects=False)
+    client.cookies.set(web.SESSION_COOKIE, auth.open_session(root, name, "proxy", time.time()))
+    return client
+
+
 def content(html):
     """The page's own content, without the site header."""
     return re.search(r'<main class="container">(.*)</main>', html, re.S).group(1)
 
 
 # The page's top-level sections, in page order.
-SECTIONS = ("theme", "tokens")
+SECTIONS = ("theme", "tokens", "password")
 
 
 def section(html, name):
@@ -96,7 +106,36 @@ def test_the_old_tokens_page_sends_the_browser_to_the_tokens_section(app, root):
     assert response.headers["location"] == web.USER_PATH + "#tokens"
 
 
-@pytest.mark.parametrize("path", [web.USER_PATH, web.OLD_TOKENS_PATH])
+def test_a_password_session_has_the_password_section_after_the_tokens(app, root):
+    client = signed_in(app, root)
+
+    html = client.get(web.USER_PATH).text
+
+    page = content(html)
+    assert page.index('<section id="theme">') < page.index('<section id="tokens">') < page.index('<section id="password">')
+    assert f'action="{web.PASSWORD_PATH}"' in section(html, "password")
+
+
+def test_a_proxy_session_has_the_theme_and_tokens_sections_and_no_password_section(app, root):
+    client = proxy_signed_in(app, root)
+
+    page = content(client.get(web.USER_PATH).text)
+
+    assert '<section id="theme">' in page and '<section id="tokens">' in page
+    assert '<section id="password">' not in page
+
+
+@pytest.mark.parametrize("make", [signed_in, proxy_signed_in])
+def test_the_old_password_page_sends_the_browser_to_the_password_section(app, root, make):
+    client = make(app, root)
+
+    response = client.get(web.OLD_PASSWORD_PATH)
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.USER_PATH + "#password"
+
+
+@pytest.mark.parametrize("path", [web.USER_PATH, web.OLD_TOKENS_PATH, web.OLD_PASSWORD_PATH])
 def test_a_browser_with_no_session_is_sent_to_sign_in(app, path):
     client = TestClient(app, follow_redirects=False)
 

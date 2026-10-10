@@ -1,8 +1,8 @@
-"""The change password page, for a browser signed in with a password.
+"""The user page's change password form, for a browser signed in with a password.
 
 A session records how it was opened. One opened with a password has the
-page and a link to it in the header; one opened through a proxy has
-neither, and the page answers it with a 404. The form asks for the current
+form on the user page; one opened through a proxy has none, and a post
+from it gets a 404. The old change password page leads to the form. The form asks for the current
 password and the new one twice. A wrong current password, new passwords
 that differ and an empty new password are refused beside the form, and the
 password stays as it was. A wrong current password is not a failed sign-in:
@@ -13,7 +13,6 @@ post runs the session-secret guard first.
 
 from __future__ import annotations
 
-import re
 import time
 from html import unescape
 
@@ -69,10 +68,6 @@ def signs_in(app, password, name="rob") -> bool:
     return response.status_code == 303
 
 
-def header(html):
-    return re.search(r'<header class="site-header">.*?</header>', html, re.S).group(0)
-
-
 def password_hash(root, name="rob"):
     with open_store(root) as store:
         return store.get_user(name).password_hash
@@ -86,24 +81,25 @@ def failures(root, name="rob"):
 # --- who has the page ------------------------------------------------------------
 
 
-def test_a_password_session_has_the_link_and_the_form(app, root):
+def test_a_password_session_has_the_form(app, root):
     client = signed_in(app, root)
 
-    assert f'href="{web.PASSWORD_PATH}"' in header(client.get(web.HOME_PATH).text)
-    html = client.get(web.PASSWORD_PATH).text
+    html = client.get(web.USER_PATH).text
+    assert '<section id="password">' in html
+    assert f'action="{web.PASSWORD_PATH}"' in html
     for field in ("current", "new", "again"):
         assert f'name="{field}"' in html
     assert f'name="session" value="{client.cookies[web.SESSION_COOKIE]}"' in html
 
 
-def test_a_proxy_session_has_no_link_and_gets_404(app, root):
+def test_a_proxy_session_has_no_form_and_its_post_gets_404(app, root):
     client = proxy_signed_in(app, root)
     before = password_hash(root)
 
-    page = client.get(web.HOME_PATH)
+    page = client.get(web.USER_PATH)
     assert page.status_code == 200
-    assert f'href="{web.PASSWORD_PATH}"' not in header(page.text)
-    assert client.get(web.PASSWORD_PATH).status_code == 404
+    assert '<section id="password">' not in page.text
+    assert web.PASSWORD_PATH not in page.text
     assert change(client).status_code == 404
     assert password_hash(root) == before
 
@@ -111,7 +107,7 @@ def test_a_proxy_session_has_no_link_and_gets_404(app, root):
 def test_a_browser_with_no_session_is_sent_to_sign_in(app):
     client = TestClient(app, follow_redirects=False)
 
-    for response in (client.get(web.PASSWORD_PATH), client.post(web.PASSWORD_PATH, data={})):
+    for response in (client.get(web.OLD_PASSWORD_PATH), client.post(web.PASSWORD_PATH, data={})):
         assert response.status_code == 303
         assert response.headers["location"] == web.SIGNIN_PATH
 

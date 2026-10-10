@@ -68,4 +68,29 @@
     {% endif %}
   </section>
 </section>
+{% if password_session %}
+<section id="password">
+  <h2>Password</h2>
+  <p>Change the password <strong>{{ user }}</strong> signs in with. This session stays signed in; every other session of yours ends.</p>
+  {% if refused %}
+  <p class="error" role="alert">{{ refused }}</p>
+  {% endif %}
+  {% if changed %}
+  <p role="status">{{ changed }}</p>
+  {% endif %}
+  <form method="post" action="{{ password_path }}">
+    <input type="hidden" name="session" value="{{ session }}">
+    <label>Current password
+      <input type="password" name="current" required autocomplete="current-password">
+    </label>
+    <label>New password
+      <input type="password" name="new" required autocomplete="new-password">
+    </label>
+    <label>New password again
+      <input type="password" name="again" required autocomplete="new-password">
+    </label>
+    <button type="submit">Change password</button>
+  </form>
+</section>
+{% endif %}
 {% endblock %}
