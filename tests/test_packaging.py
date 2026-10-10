@@ -199,6 +199,7 @@ WEB_FILES = [
     "templates/chat_line.html",
     "assets/htmx.min.js",
     "assets/hx-sse.js",
+    "assets/bench.css",
 ]
 
 

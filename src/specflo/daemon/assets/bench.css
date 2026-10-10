@@ -1,0 +1,25 @@
+/* specflo bench results page: the page's own rules, on the tokens of
+   specflo.css. The daemon links this sheet on a batch's results page; the
+   standalone index.html that `specflo bench graph` writes inlines it. */
+
+main { font-size: 15px; line-height: 1.55; padding-top: 8px; }
+h2 { font-size: 20px; margin-top: 2.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
+h3 { font-size: 16px; }
+code { font-size: .9em; background: var(--bg-muted); padding: .1em .3em; border-radius: 4px; }
+.muted { color: var(--fg-muted); }
+nav ul { padding-left: 1.2em; }
+dl.glossary dt { font-family: var(--mono); font-weight: 600; margin-top: .8em; }
+dl.glossary dd { margin-left: 1.2em; }
+.comparison { margin-top: 1.5em; }
+.table-wrap { overflow-x: auto; }
+table { border-collapse: collapse; font-size: 13px; margin: .5em 0 1em; }
+th, td { border: 1px solid var(--border-muted); padding: 4px 8px; text-align: left; vertical-align: top; }
+th { background: var(--bg-muted); }
+td { font-family: var(--mono); overflow-wrap: anywhere; min-width: 18ch; }
+thead th { min-width: 18ch; }
+tr.differs th, tr.differs td { background: var(--accent-soft); }
+figure { margin: 1em 0 2em; }
+figure img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: var(--radius); }
+figcaption { color: var(--fg-muted); margin-top: .4em; }
+details { margin: .5em 0; }
+pre { font-family: var(--mono); font-size: 12px; background: var(--bg-muted); padding: 8px; border-radius: var(--radius); overflow-x: auto; white-space: pre-wrap; }

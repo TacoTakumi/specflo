@@ -9,11 +9,16 @@ earlier `specflo bench graph` runs into the same directory are on the page too.
 
 The page is plain HTML with no script. It inlines the specflo web UI's two
 stylesheets from the installed specflo package (the frame, specflo.css, and
-the vendored github-markdown.css), so it looks like the daemon's pages and
-still stands alone when the directory is copied elsewhere; its own rules
-follow them and use only their tokens. The header's Auto/Light/Dark switch is
-three radio inputs that set the colour scheme through :has(); with no server
-behind a file, the choice lasts until the page is reloaded.
+the vendored github-markdown.css) and the page's own rules (bench.css, on
+their tokens), so it looks like the daemon's pages and still stands alone when
+the directory is copied elsewhere or opened from a file. The header's
+Auto/Light/Dark switch is three radio inputs that set the colour scheme
+through :has(); with no server behind a file, the choice lasts until the page
+is reloaded.
+
+The daemon shows the same content in its own layout: `page_title` and
+`render_body` are the parts it uses, and it links bench.css instead of
+inlining it.
 """
 
 from __future__ import annotations
@@ -60,11 +65,14 @@ METRIC_TEXT = {
 }
 
 # The daemon's assets directory, read without importing the web application.
-_ASSETS = files("specflo.daemon") / "assets"
+ASSETS_DIR = files("specflo.daemon") / "assets"
 SHARED_STYLESHEETS = ("github-markdown.css", "specflo.css")
+# The page's own rules, which the daemon links on its results page too.
+PAGE_STYLESHEET = "bench.css"
 
 THEMES = ("auto", "light", "dark")
 
+# The standalone page's header and theme switch; the daemon page has its own header.
 _STYLE = """
 /* The theme switch: radio inputs in the header, styled as the daemon's buttons. */
 :root:has(input[name="theme"][value="light"]:checked) { color-scheme: light; }
@@ -76,36 +84,14 @@ _STYLE = """
 .theme input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .bench-name { color: var(--fg-muted); font-size: 14px; padding-left: 12px; border-left: 1px solid var(--border); }
 .site-header .theme { margin-left: auto; }
-
-/* The page */
-main { font-size: 15px; line-height: 1.55; padding-top: 8px; }
-h2 { font-size: 20px; margin-top: 2.5em; padding-bottom: .3em; border-bottom: 1px solid var(--border); }
-h3 { font-size: 16px; }
-code { font-size: .9em; background: var(--bg-muted); padding: .1em .3em; border-radius: 4px; }
-.muted { color: var(--fg-muted); }
-nav ul { padding-left: 1.2em; }
-dl.glossary dt { font-family: var(--mono); font-weight: 600; margin-top: .8em; }
-dl.glossary dd { margin-left: 1.2em; }
-.comparison { margin-top: 1.5em; }
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; font-size: 13px; margin: .5em 0 1em; }
-th, td { border: 1px solid var(--border-muted); padding: 4px 8px; text-align: left; vertical-align: top; }
-th { background: var(--bg-muted); }
-td { font-family: var(--mono); overflow-wrap: anywhere; min-width: 18ch; }
-thead th { min-width: 18ch; }
-tr.differs th, tr.differs td { background: var(--accent-soft); }
-figure { margin: 1em 0 2em; }
-figure img { max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: var(--radius); }
-figcaption { color: var(--fg-muted); margin-top: .4em; }
-details { margin: .5em 0; }
-pre { font-family: var(--mono); font-size: 12px; background: var(--bg-muted); padding: 8px; border-radius: var(--radius); overflow-x: auto; white-space: pre-wrap; }
 """
 
 
 def stylesheet() -> str:
-    """The shared stylesheets as the installed specflo package holds them, then the page's own rules."""
-    shared = "\n".join((_ASSETS / name).read_text(encoding="utf-8") for name in SHARED_STYLESHEETS)
-    return f"{shared}\n{_STYLE}"
+    """The shared stylesheets and the page's own rules as the installed specflo package holds them, then the header's."""
+    names = (*SHARED_STYLESHEETS, PAGE_STYLESHEET)
+    sheets = "\n".join((ASSETS_DIR / name).read_text(encoding="utf-8") for name in names)
+    return f"{sheets}\n{_STYLE}"
 
 
 def _header() -> str:
@@ -224,7 +210,13 @@ def _graph_bases(out: Path) -> dict[str, dict[str, list[str]]]:
     return found
 
 
-def render_index(out_dir: Path | str) -> str:
+def page_title(out_dir: Path | str) -> str:
+    """The page's title: the bench and the directory's name."""
+    return f"Model bench: {Path(out_dir).name}"
+
+
+def render_body(out_dir: Path | str) -> str:
+    """The page's content, from its heading to the metric glossary, for the graphs in the directory."""
     out = Path(out_dir)
     bases = _graph_bases(out)
     levels = [lv for lv in LEVELS if lv in bases] + sorted(lv for lv in bases if lv not in LEVELS)
@@ -240,19 +232,7 @@ def render_index(out_dir: Path | str) -> str:
         for base, kinds in sorted(bases[level].items()):
             sections.append(_comparison(out, base, kinds))
     body = "\n".join(sections) or '<p class="muted">No graphs in this directory.</p>'
-    title = f"Model bench: {out.name}"
-    return f"""<!doctype html>
-<html lang="en" id="top">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{escape(title)}</title>
-<style>{stylesheet()}</style>
-</head>
-<body>
-{_header()}
-<main class="container">
-<h1>{escape(title)}</h1>
+    return f"""<h1>{escape(page_title(out))}</h1>
 <p>The specflo model bench measures how well a local model drives specflo. Each
 run seeds a specflo project in a small Python repo (tinytodo, a to-do CLI), runs
 it unattended under <code>specflo auto</code>, and grades the final tree with a
@@ -291,7 +271,23 @@ count. The table above the graphs shows the same fields.</li>
 <p>A panel name with a dot is one part of a metric: <code>tool_calls.bash</code>
 is the bash calls, <code>output_tokens_per_turn.mean</code> is the mean.</p>
 <dl class="glossary">{glossary}</dl>
-</main>
+"""
+
+
+def render_index(out_dir: Path | str) -> str:
+    """The standalone page: its head with every stylesheet inlined, its header and the content."""
+    return f"""<!doctype html>
+<html lang="en" id="top">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{escape(page_title(out_dir))}</title>
+<style>{stylesheet()}</style>
+</head>
+<body>
+{_header()}
+<main class="container">
+{render_body(out_dir)}</main>
 </body>
 </html>
 """

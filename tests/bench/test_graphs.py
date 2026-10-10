@@ -256,6 +256,21 @@ def test_index_page_takes_the_specflo_look_with_a_theme_switch_and_no_script(tmp
     assert "<script" not in page
 
 
+def test_the_page_rules_are_a_daemon_stylesheet_without_the_theme_switch():
+    sheet = (index_page.ASSETS_DIR / index_page.PAGE_STYLESHEET).read_text()
+    assert "figure img {" in sheet
+    assert 'input[name="theme"]' not in sheet
+    assert ".bench-name" not in sheet
+
+
+def test_index_page_inlines_the_page_rules_and_links_nothing_so_it_opens_from_a_file(tmp_path):
+    graphs.generate(harness_pair("quick"), tmp_path, ENGINES)
+    page = index_page.render_index(tmp_path)
+    assert (index_page.ASSETS_DIR / index_page.PAGE_STYLESHEET).read_text() in page
+    assert "<link" not in page
+    assert not re.search(r'(?:src|href)="/', page)
+
+
 def test_index_page_lists_graphs_of_earlier_runs(tmp_path):
     graphs.generate(harness_pair("quick"), tmp_path, ENGINES)
     (tmp_path / "full-by-entry-pi-pass-rate.png").write_bytes(b"png")
