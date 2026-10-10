@@ -154,9 +154,69 @@ elif args[:2] == ["workspace", "create"]:
     result = {"workspace": {"workspace_id": "w1"}}
 elif args[:2] == ["tab", "create"]:
     result = {"tab": {"tab_id": "w1:t1"}, "root_pane": {"pane_id": "w1:p7"}}
+elif args[:2] == ["pane", "run"] and os.environ.get("FAKE_HERDR_TYPED"):
+    # A pane that runs what it is given: a shell command starts, anything else
+    # is text typed into whatever runs there.
+    if args[3].startswith("exec "):
+        import subprocess
+        subprocess.Popen(["bash", "-c", args[3]], start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        with open(os.environ["FAKE_HERDR_TYPED"], "a") as f:
+            f.write(args[3] + "\n")
+    result = {}
 else:
     result = {}
 print(json.dumps({"id": "x", "result": result}))
+'''
+
+
+# A stand-in for the interactive pi in a pane: it serves the control socket and
+# mirrors run events the way the specflo extension does, waits for the
+# ignition to be typed, then acts out one ending.
+TUI_PI = r'''
+import json, os, socket, sys, time
+mode = sys.argv[1]
+root = os.path.join(os.environ["SPECFLO_AGENT_STATE_DIR"], os.environ["SPECFLO_AGENT_NAME"])
+os.makedirs(root, exist_ok=True)
+with open(os.environ["HARNESS_ENV"], "w") as f:
+    json.dump({"env": dict(os.environ), "argv": sys.argv, "pid": os.getpid()}, f)
+def emit(event):
+    with open(os.path.join(root, "events.jsonl"), "a") as f:
+        f.write(json.dumps({"ts": time.time(), **event}) + "\n")
+def set_status(value):
+    state = json.load(open(os.environ["STUB_SPECFLO_STATE"]))
+    state["status"] = value
+    json.dump(state, open(os.environ["STUB_SPECFLO_STATE"], "w"))
+def idle_forever():
+    while True:
+        time.sleep(1)
+if mode == "noserve":
+    idle_forever()
+with open(os.path.join(root, "status.json"), "w") as f:
+    json.dump({"pid": os.getpid(), "state": "idle"}, f)
+server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+server.bind(os.path.join(root, "sock"))
+server.listen(8)
+typed = os.environ["FAKE_HERDR_TYPED"]
+while not (os.path.exists(typed) and "/specflo-continue auto" in open(typed).read()):
+    time.sleep(0.05)
+emit({"type": "agent_start"})
+if mode == "complete":
+    set_status("complete")
+    emit({"type": "agent_settled"})
+    idle_forever()
+elif mode == "complete-busy":
+    set_status("complete")
+    time.sleep(0.8)
+    with open(os.environ["HARNESS_SETTLED"], "w") as f:
+        f.write(str(time.time()))
+    emit({"type": "agent_settled"})
+    idle_forever()
+elif mode == "exit":
+    sys.exit(3)
+else:
+    idle_forever()
 '''
 
 
@@ -198,6 +258,20 @@ class Bench:
             agent_dir=agent_dir, pi_version="test", config_hash="sha256:test",
         )
         return lc.pi_spec(launch, self.specflo, self.run_dir)
+
+    def pi_tui(self, mode: str, rpc_mode: str = "complete") -> lc.HarnessSpec:
+        """A pi harness with a pane start: the stand-in pane pi in `mode`, the rpc harness in `rpc_mode`."""
+        self.env["FAKE_HERDR_TYPED"] = str(self.tmp / "typed.txt")
+        tui_pi = str(_script(self.tmp / "tui-pi.py", TUI_PI))
+        launch = launch_pi.PiLaunch(
+            argv=[sys.executable, self.harness, rpc_mode], env=dict(self.env), cwd=self.workdir,
+            agent_dir=self.run_dir / launch_pi.AGENT_DIR_NAME, pi_version="test", config_hash="sha256:test",
+        )
+        return lc.pi_spec(launch, self.specflo, self.run_dir, tui_argv=[sys.executable, tui_pi, mode])
+
+    def typed(self) -> list[str]:
+        path = self.tmp / "typed.txt"
+        return path.read_text().splitlines() if path.exists() else []
 
     def plain(self, mode: str) -> lc.HarnessSpec:
         return lc.HarnessSpec(harness="test", argv=[sys.executable, self.harness, mode],
@@ -453,6 +527,110 @@ def test_a_live_herdr_pane_follows_the_run(tmp_path: Path):
                               label="modelbench lifecycle test")
     assert outcome.placement == lc.PLACEMENT_HERDR and outcome.pane_id
     assert outcome.end_reason == lc.END_STALLED
+
+
+# -- the pi TUI in a pane ------------------------------------------------------------
+
+
+def _pane_herdr(bench: Bench, tmp_path: Path, monkeypatch, fail: str = "") -> tuple[HerdrAdapter, Path]:
+    monkeypatch.setenv("FAKE_HERDR_TYPED", str(tmp_path / "typed.txt"))
+    return _fake_herdr(tmp_path, monkeypatch, fail)
+
+
+def _calls(log: Path) -> list[list[str]]:
+    return [json.loads(line) for line in log.read_text().splitlines()]
+
+
+def test_tui_pane_runs_pi_with_the_handshake_and_types_the_ignition_once(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    spec = bench.pi_tui("complete")
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(spec, herdr=herdr, label="pi quick 0")
+    assert outcome.end_reason == lc.END_COMPLETE, outcome.end_detail
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.placement == lc.PLACEMENT_HERDR and outcome.pane_id == "w1:p7"
+    assert bench.typed() == [lc.IGNITION]
+    seen = json.loads((tmp_path / "env.json").read_text())
+    assert seen["argv"] == spec.tui.argv[1:]  # python drops its own path from argv
+    assert seen["env"]["SPECFLO_AGENT_MANAGED"] == "1"
+    assert seen["env"]["SPECFLO_AGENT_PANE"] == "w1:p7"
+    assert seen["env"][lc.RUN_ENV]
+    pane_runs = [c[3] for c in _calls(log) if c[:2] == ["pane", "run"]]
+    assert not any("tail " in cmd for cmd in pane_runs)
+    assert ["tab", "close", "w1:t1"] in _calls(log)
+
+
+def test_tui_transport_waits_for_the_mirrored_settle(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    herdr, _ = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("complete-busy"), herdr=herdr)
+    assert outcome.end_reason == lc.END_COMPLETE
+    settled = float((tmp_path / "settled.txt").read_text())
+    assert datetime.fromisoformat(outcome.ended_at).timestamp() >= settled
+
+
+def test_tui_transport_keeps_the_agent_files_and_removes_its_short_state_dir(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    bench.run_dir = tmp_path / ("r" * (120 - len(str(tmp_path)) - 1))
+    assert len(str(bench.run_dir)) == 120
+    herdr, _ = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("complete"), herdr=herdr)
+    assert outcome.transport == lc.TRANSPORT_TUI
+    state_dir = Path(json.loads((tmp_path / "env.json").read_text())["env"]["SPECFLO_AGENT_STATE_DIR"])
+    assert len(str(state_dir / lc.TUI_AGENT / "sock")) < 100
+    assert not state_dir.exists()
+    events = [json.loads(line)["type"] for line in (bench.run_dir / lc.AGENT_EVENTS_FILE).read_text().splitlines()]
+    assert events == ["agent_start", "agent_settled"]
+    assert json.loads((bench.run_dir / lc.AGENT_STATUS_FILE).read_text())["state"] == "idle"
+    assert not (bench.run_dir / lc.LAUNCH_SPEC_FILE).exists()
+
+
+def test_tui_start_without_herdr_runs_rpc_headless(tmp_path: Path):
+    bench = Bench(tmp_path)
+    outcome = bench.supervise(bench.pi_tui("complete"), herdr=None)
+    assert outcome.end_reason == lc.END_COMPLETE
+    assert outcome.transport == lc.TRANSPORT_RPC
+    assert outcome.placement == lc.PLACEMENT_HEADLESS
+    assert json.loads((tmp_path / "stdin.txt").read_text())["message"] == lc.IGNITION
+
+
+def test_tui_start_with_a_failed_placement_runs_rpc_headless(tmp_path: Path, monkeypatch, capsys):
+    bench = Bench(tmp_path)
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch, fail="tab create")
+    outcome = bench.supervise(bench.pi_tui("complete"), herdr=herdr)
+    assert outcome.end_reason == lc.END_COMPLETE
+    assert outcome.transport == lc.TRANSPORT_RPC
+    assert outcome.placement == lc.PLACEMENT_HEADLESS
+    assert outcome.placement_note.startswith("herdr placement failed")
+    assert "the run is headless" in capsys.readouterr().err
+
+
+def test_tui_start_whose_pi_never_serves_closes_the_tab_and_runs_rpc(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(lc, "TUI_START_TIMEOUT", 1.0)
+    bench = Bench(tmp_path)
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("noserve"), herdr=herdr)
+    assert outcome.transport == lc.TRANSPORT_RPC
+    assert outcome.end_reason == lc.END_COMPLETE
+    assert outcome.placement_note == "pi did not open its control socket in 1 s"
+    assert ["tab", "close", "w1:t1"] in _calls(log)
+    stand_in = json.loads((tmp_path / "env.json").read_text())
+    assert stand_in["argv"][-1] == "noserve"
+    assert not lc.alive(stand_in["pid"])
+
+
+def test_build_pi_gives_rpc_argv_and_a_pane_start_without_the_rpc_mode(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(launch_pi, "pi_version", lambda pi_bin="pi": "1.0.4")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    run = arms.Run(entry=ENTRY, harness="pi", level="quick", run_index=1)
+    spec = lc.build_pi(run, workdir=workdir, run_dir=tmp_path / "run", specflo="specflo",
+                       env={"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+                       limits=lc.Limits(10.0, 5.0), settings=lc.AutoSettings("yolo", 5))
+    assert spec.argv[-2:] == ["--mode", "rpc"]
+    assert spec.tui is not None and spec.tui.argv == spec.argv[:-2]
+    assert "--mode" not in spec.tui.argv
+    assert spec.tui.ignition == lc.IGNITION
 
 
 # -- the pane launcher ---------------------------------------------------------------

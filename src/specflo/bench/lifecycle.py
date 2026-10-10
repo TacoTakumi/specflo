@@ -70,20 +70,25 @@ import glob
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
 
 from specflo import auto as sf_auto
+from specflo.agent.client import HostUnreachableError, connect
 from specflo.agent.herdr import HerdrAdapter, HerdrError, HerdrPlacement
+from specflo.agent.statefiles import ENV_STATE_DIR, AgentPaths
+from specflo.agent.tui import ENV_AGENT_MANAGED, ENV_AGENT_NAME, ENV_AGENT_PANE
 from specflo.projects import COMPLETE_STATUS
 
 from specflo.bench import arms, cc_continue, launch_cc, launch_pi, record
@@ -100,12 +105,24 @@ if {END_COMPLETE, END_ESCALATED, END_TIMEOUT, END_STALLED, END_HARNESS_EXIT} != 
 PLACEMENT_HERDR = "herdr"
 PLACEMENT_HEADLESS = "headless"
 
+# How a pi run talks to pi: the interactive TUI in a herdr pane, or RPC on stdio.
+TRANSPORT_TUI = "tui"
+TRANSPORT_RPC = "rpc"
+RPC_ARGS = ("--mode", "rpc")
+
 RUN_ENV = "MODELBENCH_RUN"
 SPECFLO_BIN_ENV = "SPECFLO_BIN"
 OUT_LOG = "harness.out"
 ERR_LOG = "harness.err"
 RECORD_FILE = "lifecycle.json"
 LAUNCH_SPEC_FILE = "pane-launch.json"
+AGENT_EVENTS_FILE = "agent-events.jsonl"
+AGENT_STATUS_FILE = "agent-status.json"
+
+# The agent name a pane pi serves its control socket under, in the run's own state dir.
+TUI_AGENT = "pi"
+# Seconds a pane pi gets to open its control socket.
+TUI_START_TIMEOUT = 60.0
 CC_SPEC_FILE = "cc-spec.json"
 CC_RESULT_FILE = "cc-result.json"
 
@@ -561,6 +578,130 @@ class HarnessSpec:
     idle: Callable[[], bool] | None = None
     on_exit: Callable[[int], Ending | None] | None = None
     report: Callable[[], dict] | None = None
+    tui: TuiStart | None = None
+
+
+@dataclass(frozen=True)
+class TuiStart:
+    """How the harness runs in a herdr pane instead: the argv there, the text typed once, and the judge.
+
+    `judge` takes the events file the pane harness mirrors its run events to and
+    returns the verdict and idle checks that read it.
+    """
+
+    argv: list[str]
+    ignition: str
+    judge: Callable[[Path], tuple[Callable[[], Ending | None], Callable[[], bool]]]
+
+
+class PaneProcess:
+    """A harness the pane started, watched by pid: the part of Popen that supervision uses.
+
+    The pane's process reaps it, so its exit code is not known here: poll
+    gives EXIT_UNKNOWN once the pid is gone.
+    """
+
+    EXIT_UNKNOWN = -1
+    stdin = None
+
+    def __init__(self, pid: int) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+
+    def poll(self) -> int | None:
+        if self.returncode is None and not alive(self.pid):
+            self.returncode = self.EXIT_UNKNOWN
+        return self.returncode
+
+    def wait(self, timeout: float | None = None) -> int:
+        end = None if timeout is None else time.monotonic() + timeout
+        while self.poll() is None:
+            if end is not None and time.monotonic() >= end:
+                raise subprocess.TimeoutExpired(str(self.pid), timeout)
+            time.sleep(0.05)
+        return self.returncode
+
+
+@dataclass
+class TuiRun:
+    placement: HerdrPlacement
+    proc: PaneProcess
+    paths: AgentPaths
+    state_dir: Path
+
+
+class TuiStartError(RuntimeError):
+    """The pane harness could not be started."""
+
+
+def _socket_pid(paths: AgentPaths, timeout: float) -> int:
+    """The pid in status.json once the control socket accepts a connection, within `timeout`."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            with connect(paths.name, paths.root.parent, connect_timeout=2.0):
+                pass
+            pid = json.loads(paths.status.read_text(encoding="utf-8")).get("pid")
+            if isinstance(pid, int) and not isinstance(pid, bool):
+                return pid
+        except (HostUnreachableError, OSError, ValueError, AttributeError):
+            pass
+        time.sleep(0.1)
+    raise TuiStartError(f"pi did not open its control socket in {timeout:g} s")
+
+
+def _kill_token(token: str) -> None:
+    """SIGKILL every process that carries the run token (a pane start that failed half way)."""
+    marker = f"{RUN_ENV}={token}".encode()
+    pids = {int(e) for e in os.listdir("/proc") if e.isdigit() and int(e) != os.getpid()
+            and _has_token(int(e), marker)}
+    _signal(pids, signal.SIGKILL)
+
+
+def start_tui(
+    herdr: Herdr, tui: TuiStart, *, label: str, cwd: Path, run_dir: Path, env: Mapping[str, str],
+    timeout: float | None = None, workspace: str = HERDR_WORKSPACE,
+) -> tuple[TuiRun | None, str | None]:
+    """Start the harness in a new herdr tab and type its ignition, or (None, why) when it cannot.
+
+    The harness gets the managed-agent handshake with a short state dir of its
+    own (socket paths are capped near 108 bytes), so the specflo extension
+    serves a control socket and mirrors its run events there. On any failure
+    the tab is closed, whatever started is killed and the state dir removed.
+    """
+    placement = None
+    state_dir = Path(tempfile.mkdtemp(prefix="mb-"))
+    spec_file = Path(run_dir) / LAUNCH_SPEC_FILE
+    try:
+        if not herdr.available():
+            raise TuiStartError("herdr unavailable")
+        placement = herdr.create_tab(herdr.ensure_workspace(workspace), label, str(cwd))
+        paths = AgentPaths.resolve(TUI_AGENT, state_dir)
+        pane_env = {**env, ENV_AGENT_NAME: TUI_AGENT, ENV_AGENT_MANAGED: "1",
+                    ENV_AGENT_PANE: placement.pane_id, ENV_STATE_DIR: str(state_dir)}
+        herdr.run_in_pane(placement.pane_id,
+                          launcher_command(write_launch_spec(spec_file, tui.argv, pane_env, cwd)))
+        pid = _socket_pid(paths, TUI_START_TIMEOUT if timeout is None else timeout)
+        herdr.run_in_pane(placement.pane_id, tui.ignition)
+        return TuiRun(placement=placement, proc=PaneProcess(pid), paths=paths, state_dir=state_dir), None
+    except (HerdrError, KeyError, TypeError, TuiStartError) as exc:
+        if placement is not None:
+            _close(herdr, placement)
+        if env.get(RUN_ENV):
+            _kill_token(env[RUN_ENV])
+        spec_file.unlink(missing_ok=True)
+        shutil.rmtree(state_dir, ignore_errors=True)
+        why = str(exc) if isinstance(exc, TuiStartError) else f"herdr placement failed: {exc}"
+        return None, why
+
+
+def _keep_agent_files(tui: TuiRun, run_dir: Path) -> None:
+    """Copy the pane harness's mirrored events and status into the run dir."""
+    for source, name in ((tui.paths.events, AGENT_EVENTS_FILE), (tui.paths.status, AGENT_STATUS_FILE)):
+        try:
+            shutil.copyfile(source, run_dir / name)
+        except OSError:
+            pass  # pi removes its status file at shutdown; the copy taken before the stop has it
 
 
 @dataclass
@@ -586,6 +727,7 @@ class Outcome:
     autonomy: str | None = None
     pass_cap: int | None = None
     env: dict = field(default_factory=dict)
+    transport: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -620,55 +762,76 @@ def supervise(
     stop_grace: float = STOP_GRACE,
     probes: Sequence[Callable[[], object]] = (),
 ) -> Outcome:
-    """Start the harness, watch it to one end condition, remove its tree and report."""
+    """Start the harness, watch it to one end condition, remove its tree and report.
+
+    A harness with a `tui` start and a herdr adapter runs in a herdr pane
+    (transport tui); when that start fails it runs headless on stdio instead.
+    Any other harness runs on stdio and its pane, when herdr answers, follows
+    its logs.
+    """
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     out_path, err_path = run_dir / OUT_LOG, run_dir / ERR_LOG
     token = uuid.uuid4().hex
     env = {**spec.env, RUN_ENV: token}
+    label = label or run_dir.name
     started_at, t0 = _now(), time.monotonic()
-    with open(out_path, "wb") as out, open(err_path, "wb") as err:
-        proc = subprocess.Popen(
-            spec.argv, env=env, cwd=spec.cwd, stdout=out, stderr=err, start_new_session=True,
-            stdin=subprocess.PIPE if spec.stdin_text is not None else subprocess.DEVNULL,
-        )
-    if spec.stdin_text is not None:
-        try:
-            proc.stdin.write(spec.stdin_text.encode())
-            proc.stdin.flush()
-        except OSError:
-            pass  # a harness that died at once is left to the watch
-    placement: HerdrPlacement | None = None
+    verdict_check, idle_check, on_exit = spec.verdict, spec.idle, spec.on_exit
+    globs = [str(out_path), str(err_path), *spec.activity_globs]
+    tui: TuiRun | None = None
+    note: str | None = None
+    if spec.tui is not None and herdr is not None:
+        out_path.write_bytes(b"")
+        err_path.write_bytes(b"")
+        tui, note = start_tui(herdr, spec.tui, label=label, cwd=spec.cwd, run_dir=run_dir, env=env)
+    if tui is not None:
+        proc: subprocess.Popen | PaneProcess = tui.proc
+        verdict_check, idle_check = spec.tui.judge(tui.paths.events)
+        on_exit = lambda code: Ending(END_HARNESS_EXIT, "pi in the pane exited")  # noqa: E731
+        globs.append(str(tui.paths.events))
+    else:
+        with open(out_path, "wb") as out, open(err_path, "wb") as err:
+            proc = subprocess.Popen(
+                spec.argv, env=env, cwd=spec.cwd, stdout=out, stderr=err, start_new_session=True,
+                stdin=subprocess.PIPE if spec.stdin_text is not None else subprocess.DEVNULL,
+            )
+        if spec.stdin_text is not None:
+            try:
+                proc.stdin.write(spec.stdin_text.encode())
+                proc.stdin.flush()
+            except OSError:
+                pass  # a harness that died at once is left to the watch
+    placement: HerdrPlacement | None = tui.placement if tui else None
     deadline = t0 + limits.wall_clock
     last_active = t0
     pending: Ending | None = None  # complete, waiting for the harness to settle
     exit_code: int | None = None
     try:
-        placement, note = place(herdr, label or run_dir.name, spec.cwd,
-                                pane_command(proc.pid, [out_path, err_path]))
+        if spec.tui is None:
+            placement, note = place(herdr, label, spec.cwd, pane_command(proc.pid, [out_path, err_path]))
         if placement is None and herdr is not None:
             print(f"modelbench: {note}; the run is headless", file=sys.stderr)
         elif placement is not None:
             print(f"modelbench: herdr workspace {HERDR_WORKSPACE} ({placement.workspace_id}), "
-                  f"tab {label or run_dir.name}, pane {placement.pane_id}", file=sys.stderr)
-        activity = Activity([str(out_path), str(err_path), *spec.activity_globs], probes)
+                  f"tab {label}, pane {placement.pane_id}", file=sys.stderr)
+        activity = Activity(globs, probes)
         while True:
             now = time.monotonic()
             if activity.changed():
                 last_active = now
             code = proc.poll()
             ending = None
-            if pending is None and spec.verdict is not None:
-                verdict = spec.verdict()
+            if pending is None and verdict_check is not None:
+                verdict = verdict_check()
                 if verdict is not None:
-                    if verdict.reason == END_COMPLETE and code is None and spec.idle and not spec.idle():
+                    if verdict.reason == END_COMPLETE and code is None and idle_check and not idle_check():
                         pending = verdict
                     else:
                         ending = verdict
-            elif pending is not None and (code is not None or spec.idle is None or spec.idle()):
+            elif pending is not None and (code is not None or idle_check is None or idle_check()):
                 ending = pending
             if ending is None and code is not None:
-                ending = (spec.on_exit(code) if spec.on_exit else None) or Ending(
+                ending = (on_exit(code) if on_exit else None) or Ending(
                     END_HARNESS_EXIT, f"the harness exited with code {code}")
             if ending is None and now >= deadline:
                 ending = pending or Ending(END_TIMEOUT, f"the wall-clock cap of {limits.wall_clock:g} s expired")
@@ -681,15 +844,26 @@ def supervise(
             time.sleep(poll)
     finally:
         ended_at, t1 = _now(), time.monotonic()
+        if tui is not None:
+            _keep_agent_files(tui, run_dir)
         survivors = stop_tree(proc, token, stop_grace)
         if placement is not None:
             _close(herdr, placement)
+        if tui is not None:
+            _keep_agent_files(tui, run_dir)  # again: the events written while pi shut down
+            shutil.rmtree(tui.state_dir, ignore_errors=True)
     report = {}
     if spec.report is not None:
         try:
             report = spec.report()
         except Exception as exc:  # noqa: BLE001 - the report must not lose the run's ending
             report = {"error": str(exc)}
+    if tui is not None:
+        transport = TRANSPORT_TUI
+    elif spec.tui is not None or spec.harness == "pi":
+        transport = TRANSPORT_RPC
+    else:
+        transport = None
     return Outcome(
         end_reason=ending.reason, end_detail=ending.detail, harness_end_reason=ending.harness_reason,
         placement=PLACEMENT_HERDR if placement else PLACEMENT_HEADLESS,
@@ -699,6 +873,7 @@ def supervise(
         exit_code=exit_code if exit_code is not None else proc.returncode,
         survivors=survivors, stdout_log=str(out_path), stderr_log=str(err_path),
         wall_clock_cap=limits.wall_clock, stall_limit=limits.stall, harness_report=report,
+        transport=transport,
     )
 
 
@@ -710,9 +885,22 @@ def ignition() -> str:
     return json.dumps({"type": "prompt", "id": "ignition", "message": IGNITION}) + "\n"
 
 
-def pi_spec(launch: launch_pi.PiLaunch, specflo: str, run_dir: Path) -> HarnessSpec:
-    """The pi arm's harness: pi in RPC mode, judged by specflo's state and pi's event stream."""
+def pi_spec(
+    launch: launch_pi.PiLaunch, specflo: str, run_dir: Path, tui_argv: Sequence[str] | None = None
+) -> HarnessSpec:
+    """The pi arm's harness: pi in RPC mode, judged by specflo's state and pi's event stream.
+
+    With `tui_argv` the harness also carries a pane start: the interactive pi
+    that argv runs, sent the same ignition by typing it, and judged the same
+    way from the run events the specflo extension mirrors.
+    """
     events = RpcEvents(Path(run_dir) / OUT_LOG)
+
+    def judge(events_path: Path) -> tuple[Callable[[], Ending | None], Callable[[], bool]]:
+        mirrored = RpcEvents(events_path)
+        return (lambda: specflo_verdict(specflo, launch.cwd, launch.env, mirrored.last_notice)), mirrored.idle
+
+    tui = TuiStart(argv=list(tui_argv), ignition=IGNITION, judge=judge) if tui_argv is not None else None
     return HarnessSpec(
         harness="pi",
         argv=list(launch.argv),
@@ -723,14 +911,15 @@ def pi_spec(launch: launch_pi.PiLaunch, specflo: str, run_dir: Path) -> HarnessS
         verdict=lambda: specflo_verdict(specflo, launch.cwd, launch.env, events.last_notice),
         idle=events.idle,
         report=launch.report,
+        tui=tui,
     )
 
 
 def build_pi(arm: arms.Run, *, workdir: Path, run_dir: Path, specflo: str, env: dict[str, str],
              limits: Limits, settings: AutoSettings) -> HarnessSpec:
-    launch = launch_pi.build_launch(arm.entry, workdir=workdir, run_dir=run_dir,
-                                    args=["--mode", "rpc"], base_env=env)
-    return pi_spec(launch, specflo, run_dir)
+    launch = launch_pi.build_launch(arm.entry, workdir=workdir, run_dir=run_dir, base_env=env)
+    rpc = replace(launch, argv=[*launch.argv, *RPC_ARGS])
+    return pi_spec(rpc, specflo, run_dir, tui_argv=launch.argv)
 
 
 # -- claude code ----------------------------------------------------------------
