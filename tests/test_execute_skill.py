@@ -326,3 +326,44 @@ def test_skill_sizes_the_ask_between_a_bare_task_and_a_brief():
     for trigger in ["recon is needed", "pick to make", "more than one task", "changes a decision"]:
         assert trigger in low, f"missing brief trigger: {trigger}"
     assert "review" in low and "offer" in low
+
+
+def test_skill_fan_out_gives_the_worktree_loop():
+    section = _flat(_fan_out_section())
+    low = section.lower()
+    assert "`specflo task start T-NN --worktree`" in section
+    assert "re-run the verify** step yourself in the worktree" in low
+    assert "`specflo task land T-NN`" in section
+    assert section.index("specflo task land") < section.index("run the Verify again on the base branch")
+    assert section.index("Verify again on the base branch") < section.index(
+        "then `specflo task done T-NN`")
+
+
+def test_skill_fan_out_handles_a_conflict():
+    low = _flat(_fan_out_section()).lower()
+    assert "on a conflict" in low
+    assert "resolve it in the worktree" in low
+    assert "`specflo task reopen t-nn`, which saves the worktree's changes as a patch" in low
+    assert "dispatch the task again with the patch" in low
+
+
+def test_skill_fan_out_keeps_user_pool_tasks_in_the_shared_tree():
+    low = _flat(_fan_out_section()).lower()
+    assert "in the shared tree (start it without `--worktree`)" in low
+
+
+def test_skill_fan_out_starts_a_leased_member_in_the_worktree():
+    assert "`specflo lease request <pool> --cwd <worktree>`" in _flat(_fan_out_section())
+
+
+def test_skill_fan_out_states_the_test_policy_and_the_edge_rule():
+    low = _flat(_fan_out_section()).lower()
+    assert "one parallel run of the test files" in low
+    assert "the full suite runs once, before the review round" in low
+    assert "never that two tasks share a file" in low
+
+
+def test_skill_fan_out_no_longer_shares_one_tree():
+    section = _flat(_fan_out_section())
+    assert "edit only the task's **Files**" not in section
+    assert "edit and test only in their worktree" in section

@@ -177,22 +177,36 @@ each *subagent* does for its task, and you drive the frontier:
    its current holders. An empty ready set with work still in progress means
    **wait** for a running agent to finish — never re-`task start` a task that
    is already `in_progress`.
-2. **Dispatch.** Per ready task: `specflo task start T-NN`, then spawn
-   **one subagent** with the full `specflo task show T-NN` brief and, for each
-   pool in its `Needs`, the concrete **pool member** it is assigned (which GPU,
-   which venv, which port). Subagents **never run `git` or `specflo`** — plan
-   state and commits are yours — and edit only the task's **Files** plus any
-   **new test files** they create.
-3. **Close.** When a subagent returns, **re-run the Verify** step yourself; its
-   report is not evidence. On pass: stage the task's files **by path** (never
-   `git add -A`), commit **one task per commit**, then `specflo task done T-NN`.
-   On fail: send the failure back (or start a fresh subagent with the same brief
-   plus the failure) — never mark it done.
+2. **Dispatch.** Per ready task: `specflo task start T-NN --worktree`, which
+   gives the task its own git worktree and branch, then spawn **one subagent**
+   with the full `specflo task show T-NN` brief (it names the worktree) and,
+   for each pool in its `Needs`, the concrete **pool member** it is assigned
+   (which GPU, which venv, which port). Subagents **never run** a `git` command
+   that writes, or `specflo` — plan state and commits are yours; the brief
+   lists the read-only git they may run. They edit and test only in their
+   worktree: the task's **Files** plus any **new test files** they create. A
+   leased pool member works where it starts: start it in the worktree with
+   `specflo lease request <pool> --cwd <worktree>`.
+3. **Close.** When a subagent returns, **re-run the Verify** step yourself in
+   the worktree; its report is not evidence. On pass: `specflo task land T-NN`
+   turns the worktree's changes into one commit on the base branch
+   (**one task per commit**) and removes the worktree; run the Verify again on
+   the base branch, then `specflo task done T-NN`. Check any file the land names
+   outside the task's Files; it is noted on the task. On fail: send the
+   failure back (or start a fresh subagent with the same brief plus the
+   failure) — never mark it done.
+   **On a conflict** the land changes nothing and names the files. Resolve
+   it in the worktree against the base branch and land again, or run
+   `specflo task reopen T-NN`, which saves the worktree's changes as a patch,
+   and dispatch the task again with the patch.
 4. **Long tasks** (downloads, benches, anything measured in minutes) run in the
    **background**; keep dispatching the rest of the frontier and act on the
    completion notification. Never predict a pending agent's result.
 5. **The `user` pool.** A task needing `user` is **never delegated**: it runs in
-   the main session with the user, and holds the one `user` slot while it does.
+   the main session with the user, in the shared tree (start it without
+   `--worktree`), and holds the one `user` slot while it does. Close it by
+   staging its files **by path** (never `git add -A`), one commit, then
+   `specflo task done T-NN --commit HEAD`.
 6. **Recovery.** A slot held by a **dead** or abandoned agent is released with
    `specflo task reopen T-NN` (→ pending): the task returns to the frontier and
    its files and pool slots free.
@@ -211,6 +225,14 @@ each *subagent* does for its task, and you drive the frontier:
    team form and the lease-ended errors are in the **specflo-agent** skill. In
    local mode there is no daemon and `specflo lease request` is refused: a
    local plan keeps its plan-level pools and its subagents as above.
+
+**Tests.** Each subagent runs its task's Verify, then one parallel run of the
+test files that exercise the modules it changed. The full suite runs once,
+before the review round, and it is yours, not a subagent's.
+
+**Edges mean results.** A `Depends on` edge means a task needs another task's
+result, never that two tasks share a file. Two worktree tasks may edit one
+file: the second land replays its change onto the first.
 
 Re-read the frontier after every `task done` / `task reopen` — the ready set
 changes as slots and files free. Milestone boundaries still surface their Exit
