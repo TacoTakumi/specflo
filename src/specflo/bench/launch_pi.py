@@ -1,20 +1,20 @@
 """The pi arm's launcher: a frozen config directory, a per-run copy, env and argv.
 
-`bench/configs/pi/` is the frozen pi config directory. It holds `models.json`
+`data/configs/pi/` in this package is the frozen pi config directory. It holds `models.json`
 (one provider, `llama-swap`, with one model per arm entry, ids equal to the
 llama-swap entry ids so every request names the entry), `settings.json` (no
-packages, no project trust) and `frozen.json` (the pinned pi version, the
-provider name and the deny list). It holds no credential: llama-swap needs no
+packages, no project trust) and `frozen.json` (the provider name and the
+deny list). pi itself is whatever is installed; the record names its version. It holds no credential: llama-swap needs no
 key, and the provider's `apiKey` is the dummy `no-key` with `authHeader` off.
 
 Extensions are not committed under the frozen directory. Each run gets a copy
 of the frozen directory in its own run directory, and the copy gets exactly two
-extensions, materialised from this checkout: specflo's pi extension (the same
+extensions, materialised from the installed specflo: specflo's pi extension (the same
 files `specflo extension install` copies) and the pool deny list (deny.ts, as a
-single-file extension). They come from the checkout because they are part of
+single-file extension). They come from specflo because they are part of
 the specflo under test, which the run record names in `versions.specflo`; a
 committed copy would go stale without notice. The run copy also takes pi's own
-writes (sessions, trust), so a run never dirties the repo.
+writes (sessions, trust), so a run never writes into the package.
 
 The run copy declares only the run's entry and names it as `defaultModel`. pi
 resolves `--model` again for every new session, and when that lookup fails it
@@ -23,7 +23,7 @@ declared, the fallback is the run's own entry, never another arm's.
 
 `config_hash` is a hash of the run copy taken before it is pinned to the entry
 and before pi starts, so it covers the committed frozen files and the committed
-extension sources, and nothing pi writes. Two copies of the same checkout hash
+extension sources, and nothing pi writes. Two copies from the same specflo hash
 the same for every entry; the pin follows from the entry, which the record names.
 
 The deny list blocks with no prompt: deny.ts returns a block result to pi's
@@ -84,7 +84,6 @@ class LaunchError(RuntimeError):
 
 @dataclass(frozen=True)
 class Frozen:
-    pi_version: str
     provider: str
     deny: tuple[str, ...]
 
@@ -117,14 +116,12 @@ def load_frozen(frozen_dir: Path | str = FROZEN_DIR) -> Frozen:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise LaunchError(f"{path}: cannot be read ({exc})") from None
-    version, provider, deny = data.get("pi_version"), data.get("provider"), data.get("deny")
-    if not isinstance(version, str) or not version:
-        raise LaunchError(f"{path}: pi_version missing")
+    provider, deny = data.get("provider"), data.get("deny")
     if not isinstance(provider, str) or not provider:
         raise LaunchError(f"{path}: provider missing")
     if not isinstance(deny, list) or not deny or not all(isinstance(r, str) for r in deny):
         raise LaunchError(f"{path}: deny must be a non-empty list of strings")
-    return Frozen(pi_version=version, provider=provider, deny=tuple(deny))
+    return Frozen(provider=provider, deny=tuple(deny))
 
 
 def model_ids(frozen_dir: Path | str, provider: str) -> set[str]:
@@ -213,7 +210,7 @@ def build_launch(
     extra_env: Mapping[str, str] | None = None,
     frozen_dir: Path | str = FROZEN_DIR,
 ) -> PiLaunch:
-    """Check the entry and pi version, make the run copy, and build env and argv.
+    """Check the entry, read the pi version, make the run copy, and build env and argv.
 
     `args` follow the fixed flags (mode, prompt, session flags: the caller's
     business). `base_env` defaults to this process's environment; `extra_env`
@@ -226,9 +223,8 @@ def build_launch(
     frozen = load_frozen(frozen_dir)
     if entry not in model_ids(frozen_dir, frozen.provider):
         raise LaunchError(f"entry {entry!r} is not a model of {frozen.provider} in {MODELS_FILE}")
+    # Whatever pi is installed runs; the record names its version.
     found = pi_version(pi_bin)
-    if found != frozen.pi_version:
-        raise LaunchError(f"pi version {found} does not match the pinned {frozen.pi_version}")
 
     agent_dir = materialise(run_dir, frozen_dir)
     if extension_names(agent_dir) != sorted(EXTENSIONS):

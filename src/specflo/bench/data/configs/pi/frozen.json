@@ -1,5 +1,4 @@
 {
-  "pi_version": "1.0.4",
   "provider": "llama-swap",
   "deny": [
     "git push",

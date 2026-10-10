@@ -53,10 +53,10 @@ def launch(tmp_path: Path) -> launch_pi.PiLaunch:
 # -- frozen directory ---------------------------------------------------------
 
 
-def test_frozen_dir_pins_version_and_provider():
+def test_frozen_dir_names_the_provider_and_no_pi_version():
     frozen = launch_pi.load_frozen()
-    assert frozen.pi_version == "1.0.4"
     assert frozen.provider == "llama-swap"
+    assert "pi_version" not in json.loads((launch_pi.FROZEN_DIR / "frozen.json").read_text())
 
 
 def test_frozen_dir_holds_no_credential_and_no_extensions():
@@ -185,28 +185,23 @@ def test_workdir_inside_the_frozen_dir_is_refused(tmp_path: Path):
         )
 
 
-# -- version pin --------------------------------------------------------------
+# -- installed pi -------------------------------------------------------------
 
 
-def test_version_mismatch_is_refused_before_any_copy(tmp_path: Path):
-    with pytest.raises(launch_pi.LaunchError, match="1.0.5.*1.0.4|1.0.4.*1.0.5"):
-        launch_pi.build_launch(
-            ENTRY,
-            workdir=tmp_path,
-            run_dir=tmp_path / "run",
-            pi_bin=fake_pi(tmp_path, "1.0.5"),
-        )
-    assert not (tmp_path / "run").exists()
+def test_any_installed_pi_version_runs_and_is_recorded(tmp_path: Path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    launched = launch_pi.build_launch(
+        ENTRY, workdir=workdir, run_dir=tmp_path / "run", pi_bin=fake_pi(tmp_path, "9.9.9"),
+        base_env={"PATH": "/usr/bin:/bin"},
+    )
+    assert launched.pi_version == "9.9.9"
+    assert launched.report()["harness"] == "pi 9.9.9"
 
 
 def test_missing_pi_binary_is_refused(tmp_path: Path):
     with pytest.raises(launch_pi.LaunchError, match="pi"):
         launch_pi.pi_version(str(tmp_path / "no-such-pi"))
-
-
-@pytest.mark.skipif(not HAVE_PI, reason="pi is not installed")
-def test_installed_pi_matches_the_pin():
-    assert launch_pi.pi_version() == launch_pi.load_frozen().pi_version
 
 
 # -- hash and record fields ---------------------------------------------------

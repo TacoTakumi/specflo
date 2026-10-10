@@ -108,9 +108,12 @@ _FIXED_ENV = {
 PERMISSION_MODE = "dontAsk"
 
 
+# The claude to run when the operator names one; otherwise the one on PATH.
+CLAUDE_ENV = "SPECFLO_BENCH_CLAUDE"
+
+
 @dataclass(frozen=True)
 class Frozen:
-    claude_bin: str
     base_url: str
     deny: tuple[str, ...]
 
@@ -156,12 +159,11 @@ def load_frozen(config_dir: Path | str = CONFIG_DIR) -> Frozen:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise LaunchError(f"{path}: cannot be read ({exc})") from None
-    for name in ("claude_bin", "base_url", "deny_from"):
+    for name in ("base_url", "deny_from"):
         if not isinstance(data.get(name), str) or not data[name]:
             raise LaunchError(f"{path}: {name} missing")
     deny = launch_pi.load_frozen((path.parent / data["deny_from"]).parent).deny
     return Frozen(
-        claude_bin=str(Path(data["claude_bin"]).expanduser()),
         base_url=data["base_url"],
         deny=deny,
     )
@@ -170,6 +172,38 @@ def load_frozen(config_dir: Path | str = CONFIG_DIR) -> Frozen:
 def deny_rules(rules: Sequence[str]) -> list[str]:
     """Claude Code deny rules for plain-text command rules: the command alone and with arguments."""
     return [form for rule in rules for form in (f"Bash({rule})", f"Bash({rule} *)")]
+
+
+def find_claude(environ: Mapping[str, str] | None = None) -> str:
+    """The claude the operator names in the environment, else the first on PATH that is no script.
+
+    A wrapper script that adds a system prompt often comes first on PATH, so
+    the search goes on past it to the binary itself.
+    """
+    environ = os.environ if environ is None else environ
+    if environ.get(CLAUDE_ENV):
+        return environ[CLAUDE_ENV]
+    scripts = []
+    for directory in environ.get("PATH", "").split(os.pathsep):
+        found = shutil.which("claude", path=directory) if directory else None
+        if found is None:
+            continue
+        if _is_script(found):
+            scripts.append(found)
+            continue
+        return found
+    skipped = f" (skipped the scripts {', '.join(scripts)})" if scripts else ""
+    raise LaunchError(
+        f"no claude binary on PATH{skipped}: install Claude Code, or name its binary with {CLAUDE_ENV}"
+    )
+
+
+def _is_script(path: str) -> bool:
+    try:
+        with open(path, "rb") as handle:
+            return handle.read(2) == b"#!"
+    except OSError:
+        return False
 
 
 def claude_version(claude_bin: str) -> str:
@@ -258,9 +292,9 @@ def build_launch(
     if entry not in arms.load_config().entries:
         raise LaunchError(f"entry {entry!r} is not an entry of the arm config")
     frozen = load_frozen(config_dir)
-    # The link (~/.local/bin/claude) moves when Claude Code updates; every pass
-    # of this run uses the file it points to now.
-    binary = str(Path(claude_bin or frozen.claude_bin).expanduser().resolve())
+    # The link (such as ~/.local/bin/claude) moves when Claude Code updates;
+    # every pass of this run uses the file it points to now.
+    binary = str(Path(claude_bin or find_claude()).expanduser().resolve())
     check_real_binary(binary)
     found = claude_version(binary)
 

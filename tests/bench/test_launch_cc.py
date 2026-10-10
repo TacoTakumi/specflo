@@ -74,10 +74,10 @@ def launch(tmp_path: Path, stub_version) -> Iterator[launch_cc.CcLaunch]:
 # -- dedicated config dir -----------------------------------------------------
 
 
-def test_config_dir_names_binary_and_base_url():
+def test_config_dir_names_the_base_url_and_no_binary():
     frozen = launch_cc.load_frozen()
-    assert frozen.claude_bin == str(REAL_CLAUDE)
     assert frozen.base_url == "http://localhost:8080"
+    assert "claude_bin" not in json.loads((launch_cc.CONFIG_DIR / "frozen.json").read_text())
 
 
 def test_config_dir_holds_no_credential_hooks_or_state():
@@ -483,3 +483,49 @@ def test_rig_claude_blocks_git_push_with_no_prompt(tmp_path: Path):
     denials = [e for e in events if e.get("subtype") == "permission_denied"]
     assert denials, "the model made no denied Bash call"
     assert "git push" in denials[0]["message"]
+
+
+# -- the installed claude -----------------------------------------------------
+
+
+def test_claude_comes_from_path_when_none_is_named(tmp_path: Path, stub_version, monkeypatch):
+    found = fake_claude(tmp_path, "2.1.300")
+    monkeypatch.setenv("PATH", str(Path(found).parent))
+    monkeypatch.delenv(launch_cc.CLAUDE_ENV, raising=False)
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+
+    with launch_cc.build_launch(ENTRY, workdir=workdir, run_dir=tmp_path / "run") as launch:
+        assert launch.argv[0] == str(Path(found).resolve())
+
+
+def test_the_env_var_names_the_claude_to_run(tmp_path: Path, stub_version, monkeypatch):
+    named = fake_claude(tmp_path / "named", "2.1.300")
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.setenv(launch_cc.CLAUDE_ENV, named)
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+
+    with launch_cc.build_launch(ENTRY, workdir=workdir, run_dir=tmp_path / "run") as launch:
+        assert launch.argv[0] == str(Path(named).resolve())
+
+
+def test_no_claude_anywhere_is_refused_naming_the_fix(tmp_path: Path, stub_version, monkeypatch):
+    monkeypatch.setenv("PATH", str(tmp_path / "empty"))
+    monkeypatch.delenv(launch_cc.CLAUDE_ENV, raising=False)
+
+    with pytest.raises(launch_cc.LaunchError, match="SPECFLO_BENCH_CLAUDE"):
+        launch_cc.build_launch(ENTRY, workdir=tmp_path, run_dir=tmp_path / "run")
+    assert not (tmp_path / "run").exists()
+
+
+def test_a_wrapper_script_first_on_path_is_passed_over(tmp_path: Path, stub_version, monkeypatch):
+    wrapper = tmp_path / "wrap" / "claude"
+    wrapper.parent.mkdir()
+    wrapper.write_text("#!/bin/sh\nexec claude \"$@\"\n")
+    wrapper.chmod(0o755)
+    real = fake_claude(tmp_path, "2.1.300")
+    monkeypatch.setenv("PATH", os.pathsep.join([str(wrapper.parent), str(Path(real).parent)]))
+    monkeypatch.delenv(launch_cc.CLAUDE_ENV, raising=False)
+
+    assert launch_cc.find_claude() == real
