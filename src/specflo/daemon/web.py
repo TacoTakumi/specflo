@@ -50,8 +50,8 @@ from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import (
-    SESSION_TTL, SIGNIN_LOCKED, SignInLocked, check_password, hash_token, open_session,
-    resume_session,
+    SESSION_TTL, SIGNIN_LOCKED, SignInLocked, check_password, hash_token, list_user_tokens,
+    mint_user_token, open_session, resume_session, revoke_user_token,
 )
 from . import seat
 from .products import Products
@@ -101,6 +101,11 @@ EDIT_TEAM_PATH = TEAMS_PATH + "/{name}/edit"
 DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
 # The model bench's pages; their routes live in the bench_web module.
 BENCH_PATH = "/bench"
+# The signed-in user's own personal tokens. A new token is posted to the
+# page's own path; a revoke carries the token's name in the form, so no name
+# a token can carry is taken by a route.
+TOKENS_PATH = "/tokens"
+REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
 SESSION_COOKIE = "specflo_session"
 # The theme switch's choice lives in this cookie for a year; auto follows the
 # browser's colour scheme.
@@ -128,6 +133,9 @@ NO_USERS = (
     " `specflo serve user add <name> --role developer --password`."
 )
 INBOX_EMPTY = "Nothing waits on {identity}."
+# What the tokens page says beside a new token's secret, and with no token.
+SHOWN_ONCE = "Copy it now: it will not be shown again."
+NO_TOKENS = "You have no personal tokens yet."
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -147,6 +155,8 @@ _templates.globals.update(
     assets_path=ASSETS_PATH,
     pool_path=POOL_PATH,
     bench_path=BENCH_PATH,
+    tokens_path=TOKENS_PATH,
+    revoke_token_path=REVOKE_TOKEN_PATH,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
@@ -991,6 +1001,81 @@ async def post_message(
         _log.warning("post to %s: %s", slug, exc)
         return render("error.html", status_code=502, identity=identity, message=exc.public)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
+
+
+def _tokens_page(user: User, root: Path, minted: tuple[str, str] | None = None) -> HTMLResponse:
+    """The tokens page of ``user``; ``minted`` is a new token's (name, secret), shown this once.
+
+    The response that carries a secret is never cached, so a back button
+    or a shared cache cannot show it again.
+    """
+    response = render(
+        "tokens.html", identity=user.role, user=user.name,
+        tokens=list_user_tokens(root, user.name), minted=minted,
+        shown_once=SHOWN_ONCE, no_tokens=NO_TOKENS,
+    )
+    if minted is not None:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@pages.get(TOKENS_PATH, include_in_schema=False)
+def tokens_page(request: Request, user: User = Depends(current_user)) -> Response:
+    """The signed-in user's personal tokens: name, created, last used and last 4 characters."""
+    return _tokens_page(user, request.app.state.root)
+
+
+@pages.post(TOKENS_PATH, include_in_schema=False)
+async def create_token(request: Request, user: User = Depends(current_user)) -> Response:
+    """Mint a personal token for the signed-in user and show its secret, once.
+
+    The form echoes the session secret like every mutating form. The page
+    answers the post itself rather than redirecting, so the secret is in
+    this one response and no later page has it: the store keeps only its
+    hash. A blank name is a 400 page; a name the user already has is a 409
+    page with the refusal. The mint is audited as the user, by name and role.
+    """
+    identity = user.role
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
+    root = request.app.state.root
+    name = fields.get("name", "").strip()
+    if not name:
+        return render(
+            "error.html", status_code=400, identity=identity, message="The token needs a name.",
+        )
+    try:
+        secret = mint_user_token(root, user.name, name)
+    except SpecfloError as exc:
+        return render("error.html", status_code=409, identity=identity, message=str(exc))
+    audit(root, user.name, user.role, "add_token", None, name)
+    return _tokens_page(user, root, minted=(name, secret))
+
+
+@pages.post(REVOKE_TOKEN_PATH, include_in_schema=False)
+async def revoke_token(request: Request, user: User = Depends(current_user)) -> Response:
+    """Revoke the signed-in user's token by the name the form carries, then back to the page.
+
+    The form echoes the session secret like every mutating form. The revoke
+    looks only among the user's own tokens, so a name another user's token
+    carries is not found: a 404 page, and that token stays as it was. The
+    revoke is audited as the user, by name and role.
+    """
+    identity = user.role
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
+    root = request.app.state.root
+    name = fields.get("name", "")
+    try:
+        revoke_user_token(root, user.name, name)
+    except SpecfloError as exc:
+        return render("error.html", status_code=404, identity=identity, message=str(exc))
+    audit(root, user.name, user.role, "revoke_token", None, name)
+    return RedirectResponse(TOKENS_PATH, status_code=303)
 
 
 @pages.post(SIGNOUT_PATH, include_in_schema=False)

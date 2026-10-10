@@ -37,6 +37,8 @@ CONTROLS = {
     "save team": "team_save_url(",
     "delete team": "team_delete_url(",
     "sign out": "signout_path",
+    "create token": "tokens_path",
+    "revoke token": "revoke_token_path",
 }
 FRONT_DOOR = "signin_path"
 # The header's theme switch sets the browser's own cookie and nothing else;
