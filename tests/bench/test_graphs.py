@@ -271,6 +271,23 @@ def test_index_page_inlines_the_page_rules_and_links_nothing_so_it_opens_from_a_
     assert not re.search(r'(?:src|href)="/', page)
 
 
+def test_index_page_leaves_out_linked_disclosures_and_graphs(tmp_path):
+    secret = "planted-secret-4417"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "auth.json").write_text(secret)
+    (outside / "real.png").write_bytes(b"png")
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / "quick-a-pass-rate.png").write_bytes(b"png")
+    (out / "quick-a-pass-rate.txt").symlink_to(outside / "auth.json")
+    (out / "quick-b-pass-rate.png").symlink_to(outside / "real.png")
+    page = index_page.render_index(out)
+    assert secret not in page
+    assert 'src="quick-a-pass-rate.png"' in page
+    assert "quick-b-pass-rate.png" not in page
+
+
 def test_index_page_lists_graphs_of_earlier_runs(tmp_path):
     graphs.generate(harness_pair("quick"), tmp_path, ENGINES)
     (tmp_path / "full-by-entry-pi-pass-rate.png").write_bytes(b"png")

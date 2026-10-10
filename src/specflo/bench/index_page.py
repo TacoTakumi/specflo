@@ -163,7 +163,8 @@ def _arms_table(arms: list[tuple[str, dict[str, str]]]) -> str:
 
 def _comparison(out: Path, base: str, kinds: list[str]) -> str:
     txt = out / f"{base}-{kinds[0]}.txt"
-    text = txt.read_text() if txt.exists() else ""
+    # A link could put any file the reader can open on the page; it counts as no disclosure.
+    text = txt.read_text() if txt.is_file() and not txt.is_symlink() else ""
     parsed = parse_disclosure(text)
     parts = [f'<section class="comparison" id="{escape(base)}">', f"<h3>{escape(base)}</h3>"]
     if parsed:
@@ -197,9 +198,11 @@ def _comparison(out: Path, base: str, kinds: list[str]) -> str:
 
 
 def _graph_bases(out: Path) -> dict[str, dict[str, list[str]]]:
-    """{level: {base name: [graph kinds]}} for the PNGs in the directory."""
+    """{level: {base name: [graph kinds]}} for the PNGs in the directory that are no link."""
     found: dict[str, dict[str, list[str]]] = {}
     for png in sorted(out.glob("*.png")):
+        if png.is_symlink():
+            continue
         for kind, _ in GRAPH_KINDS:
             suffix = f"-{kind}.png"
             if png.name.endswith(suffix):

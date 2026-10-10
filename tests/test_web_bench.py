@@ -126,6 +126,9 @@ def test_batch_files_for_each_identity(client, root, identity):
         assert response.content == body
 
 
+SECRET_BEFORE = "planted-secret-7730"
+
+
 DISCLOSURE = (
     "level: quick; compared variable: harness; excluded runs: 0\n"
     "entry-a / pi: arm.entry=entry-a; arm.harness=pi; runs=2\n"
@@ -201,6 +204,19 @@ def test_a_folder_without_an_index_page_is_no_batch(client, root):
     response = client.get(batch_file("half", "index.html"))
     assert response.status_code == 404
     assert "No such bench file." in response.text
+
+
+def test_batch_page_leaves_out_a_linked_disclosure(client, root, tmp_path):
+    outside = plant(tmp_path / "outside" / "auth.json", SECRET_BEFORE)
+    folder = graphed_batch(root, "pilot")
+    for kind in ("pass-rate", "metrics"):
+        (folder / f"quick-by-harness-{kind}.txt").unlink()
+        (folder / f"quick-by-harness-{kind}.txt").symlink_to(outside)
+    sign_in(client, root, "requester")
+    assert client.get(batch_file("pilot", "quick-by-harness-metrics.txt")).status_code == 404
+    page = client.get(batch_file("pilot", "index.html"))
+    assert page.status_code == 200
+    assert SECRET_BEFORE not in page.text
 
 
 def test_batch_page_of_a_linked_or_missing_batch_is_a_404(client, root, tmp_path):
