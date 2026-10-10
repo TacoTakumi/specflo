@@ -75,8 +75,9 @@ bench workspace, and the tab is closed at cleanup.
   control socket's prompt cannot run an extension command). Settle comes from
   the mirrored events, exit from the pid; cleanup finds pi by the run token.
   At the end `agent-events.jsonl` and `agent-status.json` are copied into the
-  run dir and the state dir is removed. Anyone typing in the pane makes the
-  run invalid (see `run.validity` and the input log in `launch_pi`).
+  run dir and the state dir is removed. A prompt, a `!` command or a model
+  or thinking change in the pane makes the run invalid (see `run.validity`
+  and the input log in `launch_pi`); slash commands go unseen.
 - Any other harness stays the bench's child, and its pane follows the
   harness logs (`tail -F --pid`); the pane closes with the harness.
 

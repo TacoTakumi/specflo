@@ -27,7 +27,7 @@ Where things go:
         record.json         the run record
         lifecycle.json      the lifecycle outcome
         harness.out/.err    the harness's stdout and stderr
-        inputs.jsonl        every pi input event with its source (pi arm)
+        inputs.jsonl        every pi input and operator action with its source (pi arm)
         session.norm.json   the merged normalised session log
         pi-agent/sessions/  pi's session JSONL (pi arm)
         claude-config/projects/, pass-NN.*, passes.json, cc-result.json (Claude Code arm)
@@ -38,8 +38,10 @@ The record's `logs` names every one of these paths.
 Validity: a run is valid when the model ids its requests recorded are exactly
 the arm's entry, no tool call named a protected path (the installed bench
 package and its held-out archive, the bench home, and other runs' workdirs and
-run dirs), the tree could be graded and, on a pi run, nobody typed in the
-run's pane (the input log holds no interactive input but the ignition).
+run dirs), the tree could be graded and, on a pi run, nobody typed a prompt
+or a `!` command or changed the model or thinking level in the run's pane (the
+input log holds no interactive entry but the ignition; pi reports slash
+commands such as /new or /compact to no extension, so they go unseen).
 `validity` says which check failed.
 
 Telemetry: when the llama-swap log has no stamped line, or no server timing
@@ -433,7 +435,11 @@ def input_log(run_dir: Path) -> list[dict] | None:
 
 
 def operator_inputs(inputs: Sequence[Mapping[str, Any]]) -> list[str]:
-    """The texts typed in the pane by someone other than the bench: interactive inputs but the ignition."""
+    """What someone other than the bench did in the pane: interactive entries but the ignition.
+
+    That is a prompt, a `!` command, or a model or thinking change. Slash
+    commands such as /new or /compact leave no entry (see the input log).
+    """
     return [str(e.get("text")) for e in inputs
             if e.get("source") == "interactive" and e.get("text") != lifecycle.IGNITION]
 

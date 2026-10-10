@@ -490,6 +490,13 @@ def test_operator_input_check_fails_a_second_interactive_input():
     assert result["operator_inputs"] == 1
 
 
+def test_operator_input_check_fails_an_operator_bash_command_or_thinking_change():
+    for entry in ({"kind": "bash", "source": "interactive", "text": "ls"},
+                  {"kind": "thinking", "source": "interactive", "text": "low"}):
+        result = _validity([entry])
+        assert result["valid"] is False and result["operator_inputs"] == 1, entry
+
+
 def test_operator_input_check_ignores_extension_and_rpc_inputs():
     result = _validity([{"source": "extension", "text": "continue"}, {"source": "rpc", "text": "go"}])
     assert result["valid"] is True, result

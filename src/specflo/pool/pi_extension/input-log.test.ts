@@ -24,9 +24,12 @@ function load(env: Record<string, string | undefined>) {
   return {
     handlers,
     async input(source: string, text: string): Promise<unknown[]> {
+      return this.fire("input", { source, text });
+    },
+    async fire(type: string, event: Record<string, unknown>): Promise<unknown[]> {
       const results = [];
-      for (const handler of handlers.get("input") ?? []) {
-        results.push(await handler({ type: "input", source, text }, {}));
+      for (const handler of handlers.get(type) ?? []) {
+        results.push(await handler({ type, ...event }, {}));
       }
       return results;
     },
@@ -45,11 +48,28 @@ describe("a pi run with an input log", () => {
     await pi.input("interactive", "stop that");
 
     const logged = lines(path);
-    assert.deepEqual(logged.map(({ source, text }) => ({ source, text })), [
-      { source: "extension", text: "continue the project" },
-      { source: "interactive", text: "stop that" },
+    assert.deepEqual(logged.map(({ kind, source, text }) => ({ kind, source, text })), [
+      { kind: "input", source: "extension", text: "continue the project" },
+      { kind: "input", source: "interactive", text: "stop that" },
     ]);
     assert.ok(logged.every((line) => typeof line.ts === "string" && line.ts !== ""));
+  });
+
+  it("logs a bash command, a model change and a thinking change as interactive", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "input-log-")), "inputs.jsonl");
+    const pi = load({ [INPUT_LOG_ENV]: path });
+    const model = { provider: "llama-swap", id: "other" };
+
+    await pi.fire("user_bash", { command: "ls", excludeFromContext: false, cwd: "/w" });
+    await pi.fire("model_select", { model, previousModel: undefined, source: "cycle" });
+    await pi.fire("model_select", { model, previousModel: undefined, source: "restore" });
+    await pi.fire("thinking_level_select", { level: "low", previousLevel: "high" });
+
+    assert.deepEqual(lines(path).map(({ kind, source, text }) => ({ kind, source, text })), [
+      { kind: "bash", source: "interactive", text: "ls" },
+      { kind: "model", source: "interactive", text: "llama-swap/other" },
+      { kind: "thinking", source: "interactive", text: "low" },
+    ]);
   });
 
   it("leaves the input as it was", async () => {
