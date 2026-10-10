@@ -80,6 +80,10 @@ def _arms(home, *entries):
     (home / "arms.yaml").write_text("\n".join(lines) + "\n")
 
 
+def _is_swap(check):
+    return check.subject == "llama-swap" or check.subject.startswith("llama-swap entry")
+
+
 def _by_subject(checks, subject):
     return [c for c in checks if c.subject == subject]
 
@@ -170,7 +174,7 @@ def test_llama_swap_one_entry_absent_gives_one_fail_naming_it(home):
     with StubSwap(["a", "other"]) as stub:
         checks = bench_doctor.run_checks(None, base_url=stub.url)
 
-    fails = [c for c in checks if c.subject.startswith("llama-swap") and c.status == "fail"]
+    fails = [c for c in checks if _is_swap(c) and c.status == "fail"]
     assert len(fails) == 1
     assert "b" in fails[0].subject
     assert stub.requests == [("GET", "/v1/models")]
@@ -181,7 +185,7 @@ def test_llama_swap_every_entry_listed_is_ok(home):
     with StubSwap(["b", "a"]) as stub:
         checks = bench_doctor.run_checks(None, base_url=stub.url)
 
-    swap = [c for c in checks if c.subject.startswith("llama-swap")]
+    swap = [c for c in checks if _is_swap(c)]
     assert [c.status for c in swap] == ["ok"]
     assert stub.requests == [("GET", "/v1/models")]
 
@@ -190,7 +194,7 @@ def test_llama_swap_without_a_config_checks_only_that_it_answers(home):
     with StubSwap([]) as stub:
         checks = bench_doctor.run_checks(None, base_url=stub.url)
 
-    [check] = [c for c in checks if c.subject.startswith("llama-swap")]
+    [check] = [c for c in checks if _is_swap(c)]
     assert check.status == "ok"
     assert "no bench config" in check.detail
 
@@ -201,6 +205,9 @@ def _found(version):
 
 def _missing():
     raise bench_doctor.LaunchError("not installed")
+
+
+NO_HARNESS = {"pi": _missing, "claude-code": _missing}
 
 
 def _harnesses(checks):
@@ -246,3 +253,42 @@ def test_harness_version_is_what_a_run_records(monkeypatch):
 
     assert bench_doctor.HARNESS_VERSIONS["pi"]() == "pi 0.9.0"
     assert bench_doctor.HARNESS_VERSIONS["claude-code"]() == "claude-code 2.0.1"
+
+
+def _log_check(tmp_path, home, text=None):
+    path = tmp_path / "llama-swap.log"
+    if text is not None:
+        path.write_text(text)
+    checks = bench_doctor.run_checks(
+        None, base_url=_closed_url(), versions=NO_HARNESS, llama_swap_log=path
+    )
+    [check] = _by_subject(checks, "llama-swap log")
+    return check
+
+
+def test_log_with_a_stamped_line_in_its_tail_is_ok(tmp_path, home):
+    text = "x" * 200_000 + "\n2026-10-09T21:48:39.192231-0300 [INFO] Request\n"
+
+    assert _log_check(tmp_path, home, text).status == "ok"
+
+
+def test_log_without_a_stamp_fails_saying_telemetry_is_unavailable(tmp_path, home):
+    check = _log_check(tmp_path, home, "0.15.506.990 I slot print_timing\n[INFO] Request\n")
+
+    assert check.status == "fail"
+    assert "telemetry" in check.detail
+    assert check.fix
+
+
+def test_log_missing_fails(tmp_path, home):
+    check = _log_check(tmp_path, home)
+
+    assert check.status == "fail"
+    assert "telemetry" in check.detail
+
+
+def test_log_defaults_to_the_path_bench_run_reads(home):
+    checks = bench_doctor.run_checks(None, base_url=_closed_url(), versions=NO_HARNESS)
+
+    [check] = _by_subject(checks, "llama-swap log")
+    assert str(bench_doctor.LLAMA_SWAP_LOG) in check.detail

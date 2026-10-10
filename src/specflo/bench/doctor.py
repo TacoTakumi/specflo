@@ -17,13 +17,16 @@ from pathlib import Path
 import yaml
 
 from specflo import settings
-from specflo.bench import arms, launch_cc, launch_pi
+from specflo.bench import arms, launch_cc, launch_pi, telemetry
 from specflo.bench.launch_pi import LaunchError
 from specflo.bench.preflight import DEFAULT_BASE_URL
+from specflo.bench.run import LLAMA_SWAP_LOG
 from specflo.doctor import Check
 from specflo.errors import SpecfloError
 
 HOME_DIRNAME = "bench"
+# How much of the log's end the stamp check reads: the newest lines, as a run's window reads them.
+LOG_TAIL_BYTES = 64 * 1024
 SET_ROOT = (
     f"`specflo serve root <dir>`, or pass --root <dir> or set ${settings.DAEMON_ROOT_ENV}"
 )
@@ -108,11 +111,43 @@ def _harnesses(config: arms.Config | None, versions: Mapping[str, Callable[[], s
     return checks
 
 
+def _stamped(line: str) -> bool:
+    """True when the line starts with a wall-clock stamp telemetry reads."""
+    match = telemetry._STAMP.match(line)
+    if not match:
+        return False
+    try:
+        telemetry._as_time(match.group(1).replace(",", "."))
+    except ValueError:
+        return False
+    return True
+
+
+def _log(path: Path) -> Check:
+    try:
+        with path.open("rb") as handle:
+            handle.seek(0, 2)
+            handle.seek(max(handle.tell() - LOG_TAIL_BYTES, 0))
+            tail = handle.read().decode("utf-8", errors="replace")
+    except OSError as exc:
+        return Check("fail", "llama-swap log", f"{path} cannot be read ({exc}), so telemetry is unavailable",
+                     "tee llama-swap's output to that file, or pass --llama-swap-log <path>")
+    if not any(_stamped(line) for line in tail.splitlines()):
+        return Check(
+            "fail", "llama-swap log",
+            f"{path} has no line with a wall-clock stamp in its last {LOG_TAIL_BYTES // 1024} KiB,"
+            " so telemetry is unavailable",
+            "stamp each line at the tee with an ISO-8601 date-time and one space",
+        )
+    return Check("ok", "llama-swap log", f"{path} has stamped lines")
+
+
 def run_checks(
     root_option: Path | None,
     *,
     base_url: str = DEFAULT_BASE_URL,
     versions: Mapping[str, Callable[[], str]] = HARNESS_VERSIONS,
+    llama_swap_log: Path = LLAMA_SWAP_LOG,
 ) -> list[Check]:
     """Every check, in report order."""
     root_check, root = _root(root_option)
@@ -123,4 +158,5 @@ def run_checks(
         config_check,
         *_llama_swap(base_url, config, config_path),
         *_harnesses(config, versions),
+        _log(Path(llama_swap_log)),
     ]
