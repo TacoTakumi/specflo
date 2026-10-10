@@ -39,7 +39,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   metric.
   It inlines the specflo web stylesheets, has the specflo header and an
   Auto/Light/Dark switch made of radio inputs; the choice lasts until the
-  page is reloaded.
+  page is reloaded. It links nothing, so it also opens from a file. The
+  daemon's Bench page shows the same content in the daemon layout, with the
+  top bar and the user's theme, at `/bench/results/<name>/index.html`.
 - **`specflo bench doctor`.** A setup check for the bench, run once at setup
   and whenever a bench command fails. It reports the daemon root, the arm
   config, llama-swap and each bench entry in its `/v1/models` list, each
