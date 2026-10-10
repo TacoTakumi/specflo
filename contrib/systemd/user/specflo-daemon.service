@@ -1,0 +1,39 @@
+# specflo daemon as a systemd user service (systemctl --user). For a
+# system-wide unit that runs as one user, see ../system/specflo-daemon.service.
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp contrib/systemd/user/specflo-daemon.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now specflo-daemon
+#   loginctl enable-linger "$USER"     # keep it running when you are logged out
+#
+# Logs:    journalctl --user -u specflo-daemon -f
+# Restart: systemctl --user restart specflo-daemon   (after a code change)
+#
+# Adjust before installing:
+# - PATH must reach specflo, uv, herdr and pi. Replace the node directory
+#   with the one `dirname "$(command -v pi)"` prints.
+# - The tui agent transport places each project agent in a herdr pane, so a
+#   herdr server must be running for your user. Without one, agent start falls
+#   back to headless. Set agent_transport: rpc in the daemon root's
+#   .specflo/config.yaml if you want headless agents on purpose.
+# - Keep --bind 127.0.0.1 unless a reverse proxy on another host must reach the
+#   daemon (see README, Reverse-proxy sign-in).
+
+[Unit]
+Description=specflo daemon
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/specflo-daemon
+Environment=PATH=%h/.local/bin:%h/bin:%h/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/specflo serve --root %h/specflo-daemon --bind 127.0.0.1 --port 8741
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=default.target
