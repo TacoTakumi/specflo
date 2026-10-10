@@ -196,11 +196,14 @@ def list_user_tokens(root: Path, owner: str) -> list[Token]:
 
 def revoke_user_token(root: Path, owner: str, name: str) -> None:
     """Drop the token ``name`` of ``owner``; a token they do not have is refused."""
-    owner = owner.lower()
+    if not discard_user_token(root, owner, name):
+        raise SpecfloError(f"{owner.lower()} has no token named {name!r}.")
+
+
+def discard_user_token(root: Path, owner: str, name: str) -> bool:
+    """Drop the token ``name`` of ``owner`` if they have it; True when one was dropped."""
     with open_store(root) as store:
-        revoked = store.revoke_token(owner, name)
-    if not revoked:
-        raise SpecfloError(f"{owner} has no token named {name!r}.")
+        return store.revoke_token(owner.lower(), name)
 
 
 def principal_for(root: Path, secret: str, now: float | None = None) -> tuple[str, str] | None:

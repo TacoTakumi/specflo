@@ -460,7 +460,8 @@ def test_a_write_that_dies_midway_leaves_the_old_mapping_whole(root, monkeypatch
 
 
 def agent_tokens(root):
-    return [entry for entry in json.loads(auth.tokens_path(root).read_text())["tokens"] if entry["identity"] == "agent"]
+    """The tokens the built-in agent owns in the state store."""
+    return auth.list_user_tokens(root, auth.AGENT_PRINCIPAL)
 
 
 def test_starting_the_agent_again_keeps_the_seats_token(root, agent_rig):
@@ -476,7 +477,7 @@ def test_starting_the_agent_again_keeps_the_seats_token(root, agent_rig):
     assert second == first
     assert config.load_remote(seat.seat_dir(root, "login-fix"), seat.REMOTE_NAME).token == token
     assert len(agent_tokens(root)) == 1
-    assert auth.identity_for(root, token) == "agent"
+    assert auth.principal_for(root, token) == ("agent", "agent")
 
 
 def test_a_seat_whose_token_the_daemon_does_not_know_gets_a_fresh_one(root, agent_rig):
@@ -487,8 +488,103 @@ def test_a_seat_whose_token_the_daemon_does_not_know_gets_a_fresh_one(root, agen
     seat.start_project_agent(root, slug, "developer", url="http://127.0.0.1:8741", pi_cmd=agent_rig["stub_cmd"]("fresh"))
 
     token = config.load_remote(seat.seat_dir(root, slug), seat.REMOTE_NAME).token
-    assert token != "agent-secret" and auth.identity_for(root, token) == "agent"
+    assert token != "agent-secret" and auth.principal_for(root, token) == ("agent", "agent")
     assert len(agent_tokens(root)) == 1
+
+
+def whoami(root, token):
+    """What GET /whoami answers for ``token`` on an app over ``root``: the status and the body."""
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon.app import create_app
+    from specflo.daemon.routes import WHOAMI_PATH
+
+    app = create_app(root)
+    _apps.append(app)
+    response = TestClient(app).get(WHOAMI_PATH, headers={"Authorization": f"Bearer {token}"})
+    return response.status_code, response.json()
+
+
+def test_a_fresh_seats_token_acts_as_user_agent_with_role_agent(root):
+    slug = hosted(root)
+
+    token = seat.seat_token(root, slug)
+
+    assert token.startswith(auth.USER_TOKEN_PREFIX)
+    assert auth.principal_for(root, token) == ("agent", "agent")
+    assert whoami(root, token) == (200, {"identity": "agent", "user": "agent", "role": "agent"})
+    assert [t.name for t in agent_tokens(root)] == [seat.seat_token_name(slug)]
+
+
+def test_the_seats_agent_token_is_reused_while_it_resolves_to_agent(root):
+    slug = hosted(root)
+    token = seat.seat_token(root, slug)
+    seat.scaffold(root, slug, "http://127.0.0.1:8741", token)
+
+    assert seat.seat_token(root, slug) == token
+    assert [t.name for t in agent_tokens(root)] == [seat.seat_token_name(slug)]
+
+
+def test_a_revoked_seat_agent_token_is_replaced_by_a_fresh_one(root):
+    slug = hosted(root)
+    old = seat.seat_token(root, slug)
+    seat.scaffold(root, slug, "http://127.0.0.1:8741", old)
+    auth.revoke_user_token(root, auth.AGENT_PRINCIPAL, seat.seat_token_name(slug))
+
+    new = seat.seat_token(root, slug)
+
+    assert new != old
+    assert auth.principal_for(root, new) == ("agent", "agent")
+    assert whoami(root, old)[0] == 401
+    assert [t.name for t in agent_tokens(root)] == [seat.seat_token_name(slug)]
+
+
+def test_a_seat_that_lost_its_agent_token_gets_the_named_one_replaced(root):
+    # The store still holds the seat's token but the seat no longer carries
+    # it: the old row goes, so the seat keeps one live credential.
+    slug = hosted(root)
+    old = seat.seat_token(root, slug)
+    seat.scaffold(root, slug, "http://127.0.0.1:8741", "agent-secret")
+
+    new = seat.seat_token(root, slug)
+
+    assert new not in (old, "agent-secret")
+    assert auth.principal_for(root, old) is None
+    assert auth.principal_for(root, new) == ("agent", "agent")
+    assert len(agent_tokens(root)) == 1
+
+
+def test_a_seat_still_holding_a_legacy_agent_token_keeps_it(root):
+    slug = hosted(root)
+    legacy = auth.mint_token(root, "agent")
+    seat.scaffold(root, slug, "http://127.0.0.1:8741", legacy)
+
+    assert seat.seat_token(root, slug) == legacy
+    assert agent_tokens(root) == []
+
+
+def test_the_agent_cannot_sign_in_on_the_page_with_its_token_or_any_password(root):
+    from fastapi.testclient import TestClient
+
+    from specflo.daemon import web
+    from specflo.daemon.app import create_app
+    from specflo.daemon.store import open_store
+
+    slug = hosted(root)
+    token = seat.seat_token(root, slug)
+    app = create_app(root)
+    _apps.append(app)
+    browser = TestClient(app, follow_redirects=False)
+
+    for password in (token, "anything", ""):
+        response = browser.post(web.SIGNIN_PATH, data={"name": "agent", "password": password})
+        assert response.status_code == 400
+        assert web.SIGNIN_FAILED in response.text
+        assert web.SESSION_COOKIE not in response.cookies
+        assert web.SESSION_COOKIE not in browser.cookies
+    with open_store(root) as store:
+        assert store.get_user("agent") is None
+        assert all(user.name != "agent" for user in store.list_users())
 
 
 # --- the agent's end: the advance out of brainstorm, or a developer's stop ------

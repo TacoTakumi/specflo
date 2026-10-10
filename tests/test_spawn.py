@@ -353,7 +353,7 @@ def test_start_project_spawns_scaffolds_and_starts_the_agent(root, rpc_rig):
     assert slug == "fix-the-login" and started.spawned.item.project == slug
     assert started.seat == seat.seat_dir(root, slug) and config.config_path(started.seat).is_file()
     remote = config.load_remote(started.seat, seat.REMOTE_NAME)
-    assert remote.url == "http://127.0.0.1:8741" and auth.identity_for(root, remote.token) == "agent"
+    assert remote.url == "http://127.0.0.1:8741" and auth.principal_for(root, remote.token) == ("agent", "agent")
     assert started.agent == seat.agent_name(slug) and seat.agent_mapping(root) == {slug: started.agent}
     probe = json.loads(_agent_cli("status", started.agent, "--json").stdout)
     assert probe["alive"] is True and probe["transport"] == "rpc"

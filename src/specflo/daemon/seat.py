@@ -55,6 +55,8 @@ DEFAULT_PI_CMD: str | None = None
 SEATS_DIRNAME = "seats"
 # The one remote a seat knows: the daemon that scaffolded it.
 REMOTE_NAME = "daemon"
+# What a seat's token is named among the agent's tokens, before the slug.
+SEAT_TOKEN_PREFIX = "seat-"
 # The project-to-agent mapping, beside the state store under the root.
 AGENTS_FILENAME = "agents.json"
 AGENT_NAME_PREFIX = "project-"
@@ -151,13 +153,23 @@ def scaffold(root: Path, slug: str, url: str, token: str) -> Path:
     return workspace
 
 
+def seat_token_name(slug: str) -> str:
+    """The name of the seat's token among the agent's tokens: one per seat."""
+    return SEAT_TOKEN_PREFIX + slug
+
+
 def seat_token(root: Path, slug: str) -> str:
     """The agent token the seat for ``slug`` should hold: its own while that still resolves to agent, else a fresh one.
 
     A seat keeps one credential for its life. Minting on every start would
     leave a live token behind per start with nothing to retire it; reusing
     the seat's own keeps the count at one, and a seat with no token or one
-    the daemon no longer knows gets a fresh mint.
+    the daemon no longer knows gets a fresh mint. The mint is a personal
+    token of the built-in agent in the state store, named for the seat, so
+    it acts as user agent with role agent and never opens a browser
+    session: the agent has no user row to sign in as. Any older token by
+    that name goes first, so the seat still holds one. A seat holding a
+    token from the tokens file keeps it while it resolves to agent.
     """
     workspace = seat_dir(root, slug)
     if config.config_path(workspace).is_file():
@@ -165,9 +177,11 @@ def seat_token(root: Path, slug: str) -> str:
             token = config.load_remote(workspace, REMOTE_NAME).token
         except SpecfloError:
             token = ""
-        if token and auth.identity_for(root, token) == "agent":
+        if token and auth.principal_for(root, token) == (auth.AGENT_PRINCIPAL, auth.AGENT_PRINCIPAL):
             return token
-    return auth.mint_token(root, "agent")
+    name = seat_token_name(slug)
+    auth.discard_user_token(root, auth.AGENT_PRINCIPAL, name)
+    return auth.mint_user_token(root, auth.AGENT_PRINCIPAL, name)
 
 
 # --- the agent ----------------------------------------------------------------
