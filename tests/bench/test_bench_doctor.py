@@ -2,7 +2,9 @@
 
 import json
 import socket
+import sys
 import threading
+import types
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
@@ -292,3 +294,38 @@ def test_log_defaults_to_the_path_bench_run_reads(home):
 
     [check] = _by_subject(checks, "llama-swap log")
     assert str(bench_doctor.LLAMA_SWAP_LOG) in check.detail
+
+
+def _optional_checks(home, **stubs):
+    checks = bench_doctor.run_checks(
+        None, base_url=_closed_url(), versions=NO_HARNESS, **stubs
+    )
+    return {c.subject: c for c in checks}
+
+
+def test_herdr_unavailable_is_skip_with_the_headless_hint(home):
+    check = _optional_checks(home, herdr_available=lambda: False)["herdr"]
+
+    assert check.status == "skip"
+    assert "--headless" in check.detail
+
+
+def test_herdr_available_is_ok(home):
+    assert _optional_checks(home, herdr_available=lambda: True)["herdr"].status == "ok"
+
+
+def test_matplotlib_import_failure_fails_naming_the_bench_extra(home, monkeypatch):
+    monkeypatch.setitem(sys.modules, "matplotlib", None)
+
+    check = _optional_checks(home, herdr_available=lambda: True)["matplotlib"]
+
+    assert check.status == "fail"
+    assert "bench" in check.fix
+
+
+def test_matplotlib_importable_is_ok(home, monkeypatch):
+    monkeypatch.setitem(sys.modules, "matplotlib", types.ModuleType("matplotlib"))
+
+    check = _optional_checks(home, herdr_available=lambda: True)["matplotlib"]
+
+    assert check.status == "ok"

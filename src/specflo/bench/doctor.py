@@ -17,7 +17,8 @@ from pathlib import Path
 import yaml
 
 from specflo import settings
-from specflo.bench import arms, launch_cc, launch_pi, telemetry
+from specflo.agent.herdr import HerdrAdapter
+from specflo.bench import arms, graphs, launch_cc, launch_pi, telemetry
 from specflo.bench.launch_pi import LaunchError
 from specflo.bench.preflight import DEFAULT_BASE_URL
 from specflo.bench.run import LLAMA_SWAP_LOG
@@ -142,12 +143,28 @@ def _log(path: Path) -> Check:
     return Check("ok", "llama-swap log", f"{path} has stamped lines")
 
 
+def _herdr(available: Callable[[], bool]) -> Check:
+    if available():
+        return Check("ok", "herdr", "answers; each run gets a pane")
+    return Check("skip", "herdr", "not available; runs go headless (or pass --headless)")
+
+
+def _matplotlib() -> Check:
+    try:
+        graphs._require_matplotlib()
+    except graphs.GraphError as exc:
+        return Check("fail", "matplotlib", "cannot be imported, so `specflo bench graph` cannot draw",
+                     str(exc).split(": ", 1)[-1])
+    return Check("ok", "matplotlib", "importable")
+
+
 def run_checks(
     root_option: Path | None,
     *,
     base_url: str = DEFAULT_BASE_URL,
     versions: Mapping[str, Callable[[], str]] = HARNESS_VERSIONS,
     llama_swap_log: Path = LLAMA_SWAP_LOG,
+    herdr_available: Callable[[], bool] = lambda: HerdrAdapter().available(),
 ) -> list[Check]:
     """Every check, in report order."""
     root_check, root = _root(root_option)
@@ -158,5 +175,7 @@ def run_checks(
         config_check,
         *_llama_swap(base_url, config, config_path),
         *_harnesses(config, versions),
+        _herdr(herdr_available),
         _log(Path(llama_swap_log)),
+        _matplotlib(),
     ]
