@@ -661,6 +661,10 @@ def execution(
         typer.echo(f"Execution mode for '{slug}': {mode}")
     else:
         typer.echo(f"Execution mode for '{slug}' unchanged: {mode}")
+    if not json_output and mode == projects.FAN_OUT_EXECUTION:
+        typer.echo(
+            "As the orchestrator, follow the Fan-out section of the specflo-execute skill."
+        )
 
 
 @app.command(epilog="Example: specflo egress local")
