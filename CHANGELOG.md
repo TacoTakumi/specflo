@@ -40,6 +40,14 @@ latter. Release tags are of the form `vX.Y.Z`.
   It inlines the specflo web stylesheets, has the specflo header and an
   Auto/Light/Dark switch made of radio inputs; the choice lasts until the
   page is reloaded.
+- **`specflo bench doctor`.** A setup check for the bench, run once at setup
+  and whenever a bench command fails. It reports the daemon root, the arm
+  config, llama-swap and each bench entry in its `/v1/models` list, each
+  harness with the version a run records, herdr, the wall-clock stamps in
+  the llama-swap log and matplotlib. Each line is ok, fail or skip, and each
+  fail names its fix. A missing harness or herdr is a skip. The check loads
+  no model and never prompts. `--json` gives the same report; the command
+  exits 1 when a check fails.
 - **Theme switch in the daemon web UI.** Every page has an Auto/Light/Dark
   switch in its header. The choice is kept in a `specflo_theme` cookie for a
   year; Auto follows the browser. The switch works with no script and needs
