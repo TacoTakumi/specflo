@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import posixpath
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -39,6 +40,9 @@ class Created:
     base_branch: str
     base_sha: str
     missing: list[str] = field(default_factory=list)
+    # The checkout root's place inside the worktree: ``path`` itself unless
+    # the root is below the repository's top.
+    workdir: Path | None = None
 
 
 def git(cwd: Path, *args: str, check: bool = True, env: dict | None = None) -> str:
@@ -140,8 +144,10 @@ def create(root: Path, slug: str, task_id: str) -> Created:
     worktrees_dir(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     git(root, "worktree", "add", "-q", "-b", branch, str(path), base_sha)
-    missing = copy_included(root, path)
-    return Created(path, branch, base_branch, base_sha, missing)
+    workdir = path / git(root, "rev-parse", "--show-prefix")
+    workdir.mkdir(parents=True, exist_ok=True)
+    missing = copy_included(root, workdir)
+    return Created(path, branch, base_branch, base_sha, missing, workdir)
 
 
 def copy_included(root: Path, path: Path) -> list[str]:
@@ -175,14 +181,17 @@ def copy_included(root: Path, path: Path) -> list[str]:
 
 
 def remove(root: Path, path: Path, branch: str) -> None:
-    """Remove the worktree at ``path`` and delete ``branch``, whatever either holds.
+    """Remove the worktree that holds ``path`` and delete ``branch``, whatever
+    either holds.
 
-    A part that is gone already is skipped, so a half-made worktree is
-    cleaned up too.
+    ``path`` may be the worktree's top or a directory inside it. A part that
+    is gone already is skipped, so a half-made worktree is cleaned up too.
     """
     root = Path(root)
     if Path(path).exists():
-        git(root, "worktree", "remove", "--force", str(path))
+        found = _run(Path(path), "rev-parse", "--show-toplevel")
+        top = found.stdout.strip() if found.returncode == 0 else str(path)
+        git(root, "worktree", "remove", "--force", top)
     git(root, "worktree", "prune")
     if _run(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
         git(root, "branch", "-D", branch)
@@ -193,6 +202,8 @@ class Landed:
     """A landed task: its one commit on the base branch and the files it changed."""
 
     sha: str
+    # Each changed file from the checkout root, as Files names them; a file
+    # outside the root starts with ``../``.
     files: list[str]
 
 
@@ -382,4 +393,5 @@ def land(
         )
     git(root, "merge", "--ff-only", "-q", sha)
     remove(root, path, branch)
-    return Landed(sha, files)
+    prefix = git(root, "rev-parse", "--show-prefix").rstrip("/") or "."
+    return Landed(sha, [posixpath.relpath(f, prefix) for f in files])

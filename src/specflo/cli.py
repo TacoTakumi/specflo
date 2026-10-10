@@ -2333,7 +2333,7 @@ def task_start(
                     " task starts."
                 )
             created = worktree_module.create(root, slug, task_id)
-            where = worktree_module.relative(root, created.path)
+            where = worktree_module.relative(root, created.workdir)
             try:
                 task = svc.start_task(
                     slug, task_id, force=force, worktree=where,
