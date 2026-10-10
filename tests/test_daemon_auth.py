@@ -157,7 +157,7 @@ def test_a_valid_token_attaches_its_identity_to_the_request(root, client):
         response = client.get("/whoami", headers=_bearer(secret))
 
         assert response.status_code == 200
-        assert response.json() == {"identity": identity}
+        assert response.json() == {"identity": identity, "user": identity, "role": identity}
 
 
 def test_the_health_endpoint_needs_no_token(client):

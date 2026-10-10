@@ -20,6 +20,12 @@ the verbs after it; the rows live in the state store, and this module holds
 only the rules a user must meet. A browser session carries no role: each
 request reads the current user row through :func:`session_user` or
 :func:`resume_session`, so a role change applies at the user's next request.
+
+A user, or the built-in agent, may also hold personal tokens, minted with
+:func:`mint_user_token` and kept in the state store as a SHA-256 and the
+secret's last four characters. Like a session, a token carries no role:
+:func:`principal_for` reads the owner's row on every request. The tokens
+file above stays readable beside them until its tokens are moved over.
 """
 
 from __future__ import annotations
@@ -35,7 +41,7 @@ import time
 from pathlib import Path
 
 from ..errors import SpecfloError
-from .store import ROLES, Conflict, Session, Store, User, open_store
+from .store import ROLES, Conflict, Session, Store, Token, User, open_store
 
 IDENTITIES = ("requester", "developer", "agent")
 # The identities a person at a browser or a CLI acts as; the agent has no
@@ -59,6 +65,15 @@ SCRYPT_MAX_MEMORY = 256 * 1024 * 1024
 # write moves nothing, so a page that asks many times a minute writes once.
 SESSION_TTL = 12 * 60 * 60
 SESSION_WRITE_EVERY = 60
+# A personal token's secret starts with this, so a leaked one is easy to
+# spot in a log or a scan. Its last-used time is written at most once in
+# TOKEN_WRITE_EVERY seconds, so a client calling many times a minute writes
+# once.
+USER_TOKEN_PREFIX = "sfp_"
+TOKEN_WRITE_EVERY = 60
+# The owner a personal token may have without a user row: the built-in
+# principal the working agents act as. It acts under the role of that name.
+AGENT_PRINCIPAL = "agent"
 # Password sign-in for a user is refused for SIGNIN_LOCK_WINDOW seconds
 # after the last of SIGNIN_LOCK_FAILURES wrong passwords that fall within
 # that many seconds of each other.
@@ -142,6 +157,99 @@ def identity_for(root: Path, secret: str) -> str | None:
         if secrets.compare_digest(str(entry.get("hash", "")), digest):
             return entry["identity"]
     return None
+
+
+def mint_user_token(root: Path, owner: str, name: str, today: str | None = None) -> str:
+    """Mint the personal token ``name`` for ``owner`` and return the secret, once.
+
+    ``owner`` is an existing user, in any case, or the built-in agent. The
+    store keeps the secret's SHA-256 and its last four characters, never the
+    secret. A name the owner already uses for a token is refused.
+    """
+    owner = owner.lower()
+    if owner != AGENT_PRINCIPAL:
+        owner = require_user(root, owner).name
+    secret = USER_TOKEN_PREFIX + secrets.token_urlsafe(32)
+    token = Token(
+        owner=owner,
+        name=name,
+        hash=hash_token(secret),
+        last4=secret[-4:],
+        created=today or datetime.date.today().isoformat(),
+    )
+    with open_store(root) as store:
+        try:
+            store.add_token(token)
+        except Conflict:
+            raise SpecfloError(f"{owner} already has a token named {name!r}.") from None
+    return secret
+
+
+def list_user_tokens(root: Path, owner: str) -> list[Token]:
+    """The tokens of ``owner`` (a user in any case, or the agent), in name order."""
+    owner = owner.lower()
+    if owner != AGENT_PRINCIPAL:
+        owner = require_user(root, owner).name
+    with open_store(root) as store:
+        return store.list_tokens(owner)
+
+
+def revoke_user_token(root: Path, owner: str, name: str) -> None:
+    """Drop the token ``name`` of ``owner``; a token they do not have is refused."""
+    owner = owner.lower()
+    with open_store(root) as store:
+        revoked = store.revoke_token(owner, name)
+    if not revoked:
+        raise SpecfloError(f"{owner} has no token named {name!r}.")
+
+
+def principal_for(root: Path, secret: str, now: float | None = None) -> tuple[str, str] | None:
+    """Who ``secret`` acts as, as (name, role), or None for nobody.
+
+    A personal token is found by its SHA-256. The agent's tokens act as
+    ('agent', 'agent'); a user's act under the role their row holds now, so
+    a role change applies at the next request and a removed user's tokens
+    resolve to nobody. The token's last use is recorded at ``now`` (epoch
+    seconds) when it has none yet or the one recorded is at least
+    :data:`TOKEN_WRITE_EVERY` old. A secret not in the store is looked up
+    in the tokens file, and a token there acts as its identity, for both
+    name and role.
+    """
+    if not secret:
+        return None
+    now = time.time() if now is None else now
+    digest = hash_token(secret)
+    with open_store(root) as store:
+        token = store.find_token(digest)
+        if token is None:
+            principal = None
+        elif token.owner == AGENT_PRINCIPAL:
+            principal = (AGENT_PRINCIPAL, AGENT_PRINCIPAL)
+        else:
+            user = store.get_user(token.owner)
+            principal = (user.name, user.role) if user is not None else None
+        if principal is not None and _token_due(token.last_used, now):
+            store.touch_token(digest, _utc(now))
+    if token is None:
+        identity = identity_for(root, secret)
+        return (identity, identity) if identity is not None else None
+    return principal
+
+
+def _token_due(last_used: str | None, now: float) -> bool:
+    """Whether a token last used at ``last_used`` should have ``now`` written."""
+    if last_used is None:
+        return True
+    try:
+        then = datetime.datetime.fromisoformat(last_used).timestamp()
+    except ValueError:
+        return True
+    return now - then >= TOKEN_WRITE_EVERY
+
+
+def _utc(epoch: float) -> str:
+    """``epoch`` as an ISO UTC timestamp to the second, as the store keeps times."""
+    return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat(timespec="seconds")
 
 
 def validate_user_name(name: str) -> str:

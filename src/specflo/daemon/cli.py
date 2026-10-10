@@ -33,6 +33,9 @@ serve_app.add_typer(token_app, name="token")
 user_app = typer.Typer(help="Add and list the named users who sign in to the daemon.")
 serve_app.add_typer(user_app, name="user")
 
+user_token_app = typer.Typer(help="Mint, list and revoke the personal tokens a user holds.")
+user_app.add_typer(user_token_app, name="token")
+
 # The pool commands read files under the root and never start the daemon.
 serve_app.add_typer(pool_app, name="pool")
 
@@ -325,3 +328,76 @@ def user_remove(
     except SpecfloError as exc:
         _fail(str(exc))
     typer.echo(f"Removed user {removed} with their tokens and sessions.")
+
+
+@user_token_app.command(
+    "add",
+    epilog="Example: specflo serve --root ~/specflo-daemon user token add rob --name laptop",
+)
+def user_token_add(
+    ctx: typer.Context,
+    user: str = typer.Argument(
+        ..., metavar="<user>", help="The user the token acts as; 'agent' for the working agents."
+    ),
+    name: str = typer.Option(
+        ..., "--name", metavar="<name>", help="A label for the token, unique among the user's."
+    ),
+) -> None:
+    """Mint a personal token for <user>: the secret prints once, only its hash is kept."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        secret = auth.mint_user_token(root, user, name)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    typer.echo(secret)
+    typer.secho(
+        f"Minted token {name} for {user.lower()}. Store it now: it will not be shown again.",
+        err=True,
+    )
+
+
+@user_token_app.command(
+    "list",
+    epilog="Example: specflo serve --root ~/specflo-daemon user token list rob",
+)
+def user_token_list(
+    ctx: typer.Context,
+    user: str = typer.Argument(..., metavar="<user>", help="The user whose tokens to list."),
+) -> None:
+    """List the tokens of <user>: name, created, last used and last 4 characters."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        tokens = auth.list_user_tokens(root, user)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    if not tokens:
+        typer.echo(
+            f"{user.lower()} has no tokens."
+            f" `specflo serve user token add {user.lower()} --name <name>` mints one."
+        )
+        return
+    table = [("NAME", "CREATED", "LAST USED", "LAST4")] + [
+        (token.name, token.created, token.last_used or "never", token.last4)
+        for token in tokens
+    ]
+    widths = [max(len(row[column]) for row in table) for column in range(3)]
+    for row in table:
+        typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths)) + "  " + row[3])
+
+
+@user_token_app.command(
+    "revoke",
+    epilog="Example: specflo serve --root ~/specflo-daemon user token revoke rob laptop",
+)
+def user_token_revoke(
+    ctx: typer.Context,
+    user: str = typer.Argument(..., metavar="<user>", help="The user who holds the token."),
+    name: str = typer.Argument(..., metavar="<name>", help="The token to revoke."),
+) -> None:
+    """Revoke the token <name> of <user>: a request with it is refused from now on."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        auth.revoke_user_token(root, user, name)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    typer.echo(f"Revoked token {name} of {user.lower()}.")

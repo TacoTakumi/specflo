@@ -24,6 +24,7 @@ import datetime
 import json
 import logging
 import threading
+import time
 import typing
 from pathlib import Path
 
@@ -34,7 +35,7 @@ from ..errors import SpecfloError
 from ..projects import validate_slug
 from ..service import wire
 from ..service.local import LocalProjectService
-from .auth import IDENTITIES, identity_for
+from .auth import IDENTITIES, principal_for
 from .products import PRODUCTS_PATH, Products
 from .store import open_store
 from .workitems import WORK_ITEMS_PATH, WorkItems
@@ -74,13 +75,24 @@ def lock_slug(operation: wire.Operation, kwargs: dict) -> str | None:
     return kwargs.get("slug")
 
 
-def current_identity(request: Request) -> str:
-    """The identity behind the request's bearer token; 401 without a valid one."""
+def _now() -> float:
+    return time.time()
+
+
+def current_principal(request: Request) -> tuple[str, str]:
+    """Who the request's bearer token acts as, as (name, role); 401 without a valid one.
+
+    The answer is kept on the request, so a route that asks again, as every
+    route does after the router's own guard, resolves the token once.
+    """
+    cached = getattr(request.state, "principal", None)
+    if cached is not None:
+        return cached
     scheme, _, secret = request.headers.get("Authorization", "").partition(" ")
-    identity = None
+    principal = None
     if scheme.lower() == "bearer":
-        identity = identity_for(request.app.state.root, secret.strip())
-    if identity is None:
+        principal = principal_for(request.app.state.root, secret.strip(), now=_now())
+    if principal is None:
         raise HTTPException(
             status_code=401,
             detail="A bearer token bound to one of "
@@ -88,15 +100,27 @@ def current_identity(request: Request) -> str:
             + " is required.",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return identity
+    request.state.principal = principal
+    return principal
+
+
+def current_identity(request: Request) -> str:
+    """The role the request's bearer token acts under; 401 without a valid one.
+
+    The role, not the user's name: the role checks and the actor stamped on
+    an entry read it as the identity.
+    """
+    return current_principal(request)[1]
 
 
 router = APIRouter(dependencies=[Depends(current_identity)])
 
 
 @router.get(WHOAMI_PATH)
-def whoami(identity: str = Depends(current_identity)) -> dict:
-    return {"identity": identity}
+def whoami(principal: tuple[str, str] = Depends(current_principal)) -> dict:
+    name, role = principal
+    # "identity" stays for clients that read only it.
+    return {"identity": role, "user": name, "role": role}
 
 
 # One lock per project (keyed by root and slug) and one per root for the
