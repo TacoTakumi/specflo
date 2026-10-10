@@ -464,3 +464,45 @@ def test_a_work_root_inside_the_bench_home_is_refused(synthetic, tmp_path):
     home = tmp_path / "R" / "bench"
     with pytest.raises(run.wd.WorkdirError, match="bench home"):
         run.run_one(**{**synthetic, "work_root": home / "work"}, home=home)
+
+
+# -- operator input -------------------------------------------------------------
+
+
+def _validity(inputs):
+    log = {"requests": [{"model": ENTRY}], "tool_calls": []}
+    return run.validity(ENTRY, log, {"contaminated": False}, {"score": 1.0}, inputs)
+
+
+def test_operator_input_check_passes_a_log_with_the_ignition_only():
+    result = _validity([{"source": "interactive", "text": lifecycle.IGNITION}])
+    assert result["valid"] is True, result
+    assert result["operator_inputs"] == 0
+
+
+def test_operator_input_check_fails_a_second_interactive_input():
+    result = _validity([{"source": "interactive", "text": lifecycle.IGNITION},
+                        {"source": "interactive", "text": "use the other file"}])
+    assert result["valid"] is False
+    assert result["reasons"] == ["operator input in the pane"]
+    assert result["operator_inputs"] == 1
+
+
+def test_operator_input_check_ignores_extension_and_rpc_inputs():
+    result = _validity([{"source": "extension", "text": "continue"}, {"source": "rpc", "text": "go"}])
+    assert result["valid"] is True, result
+
+
+def test_operator_input_check_leaves_a_run_with_no_input_log_as_before():
+    log = {"requests": [{"model": ENTRY}], "tool_calls": []}
+    before = run.validity(ENTRY, log, {"contaminated": False}, {"score": 1.0})
+    assert _validity(None) == before
+    assert "operator_inputs" not in before
+
+
+def test_operator_input_log_is_read_from_the_run_dir(tmp_path: Path):
+    assert run.input_log(tmp_path) is None
+    (tmp_path / "inputs.jsonl").write_text(
+        '{"source": "interactive", "text": "hi"}\nnot json\n{"source": "extension", "text": "x"}\n')
+    assert run.input_log(tmp_path) == [{"source": "interactive", "text": "hi"},
+                                       {"source": "extension", "text": "x"}]

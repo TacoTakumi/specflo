@@ -27,6 +27,7 @@ Where things go:
         record.json         the run record
         lifecycle.json      the lifecycle outcome
         harness.out/.err    the harness's stdout and stderr
+        inputs.jsonl        every pi input event with its source (pi arm)
         session.norm.json   the merged normalised session log
         pi-agent/sessions/  pi's session JSONL (pi arm)
         claude-config/projects/, pass-NN.*, passes.json, cc-result.json (Claude Code arm)
@@ -37,8 +38,9 @@ The record's `logs` names every one of these paths.
 Validity: a run is valid when the model ids its requests recorded are exactly
 the arm's entry, no tool call named a protected path (the installed bench
 package and its held-out archive, the bench home, and other runs' workdirs and
-run dirs) and the tree could be graded. `validity` says which check
-failed.
+run dirs), the tree could be graded and, on a pi run, nobody typed in the
+run's pane (the input log holds no interactive input but the ignition).
+`validity` says which check failed.
 
 Telemetry: when the llama-swap log has no stamped line, or no server timing
 line inside the run window, the record carries the unavailable marker with the
@@ -413,8 +415,38 @@ def grade_tree(tree: Path, level: str, grade: Callable[..., grader.GradeResult] 
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def validity(entry: str, log: dict, diag: Mapping[str, Any], grade: Mapping[str, Any]) -> dict[str, Any]:
-    """Whether the run counts, with each check's result and the reasons it does not."""
+def input_log(run_dir: Path) -> list[dict] | None:
+    """The pi input log of a run (one dict per input event), or None when the run wrote none."""
+    try:
+        text = (Path(run_dir) / launch_pi.INPUT_LOG_FILE).read_text(encoding="utf-8")
+    except OSError:
+        return None
+    entries = []
+    for line in text.splitlines():
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(entry, dict):
+            entries.append(entry)
+    return entries
+
+
+def operator_inputs(inputs: Sequence[Mapping[str, Any]]) -> list[str]:
+    """The texts typed in the pane by someone other than the bench: interactive inputs but the ignition."""
+    return [str(e.get("text")) for e in inputs
+            if e.get("source") == "interactive" and e.get("text") != lifecycle.IGNITION]
+
+
+def validity(
+    entry: str, log: dict, diag: Mapping[str, Any], grade: Mapping[str, Any],
+    inputs: Sequence[Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Whether the run counts, with each check's result and the reasons it does not.
+
+    `inputs` is the run's pi input log; None (no log, as on a Claude Code run)
+    leaves the operator check out.
+    """
     model = preflight.model_validity(entry, log=log)
     reasons = []
     if not model["valid"]:
@@ -423,9 +455,15 @@ def validity(entry: str, log: dict, diag: Mapping[str, Any], grade: Mapping[str,
         reasons.append("a tool call named a protected path")
     if "error" in grade:
         reasons.append(f"the final tree could not be graded: {grade['error']}")
-    return {"valid": not reasons, "model_ids": model["model_ids"], "model_ids_valid": model["valid"],
-            "contaminated": bool(diag.get("contaminated")), "graded": "error" not in grade,
-            "reasons": reasons}
+    typed = operator_inputs(inputs) if inputs is not None else []
+    if typed:
+        reasons.append("operator input in the pane")
+    result = {"valid": not reasons, "model_ids": model["model_ids"], "model_ids_valid": model["valid"],
+              "contaminated": bool(diag.get("contaminated")), "graded": "error" not in grade,
+              "reasons": reasons}
+    if inputs is not None:
+        result["operator_inputs"] = len(typed)
+    return result
 
 
 def _safe(step: Callable[[], dict], what: str) -> dict:
@@ -461,7 +499,7 @@ def assemble_record(
     fields = outcome.record_fields()
     report = outcome.harness_report or {}
     harness_version = report.get("harness") if isinstance(report.get("harness"), str) else None
-    valid = validity(run.entry, log, diag, grade)
+    valid = validity(run.entry, log, diag, grade, input_log(run_dir))
     run_dir = Path(run_dir)
     logs = {
         "run_dir": str(run_dir),
