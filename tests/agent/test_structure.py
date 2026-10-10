@@ -41,9 +41,19 @@ POOL_LEASE_CLI = SRC / "pool" / "cli_lease.py"
 POOL_LEASE_CLI_ALLOWED = ("specflo.agent.lease",)
 
 # The model bench places a run's harness in a herdr pane to watch, so it takes
-# the herdr adapter and nothing else of the agent subsystem.
+# the herdr adapter and nothing else of the agent subsystem. Its lifecycle also
+# starts pi in that pane as a managed agent: it takes the handshake names, the
+# state directory layout and the client that waits for the control socket.
+# Never the host, the CLI or the pi protocol module.
 BENCH_DIR = SRC / "bench"
 BENCH_ALLOWED_PREFIX = "specflo.agent.herdr"
+BENCH_LIFECYCLE = BENCH_DIR / "lifecycle.py"
+BENCH_LIFECYCLE_ALLOWED = (
+    "specflo.agent.herdr",
+    "specflo.agent.client",
+    "specflo.agent.statefiles",
+    "specflo.agent.tui",
+)
 
 # Controller-side sentinel conventions the HOST must never know about.
 SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
@@ -100,7 +110,9 @@ def test_pipeline_modules_import_no_agent_code():
         }
         if DAEMON_DIR in path.parents:
             offending = {n for n in offending if not n.startswith(DAEMON_ALLOWED_PREFIX)}
-        if BENCH_DIR in path.parents:
+        if path == BENCH_LIFECYCLE:
+            offending = {n for n in offending if not n.startswith(BENCH_LIFECYCLE_ALLOWED)}
+        elif BENCH_DIR in path.parents:
             offending = {n for n in offending if not n.startswith(BENCH_ALLOWED_PREFIX)}
         if path == POOL_RUNNER:
             offending = {
