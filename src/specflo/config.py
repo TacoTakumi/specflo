@@ -8,6 +8,7 @@ works from anywhere inside a project tree.
 from __future__ import annotations
 
 import io
+import ipaddress
 import json
 import re
 import sys
@@ -137,6 +138,17 @@ class Text:
 
     def __str__(self) -> str:
         return "text" + (", or nothing" if self.optional else "")
+
+
+@dataclass(frozen=True)
+class Flag:
+    """A plain true or false; a number or a word is neither."""
+
+    def __call__(self, raw: object) -> bool:
+        return isinstance(raw, bool)
+
+    def __str__(self) -> str:
+        return "true or false"
 
 
 @dataclass(frozen=True)
@@ -924,9 +936,70 @@ def hosting_remote(root: Path, slug: str) -> str | None:
 # a hosted one. The pool counts a live project agent's model and account slot
 # beside its leases. A root that names neither has project agents that are
 # not counted.
+#
+# The three after them say whether the daemon takes the signed-in user's name
+# from a header a reverse proxy sets, which header that is, and the peers -
+# addresses or CIDR ranges - trusted to set it. Any other peer's header names
+# no one.
 
 PROJECT_AGENT_MODEL = "project_agent_model"
 PROJECT_AGENT_ACCOUNT = "project_agent_account"
+AUTH_PROXY = "auth_proxy"
+AUTH_PROXY_HEADER = "auth_proxy_header"
+AUTH_TRUSTED_PROXIES = "auth_trusted_proxies"
+DEFAULT_AUTH_PROXY_HEADER = "X-WEBAUTH-USER"
+DEFAULT_TRUSTED_PROXIES = ("127.0.0.1", "::1")
+
+Network = ipaddress.IPv4Network | ipaddress.IPv6Network
+
+
+def _trusted_networks(raw: object) -> tuple[Network, ...]:
+    """The networks a trusted proxy list names, or the error naming its fault.
+
+    A single address reads as a network of one. The list refuses what would
+    let any peer at all name a user: an empty list, ``*``, and a range that
+    holds every address (``0.0.0.0/0``, ``::/0``, or the same spelled with a
+    netmask). It refuses an entry that is not an address or a range too,
+    rather than drop it: the admin meant something by it.
+    """
+    if not isinstance(raw, list) or not raw:
+        raise SpecfloError(
+            f"{CONFIG_FILENAME}: {AUTH_TRUSTED_PROXIES} must list at least one"
+            f" address or CIDR range of the proxy, not {raw!r}."
+        )
+    networks = []
+    for entry in raw:
+        try:
+            if not isinstance(entry, str):
+                raise ValueError
+            network = ipaddress.ip_network(entry.strip(), strict=False)
+        except ValueError:
+            raise SpecfloError(
+                f"{CONFIG_FILENAME}: {AUTH_TRUSTED_PROXIES} entry {entry!r} is not"
+                " an address or a CIDR range."
+            ) from None
+        if network.prefixlen == 0:
+            raise SpecfloError(
+                f"{CONFIG_FILENAME}: {AUTH_TRUSTED_PROXIES} entry {entry!r} trusts"
+                " every address; name the proxy's own address or range."
+            )
+        networks.append(network)
+    return tuple(networks)
+
+
+@dataclass(frozen=True)
+class TrustedProxies:
+    """A list of addresses and CIDR ranges, none of which trusts every peer."""
+
+    def __call__(self, raw: object) -> bool:
+        try:
+            _trusted_networks(raw)
+        except SpecfloError:
+            return False
+        return True
+
+    def __str__(self) -> str:
+        return "a list of addresses and CIDR ranges"
 
 DAEMON_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(
@@ -942,6 +1015,27 @@ DAEMON_FIELDS: tuple[ConfigField, ...] = (
         None,
         "The pool account a hosted project's agent runs through, counted by the pool.",
         Text(optional=True),
+    ),
+    ConfigField(
+        AUTH_PROXY,
+        bool,
+        False,
+        "Take the signed-in user's name from a header a trusted reverse proxy sets.",
+        Flag(),
+    ),
+    ConfigField(
+        AUTH_PROXY_HEADER,
+        str,
+        DEFAULT_AUTH_PROXY_HEADER,
+        "The header the reverse proxy puts the signed-in user's name in.",
+        Text(),
+    ),
+    ConfigField(
+        AUTH_TRUSTED_PROXIES,
+        list,
+        list(DEFAULT_TRUSTED_PROXIES),
+        "The addresses and CIDR ranges of the proxies trusted to set that header.",
+        TrustedProxies(),
     ),
 )
 DAEMON_FIELDS_BY_NAME = {f.name: f for f in DAEMON_FIELDS}
@@ -967,7 +1061,8 @@ def project_agent_use(root: Path) -> ProjectAgentUse:
         return ProjectAgentUse()
     data = _read_data(root)
     named = {}
-    for spec in DAEMON_FIELDS:
+    for spec in (DAEMON_FIELDS_BY_NAME[PROJECT_AGENT_MODEL],
+                 DAEMON_FIELDS_BY_NAME[PROJECT_AGENT_ACCOUNT]):
         raw = data.get(spec.name)
         if spec.name in data and not spec.validate(raw):
             _warn_invalid(spec, raw)
@@ -975,4 +1070,50 @@ def project_agent_use(root: Path) -> ProjectAgentUse:
         named[spec.name] = raw.strip() if isinstance(raw, str) else None
     return ProjectAgentUse(
         model=named[PROJECT_AGENT_MODEL], account=named[PROJECT_AGENT_ACCOUNT]
+    )
+
+
+@dataclass(frozen=True)
+class ProxyAuth:
+    """How a daemon takes a user's name from a reverse proxy: whether it does,
+    the header it reads, and the networks whose peers may set it."""
+
+    enabled: bool = False
+    header: str = DEFAULT_AUTH_PROXY_HEADER
+    trusted: tuple[Network, ...] = tuple(
+        ipaddress.ip_network(entry) for entry in DEFAULT_TRUSTED_PROXIES
+    )
+
+
+def proxy_auth(root: Path) -> ProxyAuth:
+    """What the config of the daemon root ``root`` says about proxy sign-in.
+
+    A missing key, and a directory with no config at all, read as the
+    default: off, ``X-WEBAUTH-USER``, and loopback trusted. Unlike the other
+    daemon keys a bad value does not degrade: a sign-in that silently trusted
+    more, or other, peers than the admin wrote is worse than a daemon that
+    does not start, so a bad setting raises the error naming the key.
+
+    With ``auth_proxy`` off the header and the list are not checked, and read
+    as the defaults: a daemon that takes no name from a proxy must not fail
+    to start over keys it does not use.
+    """
+    if not config_path(root).is_file():
+        return ProxyAuth()
+    data = _read_data(root)
+    enabled = data.get(AUTH_PROXY, False)
+    if not Flag()(enabled):
+        raise SpecfloError(
+            f"{CONFIG_FILENAME}: {AUTH_PROXY} must be true or false, not {enabled!r}."
+        )
+    if not enabled:
+        return ProxyAuth()
+    header = data.get(AUTH_PROXY_HEADER, DEFAULT_AUTH_PROXY_HEADER)
+    if not Text()(header):
+        raise SpecfloError(
+            f"{CONFIG_FILENAME}: {AUTH_PROXY_HEADER} must name a header, not {header!r}."
+        )
+    trusted = data.get(AUTH_TRUSTED_PROXIES, list(DEFAULT_TRUSTED_PROXIES))
+    return ProxyAuth(
+        enabled=True, header=header.strip(), trusted=_trusted_networks(trusted)
     )

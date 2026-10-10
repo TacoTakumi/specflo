@@ -25,6 +25,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from ..config import proxy_auth
 from ..pool import accounts, bridge, events, service, watch
 from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, auth, chat, pool_routes, prepare_root, web
@@ -90,8 +91,13 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     the seat a project's agent runs in is scaffolded with it. A root that
     still holds the tokens file from before named users has it moved into
     the state store first, before anything serves.
+
+    The root's proxy sign-in setting is read once, onto
+    ``app.state.proxy_auth``; with the proxy on, a setting that would trust
+    the wrong peers raises before anything else is done.
     """
     root = prepare_root(root)
+    proxy = proxy_auth(root)
     auth.migrate_legacy_tokens(root)
     # No generated docs or schema routes: those would serve every API path
     # to a browser without a token, and the token guard is the contract.
@@ -101,6 +107,7 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     )
     app.state.root = root
     app.state.url = url
+    app.state.proxy_auth = proxy
     # The chat pumps: one per agent discovery finds alive for a mapped
     # project, so a daemon restart follows every live conversation again.
     app.state.pumps = chat.Pumps(root)

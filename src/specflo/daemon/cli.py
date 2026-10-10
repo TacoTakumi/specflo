@@ -68,9 +68,15 @@ def serve(
         typer.secho(f"error: {SERVE_EXTRA_HINT}", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     url = f"http://{bind}:{port}"
-    application = create_app(root, url=url)
+    try:
+        application = create_app(root, url=url)
+    except SpecfloError as exc:
+        _fail(str(exc))
     typer.echo(f"specflo daemon: root {root}, listening on {url}")
-    uvicorn.run(application, host=bind, port=port)
+    # request.client stays the socket peer: uvicorn's default rewrites it from
+    # X-Forwarded-For for a loopback peer, and the proxy trust check must see
+    # the peer that really connected.
+    uvicorn.run(application, host=bind, port=port, proxy_headers=False)
 
 
 class _RootOnDemand(dict):
