@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import datetime
 import json
 import os
 import sys
@@ -2276,8 +2277,9 @@ def _report_transition(
 ) -> None:
     """Print a task's state transition; ``extra`` adds fields to the JSON form.
 
-    Only `task done` passes ``extra`` — the other verbs stay terse, since
-    completing a task is the one task-level clear-point (REQ-01). The transition
+    `task done` passes ``extra``, since completing a task is the one
+    task-level clear-point (REQ-01), and `task reopen` of a worktree task
+    passes the patch it saved; the other verbs stay terse. The transition
     fields are applied last, so ``extra`` can never overwrite them.
     """
     if json_output:
@@ -2536,15 +2538,37 @@ def task_reopen(
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
-    """Return a task to pending (clears any block)."""
+    """Return a task to pending (clears any block).
+
+    A task in its own worktree gets its changes saved as a patch first; then
+    the worktree and its branch are removed.
+    """
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
+    patch = None
     try:
+        current = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
+        held = current is not None and current.worktree and current.base
+        if held:
+            path = root / current.worktree
+            if path.is_dir():
+                stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+                patch = worktree_module.save_patch(
+                    root, path, current.base.split()[-1], slug, task_id, stamp
+                )
         task = svc.reopen_task(slug, task_id, note=note)
+        if held:
+            worktree_module.remove(root, path, worktree_module.task_branch(slug, task_id))
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
+    where = worktree_module.relative(root, patch) if patch else None
+    if json_output:
+        _report_transition(task, json_output, {"patch": where} if held else None)
+        return
     _report_transition(task, json_output)
+    if where:
+        typer.echo(f"Saved the worktree's changes: {where} (apply with `git apply` on its base)")
 
 
 @task_app.command("list", epilog="Example: specflo task list")

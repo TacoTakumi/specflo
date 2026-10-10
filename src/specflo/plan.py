@@ -1385,6 +1385,10 @@ def _set_progress(
         if worktree is not None:
             doc = markdown.set_entry_field(doc, task_id, "Worktree", worktree)
             doc = markdown.set_entry_field(doc, task_id, "Base", base or "")
+        elif progress == "pending":
+            # A task back at pending has no worktree: it starts afresh.
+            doc = markdown.clear_entry_field(doc, task_id, "Worktree")
+            doc = markdown.clear_entry_field(doc, task_id, "Base")
         if note_value is not None:
             doc = markdown.append_entry_field(doc, task_id, NOTE_FIELD, note_value)
         doc = markdown.bump_updated(doc, today)
@@ -1393,6 +1397,8 @@ def _set_progress(
         task.commit = commit
     if worktree is not None:
         task.worktree, task.base = worktree, base
+    elif progress == "pending":
+        task.worktree = task.base = None
     task.progress = progress
     task.blocked = reason if progress == "blocked" else None
     return task

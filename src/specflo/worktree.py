@@ -175,6 +175,30 @@ class Landed:
     files: list[str]
 
 
+PATCHES_DIRNAME = "patches"
+
+
+def save_patch(root: Path, path: Path, base_sha: str, slug: str, task_id: str,
+               stamp: str) -> Path | None:
+    """Write what the worktree at ``path`` holds against ``base_sha`` to a patch file.
+
+    The patch is under ``.specflo/worktrees/patches/<slug>/``, named for the
+    task and ``stamp``, and applies with ``git apply`` on ``base_sha``.
+    Returns its path, or None when the worktree holds no change.
+    """
+    tree = snapshot_tree(path)
+    diff = _run(Path(root), "diff", "--binary", "--full-index", base_sha, tree)
+    if diff.returncode != 0:
+        raise SpecfloError(f"git diff failed: {(diff.stderr or diff.stdout).strip()}")
+    if not diff.stdout:
+        return None
+    directory = worktrees_dir(root) / PATCHES_DIRNAME / slug
+    directory.mkdir(parents=True, exist_ok=True)
+    patch = directory / f"{task_id}-{stamp}.patch"
+    patch.write_text(diff.stdout)
+    return patch
+
+
 def _under(top: Path, directory: Path) -> str | None:
     """``directory`` relative to the repository's top, or None outside it."""
     resolved = Path(directory).resolve()
