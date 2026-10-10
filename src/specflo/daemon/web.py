@@ -289,6 +289,32 @@ def _trusted_peer(host: str, trusted) -> bool:
     return any(address in network for network in trusted)
 
 
+def request_is_https(request: HTTPConnection) -> bool:
+    """Whether the browser reached the daemon over https, so its cookies go out Secure.
+
+    True for a request the socket itself took over https. ``specflo serve``
+    reads no forwarded header into the scheme, so behind a reverse proxy
+    that ends TLS every request arrives as plain http; one from a peer
+    inside the trusted networks that says ``X-Forwarded-Proto: https``
+    counts as https too. The trusted list holds whether or not proxy
+    sign-in is on: with it off, it is loopback. The header is read by its
+    own name only, its first value, and from any other peer it counts for
+    nothing, as any client can send it.
+    """
+    if request.url.scheme == "https":
+        return True
+    setting = getattr(request.app.state, "proxy_auth", None)
+    if setting is None or request.client is None:
+        return False
+    if not _trusted_peer(request.client.host, setting.trusted):
+        return False
+    values = request.headers.getlist("x-forwarded-proto")
+    if not values:
+        return False
+    # A chain of proxies lists one scheme per hop; the first is the browser's.
+    return values[0].split(",")[0].strip().lower() == "https"
+
+
 def _proxy_sign_in(request: Request, name: str, replacing: str | None = None) -> User:
     """Sign in the user ``name`` a trusted proxy sent, with no form.
 
@@ -357,7 +383,7 @@ class SessionCookieMiddleware:
             secret = state.get(SESSION_REFRESH_STATE)
             if message["type"] == "http.response.start" and secret:
                 cookie = Response()
-                _set_session_cookie(cookie, secret, scope.get("scheme") == "https")
+                _set_session_cookie(cookie, secret, request_is_https(HTTPConnection(scope)))
                 MutableHeaders(scope=message).append("set-cookie", cookie.headers["set-cookie"])
             await send(message)
 
@@ -509,7 +535,7 @@ async def sign_in(request: Request) -> Response:
         return _sign_in_form(root, status_code=400, error=SIGNIN_FAILED, name=name)
     secret = await run_in_threadpool(open_session, root, user.name, "password", _now())
     response = RedirectResponse(HOME_PATH, status_code=303)
-    _set_session_cookie(response, secret, request.url.scheme == "https")
+    _set_session_cookie(response, secret, request_is_https(request))
     return response
 
 
@@ -532,7 +558,7 @@ async def set_theme(request: Request) -> Response:
         httponly=True,
         samesite="lax",
         path="/",
-        secure=request.url.scheme == "https",
+        secure=request_is_https(request),
     )
     return response
 
@@ -1316,7 +1342,7 @@ async def sign_out(request: Request, identity: str = Depends(current_session)) -
     response = RedirectResponse(SIGNIN_PATH, status_code=303)
     response.delete_cookie(
         SESSION_COOKIE, path="/", httponly=True, samesite="lax",
-        secure=request.url.scheme == "https",
+        secure=request_is_https(request),
     )
     return response
 
