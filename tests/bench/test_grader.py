@@ -266,3 +266,12 @@ def test_grading_dir_inside_a_forbidden_root_is_refused(tmp_path: Path) -> None:
     with pytest.raises(grader.GraderError, match="bench home"):
         grader.grade(_clean_tree(tmp_path), "quick", grading_dir=home / "g", forbidden=[home])
     assert not (home / "g").exists()
+
+
+def test_the_grade_command_refuses_a_grading_dir_in_the_bench_home(tmp_path: Path, capsys) -> None:
+    home = tmp_path / "R" / "bench"
+    code = cmd_grade.main(["--tree", str(_clean_tree(tmp_path)), "--level", "quick",
+                           "--grading-dir", str(home / "g"), "--home", str(home)])
+    assert code == 1
+    assert "bench home" in capsys.readouterr().err
+    assert not (home / "g").exists()

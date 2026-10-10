@@ -72,7 +72,7 @@ def home_defaults(command: str, home: Path, args: list[str]) -> list[str]:
         "records": ("--config", "--matrices", "--runs-dir"),
         "probe": ("--config", "--state"),
         "graph": ("--config", "--records"),
-        "grade": (),
+        "grade": ("--home",),
     }[command]
     given = {arg.split("=", 1)[0] for arg in args if arg.startswith("--")}
     filled: list[str] = []

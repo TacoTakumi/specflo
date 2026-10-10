@@ -21,19 +21,23 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--archive", type=Path, default=grader.ARCHIVE, help="held-out archive")
     parser.add_argument(
         "--grading-dir", type=Path, default=None,
-        help="fresh dir outside the repo and every workdir (default: a new temp dir)",
+        help="fresh dir outside the bench package, the bench home and every workdir"
+        " (default: a new temp dir)",
     )
     parser.add_argument(
         "--workdir", action="append", type=Path, default=[],
         help="another run workdir the grading dir must stay out of (repeat)",
     )
+    parser.add_argument("--home", type=Path, default=None,
+                        help="the bench home, which the grading dir must stay out of")
     parser.add_argument("--keep", action="store_true", help="keep the grading dir")
     parser.add_argument("--timeout", type=float, default=grader.DEFAULT_TIMEOUT, help="seconds")
     args = parser.parse_args(argv)
     try:
         result = grader.grade(
             args.tree, args.level, archive=args.archive, grading_dir=args.grading_dir,
-            workdirs=args.workdir, keep=args.keep, timeout=args.timeout,
+            workdirs=args.workdir, forbidden=[args.home] if args.home else [],
+            keep=args.keep, timeout=args.timeout,
         )
     except (grader.GraderError, heldout.HeldoutError, OSError) as exc:
         print(f"specflo bench grade: {exc}", file=sys.stderr)

@@ -101,11 +101,11 @@ def test_each_command_defaults_its_paths_to_the_bench_home(home, seen, command, 
     }
 
 
-def test_grade_takes_nothing_from_the_home(home, seen):
+def test_grade_takes_only_the_home_itself(home, seen):
     result = _bench("grade", "--tree", "t", "--level", "quick")
 
     assert result.exit_code == 0, result.output
-    assert seen["grade"] == ["--tree", "t", "--level", "quick"]
+    assert seen["grade"] == ["--home", str(home), "--tree", "t", "--level", "quick"]
 
 
 def test_a_flag_on_the_command_line_wins(home, seen, tmp_path):
