@@ -70,3 +70,39 @@ def test_the_claude_launch_accepts_an_entry_of_the_home(home, tmp_path, monkeypa
 
 def test_the_context_window_comes_from_the_home_models(home):
     assert cc_continue.context_window(MINE) == 32768
+
+
+BENCH_VARS = {HOME_ENV: "/somewhere/bench", "SPECFLO_BENCH_CONFIG": "/somewhere/arms.yaml",
+              "SPECFLO_BENCH_CLAUDE": "/somewhere/claude"}
+
+
+def test_the_pi_agent_env_has_no_bench_variable(tmp_path):
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    pi = _fake(tmp_path, "pi", b"#!/bin/sh\necho 1.2.3\n")
+
+    launched = launch_pi.build_launch("swift15-flash-next-iq4xs-mtp-vision", workdir=workdir,
+                                      run_dir=tmp_path / "run", pi_bin=pi,
+                                      base_env={"PATH": "/usr/bin:/bin", **BENCH_VARS})
+
+    assert not set(BENCH_VARS) & set(launched.env)
+
+
+def test_the_claude_agent_env_has_no_bench_variable(tmp_path, monkeypatch):
+    monkeypatch.setattr(launch_cc, "claude_version", lambda _bin: "2.1.300")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    claude = _fake(tmp_path, "claude", b"\x7fELF stand-in")
+
+    with launch_cc.build_launch("swift15-flash-next-iq4xs-mtp-vision", workdir=workdir,
+                                run_dir=tmp_path / "run", claude_bin=claude,
+                                base_env={"PATH": "/usr/bin:/bin", **BENCH_VARS}) as launched:
+        assert not set(BENCH_VARS) & set(launched.env)
+
+
+def test_the_claude_code_loop_child_keeps_the_bench_variables(tmp_path):
+    from specflo.bench import lifecycle
+
+    env, _ = lifecycle.harness_env({"PATH": "/usr/bin", **BENCH_VARS}, tmp_path / "bin")
+
+    assert {name: env[name] for name in BENCH_VARS} == BENCH_VARS

@@ -50,7 +50,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from specflo.bench import DATA, PACKAGE, home_file
+from specflo.bench import DATA, ENV_PREFIX, PACKAGE, home_file
 from specflo.extension_install import extension_source, installable_files
 
 FROZEN_DIR = DATA / "configs" / "pi"
@@ -243,6 +243,9 @@ def build_launch(
     env: dict[str, str] = dict(os.environ if base_env is None else base_env)
     for name in _DROPPED_ENV:
         env.pop(name, None)
+    # The bench's own variables point at the bench home, which holds other runs.
+    for name in [n for n in env if n.startswith(ENV_PREFIX)]:
+        del env[name]
     env.update(extra_env or {})
     env.update(_FIXED_ENV)
     env[AGENT_DIR_ENV] = str(agent_dir)

@@ -16,6 +16,8 @@ from pathlib import Path
 PACKAGE = Path(__file__).resolve().parent
 DATA = PACKAGE / "data"
 HOME_ENV = "SPECFLO_BENCH_HOME"
+# Every variable the bench itself reads starts so; none reaches the agent under test.
+ENV_PREFIX = "SPECFLO_BENCH_"
 
 
 def home_file(name: str) -> Path | None:

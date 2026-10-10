@@ -53,7 +53,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from specflo.bench import DATA
+from specflo.bench import DATA, ENV_PREFIX
 from specflo.hook import settings_snippet
 
 from specflo.bench import arms, launch_pi
@@ -88,7 +88,8 @@ MODEL_VARS = (
 
 # Inherited variables with these prefixes are dropped: they could carry the
 # user's account, base URL, model or config dir into the run.
-_DROPPED_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "CLAUDECODE", "AWS_BEARER_TOKEN_BEDROCK")
+# The bench's own variables point at the bench home, which holds other runs.
+_DROPPED_PREFIXES = ("ANTHROPIC_", "CLAUDE_", "CLAUDECODE", "AWS_BEARER_TOKEN_BEDROCK", ENV_PREFIX)
 
 # llama-swap needs no key. Claude Code needs some credential to start without
 # a login; a bearer token (not an API key) also avoids the interactive
