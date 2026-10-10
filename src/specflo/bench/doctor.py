@@ -93,7 +93,11 @@ def _llama_swap(base_url: str, config: arms.Config | None, config_path: Path | N
 
 def _claude_code_version() -> str:
     """The claude binary a run would use, refused as a run refuses it, and its version."""
-    binary = str(Path(launch_cc.find_claude()).expanduser().resolve())
+    named = launch_cc.find_claude()
+    try:
+        binary = str(Path(named).expanduser().resolve())
+    except (OSError, RuntimeError) as exc:
+        raise LaunchError(f"claude binary {named!r} cannot be resolved ({exc})") from None
     launch_cc.check_real_binary(binary)
     return f"claude-code {launch_cc.claude_version(binary)}"
 

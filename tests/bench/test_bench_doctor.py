@@ -420,3 +420,15 @@ def test_harness_claude_wrapper_script_is_a_skip_as_a_run_refuses_it(home, tmp_p
     [check] = [c for c in checks if c.subject == "harness claude-code"]
     assert check.status == "skip"
     assert "script" in check.detail
+
+
+def test_harness_claude_path_in_a_symlink_loop_is_a_skip(home, tmp_path, monkeypatch):
+    loop = tmp_path / "claude"
+    loop.symlink_to(loop)
+    monkeypatch.setenv(bench_doctor.launch_cc.CLAUDE_ENV, str(loop))
+    monkeypatch.setattr(bench_doctor.launch_pi, "pi_version", lambda: _missing())
+
+    checks = _harnesses(bench_doctor.run_checks(None, base_url=_closed_url(), herdr_available=lambda: True))
+
+    [check] = [c for c in checks if c.subject == "harness claude-code"]
+    assert check.status == "skip"
