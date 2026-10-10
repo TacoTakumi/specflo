@@ -203,6 +203,31 @@ def _uncommitted(root: Path) -> set[str]:
     return paths
 
 
+def _replay(root: Path, base_sha: str, tip: str, squashed: str, base_branch: str) -> str:
+    """The tree of ``squashed`` replayed from ``base_sha`` onto ``tip``.
+
+    ``git merge-tree`` works on objects alone, so a conflict leaves no
+    rebase in progress and every worktree as it was; it is refused naming
+    the conflicting files.
+    """
+    result = _run(
+        root, "merge-tree", "--write-tree", "--name-only", "--no-messages",
+        "--merge-base", base_sha, tip, squashed,
+    )
+    lines = result.stdout.splitlines()
+    if result.returncode == 1:
+        conflicts = list(dict.fromkeys(line for line in lines[1:] if line))
+        raise SpecfloError(
+            f"The task's change conflicts with {base_branch} in {', '.join(conflicts)}."
+            " Nothing was landed. Resolve it in the worktree against"
+            f" {base_branch}, or reopen the task and dispatch it again."
+        )
+    if result.returncode != 0 or not lines:
+        detail = (result.stderr or result.stdout).strip()
+        raise SpecfloError(f"git merge-tree failed: {detail}")
+    return lines[0]
+
+
 def snapshot_tree(path: Path) -> str:
     """The tree of everything the worktree at ``path`` holds, committed or not.
 
@@ -263,8 +288,8 @@ def land(
     tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
     if tip != base_sha:
         squashed = git(root, "commit-tree", tree, "-p", base_sha, "-m", message)
-        tree = git(root, "merge-tree", "--write-tree", "--merge-base", base_sha, tip, squashed)
-    sha = git(root, "commit-tree", tree.splitlines()[0], "-p", tip, "-m", message)
+        tree = _replay(root, base_sha, tip, squashed, base_branch)
+    sha = git(root, "commit-tree", tree, "-p", tip, "-m", message)
     files = git(root, "diff", "--name-only", tip, sha).splitlines()
     dirty = sorted(set(files) & _uncommitted(root))
     if dirty:
