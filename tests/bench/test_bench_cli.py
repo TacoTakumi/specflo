@@ -166,3 +166,21 @@ def test_the_command_runs_with_the_bench_home_in_its_environment(home, monkeypat
 
     assert result.exit_code == 0, result.output
     assert seen["home"] == str(home)
+
+
+@pytest.mark.parametrize("given", [None, "--config", "--config="])
+def test_the_command_runs_with_the_config_in_force_in_its_environment(home, monkeypatch, tmp_path, given):
+    import os
+
+    from specflo.bench import CONFIG_ENV, cmd_run
+
+    seen = {}
+    monkeypatch.setattr(cmd_run, "main", lambda argv: seen.setdefault("config", os.environ.get(CONFIG_ENV)) and 0)
+    mine = tmp_path / "mine.yaml"
+    args = {None: [], "--config": ["--config", str(mine)], "--config=": [f"--config={mine}"]}[given]
+
+    result = _bench("run", *args)
+
+    assert result.exit_code == 0, result.output
+    assert seen["config"] == str(mine if given else home / "arms.yaml")
+    assert CONFIG_ENV not in os.environ

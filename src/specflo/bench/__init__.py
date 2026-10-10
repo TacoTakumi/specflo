@@ -16,6 +16,8 @@ from pathlib import Path
 PACKAGE = Path(__file__).resolve().parent
 DATA = PACKAGE / "data"
 HOME_ENV = "SPECFLO_BENCH_HOME"
+# The arm config in force, which `specflo bench` names for the processes it starts.
+CONFIG_ENV = "SPECFLO_BENCH_CONFIG"
 # Every variable the bench itself reads starts so; none reaches the agent under test.
 ENV_PREFIX = "SPECFLO_BENCH_"
 

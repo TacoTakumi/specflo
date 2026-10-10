@@ -16,7 +16,7 @@ from pathlib import Path
 
 import typer
 
-from . import DATA, HOME_ENV
+from . import CONFIG_ENV, DATA, HOME_ENV
 
 HOME_DIRNAME = "bench"
 # Each config the operator keeps in the bench home, and the shipped template it starts from.
@@ -92,17 +92,31 @@ def _run(ctx: typer.Context, command: str, args: list[str]) -> None:
         raise typer.Exit(code=int(module.main(args) or 0))
     home = bench_home(ctx)
     args = home_defaults(command, home, args) + args
-    # The run's own processes read the operator's configs through it too.
-    before = os.environ.get(HOME_ENV)
-    os.environ[HOME_ENV] = str(home)
+    # The run's own processes, the launchers among them, read the operator's
+    # configs through these: the home, and the arm config the command uses.
+    named = {HOME_ENV: str(home), CONFIG_ENV: _last_value(args, "--config") or str(home / "arms.yaml")}
+    before = {name: os.environ.get(name) for name in named}
+    os.environ.update(named)
     try:
         code = int(module.main(args) or 0)
     finally:
-        if before is None:
-            os.environ.pop(HOME_ENV, None)
-        else:
-            os.environ[HOME_ENV] = before
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
     raise typer.Exit(code=code)
+
+
+def _last_value(args: list[str], flag: str) -> str | None:
+    """The value of the last ``flag`` in *args*, as argparse reads it."""
+    value = None
+    for i, arg in enumerate(args):
+        if arg == flag and i + 1 < len(args):
+            value = args[i + 1]
+        elif arg.startswith(flag + "="):
+            value = arg.split("=", 1)[1]
+    return value
 
 
 def _command(name: str, summary: str) -> None:

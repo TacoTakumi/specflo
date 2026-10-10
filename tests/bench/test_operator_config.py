@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from specflo.bench import HOME_ENV, arms, cc_continue, launch_cc, launch_pi
+from specflo.bench import CONFIG_ENV, HOME_ENV, arms, cc_continue, launch_cc, launch_pi
 
 MINE = "my-own-entry"
 
@@ -106,3 +106,29 @@ def test_the_claude_code_loop_child_keeps_the_bench_variables(tmp_path):
     env, _ = lifecycle.harness_env({"PATH": "/usr/bin", **BENCH_VARS}, tmp_path / "bin")
 
     assert {name: env[name] for name in BENCH_VARS} == BENCH_VARS
+
+
+def test_the_named_config_wins_over_the_home_arms(home, tmp_path, monkeypatch):
+    other = tmp_path / "other.yaml"
+    config = yaml.safe_load(arms.DEFAULT_CONFIG.read_text())
+    config["entries"] = {"named-entry": {"engine": "llama.cpp"}}
+    other.write_text(yaml.safe_dump(config))
+    monkeypatch.setenv(CONFIG_ENV, str(other))
+
+    assert list(arms.load_config().entries) == ["named-entry"]
+
+
+def test_the_claude_launch_checks_the_entry_against_the_named_config(home, tmp_path, monkeypatch):
+    other = tmp_path / "other.yaml"
+    config = yaml.safe_load(arms.DEFAULT_CONFIG.read_text())
+    config["entries"] = {"named-entry": {"engine": "strata"}}
+    other.write_text(yaml.safe_dump(config))
+    monkeypatch.setenv(CONFIG_ENV, str(other))
+    monkeypatch.setattr(launch_cc, "claude_version", lambda _bin: "2.1.300")
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    claude = _fake(tmp_path, "claude", b"\x7fELF stand-in")
+
+    with launch_cc.build_launch("named-entry", workdir=workdir, run_dir=tmp_path / "run",
+                                claude_bin=claude) as launched:
+        assert launched.shim is None

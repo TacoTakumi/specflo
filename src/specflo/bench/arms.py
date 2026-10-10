@@ -11,13 +11,14 @@ a slower engine gets the same headroom as the one the limits were set on.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
 
-from specflo.bench import DATA, home_file
+from specflo.bench import CONFIG_ENV, DATA, home_file
 
 HARNESSES = ("pi", "claude-code")
 LEVELS = ("quick", "fast", "full")
@@ -59,9 +60,10 @@ def _check_names(field: str, names: Any, allowed: tuple[str, ...]) -> None:
 def load_config(path: Path | str | None = None) -> Config:
     """Read and check an arm config file; raise ArmError naming the bad field.
 
-    With no path, the bench home's arms.yaml, else the shipped template.
+    With no path: the config `specflo bench` names as in force, else the
+    bench home's arms.yaml, else the shipped template.
     """
-    path = path or home_file("arms.yaml") or DEFAULT_CONFIG
+    path = path or os.environ.get(CONFIG_ENV) or home_file("arms.yaml") or DEFAULT_CONFIG
     data = yaml.safe_load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
         raise ArmError("config", "expected a mapping")
