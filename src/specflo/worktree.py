@@ -317,9 +317,10 @@ def changed_paths(root: Path, old: str, new: str) -> list[str]:
     """Every path, from the repository's top, that differs between ``old`` and ``new``.
 
     Renames are not detected, so a moved file counts at both its old and its
-    new path, and ``-z`` keeps each name as it is, unquoted.
+    new path, ``-z`` keeps each name as it is, unquoted, and ``--no-relative``
+    keeps a ``diff.relative`` setting from cutting the paths to the root.
     """
-    out = git(root, "diff", "-z", "--name-only", "--no-renames", old, new)
+    out = git(root, "diff", "-z", "--name-only", "--no-renames", "--no-relative", old, new)
     return [name for name in out.split("\0") if name]
 
 
@@ -339,7 +340,7 @@ def snapshot_tree(path: Path, exclude: list[str] | None = None) -> str:
         git(path, "add", "-A", env=env)
         if exclude:
             added = git(path, "diff", "--cached", "-z", "--name-only", "--no-renames",
-                        "--diff-filter=A", "HEAD", "--",
+                        "--no-relative", "--diff-filter=A", "HEAD", "--",
                         *(f":(literal){name}" for name in exclude), env=env)
             names = [name for name in added.split("\0") if name]
             if names:

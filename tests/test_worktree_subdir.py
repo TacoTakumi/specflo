@@ -95,3 +95,34 @@ def test_reopen_removes_the_whole_worktree(nested):
     assert ".patch" in result.output
     assert not top.exists()
     assert f"specflo/{SLUG}/{task_id}" not in git(repo, "branch", "--list")
+
+
+def test_diff_relative_does_not_shift_the_paths(nested):
+    repo, root, cfg, task_id, top, started = nested
+    git(repo, "config", "diff.relative", "true")
+    (top / "pkg" / "src" / "a.py").write_text("a = 2\n")
+
+    result = runner.invoke(app, ["task", "land", task_id, "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["files"] == ["src/a.py"] and data["outside_files"] == []
+    assert git(repo, "diff", "--no-relative", "--name-only", "HEAD^", "HEAD") == "pkg/src/a.py"
+
+
+def test_diff_relative_does_not_open_the_projects_dir(nested):
+    repo, root, cfg, task_id, top, started = nested
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "project documents")
+    git(repo, "config", "diff.relative", "true")
+    # The worktree was cut before the documents were committed, so it takes them in.
+    git(top, "merge", "-q", "--no-edit", "main")
+    spec_md = top / "pkg" / "docs" / "projects" / SLUG / "spec.md"
+    spec_md.write_text(spec_md.read_text() + "\nhand edit\n")
+    before = git(repo, "rev-parse", "HEAD")
+
+    result = runner.invoke(app, ["task", "land", task_id])
+
+    assert result.exit_code != 0
+    assert f"pkg/docs/projects/{SLUG}/spec.md" in result.output
+    assert git(repo, "rev-parse", "HEAD") == before
