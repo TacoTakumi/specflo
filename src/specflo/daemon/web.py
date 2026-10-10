@@ -50,8 +50,9 @@ from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
 from .auth import (
-    SESSION_TTL, SIGNIN_LOCKED, SignInLocked, check_password, hash_token, list_user_tokens,
-    mint_user_token, open_session, resume_session, revoke_user_token,
+    SESSION_TTL, SIGNIN_LOCKED, SignInLocked, check_password, hash_password, hash_token,
+    list_user_tokens, mint_user_token, open_session, resume_session, revoke_user_token,
+    verify_password,
 )
 from . import seat
 from .products import Products
@@ -106,6 +107,10 @@ BENCH_PATH = "/bench"
 # a token can carry is taken by a route.
 TOKENS_PATH = "/tokens"
 REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
+# The change password page, which only a session opened with a password has.
+PASSWORD_PATH = "/password"
+# How a session opened on the sign-in form records its method in the store.
+PASSWORD_METHOD = "password"
 SESSION_COOKIE = "specflo_session"
 # The theme switch's choice lives in this cookie for a year; auto follows the
 # browser's colour scheme.
@@ -136,6 +141,11 @@ INBOX_EMPTY = "Nothing waits on {identity}."
 # What the tokens page says beside a new token's secret, and with no token.
 SHOWN_ONCE = "Copy it now: it will not be shown again."
 NO_TOKENS = "You have no personal tokens yet."
+# What the change password page says when it refuses a change, and after one.
+WRONG_PASSWORD = "That is not your current password."
+PASSWORDS_DIFFER = "The two new passwords do not match."
+PASSWORD_EMPTY = "The new password may not be empty."
+PASSWORD_CHANGED = "Your password is changed. Every other session of yours has ended."
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 ASSETS_DIR = Path(__file__).parent / "assets"
@@ -156,6 +166,7 @@ _templates.globals.update(
     pool_path=POOL_PATH,
     bench_path=BENCH_PATH,
     tokens_path=TOKENS_PATH,
+    password_path=PASSWORD_PATH,
     revoke_token_path=REVOKE_TOKEN_PATH,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
@@ -268,6 +279,9 @@ _page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=("au
 # The request's session cookie, which the header's sign-out form echoes on
 # every page, as the middleware below set it for this request.
 _page_session: ContextVar[str] = ContextVar("page_session", default="")
+# The daemon root of the request's application, so render() can look up how
+# the request's session was opened; None outside a request.
+_page_root: ContextVar[Path | None] = ContextVar("page_root", default=None)
 
 
 class ThemeMiddleware:
@@ -292,6 +306,8 @@ class ThemeMiddleware:
                 back = HOME_PATH
             _page_theme.set((theme if theme in THEMES else "auto", back))
             _page_session.set(conn.cookies.get(SESSION_COOKIE, ""))
+            app = scope.get("app")
+            _page_root.set(getattr(getattr(app, "state", None), "root", None))
         await self.app(scope, receive, send)
 
 
@@ -301,12 +317,27 @@ def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
     The page depends on the theme cookie as well as the session one, so the
     response varies on Cookie. ``session`` is the session secret every
     mutating form echoes, the header's sign-out form among them; a route
-    that passes it passes the same cookie value.
+    that passes it passes the same cookie value. ``password_session`` tells
+    the header of a signed-in page whether to link the change password page.
     """
     theme, path = _page_theme.get()
     context.setdefault("session", _page_session.get())
+    if context.get("identity") and "password_session" not in context:
+        root = _page_root.get()
+        context["password_session"] = (
+            root is not None and session_method(root, context["session"]) == PASSWORD_METHOD
+        )
     html = _templates.get_template(template).render(theme=theme, theme_next=path, **context)
     return HTMLResponse(html, status_code=status_code, headers={"Vary": "Cookie"})
+
+
+def session_method(root: Path, secret: str) -> str | None:
+    """How the session ``secret`` stands for was opened, 'password' or 'proxy'; None for no session."""
+    if not secret:
+        return None
+    with open_store(root) as store:
+        session = store.get_session(hash_token(secret))
+    return session.method if session is not None else None
 
 
 def same_site_path(target: str) -> str:
@@ -1076,6 +1107,80 @@ async def revoke_token(request: Request, user: User = Depends(current_user)) -> 
         return render("error.html", status_code=404, identity=identity, message=str(exc))
     audit(root, user.name, user.role, "revoke_token", None, name)
     return RedirectResponse(TOKENS_PATH, status_code=303)
+
+
+def _password_page(user: User, status_code: int = 200, **context) -> HTMLResponse:
+    """The change password page of ``user``; ``refused`` or ``changed`` say how a post went."""
+    return render(
+        "password.html", status_code=status_code, identity=user.role, user=user.name,
+        password_session=True, **context,
+    )
+
+
+def _change_password(root: Path, name: str, current: str, new: str, keep: str) -> str | None:
+    """Replace the password of ``name`` when ``current`` is theirs; the refusal, or None.
+
+    The current password is checked against the stored hash directly, not
+    through the sign-in check: a wrong one here is no failed sign-in, so it
+    neither counts toward the lockout nor is blocked by one. A change keeps
+    the session keyed by ``keep``, the one that made it, and ends every
+    other session of the user; it clears their failed sign-ins, as a
+    password the operator sets does.
+    """
+    with open_store(root) as store:
+        user = store.get_user(name)
+    if user is None or user.password_hash is None or not verify_password(current, user.password_hash):
+        return WRONG_PASSWORD
+    new_hash = hash_password(new)
+    with open_store(root) as store:
+        # The password first, then the sessions: a session opened under the
+        # old password just before the change is still among those dropped.
+        store.set_user_password(user.name, new_hash)
+        store.remove_user_sessions(user.name, keep=keep)
+        store.clear_signin_failures(user.name)
+    return None
+
+
+@pages.get(PASSWORD_PATH, include_in_schema=False)
+def password_page(request: Request, user: User = Depends(current_user)) -> Response:
+    """The change password form, for a session opened with a password; a 404 page for any other."""
+    if session_method(request.app.state.root, session_secret(request)) != PASSWORD_METHOD:
+        return _missing(user.role, "No such page.")
+    return _password_page(user)
+
+
+@pages.post(PASSWORD_PATH, include_in_schema=False)
+async def change_password(request: Request, user: User = Depends(current_user)) -> Response:
+    """Change the signed-in user's password, keeping this session and ending their others.
+
+    Only a session opened with a password has the page; any other gets the
+    same 404 page as the form. The form echoes the session secret like every
+    mutating form. A new password that is empty or not typed the same twice,
+    and a wrong current password, are refused beside the form as a 400 page,
+    and nothing changes. The change is audited as the user, by name and
+    role, with no password or hash in the record.
+    """
+    identity = user.role
+    root = request.app.state.root
+    secret = session_secret(request)
+    if session_method(root, secret) != PASSWORD_METHOD:
+        return _missing(identity, "No such page.")
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
+    new = fields.get("new", "")
+    if not new:
+        return _password_page(user, status_code=400, refused=PASSWORD_EMPTY)
+    if new != fields.get("again", ""):
+        return _password_page(user, status_code=400, refused=PASSWORDS_DIFFER)
+    refusal = await run_in_threadpool(
+        _change_password, root, user.name, fields.get("current", ""), new, hash_token(secret)
+    )
+    if refusal is not None:
+        return _password_page(user, status_code=400, refused=refusal)
+    audit(root, user.name, user.role, "change_password", None, None)
+    return _password_page(user, changed=PASSWORD_CHANGED)
 
 
 @pages.post(SIGNOUT_PATH, include_in_schema=False)

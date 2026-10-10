@@ -39,6 +39,7 @@ CONTROLS = {
     "sign out": "signout_path",
     "create token": "tokens_path",
     "revoke token": "revoke_token_path",
+    "change password": "password_path",
 }
 FRONT_DOOR = "signin_path"
 # The header's theme switch sets the browser's own cookie and nothing else;

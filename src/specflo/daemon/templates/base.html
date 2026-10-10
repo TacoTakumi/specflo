@@ -36,6 +36,9 @@
       {% if identity %}
       {# After the theme switch: the stylesheet places the switch right after the identity. #}
       <a class="tokens" href="{{ tokens_path }}">My tokens</a>
+      {% if password_session %}
+      <a class="password" href="{{ password_path }}">Password</a>
+      {% endif %}
       <form class="signout" method="post" action="{{ signout_path }}">
         <input type="hidden" name="session" value="{{ session }}">
         <button type="submit">Sign out</button>
