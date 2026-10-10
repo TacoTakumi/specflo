@@ -59,6 +59,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   `~/specflo-daemon`) and saves the answer; off a terminal it fails and names
   the fix. `specflo serve root [<dir>]` saves a root, or prints the root in
   force and where it came from.
+- **Bench pages in the daemon web UI.** The site nav has a Bench link to a
+  menu of every result batch under `<daemon root>/bench/results`, newest
+  first. Requester and developer can open each batch's `index.html` and the
+  charts beside it. The developer's menu also lists the runs, with each run's
+  `record.json` and `session.norm.json`. Nothing else under the bench home is
+  served: not `harness.out`, not the harness folder with its credentials, and
+  not the bench state.
 
 ### Changed
 - **No ask-first reseed during an auto run.** While a `specflo auto` run is
