@@ -2346,10 +2346,13 @@ def task_start(
             "id": task.id, "progress": task.progress, "blocked": task.blocked,
             "worktree": where, "branch": created.branch,
             "base_branch": created.base_branch, "base_sha": created.base_sha,
+            "not_copied": created.missing,
         }))
     else:
         typer.echo(f"{task.id} -> {task.progress}")
         typer.echo(f"Worktree: {where} (branch {created.branch})")
+        for name in created.missing:
+            typer.echo(f"Not found, not copied: {name} (listed in .specflo/worktree-include)")
 
 
 @task_app.command("done", epilog="Example: specflo task done T-01")

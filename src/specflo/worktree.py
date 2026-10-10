@@ -11,6 +11,7 @@ hosted project gets no worktree.
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,7 @@ from .config import CONFIG_DIRNAME
 from .errors import SpecfloError
 
 WORKTREES_DIRNAME = "worktrees"
+INCLUDE_FILENAME = "worktree-include"
 BRANCH_PREFIX = "specflo"
 _GITIGNORE_CONTENT = "*\n"
 
@@ -99,7 +101,38 @@ def create(root: Path, slug: str, task_id: str) -> Created:
     worktrees_dir(root)
     path.parent.mkdir(parents=True, exist_ok=True)
     git(root, "worktree", "add", "-q", "-b", branch, str(path), base_sha)
-    return Created(path, branch, base_branch, base_sha)
+    missing = copy_included(root, path)
+    return Created(path, branch, base_branch, base_sha, missing)
+
+
+def copy_included(root: Path, path: Path) -> list[str]:
+    """Copy each path ``.specflo/worktree-include`` lists into the worktree at ``path``.
+
+    The list names files git does not carry (a ``.env``, a local config), one
+    per line, relative to the checkout root; a blank line or a ``#`` line is
+    skipped. Returns the listed paths that were not copied: those that do
+    not exist, and those that lead outside the checkout.
+    """
+    include = Path(root) / CONFIG_DIRNAME / INCLUDE_FILENAME
+    if not include.is_file():
+        return []
+    missing = []
+    top = Path(root).resolve()
+    for raw in include.read_text().splitlines():
+        name = raw.strip()
+        if not name or name.startswith("#"):
+            continue
+        source = (top / name).resolve()
+        if not source.is_relative_to(top) or not source.exists():
+            missing.append(name)
+            continue
+        target = Path(path) / source.relative_to(top)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            shutil.copytree(source, target, symlinks=True, dirs_exist_ok=True)
+        else:
+            shutil.copy2(source, target)
+    return missing
 
 
 def remove(root: Path, path: Path, branch: str) -> None:
