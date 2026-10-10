@@ -624,12 +624,14 @@ A browser signs in with the user name and password. A session lasts 12 hours
 from its last use, is kept in the daemon's state store and survives a restart;
 the header has a sign-out control. After 5 failed password sign-ins in 15
 minutes, password sign-in for that user is locked for 15 minutes;
-`serve user passwd` clears the lock. A user signed in with a password can
-change it on the Change password page (`/password`).
+`serve user passwd` clears the lock. The header names the signed-in user and
+links to their user page (`/user`), which holds the theme switch, the user's
+personal tokens and, for a session signed in with a password, the change
+password form.
 
 A personal API token starts with `sfp_`, prints once, and the daemon keeps only
-its SHA-256. A signed-in user creates, lists and revokes their own tokens on the
-My tokens page (`/tokens`). A token acts as its owner, with the role read at each
+its SHA-256. A signed-in user creates, lists and revokes their own tokens on
+their user page (`/user`). A token acts as its owner, with the role read at each
 request. Register a daemon in a checkout with your own token:
 `specflo remote add <name> <url> --token <secret>`. The agents the daemon
 starts get tokens the daemon mints itself, one per seat, owned by the built-in

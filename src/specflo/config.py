@@ -817,8 +817,9 @@ def add_remote(root: Path, name: str, url: str, token: str) -> bool:
     token = (token or "").strip()
     if not token:
         raise SpecfloError(
-            "A remote needs a token: pass a personal token from the My tokens page"
-            " of the daemon's web UI, or one minted by `specflo serve user token add`."
+            "A remote needs a token: pass a personal token from the My tokens section"
+            " of your user page in the daemon's web UI, or one minted by"
+            " `specflo serve user token add`."
         )
     directory = remotes_dir(root)
     directory.mkdir(parents=True, exist_ok=True)

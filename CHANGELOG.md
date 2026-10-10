@@ -48,10 +48,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   fail names its fix. A missing harness or herdr is a skip. The check loads
   no model and never prompts. `--json` gives the same report; the command
   exits 1 when a check fails.
-- **Theme switch in the daemon web UI.** Every page has an Auto/Light/Dark
-  switch in its header. The choice is kept in a `specflo_theme` cookie for a
-  year; Auto follows the browser. The switch works with no script and needs
-  no sign-in, so the sign-in page has it too.
+- **Theme switch in the daemon web UI.** The user page has an
+  Auto/Light/Dark switch. The choice is kept in a `specflo_theme` cookie for
+  a year and every page follows it, the sign-in page too; Auto follows the
+  browser, and a browser with no choice gets Dark. The switch works with no
+  script.
 - **A saved daemon root.** `specflo serve` and its subcommands no longer need
   `--root`. The root comes from `--root`, then the `SPECFLO_DAEMON_ROOT`
   environment variable, then the root saved in `~/.specflo/settings.yaml`.
@@ -81,14 +82,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   from their last use and survive a restart. The header has a sign-out
   control. After 5 failed password sign-ins in 15 minutes that user's password
   sign-in is locked for 15 minutes; `serve user passwd` clears it. A fresh
-  daemon's sign-in page names `specflo serve user add`. A Change password page
-  (`/password`) serves sessions signed in with a password.
+  daemon's sign-in page names `specflo serve user add`. A session signed in
+  with a password can change it on the user page.
 - **Personal API tokens.** `specflo serve user token add <user> --name <name>`,
   `token list <user>` and `token revoke <user> <name>` mint, list and revoke a
   user's tokens. A token starts with `sfp_`, prints once, and the daemon keeps
-  only its SHA-256. A My tokens page (`/tokens`) lets a signed-in user create,
-  list and revoke their own. A token acts as its owner with the role read at
+  only its SHA-256. The user page lets a signed-in user create, list and
+  revoke their own. A token acts as its owner with the role read at
   each request; `specflo remote add` takes one.
+- **User page in the daemon web UI.** The header names the signed-in user,
+  not the role, and links to their page (`/user`). The page holds the theme
+  switch, the user's personal tokens and, for a session signed in with a
+  password, the change password form.
 - **Reverse-proxy sign-in.** Off by default. With `auth_proxy: true` in the
   daemon root's `.specflo/config.yaml`, a request whose socket peer is in
   `auth_trusted_proxies` (default `127.0.0.1` and `::1`) and whose

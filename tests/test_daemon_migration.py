@@ -74,7 +74,7 @@ def test_first_start_carries_the_agent_token_and_drops_the_human_ones(root):
         assert auth.principal_for(root, human) is None
         refused = client.get(routes.WHOAMI_PATH, headers=_bearer(human))
         assert refused.status_code == 401
-        assert "My tokens" in refused.json()["detail"]
+        assert "My tokens" in refused.json()["detail"] and "user page" in refused.json()["detail"]
         assert refused.headers["WWW-Authenticate"] == "Bearer"
     assert _files(root) == ["tokens.json.migrated"]
 
@@ -116,7 +116,7 @@ def test_a_request_without_any_token_is_told_where_to_get_one(root):
 
     assert response.status_code == 401
     detail = response.json()["detail"]
-    assert "My tokens" in detail and "specflo serve user token add" in detail
+    assert "My tokens" in detail and "user page" in detail and "specflo serve user token add" in detail
 
 
 # --- later starts ---------------------------------------------------------------
@@ -208,7 +208,7 @@ def test_a_remote_without_a_token_is_told_to_get_a_personal_one(tmp_path):
         config.add_remote(tmp_path, "team", "http://127.0.0.1:8741", "")
 
     message = str(refused.value)
-    assert "personal token" in message and "My tokens" in message
+    assert "personal token" in message and "My tokens" in message and "user page" in message
     assert "specflo serve user token add" in message
     assert "serve token add" not in message.replace("serve user token add", "")
 
@@ -218,5 +218,5 @@ def test_remote_add_help_names_a_personal_token():
 
     assert result.exit_code == 0, result.output
     text = " ".join(word for word in result.output.split() if word != "\u2502")
-    assert "personal token" in text and "My tokens" in text
+    assert "personal token" in text and "My tokens" in text and "user page" in text
     assert "specflo serve user token add" in text

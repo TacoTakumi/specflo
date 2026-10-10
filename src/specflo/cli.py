@@ -3555,8 +3555,8 @@ def remote_add(
     ),
     token: str = typer.Option(
         ..., "--token", metavar="<secret>",
-        help="Your personal token: from the My tokens page of the daemon's web UI,"
-        " or minted by `specflo serve user token add`.",
+        help="Your personal token: from the My tokens section of your user page in"
+        " the daemon's web UI, or minted by `specflo serve user token add`.",
     ),
 ) -> None:
     """Register a daemon by name, or update one; local projects are untouched."""

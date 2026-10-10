@@ -64,8 +64,8 @@ LEGACY_TOKEN_PREFIX = "legacy-"
 LEGACY_TOKEN_LAST4 = "????"
 # What a request with no token, or one the daemon does not know, is told.
 TOKEN_REQUIRED = (
-    "A personal bearer token is required: get one from the My tokens page of"
-    " this daemon's web UI, or from whoever runs the daemon"
+    "A personal bearer token is required: get one from the My tokens section"
+    " of your user page in this daemon's web UI, or from whoever runs the daemon"
     " (`specflo serve user token add`)."
 )
 
