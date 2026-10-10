@@ -2862,6 +2862,24 @@ def review_scope_set(
         typer.echo(f"Scope reviewed set in {locator}.")
 
 
+@review_app.command("clean", epilog="Example: specflo review clean")
+def review_clean(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Record the open round as one with no findings."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        path = svc.mark_round_clean(slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps({"locator": locator, "path": reported, "findings": []}))
+    else:
+        typer.echo(f"{locator} records no findings.")
+
+
 @finding_app.command(
     "add",
     epilog='Example: specflo review finding add --severity blocker --at src/app.py:9-12'

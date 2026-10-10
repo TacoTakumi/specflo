@@ -92,8 +92,9 @@ superseding requirement — never silently mutate a task or drift off its
      --severity blocker|should-fix|nit --at <file>:<line>[-<line>] --text "…"`
      for each finding (`--at` is required for a blocker or should-fix; the CLI
      marks a regression itself), `specflo review finding check F-NN
-     closed|open` for each earlier item, and `- none` as the only line under
-     Findings for a clean round.
+     closed|open` for each earlier item, `specflo review scope "<line>"` for
+     what the round read, and `specflo review clean` for a round with no
+     findings. No hand edits to the round file.
    - Close the round with `specflo review done`. The CLI sets the verdict from
      the findings: any blocker or should-fix item, or an earlier item still
      open, is changes-requested; nits never block and go to one follow-up.

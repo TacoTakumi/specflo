@@ -59,7 +59,7 @@ _ELEMENTS = (
     "did not introduce", "specflo followup add",
     # how to record
     "specflo review finding add", "specflo review finding check",
-    "## Scope reviewed", "- none",
+    "specflo review scope", "specflo review clean",
     # the verdict is the CLI's
     "specflo review done", "verdict",
     # targeted tests
@@ -422,9 +422,8 @@ _GATE_FIRST = (
     " leave it out.\n"
     "- No earlier items to check this round. A later round records each one with `specflo"
     " review finding check F-NN closed|open`.\n"
-    "- One line under `## Scope reviewed` in review-1.md saying what you read.\n"
-    "- A round with no findings: `- none` as the only line under `## Findings` in"
-    " review-1.md.\n"
+    "- What you read: `specflo review scope \"<one line>\"`.\n"
+    "- A round with no findings: `specflo review clean`.\n"
     "\n"
     "Do not choose a verdict. `specflo review done` derives it from what you recorded"
     " when the round closes.\n"
@@ -498,9 +497,8 @@ _GATE_DELTA = (
     " the file is at the round's sha; a blocker or should-fix needs it, and a nit may"
     " leave it out.\n"
     "- Each earlier item above: `specflo review finding check F-NN closed|open`.\n"
-    "- One line under `## Scope reviewed` in review-3.md saying what you read.\n"
-    "- A round with no findings: `- none` as the only line under `## Findings` in"
-    " review-3.md.\n"
+    "- What you read: `specflo review scope \"<one line>\"`.\n"
+    "- A round with no findings: `specflo review clean`.\n"
     "\n"
     "Do not choose a verdict. `specflo review done` derives it from what you recorded"
     " when the round closes.\n"
@@ -639,9 +637,8 @@ _HARDEN_FIRST = (
     " leave it out.\n"
     "- No earlier items to check this round. A later round records each one with `specflo"
     " review finding check F-NN closed|open`.\n"
-    "- One line under `## Scope reviewed` in review-1.md saying what you read.\n"
-    "- A round with no findings: `- none` as the only line under `## Findings` in"
-    " review-1.md.\n"
+    "- What you read: `specflo review scope \"<one line>\"`.\n"
+    "- A round with no findings: `specflo review clean`.\n"
     "\n"
     "A harden round has no verdict. `specflo review done` closes it as hardened, whatever"
     " you recorded.\n"

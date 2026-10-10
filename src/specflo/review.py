@@ -1945,6 +1945,37 @@ def set_scope_line(root: Path, cfg: SpecfloConfig, slug: str, text: str) -> Path
     return path
 
 
+def mark_clean(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
+    """Record the open round as one with no findings: ``- none`` as the only
+    line under its Findings section. Returns the round path.
+
+    Raises ``SpecfloError``, leaving every file untouched, when no round is
+    open, when the round has no Findings section, or when it records a
+    finding already.
+    """
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        path = open_round(root, cfg, slug)
+        if path is None:
+            raise SpecfloError(
+                "No review is open. Start one with `specflo review start`."
+            )
+        doc = path.read_text()
+        lines = _findings_lines(doc)
+        if lines is None:
+            raise SpecfloError(
+                f"{path.name} has no '{FINDINGS_HEADER}' section. Add the heading"
+                " by hand, then mark the round clean again."
+            )
+        recorded = [line for line in lines if line != NONE_LINE]
+        if recorded:
+            raise SpecfloError(
+                f"{path.name} records a finding already ({recorded[0]}); a clean"
+                " round has none."
+            )
+        path.write_text(markdown.replace_section_body(doc, FINDINGS_HEADER, NONE_LINE))
+    return path
+
+
 WHOLE_BRANCH = "whole-branch"
 DELTA = "delta"
 
@@ -2617,8 +2648,8 @@ def reviewer_brief(
             " with `specflo review finding check F-NN closed|open`."
         )
     lines += [
-        f"- One line under `## Scope reviewed` in {name} saying what you read.",
-        f"- A round with no findings: `- none` as the only line under `## Findings` in {name}.",
+        "- What you read: `specflo review scope \"<one line>\"`.",
+        "- A round with no findings: `specflo review clean`.",
         "",
         (
             "A harden round has no verdict. `specflo review done` closes it as"

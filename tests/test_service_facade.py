@@ -225,6 +225,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert svc.set_review_scope(slug, "the whole branch") == round_path
     finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
     assert (finding_id, finding_round) == ("F-01", round_path)
+    with pytest.raises(SpecfloError, match="records a finding already"):
+        svc.mark_round_clean(slug)
     with pytest.raises(SpecfloError, match="finding of this round"):
         svc.check_finding(slug, "F-01", "closed")
     with pytest.raises(SpecfloError, match="finding of the open round review-1.md"):

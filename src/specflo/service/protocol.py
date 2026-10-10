@@ -396,6 +396,10 @@ class ProjectService(Protocol):
         """Write ``text`` as the one Scope reviewed line of the open round."""
         ...
 
+    def mark_round_clean(self, slug: str) -> Path:
+        """Record the open round as one with no findings."""
+        ...
+
     def add_finding(
         self, slug: str, severity: str, text: str, location: str | None = None,
         regression: bool = False,
