@@ -105,6 +105,7 @@ SPECFLO_BIN_ENV = "SPECFLO_BIN"
 OUT_LOG = "harness.out"
 ERR_LOG = "harness.err"
 RECORD_FILE = "lifecycle.json"
+LAUNCH_SPEC_FILE = "pane-launch.json"
 CC_SPEC_FILE = "cc-spec.json"
 CC_RESULT_FILE = "cc-result.json"
 
@@ -485,6 +486,31 @@ class Herdr(Protocol):
     def create_tab(self, workspace_id: str, label: str, cwd: str, env: dict[str, str] | None = None) -> HerdrPlacement: ...
     def run_in_pane(self, pane_id: str, command: str) -> None: ...
     def close_tab(self, tab_id: str) -> None: ...
+
+
+# Run in the pane by the bench's python: read the launch spec, remove it (it
+# holds the whole env), then become the harness with exactly that argv, env and
+# cwd. `-I` keeps the pane's env and cwd away from the python that runs this.
+_LAUNCHER = (
+    "import json, os, sys; "
+    "f = sys.argv[1]; spec = json.load(open(f)); os.unlink(f); os.chdir(spec['cwd']); "
+    "os.execvpe(spec['argv'][0], spec['argv'], spec['env'])"
+)
+
+
+def write_launch_spec(path: Path, argv: Sequence[str], env: Mapping[str, str], cwd: Path) -> Path:
+    """The file the pane launcher reads: argv, env and cwd, readable by this user only."""
+    path = Path(path)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump({"argv": list(argv), "env": dict(env), "cwd": str(cwd)}, fh)
+    return path
+
+
+def launcher_command(spec_path: Path) -> str:
+    """What a pane runs to start a harness from a launch spec, whatever the pane shell's rc files set."""
+    return "exec {} -I -c {} {}".format(
+        shlex.quote(sys.executable), shlex.quote(_LAUNCHER), shlex.quote(str(spec_path)))
 
 
 def pane_command(pid: int, logs: Sequence[Path]) -> str:

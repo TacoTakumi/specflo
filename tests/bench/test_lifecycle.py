@@ -455,6 +455,39 @@ def test_a_live_herdr_pane_follows_the_run(tmp_path: Path):
     assert outcome.end_reason == lc.END_STALLED
 
 
+# -- the pane launcher ---------------------------------------------------------------
+
+STAND_IN_PI = r'''
+import json, os, sys
+with open(sys.argv[1], "w") as f:
+    json.dump({"env": dict(os.environ), "argv": sys.argv, "cwd": os.getcwd()}, f)
+'''
+
+
+def test_the_launcher_starts_the_harness_with_exactly_its_spec(tmp_path: Path):
+    import subprocess
+
+    stand_in = _script(tmp_path / "bin" / "pi", STAND_IN_PI)
+    seen = tmp_path / "seen.json"
+    cwd = tmp_path / "work"
+    cwd.mkdir()
+    env = {"PATH": f"{tmp_path / 'specflo-bin'}:/usr/bin:/bin", "HOME": str(tmp_path), "ONLY_HERE": "1"}
+    argv = [str(stand_in), str(seen), "--no-approve", "two words"]
+    spec = lc.write_launch_spec(tmp_path / lc.LAUNCH_SPEC_FILE, argv, env, cwd)
+    assert spec.stat().st_mode & 0o777 == 0o600
+
+    # The pane's shell has its own PATH and env; none of it reaches the harness.
+    shell_env = {"PATH": "/opt/other/bin:/usr/bin:/bin", "HOME": "/elsewhere", "LEAK": "yes"}
+    subprocess.run(["bash", "-c", lc.launcher_command(spec)], env=shell_env, cwd="/", check=True, timeout=30)
+
+    got = json.loads(seen.read_text())
+    assert got["argv"] == argv
+    assert got["cwd"] == str(cwd)
+    assert {k: v for k, v in got["env"].items() if k in env or k == "LEAK"} == env
+    assert got["env"]["PATH"].split(":")[0] == str(tmp_path / "specflo-bin")
+    assert not spec.exists()
+
+
 # -- settings, env and the record -------------------------------------------------------
 
 
