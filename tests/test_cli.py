@@ -4123,7 +4123,7 @@ def test_task_list_json_carries_files_as_a_list(tmp_path, monkeypatch):
     assert plan_md.read_text() == before
 
 
-def test_validate_plan_shared_file_warning_exits_zero(tmp_path, monkeypatch):
+def test_validate_plan_names_no_pair_that_shares_a_file(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _project_at_plan_phase(runner, app, tmp_path)
     for text in ("first", "second"):
@@ -4131,7 +4131,7 @@ def test_validate_plan_shared_file_warning_exits_zero(tmp_path, monkeypatch):
                             "--verify", "v", "--from", "REQ-01", "--files", "src/a.py"])
     result = runner.invoke(app, ["validate", "plan"])
     assert result.exit_code == 0, result.output
-    assert "T-01" in result.output and "T-02" in result.output and "src/a.py" in result.output
+    assert "share" not in result.output and "src/a.py" not in result.output
 
 
 def test_task_list_marks_only_file_clear_tasks_as_next(tmp_path, monkeypatch):

@@ -1426,66 +1426,14 @@ def _shared_file_warnings(root, cfg, project, entries):
     return [w for w in plan.plan_warnings(root, cfg, project) if "share" in w]
 
 
-def test_shared_file_without_an_edge_yields_one_warning(root, cfg, project):
+def test_shared_file_without_an_edge_gives_no_warning(root, cfg, project):
+    # The ready set and worktrees keep two sharers apart, so a shared file
+    # needs no Depends on edge and draws no warning.
     warnings = _shared_file_warnings(root, cfg, project, [
         _entry_with_files("T-01", "src/a.py"),
         _entry_with_files("T-02", "src/a.py, tests/b.py"),
     ])
-    assert len(warnings) == 1
-    assert "T-01" in warnings[0] and "T-02" in warnings[0] and "src/a.py" in warnings[0]
-    assert "tests/b.py" not in warnings[0]
-
-
-def test_shared_file_joined_by_a_transitive_edge_is_silent(root, cfg, project):
-    # T-01 -> T-03 -> T-02: T-02 depends on T-03 which depends on T-01.
-    warnings = _shared_file_warnings(root, cfg, project, [
-        _entry_with_files("T-01", "src/a.py"),
-        _entry_with_files("T-02", "src/a.py", deps=["T-03"]),
-        _raw_task_entry("T-03", deps=["T-01"]),
-    ])
     assert warnings == []
-
-
-def test_shared_file_joined_by_a_direct_edge_is_silent(root, cfg, project):
-    warnings = _shared_file_warnings(root, cfg, project, [
-        _entry_with_files("T-01", "src/a.py"),
-        _entry_with_files("T-02", "src/a.py", deps=["T-01"]),
-    ])
-    assert warnings == []
-
-
-def test_shared_file_with_a_superseded_sharer_is_silent(root, cfg, project):
-    warnings = _shared_file_warnings(root, cfg, project, [
-        _entry_with_files("T-01", "src/a.py", status="superseded by T-02"),
-        _entry_with_files("T-02", "src/a.py"),
-    ])
-    assert warnings == []
-
-
-def test_shared_file_two_paths_are_both_named(root, cfg, project):
-    warnings = _shared_file_warnings(root, cfg, project, [
-        _entry_with_files("T-01", "src/a.py, src/b.py"),
-        _entry_with_files("T-02", "src/b.py, src/a.py (note)"),
-    ])
-    assert warnings
-    joined = "\n".join(warnings)
-    assert "src/a.py" in joined and "src/b.py" in joined
-
-
-def test_shared_file_warning_counts_in_progress_and_done_tasks(root, cfg, project):
-    entries = [
-        _entry_with_files("T-01", "src/a.py").replace("Progress: pending", "Progress: done"),
-        _entry_with_files("T-02", "src/a.py"),
-    ]
-    assert len(_shared_file_warnings(root, cfg, project, entries)) == 1
-
-
-def test_shared_file_warning_is_a_warning_not_a_validation_issue(root, cfg, project):
-    _spec_with_reqs(root, cfg, project, n=1)
-    _plan_with_entries(root, cfg, project, [
-        _entry_with_files("T-01", "src/a.py"),
-        _entry_with_files("T-02", "src/a.py"),
-    ])
     assert plan.validate_plan(root, cfg, project) == []
 
 
