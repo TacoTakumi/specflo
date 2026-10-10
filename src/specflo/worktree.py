@@ -150,6 +150,16 @@ def create(root: Path, slug: str, task_id: str) -> Created:
     return Created(path, branch, base_branch, base_sha, missing, workdir)
 
 
+def included(root: Path) -> list[str]:
+    """The paths ``.specflo/worktree-include`` lists, relative to the checkout
+    root; blank lines and ``#`` lines skipped. Empty with no list."""
+    include = Path(root) / CONFIG_DIRNAME / INCLUDE_FILENAME
+    if not include.is_file():
+        return []
+    names = (raw.strip() for raw in include.read_text().splitlines())
+    return [name for name in names if name and not name.startswith("#")]
+
+
 def copy_included(root: Path, path: Path) -> list[str]:
     """Copy each path ``.specflo/worktree-include`` lists into the worktree at ``path``.
 
@@ -158,15 +168,9 @@ def copy_included(root: Path, path: Path) -> list[str]:
     skipped. Returns the listed paths that were not copied: those that do
     not exist, and those that lead outside the checkout.
     """
-    include = Path(root) / CONFIG_DIRNAME / INCLUDE_FILENAME
-    if not include.is_file():
-        return []
     missing = []
     top = Path(root).resolve()
-    for raw in include.read_text().splitlines():
-        name = raw.strip()
-        if not name or name.startswith("#"):
-            continue
+    for name in included(root):
         source = (top / name).resolve()
         if not source.is_relative_to(top) or not source.exists():
             missing.append(name)
@@ -218,7 +222,7 @@ def save_patch(root: Path, path: Path, base_sha: str, slug: str, task_id: str,
     task and ``stamp``, and applies with ``git apply`` on ``base_sha``.
     Returns its path, or None when the worktree holds no change.
     """
-    tree = snapshot_tree(path)
+    tree = snapshot_tree(path, included(root))
     # Plumbing with fixed prefixes and raw bytes: no user diff config, colour
     # or newline translation reaches the patch.
     diff = _run(
@@ -319,11 +323,13 @@ def changed_paths(root: Path, old: str, new: str) -> list[str]:
     return [name for name in out.split("\0") if name]
 
 
-def snapshot_tree(path: Path) -> str:
+def snapshot_tree(path: Path, exclude: list[str] | None = None) -> str:
     """The tree of everything the worktree at ``path`` holds, committed or not.
 
     Built in a scratch index, so the worktree's own index, branch and files
-    are left as they are. Ignored files stay out, as they would from a commit.
+    are left as they are. Ignored files stay out, as they would from a commit,
+    and so do the new files under ``exclude`` (paths from ``path``): the
+    copies ``.specflo/worktree-include`` brought in.
     """
     index = Path(git(path, "rev-parse", "--path-format=absolute", "--git-path",
                      "specflo-land-index"))
@@ -331,6 +337,14 @@ def snapshot_tree(path: Path) -> str:
     try:
         git(path, "read-tree", "HEAD", env=env)
         git(path, "add", "-A", env=env)
+        if exclude:
+            added = git(path, "diff", "--cached", "-z", "--name-only", "--no-renames",
+                        "--diff-filter=A", "HEAD", "--",
+                        *(f":(literal){name}" for name in exclude), env=env)
+            names = [name for name in added.split("\0") if name]
+            if names:
+                git(path, "rm", "--cached", "-q", "--",
+                    *(f":(top,literal){name}" for name in names), env=env)
         return git(path, "write-tree", env=env)
     finally:
         index.unlink(missing_ok=True)
@@ -364,7 +378,7 @@ def land(
             f"The checkout is on {current}, not {base_branch}, the branch the task"
             f" lands on. Check out {base_branch} first."
         )
-    tree = snapshot_tree(path)
+    tree = snapshot_tree(path, included(root))
     tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
     base_sha = git(root, "merge-base", git(path, "rev-parse", "HEAD"), tip)
     if tree == git(root, "rev-parse", f"{base_sha}^{{tree}}"):

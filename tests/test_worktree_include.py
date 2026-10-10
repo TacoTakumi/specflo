@@ -60,3 +60,21 @@ def test_no_include_file_copies_and_reports_nothing(repo):
     assert result.exit_code == 0, result.output
     assert not (root / ".specflo" / "worktrees" / SLUG / task_id / ".env").exists()
     assert "not copied" not in result.output.lower()
+
+
+def test_an_untracked_included_file_stays_out_of_the_land(repo):
+    from test_worktree_start import git
+
+    root, task_id = repo
+    (root / "local.cfg").write_text("debug = true\n")
+    (root / ".specflo" / "worktree-include").write_text("local.cfg\n")
+    assert runner.invoke(app, ["task", "start", task_id, "--worktree"]).exit_code == 0
+    path = root / ".specflo" / "worktrees" / SLUG / task_id
+    assert (path / "local.cfg").is_file()
+    (path / "src" / "a.py").write_text("a = 2\n")
+
+    result = runner.invoke(app, ["task", "land", task_id])
+
+    assert result.exit_code == 0, result.output
+    assert git(root, "diff", "--name-only", "HEAD^", "HEAD") == "src/a.py"
+    assert (root / "local.cfg").read_text() == "debug = true\n"
