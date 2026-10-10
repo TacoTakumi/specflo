@@ -215,6 +215,17 @@ elif mode == "complete-busy":
     idle_forever()
 elif mode == "exit":
     sys.exit(3)
+elif mode in ("stream", "idle"):
+    # stream: read a growing file, as pi reads a model's stream, with no event
+    # written; idle: read a few bytes now and then, as an idle pi does.
+    src = os.path.join(root, "stream.bin")
+    with open(src, "wb") as f:
+        f.write(os.urandom(1 << 20))
+    with open(src, "rb") as f:
+        while True:
+            f.seek(0)
+            f.read(4096 if mode == "stream" else 8)
+            time.sleep(0.1)
 elif mode == "hang":
     # A child in its own session: only the run token finds it.
     import subprocess
@@ -665,6 +676,30 @@ def test_tui_cleanup_at_the_wall_clock_cap_leaves_no_process_of_the_run(tmp_path
     assert len(started) == 2 and _alive(started) == []
     assert outcome.pid == started[0]
     assert ["tab", "close", "w1:t1"] in _calls(log)
+
+
+
+def test_read_activity_counts_only_jumps_of_read_bytes(tmp_path: Path, monkeypatch):
+    values = iter([100, 108, 116, 2000, 2008])
+    monkeypatch.setattr(Path, "read_text", lambda self, *a, **k: f"rchar: {next(values)}\nwchar: 1\n")
+    probe = lc.read_activity(1234)
+    assert [probe() for _ in range(5)] == [0, 0, 0, 1, 1]
+
+
+def test_tui_stream_reads_keep_a_pane_pi_alive_past_the_stall_limit(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    herdr, _ = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("stream"), herdr=herdr, wall_clock=4.0, stall=1.5)
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.end_reason == lc.END_TIMEOUT, outcome.end_detail
+
+
+def test_tui_stream_idle_reads_do_not_keep_a_pane_pi_alive(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    herdr, _ = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("idle"), herdr=herdr, wall_clock=10.0, stall=1.5)
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.end_reason == lc.END_STALLED, outcome.end_detail
 
 
 # -- the pane launcher ---------------------------------------------------------------

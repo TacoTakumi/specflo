@@ -45,7 +45,8 @@ End reasons (the record's `end_reason`):
 - stalled: no harness output and no model request for the level's stall
   limit. Activity is any change in size or mtime of the harness logs and of
   the harness's session files (pi's session JSONL and, in a pane, its mirrored
-  events; Claude Code's pass streams
+  events and a jump of `READ_ACTIVITY_BYTES` in pi's read bytes between two
+  polls, which is how a long streamed response shows; Claude Code's pass streams
   and session JSONL), plus any extra probe the caller passes (for example
   `file_growth` on the llama-swap log).
 - harness-exit: the harness ended by itself with no specflo verdict, or the
@@ -448,6 +449,34 @@ def file_growth(path: Path | str) -> Callable[[], object]:
     return probe
 
 
+# A jump in a pane pi's read bytes between two polls that counts as activity.
+# Streaming a response reads far more; an idle pi reads 8 bytes every 8 s.
+READ_ACTIVITY_BYTES = 256
+
+
+def read_activity(pid: int, threshold: int = READ_ACTIVITY_BYTES) -> Callable[[], object]:
+    """An activity probe over a process's read bytes (/proc/<pid>/io rchar).
+
+    For a harness whose output the bench cannot see (pi in a pane): its value
+    moves only when the process read at least `threshold` bytes since the last
+    poll, so a model stream counts and the idle process's own timer reads do not.
+    """
+    state = {"last": None, "jumps": 0}
+
+    def probe() -> object:
+        try:
+            text = Path(f"/proc/{pid}/io").read_text()
+        except OSError:
+            return state["jumps"]
+        rchar = next((int(line.split()[1]) for line in text.splitlines() if line.startswith("rchar:")), None)
+        if rchar is not None:
+            if state["last"] is not None and rchar - state["last"] >= threshold:
+                state["jumps"] += 1
+            state["last"] = rchar
+        return state["jumps"]
+    return probe
+
+
 class Activity:
     """Whether anything the run is judged on moved since the last look."""
 
@@ -813,6 +842,8 @@ def supervise(
         verdict_check, idle_check = spec.tui.judge(tui.paths.events)
         on_exit = lambda code: Ending(END_HARNESS_EXIT, "pi in the pane exited")  # noqa: E731
         globs.append(str(tui.paths.events))
+        # The mirror writes no per-token event, so a long response shows only as pi reading its stream.
+        probes = [*probes, read_activity(tui.proc.pid)]
     else:
         with open(out_path, "wb") as out, open(err_path, "wb") as err:
             proc = subprocess.Popen(
