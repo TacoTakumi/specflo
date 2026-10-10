@@ -11,6 +11,7 @@ hosted project gets no worktree.
 
 from __future__ import annotations
 
+import contextlib
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -18,11 +19,14 @@ from pathlib import Path
 
 from .config import CONFIG_DIRNAME
 from .errors import SpecfloError
+from .locking import lock_path_for, locked
 
 WORKTREES_DIRNAME = "worktrees"
 INCLUDE_FILENAME = "worktree-include"
 BRANCH_PREFIX = "specflo"
 _GITIGNORE_CONTENT = "*\n"
+# A start may wait behind several others, each making a whole worktree.
+LOCK_TIMEOUT = 300.0
 
 
 @dataclass
@@ -63,6 +67,19 @@ def worktrees_dir(root: Path) -> Path:
     if not gitignore.exists():
         gitignore.write_text(_GITIGNORE_CONTENT, encoding="utf-8")
     return directory
+
+
+@contextlib.contextmanager
+def creation_lock(root: Path, timeout: float = LOCK_TIMEOUT):
+    """Hold the checkout's one worktree lock.
+
+    ``git worktree add`` writes shared state in the repository, and a start
+    reads the plan before it writes it, so starts that make a worktree run
+    one at a time.
+    """
+    # No project slug starts with a dot, so the lock is no project's.
+    with locked(lock_path_for(root, ".worktrees", "create"), timeout):
+        yield
 
 
 def task_path(root: Path, slug: str, task_id: str) -> Path:

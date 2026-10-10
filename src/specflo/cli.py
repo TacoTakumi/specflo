@@ -2319,26 +2319,27 @@ def task_start(
         _report_transition(task, json_output)
         return
     try:
-        current = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
-        if current is None:
-            raise SpecfloError(f"No task {task_id}.")
-        if current.progress == "in_progress":
-            raise SpecfloError(
-                f"{task_id} is in progress already; a worktree is made only when a"
-                " task starts."
-            )
-        created = worktree_module.create(root, slug, task_id)
+        with worktree_module.creation_lock(root):
+            current = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
+            if current is None:
+                raise SpecfloError(f"No task {task_id}.")
+            if current.progress == "in_progress":
+                raise SpecfloError(
+                    f"{task_id} is in progress already; a worktree is made only when a"
+                    " task starts."
+                )
+            created = worktree_module.create(root, slug, task_id)
+            where = worktree_module.relative(root, created.path)
+            try:
+                task = svc.start_task(
+                    slug, task_id, force=force, worktree=where,
+                    base=f"{created.base_branch} {created.base_sha}",
+                )
+            except SpecfloError:
+                # The task did not start, so its worktree goes too.
+                worktree_module.remove(root, created.path, created.branch)
+                raise
     except SpecfloError as exc:
-        raise _die(str(exc))
-    where = worktree_module.relative(root, created.path)
-    try:
-        task = svc.start_task(
-            slug, task_id, force=force, worktree=where,
-            base=f"{created.base_branch} {created.base_sha}",
-        )
-    except SpecfloError as exc:
-        # The task did not start, so its worktree goes too.
-        worktree_module.remove(root, created.path, created.branch)
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     if json_output:
