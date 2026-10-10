@@ -193,3 +193,56 @@ def test_llama_swap_without_a_config_checks_only_that_it_answers(home):
     [check] = [c for c in checks if c.subject.startswith("llama-swap")]
     assert check.status == "ok"
     assert "no bench config" in check.detail
+
+
+def _found(version):
+    return lambda: version
+
+
+def _missing():
+    raise bench_doctor.LaunchError("not installed")
+
+
+def _harnesses(checks):
+    return [c for c in checks if c.subject.startswith("harness")]
+
+
+def test_harness_found_is_ok_with_the_recorded_version_and_missing_is_skip(home):
+    (home / "arms.yaml").write_text((DATA / "arms.yaml").read_text())
+    versions = {"pi": _found("pi 1.2.3"), "claude-code": _missing}
+
+    checks = _harnesses(bench_doctor.run_checks(None, base_url=_closed_url(), versions=versions))
+
+    assert [(c.subject, c.status) for c in checks] == [
+        ("harness pi", "ok"), ("harness claude-code", "skip"),
+    ]
+    assert checks[0].detail == "pi 1.2.3"
+
+
+def test_harness_none_installed_fails(home):
+    (home / "arms.yaml").write_text((DATA / "arms.yaml").read_text())
+    versions = {"pi": _missing, "claude-code": _missing}
+
+    checks = _harnesses(bench_doctor.run_checks(None, base_url=_closed_url(), versions=versions))
+
+    assert [c.status for c in checks] == ["skip", "skip", "fail"]
+    assert checks[-1].fix
+
+
+def test_harness_without_a_config_checks_every_known_harness(home):
+    versions = {"pi": _missing, "claude-code": _found("claude-code 2.0.1")}
+
+    checks = _harnesses(bench_doctor.run_checks(None, base_url=_closed_url(), versions=versions))
+
+    assert [(c.subject, c.status) for c in checks] == [
+        ("harness pi", "skip"), ("harness claude-code", "ok"),
+    ]
+
+
+def test_harness_version_is_what_a_run_records(monkeypatch):
+    monkeypatch.setattr(bench_doctor.launch_pi, "pi_version", lambda: "0.9.0")
+    monkeypatch.setattr(bench_doctor.launch_cc, "find_claude", lambda: "/bin/claude")
+    monkeypatch.setattr(bench_doctor.launch_cc, "claude_version", lambda path: "2.0.1")
+
+    assert bench_doctor.HARNESS_VERSIONS["pi"]() == "pi 0.9.0"
+    assert bench_doctor.HARNESS_VERSIONS["claude-code"]() == "claude-code 2.0.1"

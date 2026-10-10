@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import yaml
 
 from specflo import settings
-from specflo.bench import arms
+from specflo.bench import arms, launch_cc, launch_pi
+from specflo.bench.launch_pi import LaunchError
 from specflo.bench.preflight import DEFAULT_BASE_URL
 from specflo.doctor import Check
 from specflo.errors import SpecfloError
@@ -83,9 +85,42 @@ def _llama_swap(base_url: str, config: arms.Config | None, config_path: Path | N
     ]
 
 
-def run_checks(root_option: Path | None, *, base_url: str = DEFAULT_BASE_URL) -> list[Check]:
+# Each harness's version as a run records it in versions.harness, found as its launcher finds it.
+HARNESS_VERSIONS: dict[str, Callable[[], str]] = {
+    "pi": lambda: f"pi {launch_pi.pi_version()}",
+    "claude-code": lambda: f"claude-code {launch_cc.claude_version(launch_cc.find_claude())}",
+}
+
+
+def _harnesses(config: arms.Config | None, versions: Mapping[str, Callable[[], str]]) -> list[Check]:
+    names = config.harnesses if config else arms.HARNESSES
+    checks = []
+    for name in names:
+        try:
+            checks.append(Check("ok", f"harness {name}", versions[name]()))
+        except LaunchError as exc:
+            checks.append(Check("skip", f"harness {name}", f"not usable: {exc}"))
+    if all(c.status == "skip" for c in checks):
+        checks.append(Check(
+            "fail", "harnesses", f"none of {', '.join(names)} is installed",
+            f"install pi or Claude Code (or name the claude binary with ${launch_cc.CLAUDE_ENV})",
+        ))
+    return checks
+
+
+def run_checks(
+    root_option: Path | None,
+    *,
+    base_url: str = DEFAULT_BASE_URL,
+    versions: Mapping[str, Callable[[], str]] = HARNESS_VERSIONS,
+) -> list[Check]:
     """Every check, in report order."""
     root_check, root = _root(root_option)
     config_check, config = _config(root)
     config_path = root / HOME_DIRNAME / "arms.yaml" if root else None
-    return [root_check, config_check, *_llama_swap(base_url, config, config_path)]
+    return [
+        root_check,
+        config_check,
+        *_llama_swap(base_url, config, config_path),
+        *_harnesses(config, versions),
+    ]
