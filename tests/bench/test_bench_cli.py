@@ -141,3 +141,28 @@ def test_help_on_a_command_needs_no_root(home, monkeypatch):
     assert result.exit_code == 0, result.output
     assert "usage: specflo bench graph" in result.stdout
     assert not settings.settings_path().exists()
+
+
+def test_init_writes_the_pi_model_specs_and_keeps_an_edited_copy(home):
+    first = _bench("init")
+    (home / "pi-models.json").write_text("{}\n")
+    second = _bench("init")
+
+    assert first.exit_code == 0 and second.exit_code == 0
+    assert (home / "pi-models.json").read_text() == "{}\n"
+    assert f"kept {home / 'pi-models.json'}" in second.stdout
+
+
+def test_the_command_runs_with_the_bench_home_in_its_environment(home, monkeypatch):
+    import os
+
+    from specflo.bench import HOME_ENV, cmd_records
+
+    monkeypatch.delenv(HOME_ENV, raising=False)
+    seen = {}
+    monkeypatch.setattr(cmd_records, "main", lambda argv: seen.setdefault("home", os.environ.get(HOME_ENV)) and 0)
+
+    result = _bench("records")
+
+    assert result.exit_code == 0, result.output
+    assert seen["home"] == str(home)

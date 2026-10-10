@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-from specflo.bench import DATA
+from specflo.bench import DATA, home_file
 
 HARNESSES = ("pi", "claude-code")
 LEVELS = ("quick", "fast", "full")
@@ -56,8 +56,12 @@ def _check_names(field: str, names: Any, allowed: tuple[str, ...]) -> None:
             raise ArmError(field, f"unknown {name!r} (allowed: {', '.join(allowed)})")
 
 
-def load_config(path: Path | str = DEFAULT_CONFIG) -> Config:
-    """Read and check an arm config file; raise ArmError naming the bad field."""
+def load_config(path: Path | str | None = None) -> Config:
+    """Read and check an arm config file; raise ArmError naming the bad field.
+
+    With no path, the bench home's arms.yaml, else the shipped template.
+    """
+    path = path or home_file("arms.yaml") or DEFAULT_CONFIG
     data = yaml.safe_load(Path(path).read_text()) or {}
     if not isinstance(data, dict):
         raise ArmError("config", "expected a mapping")

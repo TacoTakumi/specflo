@@ -50,12 +50,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from specflo.bench import DATA, PACKAGE
+from specflo.bench import DATA, PACKAGE, home_file
 from specflo.extension_install import extension_source, installable_files
 
 FROZEN_DIR = DATA / "configs" / "pi"
 FROZEN_FILE = "frozen.json"
 MODELS_FILE = "models.json"
+# The operator's pi model specs in the bench home, read in place of the shipped ones.
+HOME_MODELS_FILE = "pi-models.json"
 
 DENY_SOURCE = PACKAGE.parent / "pool" / "pi_extension" / "deny.ts"
 SPECFLO_EXTENSION = "specflo"
@@ -124,9 +126,14 @@ def load_frozen(frozen_dir: Path | str = FROZEN_DIR) -> Frozen:
     return Frozen(provider=provider, deny=tuple(deny))
 
 
+def models_path(frozen_dir: Path | str = FROZEN_DIR) -> Path:
+    """The pi model specs in force: the bench home's, else the frozen directory's."""
+    return home_file(HOME_MODELS_FILE) or Path(frozen_dir) / MODELS_FILE
+
+
 def model_ids(frozen_dir: Path | str, provider: str) -> set[str]:
-    """The model ids the frozen `models.json` declares under `provider`."""
-    data = json.loads((Path(frozen_dir) / MODELS_FILE).read_text(encoding="utf-8"))
+    """The model ids the pi model specs in force declare under `provider`."""
+    data = json.loads(models_path(frozen_dir).read_text(encoding="utf-8"))
     models = data.get("providers", {}).get(provider, {}).get("models", [])
     return {m.get("id") for m in models if isinstance(m, dict)}
 
@@ -171,6 +178,7 @@ def materialise(run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR) -> Pat
     if agent_dir.exists():
         raise LaunchError(f"run copy {agent_dir} already exists")
     shutil.copytree(frozen_dir, agent_dir)
+    shutil.copyfile(models_path(frozen_dir), agent_dir / MODELS_FILE)
     extensions = agent_dir / "extensions"
     source = extension_source()
     for file in installable_files(source):

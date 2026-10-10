@@ -10,15 +10,21 @@ found as ``specflo serve`` finds it. A flag given on the command line wins.
 from __future__ import annotations
 
 import importlib
+import os
 import shutil
 from pathlib import Path
 
 import typer
 
-from . import DATA
+from . import DATA, HOME_ENV
 
 HOME_DIRNAME = "bench"
-TEMPLATES = ("arms.yaml", "matrices.yaml")
+# Each config the operator keeps in the bench home, and the shipped template it starts from.
+TEMPLATES = {
+    "arms.yaml": DATA / "arms.yaml",
+    "matrices.yaml": DATA / "matrices.yaml",
+    "pi-models.json": DATA / "configs" / "pi" / "models.json",
+}
 DEFAULT_RESULTS = "latest"
 
 bench_app = typer.Typer(
@@ -82,10 +88,21 @@ def _wants_help(args: list[str]) -> bool:
 
 def _run(ctx: typer.Context, command: str, args: list[str]) -> None:
     module = importlib.import_module(f"specflo.bench.cmd_{command}")
-    if not _wants_help(args):
-        home = bench_home(ctx)
-        args = home_defaults(command, home, args) + args
-    raise typer.Exit(code=int(module.main(args) or 0))
+    if _wants_help(args):
+        raise typer.Exit(code=int(module.main(args) or 0))
+    home = bench_home(ctx)
+    args = home_defaults(command, home, args) + args
+    # The run's own processes read the operator's configs through it too.
+    before = os.environ.get(HOME_ENV)
+    os.environ[HOME_ENV] = str(home)
+    try:
+        code = int(module.main(args) or 0)
+    finally:
+        if before is None:
+            os.environ.pop(HOME_ENV, None)
+        else:
+            os.environ[HOME_ENV] = before
+    raise typer.Exit(code=code)
 
 
 def _command(name: str, summary: str) -> None:
@@ -123,13 +140,17 @@ def init(ctx: typer.Context) -> None:
     """Write the arm and matrix config templates into the bench home; keep files that exist."""
     home = bench_home(ctx)
     home.mkdir(parents=True, exist_ok=True)
-    for name in TEMPLATES:
+    for name, template in TEMPLATES.items():
         target = home / name
         if target.exists():
             typer.echo(f"kept {target}")
             continue
-        shutil.copyfile(DATA / name, target)
+        shutil.copyfile(template, target)
         typer.echo(f"wrote {target}")
     for name in ("runs", "results", "state"):
         (home / name).mkdir(exist_ok=True)
-    typer.secho(f"Edit {home / 'arms.yaml'} to name your llama-swap entries.", err=True)
+    typer.secho(
+        f"Name your llama-swap entries in {home / 'arms.yaml'}, and give each a model spec"
+        f" in {home / 'pi-models.json'}.",
+        err=True,
+    )

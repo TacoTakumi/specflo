@@ -208,7 +208,7 @@ def describe_seam(last: Snapshot, current: Snapshot) -> str | None:
 
 def context_window(entry: str) -> int:
     """The entry's context window, as the pi arm's models.json gives it (both arms share it)."""
-    models = json.loads((launch_pi.FROZEN_DIR / launch_pi.MODELS_FILE).read_text(encoding="utf-8"))
+    models = json.loads(launch_pi.models_path().read_text(encoding="utf-8"))
     for provider in models.get("providers", {}).values():
         for model in provider.get("models", []):
             if model.get("id") == entry and isinstance(model.get("contextWindow"), int):
