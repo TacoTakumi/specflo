@@ -28,13 +28,15 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from specflo.daemon import HEALTH_PATH, auth, pool_routes, web
+from specflo.daemon import HEALTH_PATH, pool_routes
 from specflo.daemon import app as daemon_app
 from specflo.daemon.poolstore import open_pool_store
 from specflo.pool import accounts, cli_admin
 from specflo.pool import config as pool_config
 from specflo.pool.config import Account
 from specflo.pool.service import ClosedAccount
+
+from conftest import web_sign_in
 
 from .conftest import START
 from .stub_provider import KEY_READ_PATH, Seen, StubProvider
@@ -423,9 +425,7 @@ def test_the_daemon_reads_the_accounts_while_it_serves_and_the_page_shows_them(
         deadline = 200
         while len(provider.seen) < 2 and (deadline := deadline - 1):
             client.get(HEALTH_PATH)
-        token = auth.mint_token(pool_rig.root, "developer")
-        signin = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-        assert signin.status_code == 303, signin.text
+        web_sign_in(client, pool_rig.root)
         html = client.get("/pool").text
         with pytest.raises(ClosedAccount):
             service.grant("rebasers", holder_label="orchestrator-a", cwd=pool_rig.work)

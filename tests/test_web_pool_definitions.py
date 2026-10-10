@@ -40,10 +40,12 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from specflo.cli import app as cli
-from specflo.daemon import auth, pool_manage, pool_routes, web
+from specflo.daemon import pool_manage, pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin, definitions
 from specflo.pool import config as pool_config
+
+from conftest import web_sign_in
 
 # The pool tests' rig and helpers, imported rather than copied. The rig's
 # fixtures are named here so that pytest finds them from this module.
@@ -132,9 +134,7 @@ def browser(app) -> TestClient:
     """The developer's signed-in browser, which gets a fault of the server as
     the 500 a browser gets, where ``signed_in`` raises it in the test."""
     client = TestClient(app, follow_redirects=False, raise_server_exceptions=False)
-    token = auth.mint_token(app.state.root, "developer")
-    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, app.state.root)
     return client
 
 

@@ -15,8 +15,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import daemon
-from specflo.daemon import auth, web
+from specflo.daemon import web
 from specflo.daemon.app import create_app
+
+from conftest import web_sign_in
 
 MENU = "/bench"
 NO_RESULTS = "No bench results yet."
@@ -33,9 +35,7 @@ def client(root):
 
 
 def sign_in(client, root, identity):
-    token = auth.mint_token(root, identity)
-    response = client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, root, identity)
     return client
 
 

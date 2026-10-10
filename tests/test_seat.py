@@ -25,6 +25,8 @@ from specflo.cli import app
 from specflo.daemon import auth, seat
 from specflo.errors import SpecfloError
 from specflo.service.local import LocalProjectService
+
+from conftest import web_sign_in
 from waits import settle, wait_until
 
 runner = CliRunner()
@@ -741,8 +743,7 @@ def test_a_take_through_the_page_tells_the_agent_too(root, tmp_path, agent_rig):
     # pump thread outlives this test and follows the name into another.
     browser = TestClient(create_app(root), follow_redirects=False)
     try:
-        token = auth.mint_token(root, "developer")
-        assert browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token}).status_code == 303
+        web_sign_in(browser, root)
 
         response = browser.post(
             web.TAKE_PATH.format(slug=slug), data={"session": browser.cookies[web.SESSION_COOKIE]}

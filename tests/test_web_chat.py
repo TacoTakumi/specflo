@@ -27,12 +27,14 @@ from fastapi.testclient import TestClient
 from specflo import config, daemon
 from specflo.agent.protocol import FrameDecoder, encode_frame
 from specflo.agent.statefiles import ENV_STATE_DIR, AgentPaths
-from specflo.daemon import auth, chat, chatlog, seat, web
+from specflo.daemon import chat, chatlog, seat, web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
 from specflo.daemon.workitems import WorkItems
 from specflo.service.local import LocalProjectService
+
+from conftest import web_sign_in
 
 # How long a post may take when the agent answers at once, in seconds.
 POST_BOUND = 5.0
@@ -160,9 +162,7 @@ def working_agent(root, tmp_path, slug):
 
 def signed_in(root, identity):
     client = TestClient(create_app(root), follow_redirects=False)
-    token = auth.mint_token(root, identity)
-    response = client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, root, identity)
     return client
 
 
@@ -475,9 +475,7 @@ def live(live_daemon, tmp_path, monkeypatch):
     slug = brainstorming(root)
     fake = fake_agent(root, tmp_path, slug)
     client = httpx.Client(base_url=live_daemon["url"], follow_redirects=False, timeout=10.0)
-    token = auth.mint_token(root, seat.REQUESTER_SEAT)
-    response = client.post(web.SIGNIN_PATH, data={"identity": seat.REQUESTER_SEAT, "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, root, seat.REQUESTER_SEAT)
     yield SimpleNamespace(root=root, slug=slug, agent=fake, client=client)
     client.close()
     fake.close()

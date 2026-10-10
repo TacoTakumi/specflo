@@ -60,6 +60,8 @@ from specflo.service.pool_remote import (
     RemotePool,
     release_path,
 )
+
+from conftest import web_sign_in
 from waits import settle
 
 from . import test_lease_request
@@ -658,9 +660,7 @@ def test_a_save_from_a_management_page_is_in_force_when_an_expired_member_does_n
 ):
     expired_and_stuck(served, monkeypatch)
     browser = TestClient(served.application, follow_redirects=False)
-    token = auth.mint_token(pool_rig.root, "developer")
-    signed = browser.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-    assert signed.status_code == 303, signed.text
+    web_sign_in(browser, pool_rig.root)
     form = {
         "session": browser.cookies[web.SESSION_COOKIE], "name": "worker",
         "role": "Does one plan task and reports what changed", "tools": "read\nbash\n",

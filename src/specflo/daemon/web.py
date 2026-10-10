@@ -1,12 +1,14 @@
 """The daemon's web UI: server-rendered pages behind a browser session.
 
-A browser signs in as requester or developer by presenting that identity's
-bearer token once, on the sign-in page; the agent identity has no browser,
-so the page neither offers it nor accepts its token. The daemon answers with a session
-cookie holding a fresh secret of its own; the token itself never reaches the
-browser, and the cookie never unlocks the API, whose routes still read only
-the Authorization header. Sessions live in the daemon process, so a restart
-signs every browser out.
+A browser signs in with a user's name and password on the sign-in page; a
+wrong password, an unknown name and a user with no password get one and the
+same refusal. The daemon answers with a session cookie holding a fresh
+secret of its own, and the cookie never unlocks the API, whose routes still
+read only the Authorization header. The state store keeps each session by
+the hash of its secret, so a restart signs no browser out. A session lasts
+12 hours past its last use: a request moves the expiry and refreshes the
+cookie, writing the session's row at most once a minute. Each request reads
+the user's row as it is then, so a changed role applies at once.
 
 Every page renders a Jinja2 template from the package's ``templates``
 directory, from what the store and the project index hold at that moment;
@@ -34,6 +36,7 @@ from urllib.parse import parse_qs, quote
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import MutableHeaders
 from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -46,12 +49,12 @@ from ..errors import ProjectNotFound, SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
-from .auth import BROWSER_IDENTITIES, identity_for
+from .auth import SESSION_TTL, check_password, open_session, resume_session
 from . import seat
 from .products import Products
 from . import chat, chatlog
 from .routes import audit, project_lock
-from .store import Product, WorkItem, open_store
+from .store import Product, User, WorkItem, open_store
 from .workitems import FULL_DEV_PATH, WorkItems
 
 HOME_PATH = "/"
@@ -99,8 +102,10 @@ SESSION_COOKIE = "specflo_session"
 THEME_COOKIE = "specflo_theme"
 THEMES = ("auto", "light", "dark")
 THEME_TTL = 365 * 24 * 60 * 60
-# How long a session lives, in seconds; the cookie carries the same limit.
-SESSION_TTL = 12 * 60 * 60
+# The key under the request's state that marks a response whose request
+# moved the session's expiry. How long a session lives, SESSION_TTL, comes
+# from the auth module; the cookie carries the same limit.
+SESSION_REFRESH_STATE = "session_refresh"
 
 # A work item still counts as open work until it is done or dropped.
 OPEN_STATUSES = ("open", "in-progress")
@@ -109,7 +114,12 @@ OPEN_STATUSES = ("open", "in-progress")
 # slice that hands a phase to the requester changes this line and no template.
 WAITING_ROLES: dict[str, str] = {phase: "developer" for phase in PHASES}
 
-SIGNIN_FAILED = "That token does not sign in the identity you chose."
+SIGNIN_FAILED = "That user name and password do not sign in."
+# What the sign-in page says on a root with no user yet.
+NO_USERS = (
+    "No user exists yet. Whoever runs the daemon adds the first one with"
+    " `specflo serve user add <name> --role developer --password`."
+)
 INBOX_EMPTY = "Nothing waits on {identity}."
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
@@ -129,7 +139,6 @@ _templates.globals.update(
     assets_path=ASSETS_PATH,
     pool_path=POOL_PATH,
     bench_path=BENCH_PATH,
-    identities=BROWSER_IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
@@ -166,21 +175,72 @@ def _now() -> float:
     return time.time()
 
 
-def current_session(request: Request) -> str:
-    """The identity signed in on the request's cookie; sends to sign-in without one.
+def current_user(request: Request) -> User:
+    """The user signed in on the request's cookie, read live; sends to sign-in without one.
 
-    A session is the identity and the moment it expires; an expired one is
-    dropped on sight and counts as none.
+    The session is looked up in the store by its secret's hash; an expired
+    one, or one whose user is gone, counts as none. A request that moved the
+    session's expiry marks the request's state, so the response refreshes
+    the cookie.
     """
     secret = request.cookies.get(SESSION_COOKIE, "")
-    sessions = request.app.state.sessions
-    entry = sessions.get(secret) if secret else None
-    if entry is not None and entry[1] <= _now():
-        sessions.pop(secret, None)
-        entry = None
-    if entry is None:
+    live = resume_session(request.app.state.root, secret, _now())
+    if live is None:
         raise SignInRequired()
-    return entry[0]
+    user, moved = live
+    if moved:
+        setattr(request.state, SESSION_REFRESH_STATE, secret)
+    return user
+
+
+def current_session(request: Request) -> str:
+    """The role of the user signed in on the request's cookie; sends to sign-in without one.
+
+    Every page and role check reads this string, as the role holds it now.
+    """
+    return current_user(request).role
+
+
+def _set_session_cookie(response: Response, secret: str, secure: bool) -> None:
+    """Put the session cookie for ``secret`` on ``response``, for the session's full life."""
+    response.set_cookie(
+        SESSION_COOKIE,
+        secret,
+        max_age=SESSION_TTL,
+        httponly=True,
+        samesite="lax",
+        path="/",
+        secure=secure,
+    )
+
+
+class SessionCookieMiddleware:
+    """Refresh the session cookie on a response whose request moved the session's expiry.
+
+    The route found the session and marked the request's state; here the
+    cookie goes on whatever response the route made, its own or a page.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        # The request's state is this dict; holding it here sees what the
+        # route set, whatever scope the route itself was given.
+        state = scope.setdefault("state", {})
+
+        async def send_with_cookie(message) -> None:
+            secret = state.get(SESSION_REFRESH_STATE)
+            if message["type"] == "http.response.start" and secret:
+                cookie = Response()
+                _set_session_cookie(cookie, secret, scope.get("scheme") == "https")
+                MutableHeaders(scope=message).append("set-cookie", cookie.headers["set-cookie"])
+            await send(message)
+
+        await self.app(scope, receive, send_with_cookie)
 
 
 # The theme the request's cookie chose and the path it asked for, as the
@@ -248,12 +308,22 @@ def _to_sign_in(request: Request, exc: SignInRequired) -> RedirectResponse:
 front_door = APIRouter()
 
 
+def _sign_in_form(root: Path, status_code: int = 200, **context) -> HTMLResponse:
+    """The sign-in page; on a root with no user yet it says how to add one."""
+    with open_store(root) as store:
+        no_users = not store.list_users()
+    return render(
+        "signin.html", status_code=status_code, identity=None,
+        no_users=NO_USERS if no_users else None, **context,
+    )
+
+
 @front_door.get(SIGNIN_PATH, include_in_schema=False)
 def sign_in_page(request: Request) -> Response:
     try:
         current_session(request)
     except SignInRequired:
-        return render("signin.html", identity=None)
+        return _sign_in_form(request.app.state.root)
     return RedirectResponse(HOME_PATH, status_code=303)
 
 
@@ -262,31 +332,16 @@ async def sign_in(request: Request) -> Response:
     # The form posts URL-encoded fields; the standard library parses those,
     # so form handling pulls in no further package.
     form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
-    identity = form.get("identity", [""])[0]
-    token = form.get("token", [""])[0].strip()
-    if (
-        identity not in BROWSER_IDENTITIES
-        or identity_for(request.app.state.root, token) != identity
-    ):
-        return render(
-            "signin.html", status_code=400, identity=None, error=SIGNIN_FAILED, chosen=identity
-        )
-    sessions = request.app.state.sessions
-    now = _now()
-    for stale in [key for key, (_, expires) in sessions.items() if expires <= now]:
-        del sessions[stale]
-    secret = secrets.token_urlsafe(32)
-    sessions[secret] = (identity, now + SESSION_TTL)
+    name = form.get("name", [""])[0].strip().lower()
+    password = form.get("password", [""])[0]
+    root = request.app.state.root
+    # A password check is a scrypt run; it waits off the event loop.
+    user = await run_in_threadpool(check_password, root, name, password) if name else None
+    if user is None:
+        return _sign_in_form(root, status_code=400, error=SIGNIN_FAILED, name=name)
+    secret = await run_in_threadpool(open_session, root, user.name, "password", _now())
     response = RedirectResponse(HOME_PATH, status_code=303)
-    response.set_cookie(
-        SESSION_COOKIE,
-        secret,
-        max_age=SESSION_TTL,
-        httponly=True,
-        samesite="lax",
-        path="/",
-        secure=request.url.scheme == "https",
-    )
+    _set_session_cookie(response, secret, request.url.scheme == "https")
     return response
 
 
@@ -922,7 +977,6 @@ def _to_error_page(request: Request, exc: SpecfloError) -> HTMLResponse:
 
 def install(app: FastAPI) -> None:
     """Add the web UI to ``app``: its pages, the sign-in routes, and the assets."""
-    app.state.sessions = {}
     app.add_exception_handler(SignInRequired, _to_sign_in)
     app.add_exception_handler(SpecfloError, _to_error_page)
     app.include_router(front_door)
@@ -943,3 +997,4 @@ def install(app: FastAPI) -> None:
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")
     app.add_middleware(ThemeMiddleware)
+    app.add_middleware(SessionCookieMiddleware)

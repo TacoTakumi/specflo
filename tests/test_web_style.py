@@ -12,8 +12,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import daemon
-from specflo.daemon import auth, web
+from specflo.daemon import web
 from specflo.daemon.app import create_app
+
+from conftest import web_sign_in
 
 STYLESHEETS = ("specflo.css", "github-markdown.css")
 TEAL_ACCENT = "--accent:       light-dark(#0e7c7b, #4cc3bd);"
@@ -49,9 +51,7 @@ def test_the_markdown_stylesheet_keeps_its_mit_notice():
 
 
 def sign_in(client, root):
-    token = auth.mint_token(root, "developer")
-    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, root)
 
 
 def header(html):

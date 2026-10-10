@@ -33,6 +33,8 @@ from specflo.pool import config as pool_config
 from specflo.pool.service import Grant, hash_token
 from specflo.service.pool_remote import HELD_PATH, LEASES_PATH, release_path
 
+from conftest import web_sign_in
+
 # The pool tests' rig and helpers, imported rather than copied. The rig's
 # fixtures are named here so that pytest finds them from this module.
 from pool.conftest import no_real_llama_swap, no_real_provider, pool_rig  # noqa: F401  (fixtures)
@@ -65,9 +67,7 @@ def application(pool_rig, svc=None):
 
 def signed_in(app, identity: str = "developer") -> TestClient:
     client = TestClient(app, follow_redirects=False)
-    token = auth.mint_token(app.state.root, identity)
-    response = client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, app.state.root, identity)
     return client
 
 

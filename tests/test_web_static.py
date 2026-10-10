@@ -17,12 +17,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import config, daemon
-from specflo.daemon import auth, web
+from specflo.daemon import web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
 from specflo.daemon.workitems import WorkItems
 from specflo.service.local import LocalProjectService
+
+from conftest import web_sign_in
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -190,8 +192,7 @@ def pages(tmp_path):
         WorkItems(store).spawn(1, service, name="Login fix")
     client = TestClient(create_app(root), follow_redirects=False)
     signin = client.get(web.SIGNIN_PATH)
-    token = auth.mint_token(root, "developer")
-    assert client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token}).status_code == 303
+    web_sign_in(client, root)
     rendered = {
         web.SIGNIN_PATH: signin,
         web.HOME_PATH: client.get(web.HOME_PATH),

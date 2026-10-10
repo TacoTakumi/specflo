@@ -13,12 +13,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import config, daemon
-from specflo.daemon import auth, web
+from specflo.daemon import web
 from specflo.daemon import store as store_module
 from specflo.daemon.app import create_app
 from specflo.daemon.products import Products
 from specflo.daemon.workitems import WorkItems
 from specflo.service.local import LocalProjectService
+
+from conftest import web_sign_in
 
 
 @pytest.fixture
@@ -29,9 +31,7 @@ def root(tmp_path):
 @pytest.fixture
 def client(root):
     client = TestClient(create_app(root), follow_redirects=False)
-    token = auth.mint_token(root, "developer")
-    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-    assert response.status_code == 303, response.text
+    web_sign_in(client, root)
     return client
 
 
@@ -114,8 +114,7 @@ def seed_gates(root):
 
 def signed_in(root, identity):
     client = TestClient(create_app(root), follow_redirects=False)
-    token = auth.mint_token(root, identity)
-    assert client.post(web.SIGNIN_PATH, data={"identity": identity, "token": token}).status_code == 303
+    web_sign_in(client, root, identity)
     return client
 
 

@@ -1,6 +1,7 @@
 """Shared pytest fixtures and helpers for the specflo test suite."""
 
 import ast
+import functools
 import inspect
 import textwrap
 from pathlib import Path
@@ -70,6 +71,45 @@ def live_keys(text: str) -> list[str]:
         for line in text.splitlines()
         if ":" in line and not line.startswith("#")
     ]
+
+
+# The password every user that web_sign_in makes signs in with.
+WEB_PASSWORD = "correct horse battery staple"
+
+
+@functools.cache
+def _web_password_hash() -> str:
+    # One scrypt run per test process, not one per signed-in test.
+    from specflo.daemon import auth
+
+    return auth.hash_password(WEB_PASSWORD)
+
+
+def web_sign_in(client, root, role: str = "developer", name: str | None = None):
+    """Sign ``client`` in on the web form as a user holding ``role``; the 303.
+
+    The user is called ``name``, by default the role itself, and is made with
+    :data:`WEB_PASSWORD` when the root does not have one by that name yet; an
+    existing user is reused as it is. ``client`` is a TestClient or an httpx
+    client on a live daemon, and the post never follows the redirect, so the
+    response is always the sign-in's own.
+    """
+    from specflo.daemon import web
+    from specflo.daemon.store import User, open_store
+
+    name = name or role
+    with open_store(root) as store:
+        if store.get_user(name) is None:
+            store.add_user(
+                User(name=name, role=role, password_hash=_web_password_hash(), created="2026-01-01")
+            )
+    response = client.post(
+        web.SIGNIN_PATH, data={"name": name, "password": WEB_PASSWORD}, follow_redirects=False
+    )
+    assert response.status_code == 303, response.text
+    return response
+
+
 @pytest.fixture(autouse=True)
 def _no_directory_override(monkeypatch):
     """Keep ``SPECFLO_DIRECTORY`` out of the suite's environment.

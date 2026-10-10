@@ -18,13 +18,14 @@ and hash in hex, so a hash made under older parameters still verifies and
 A user is added and changed on the serve side with :func:`add_user` and
 the verbs after it; the rows live in the state store, and this module holds
 only the rules a user must meet. A browser session carries no role: each
-request reads the current user row through :func:`session_user`, so a role
-change applies at the user's next request.
+request reads the current user row through :func:`session_user` or
+:func:`resume_session`, so a role change applies at the user's next request.
 """
 
 from __future__ import annotations
 
 import datetime
+import functools
 import hashlib
 import hmac
 import json
@@ -34,11 +35,11 @@ import time
 from pathlib import Path
 
 from ..errors import SpecfloError
-from .store import ROLES, Conflict, User, open_store
+from .store import ROLES, Conflict, Session, User, open_store
 
 IDENTITIES = ("requester", "developer", "agent")
-# The identities a browser can sign in as. The agent has no browser: the
-# sign-in page offers only these and refuses an agent token.
+# The identities a person at a browser or a CLI acts as; the agent has no
+# browser. A browser now signs in as a named user, never with a token.
 BROWSER_IDENTITIES = ("requester", "developer")
 TOKENS_FILENAME = "tokens.json"
 
@@ -52,6 +53,12 @@ SCRYPT_KEY_BYTES = 32
 # The ceiling on what one stored hash may ask scrypt to allocate; a stored
 # string past it verifies false instead of exhausting memory.
 SCRYPT_MAX_MEMORY = 256 * 1024 * 1024
+
+# How long a browser session lives past its last use, in seconds, and how
+# long its row goes between writes: a request within a minute of the last
+# write moves nothing, so a page that asks many times a minute writes once.
+SESSION_TTL = 12 * 60 * 60
+SESSION_WRITE_EVERY = 60
 
 # A user name: 1 to 64 characters from a-z 0-9 . _ - @, starting with a
 # letter or digit. Short and plain, so it is safe in a URL, a log line and a
@@ -261,6 +268,79 @@ def session_user(root: Path, secret: str, now: float | None = None) -> User | No
         if session is None or session.expires <= now:
             return None
         return store.get_user(session.user)
+
+
+def check_password(root: Path, name: str, password: str) -> User | None:
+    """The user ``name`` (in any case) when ``password`` is theirs, else None.
+
+    An unknown name, a proxy-only user and a wrong password all answer None,
+    and each costs one scrypt run, so neither the answer nor how long it
+    takes tells which. A right password over a hash made under older
+    parameters replaces that hash with one under today's.
+    """
+    with open_store(root) as store:
+        user = store.get_user(name.lower())
+    if user is None or user.password_hash is None:
+        verify_password(password, _decoy_hash())
+        return None
+    if not verify_password(password, user.password_hash):
+        return None
+    if needs_rehash(user.password_hash):
+        with open_store(root) as store:
+            user = store.set_user_password(user.name, hash_password(password)) or user
+    return user
+
+
+@functools.cache
+def _decoy_hash() -> str:
+    # What a sign-in with no stored hash checks against, so it takes as long
+    # as one with a hash; no password is ever its own.
+    return hash_password(secrets.token_urlsafe(32))
+
+
+def open_session(root: Path, user: str, method: str, now: float) -> str:
+    """Start a browser session for ``user`` and return its cookie secret, once.
+
+    The store keeps only the secret's hash, with the user, how the session
+    was opened, and an expiry :data:`SESSION_TTL` after ``now``. Sessions
+    already expired are dropped on the way.
+    """
+    secret = secrets.token_urlsafe(32)
+    with open_store(root) as store:
+        store.remove_expired_sessions(now)
+        store.add_session(Session(
+            hash=hash_token(secret), user=user, method=method,
+            expires=now + SESSION_TTL, written=now,
+        ))
+    return secret
+
+
+def resume_session(root: Path, secret: str, now: float) -> tuple[User, bool] | None:
+    """The user a live session stands for, read live, and whether its row was written.
+
+    None for an empty or unknown secret, a session whose user is gone, or
+    one whose expiry is at or before ``now``; an expired session is dropped
+    on sight. A live session's expiry moves to :data:`SESSION_TTL` after
+    ``now``, but only once :data:`SESSION_WRITE_EVERY` has passed since its
+    row was last written; before that the row is left as it is.
+    """
+    if not secret:
+        return None
+    digest = hash_token(secret)
+    with open_store(root) as store:
+        session = store.get_session(digest)
+        if session is None:
+            return None
+        if session.expires <= now:
+            store.remove_session(digest)
+            return None
+        user = store.get_user(session.user)
+        if user is None:
+            return None
+        written = now - session.written >= SESSION_WRITE_EVERY
+        if written:
+            store.update_session(digest, expires=now + SESSION_TTL, written=now)
+    return user, written
 
 
 def hash_password(password: str) -> str:

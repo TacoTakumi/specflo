@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from specflo import daemon
 from specflo.cli import app
-from specflo.daemon import auth, pool_routes, web
+from specflo.daemon import auth, pool_routes
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
@@ -37,6 +37,8 @@ from specflo.service.pool_remote import (
     STATUS_PATH,
     release_path,
 )
+
+from conftest import web_sign_in
 
 from . import test_lease_request
 from .test_cli_validate import WORKER, _validate, _write, _write_three_faults
@@ -200,9 +202,7 @@ def test_a_pool_request_is_answered_with_the_file_that_is_not_utf8_and_the_other
 def test_the_pool_page_lists_the_file_that_is_not_utf8_with_the_other_faults(latin1_root):
     application = create_app(latin1_root)
     client = TestClient(application, follow_redirects=False)
-    token = auth.mint_token(latin1_root, "developer")
-    signed_in = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": token})
-    assert signed_in.status_code == 303, signed_in.text
+    web_sign_in(client, latin1_root)
 
     page = client.get("/pool")
 
