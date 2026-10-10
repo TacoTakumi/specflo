@@ -268,6 +268,21 @@ def test_batch_refuses_a_link_to_a_file_beside_it(client, root):
     assert SECRET not in response.text
 
 
+def test_lookup_failure_is_a_404(client, root):
+    run(root, "run-a")
+    batch(root, "pilot")
+    (root / "bench" / "runs" / "loop").symlink_to(root / "bench" / "runs" / "loop")
+    long = "x" * 300
+    sign_in(client, root, "developer")
+    for path in (
+        batch_file("pilot", long + ".txt"),
+        batch_file(long, "index.html"),
+        run_file(long, "record.json"),
+        run_file("loop", "record.json"),
+    ):
+        assert client.get(path).status_code == 404, path
+
+
 def test_run_file_needs_a_session(client, root):
     run(root, "run-a")
     response = client.get(run_file("run-a", "record.json"))

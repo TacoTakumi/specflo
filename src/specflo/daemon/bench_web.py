@@ -110,13 +110,17 @@ def served_file(base: Path, folder: str, name: str) -> Path | None:
 
     Both names must be plain, and neither the folder nor the file may be a
     link: a link planted in a bench folder could serve another file, beside
-    it or outside the bench, under a name the allow-list lets through.
+    it or outside the bench, under a name the allow-list lets through. A
+    name the file system cannot look up (too long, say) serves nothing.
     """
     if not (plain_name(folder) and plain_name(name)):
         return None
     inside = base / folder
     path = inside / name
-    if inside.is_symlink() or path.is_symlink() or not path.is_file():
+    try:
+        if inside.is_symlink() or path.is_symlink() or not path.is_file():
+            return None
+    except OSError:
         return None
     return path
 
