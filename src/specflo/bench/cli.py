@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import json
 import os
 import shutil
 from pathlib import Path
@@ -148,6 +149,26 @@ def graph(ctx: typer.Context) -> None:
     if not _wants_help(args) and not any(a.split("=", 1)[0] == "--out" for a in args):
         args = ["--out", str(bench_home(ctx) / "results" / name), *args]
     _run(ctx, "graph", args)
+
+
+@bench_app.command("doctor", epilog="Example: specflo bench doctor --json")
+def doctor(
+    ctx: typer.Context,
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Check the bench setup: each problem names its fix. Exits 1 when a check fails."""
+    from specflo.doctor import render
+
+    from . import doctor as bench_doctor
+
+    checks = bench_doctor.run_checks(ctx.obj["option"])
+    failed = any(c.status == "fail" for c in checks)
+    if json_output:
+        typer.echo(json.dumps({"ok": not failed, "checks": [c.to_dict() for c in checks]}))
+    else:
+        typer.echo(render(checks))
+    if failed:
+        raise typer.Exit(1)
 
 
 @bench_app.command("init", epilog="Example: specflo bench init")
