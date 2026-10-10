@@ -29,6 +29,7 @@ CONTROLS = {
     "delete definition": "definition_delete_url(",
     "save team": "team_save_url(",
     "delete team": "team_delete_url(",
+    "sign out": "signout_path",
 }
 FRONT_DOOR = "signin_path"
 # The header's theme switch sets the browser's own cookie and nothing else;

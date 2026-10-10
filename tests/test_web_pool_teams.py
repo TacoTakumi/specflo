@@ -737,6 +737,8 @@ BROWSER_POSTS = {
     web.SIGNIN_PATH,
     # The header's theme switch: it sets the browser's own cookie and nothing else.
     web.THEME_PATH,
+    # The header's sign-out: it ends the browser's own session.
+    web.SIGNOUT_PATH,
     web.START_PROJECT_PATH,
     web.TAKE_PATH,
     web.CHAT_PATH,

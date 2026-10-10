@@ -120,7 +120,7 @@ def test_the_requesters_page_shows_no_control(pool_rig, busy):
 
     assert list(rows(html, "leases", "lease")) == [busy["granted"].lease_id]
     assert "<form" not in page_body(html) and "<button" not in page_body(html)
-    assert client.cookies[web.SESSION_COOKIE] not in html
+    assert client.cookies[web.SESSION_COOKIE] not in page_body(html)
 
 
 # -- the release ----------------------------------------------------------------------

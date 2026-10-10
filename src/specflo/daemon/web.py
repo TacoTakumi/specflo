@@ -49,7 +49,7 @@ from ..errors import ProjectNotFound, SpecfloError
 from ..projects import COMPLETE_STATUS, INITIAL_STATUS, Gate, Project, validate_slug
 from ..service.local import LocalProjectService
 from ..workflow import PHASES
-from .auth import SESSION_TTL, check_password, open_session, resume_session
+from .auth import SESSION_TTL, check_password, hash_token, open_session, resume_session
 from . import seat
 from .products import Products
 from . import chat, chatlog
@@ -59,6 +59,8 @@ from .workitems import FULL_DEV_PATH, WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
+# Where the header's sign-out form posts; it needs a live session.
+SIGNOUT_PATH = "/signout"
 # Where the header's theme switch posts; like sign-in, it needs no session.
 THEME_PATH = "/theme"
 ASSETS_PATH = "/assets"
@@ -134,6 +136,7 @@ _templates = Environment(
 _templates.globals.update(
     home_path=HOME_PATH,
     signin_path=SIGNIN_PATH,
+    signout_path=SIGNOUT_PATH,
     theme_path=THEME_PATH,
     themes=THEMES,
     assets_path=ASSETS_PATH,
@@ -247,10 +250,13 @@ class SessionCookieMiddleware:
 # middleware below set them for this request. Every page reads them here, so
 # no route has to pass the request on to render().
 _page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=("auto", HOME_PATH))
+# The request's session cookie, which the header's sign-out form echoes on
+# every page, as the middleware below set it for this request.
+_page_session: ContextVar[str] = ContextVar("page_session", default="")
 
 
 class ThemeMiddleware:
-    """Set the request's theme and path for render() before the route runs."""
+    """Set the request's theme, path and session cookie for render() before the route runs."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -270,16 +276,20 @@ class ThemeMiddleware:
             else:
                 back = HOME_PATH
             _page_theme.set((theme if theme in THEMES else "auto", back))
+            _page_session.set(conn.cookies.get(SESSION_COOKIE, ""))
         await self.app(scope, receive, send)
 
 
 def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
-    """The page ``template`` renders with ``context`` and the request's theme.
+    """The page ``template`` renders with ``context``, the request's theme and its session.
 
     The page depends on the theme cookie as well as the session one, so the
-    response varies on Cookie.
+    response varies on Cookie. ``session`` is the session secret every
+    mutating form echoes, the header's sign-out form among them; a route
+    that passes it passes the same cookie value.
     """
     theme, path = _page_theme.get()
+    context.setdefault("session", _page_session.get())
     html = _templates.get_template(template).render(theme=theme, theme_next=path, **context)
     return HTMLResponse(html, status_code=status_code, headers={"Vary": "Cookie"})
 
@@ -959,6 +969,33 @@ async def post_message(
         _log.warning("post to %s: %s", slug, exc)
         return render("error.html", status_code=502, identity=identity, message=exc.public)
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
+
+
+@pages.post(SIGNOUT_PATH, include_in_schema=False)
+async def sign_out(request: Request, identity: str = Depends(current_session)) -> Response:
+    """End the signed-in session and go to the sign-in page.
+
+    The form echoes the session secret like every mutating form; a post
+    without it changes nothing. The session's row goes from the store, so
+    the old cookie opens nothing even if a browser kept it, and the cookie
+    is deleted.
+    """
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity)
+    if refused is not None:
+        return refused
+    secret = session_secret(request)
+    with open_store(request.app.state.root) as store:
+        store.remove_session(hash_token(secret))
+    # This request may have moved the session's expiry; the response deletes
+    # the cookie, so it must not refresh it as well.
+    setattr(request.state, SESSION_REFRESH_STATE, None)
+    response = RedirectResponse(SIGNIN_PATH, status_code=303)
+    response.delete_cookie(
+        SESSION_COOKIE, path="/", httponly=True, samesite="lax",
+        secure=request.url.scheme == "https",
+    )
+    return response
 
 
 def _missing(identity: str, message: str) -> HTMLResponse:

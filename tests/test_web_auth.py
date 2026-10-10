@@ -423,3 +423,86 @@ def test_a_session_idle_for_12_hours_goes_to_sign_in(client, root, clock):
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
     assert session_of(client, root) is None
+
+
+# --- signing out ------------------------------------------------------------
+
+
+def signout_form(html):
+    """The secret the header's sign-out form echoes, or None when the page has no such form."""
+    form = re.search(
+        rf'<form[^>]*method="post"[^>]*action="{web.SIGNOUT_PATH}"[^>]*>(.*?)</form>', html, re.S
+    )
+    if form is None:
+        return None
+    return re.search(r'<input type="hidden" name="session" value="([^"]*)">', form.group(1)).group(1)
+
+
+def test_every_page_carries_a_signout_form_that_echoes_the_session(client, root):
+    web_sign_in(client, root)
+    secret = client.cookies[web.SESSION_COOKIE]
+
+    for path in (
+        web.HOME_PATH,
+        web.POOL_PATH,
+        web.BENCH_PATH,
+        web.DEFINITIONS_PATH,
+        web.TEAMS_PATH,
+        web.PROJECT_PATH.format(slug="no-such-project"),
+    ):
+        html = client.get(path).text
+
+        assert signout_form(html) == secret, path
+
+
+def test_the_sign_in_page_has_no_signout_form(client):
+    assert signout_form(client.get(web.SIGNIN_PATH).text) is None
+
+
+def test_signout_with_the_echoed_secret_ends_the_session(client, root):
+    web_sign_in(client, root)
+    secret = client.cookies[web.SESSION_COOKIE]
+
+    response = client.post(web.SIGNOUT_PATH, data={"session": secret})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
+    cookie = response.headers["set-cookie"]
+    assert cookie.startswith(f'{web.SESSION_COOKIE}=""') and "Max-Age=0" in cookie
+    with open_store(root) as store:
+        assert store.get_session(auth.hash_token(secret)) is None
+    # the old cookie, sent again, opens nothing
+    client.cookies.set(web.SESSION_COOKIE, secret)
+    assert client.get(web.HOME_PATH).headers["location"] == web.SIGNIN_PATH
+
+
+def test_signout_a_minute_on_does_not_refresh_the_cookie_it_deletes(client, root, clock):
+    web_sign_in(client, root)
+    secret = client.cookies[web.SESSION_COOKIE]
+    clock.move(auth.SESSION_WRITE_EVERY)
+
+    response = client.post(web.SIGNOUT_PATH, data={"session": secret})
+
+    assert response.status_code == 303
+    [cookie] = response.headers.get_list("set-cookie")
+    assert "Max-Age=0" in cookie
+
+
+@pytest.mark.parametrize("form", ({}, {"session": "not-the-secret"}), ids=("no-echo", "wrong-echo"))
+def test_signout_without_the_echoed_secret_changes_nothing(client, root, form):
+    web_sign_in(client, root)
+    before = session_of(client, root)
+
+    response = client.post(web.SIGNOUT_PATH, data=form)
+
+    assert response.status_code == 403
+    assert "set-cookie" not in response.headers
+    assert session_of(client, root) == before
+    assert client.get(web.HOME_PATH).status_code == 200
+
+
+def test_signout_without_a_session_goes_to_sign_in(client):
+    response = client.post(web.SIGNOUT_PATH, data={"session": "anything"})
+
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
