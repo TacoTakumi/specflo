@@ -329,3 +329,42 @@ def test_matplotlib_importable_is_ok(home, monkeypatch):
     check = _optional_checks(home, herdr_available=lambda: True)["matplotlib"]
 
     assert check.status == "ok"
+
+
+def test_llama_swap_answering_without_http_fails_naming_the_url(home):
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    url = f"http://127.0.0.1:{server.getsockname()[1]}"
+
+    def garbage():
+        conn, _ = server.accept()
+        conn.recv(1024)
+        conn.sendall(b"not http at all\r\n\r\n")
+        conn.close()
+
+    thread = threading.Thread(target=garbage, daemon=True)
+    thread.start()
+    try:
+        [check] = _by_subject(
+            bench_doctor.run_checks(None, base_url=url, versions=NO_HARNESS, herdr_available=lambda: True),
+            "llama-swap",
+        )
+    finally:
+        thread.join(5)
+        server.close()
+
+    assert check.status == "fail"
+    assert f"{url}/v1/models" in check.detail
+
+
+def test_llama_swap_bad_port_in_the_url_fails_naming_the_url(home):
+    url = "http://127.0.0.1:port"
+
+    [check] = _by_subject(
+        bench_doctor.run_checks(None, base_url=url, versions=NO_HARNESS, herdr_available=lambda: True),
+        "llama-swap",
+    )
+
+    assert check.status == "fail"
+    assert f"{url}/v1/models" in check.detail

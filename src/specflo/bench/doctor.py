@@ -8,6 +8,7 @@ preflight stays the run's own guard.
 
 from __future__ import annotations
 
+import http.client
 import json
 import urllib.error
 import urllib.request
@@ -74,7 +75,7 @@ def _llama_swap(base_url: str, config: arms.Config | None, config_path: Path | N
     url = base_url.rstrip("/") + "/v1/models"
     try:
         listed = set(fetch_models(base_url))
-    except (urllib.error.URLError, OSError, ValueError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError) as exc:
         return [Check("fail", "llama-swap", f"no answer from {url}: {exc}",
                       "start llama-swap, or pass --base-url <url>")]
     if config is None:
