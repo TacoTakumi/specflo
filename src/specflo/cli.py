@@ -2311,6 +2311,8 @@ def task_start(
 ) -> None:
     """Mark a task in_progress."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    if in_worktree:
+        _require_worktree_project(root, slug)
     svc = _service(root, cfg)
     if not in_worktree:
         try:
@@ -2369,6 +2371,7 @@ def task_land(
 ) -> None:
     """Land a worktree task's changes on its base branch as one commit."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    _require_worktree_project(root, slug)
     svc = _service(root, cfg)
     try:
         task = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
@@ -3269,6 +3272,20 @@ def section_set(
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     typer.echo(f"Set '{title}' in {slug}/{artifact}.")
+
+
+def _require_worktree_project(root: Path, slug: str) -> None:
+    """Refuse a daemon-hosted project before any request goes out.
+
+    A task worktree is made from this checkout's git repository and lands
+    back into it, and a daemon holds no code to match.
+    """
+    remote = config.hosting_remote(root, slug)
+    if remote is not None:
+        raise _die(
+            f"Project {slug!r} is hosted on remote {remote!r}; task worktrees work"
+            " only for projects in this checkout."
+        )
 
 
 def _require_checkout_project(root: Path, slug: str) -> None:
