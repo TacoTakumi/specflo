@@ -16,9 +16,12 @@ arm's level. `run` then:
    agent the bench's python and packages. The agent gets the system python.
 3. Starts the harness as a child in a new session (its own process group),
    stdout and stderr to `harness.out` and `harness.err` in the run dir:
-   - pi: `pi --mode rpc` from `launch_pi`, sent one prompt on stdin,
-     `/specflo-continue auto`, which starts the extension's anchored auto
-     chain. stdin stays open, so pi stays up between passes.
+   - pi with herdr: the interactive pi TUI in a herdr pane (transport tui,
+     see herdr below), not a child of the bench.
+   - pi without herdr: `pi --mode rpc` from `launch_pi` (transport rpc), sent
+     one prompt on stdin, `/specflo-continue auto`, which starts the
+     extension's anchored auto chain. stdin stays open, so pi stays up between
+     passes.
    - claude-code: a small child python that runs `cc_continue.run` (one fresh
      `claude -p` per specflo pass) and writes `cc-result.json`. A child, not a
      thread, so the whole loop is one process tree that a cap can remove.
@@ -27,23 +30,27 @@ arm's level. `run` then:
 End reasons (the record's `end_reason`):
 
 - complete: the specflo project reached complete. pi: `specflo status --json`
-  says status complete; the run ends once pi's RPC stream says it settled
-  (`agent_settled`), so the agent's last turn is not cut, or at a cap. Claude
+  says status complete; the run ends once pi's RPC stream (in a pane, the run
+  events the specflo extension mirrors) says it settled (`agent_settled`), so
+  the agent's last turn is not cut, or at a cap. Claude
   Code: `cc_continue` stopped on specflo's `project-complete`.
 - escalated: specflo handed the run to a human. pi: the project's auto-run
   state file is marked ended or killed while the project is not complete (the
-  extension shows the stop as an RPC notify, kept as the detail). Claude Code:
+  extension shows the stop as an RPC notify, kept as the detail; a pane pi
+  mirrors no notify, so its detail is the generic one). Claude Code:
   any other specflo stop reason (stall, pass-cap, kill-switch, review-budget
   and so on), or the bench's own pass limit.
 - timeout: the level's wall-clock cap expired (also Claude Code's own
   wall-clock end).
 - stalled: no harness output and no model request for the level's stall
   limit. Activity is any change in size or mtime of the harness logs and of
-  the harness's session files (pi's session JSONL; Claude Code's pass streams
+  the harness's session files (pi's session JSONL and, in a pane, its mirrored
+  events; Claude Code's pass streams
   and session JSONL), plus any extra probe the caller passes (for example
   `file_growth` on the llama-swap log).
 - harness-exit: the harness ended by itself with no specflo verdict, or the
-  Claude Code loop ended with a failed pass or a failed `specflo auto`.
+  Claude Code loop ended with a failed pass or a failed `specflo auto`. A
+  pane pi's exit code is not known to the bench (the record says -1).
 
 Cleanup: every run's harness env carries a unique `MODELBENCH_RUN` token. The
 tree is the root's descendants (by parent pid), its process group and every
@@ -53,12 +60,29 @@ after the grace, and the scan repeats until nothing is left. The record lists
 any survivor.
 
 herdr: when an adapter is given and herdr answers, the run gets a tab in the
-bench workspace whose pane follows the harness logs (`tail -F --pid`), so the
-operator can watch; the pane closes with the harness and the tab is closed at
-cleanup. The bench keeps the harness as its own child, so end detection and
-cleanup are the same with or without herdr. When herdr is unavailable, or
-placement fails, the run proceeds headless with one stderr line. The record
-says which: `placement` herdr with the pane id, or headless.
+bench workspace, and the tab is closed at cleanup.
+
+- pi runs there as the interactive TUI, so the operator watches a real pi
+  session and herdr lists the pane as a pi agent. The pane runs a launcher
+  that reads argv, env and cwd from `pane-launch.json` in the run dir (and
+  removes it), so the pane shell's rc files cannot change the harness env.
+  The env adds the specflo extension's managed-agent handshake with a short
+  state dir of the run's own (socket paths are capped near 108 bytes): the
+  extension serves a control socket there and mirrors pi's run events to
+  `events.jsonl`. Once the socket answers, the bench takes pi's pid from
+  `status.json` and types `/specflo-continue auto` into the pane once (the
+  control socket's prompt cannot run an extension command). Settle comes from
+  the mirrored events, exit from the pid; cleanup finds pi by the run token.
+  At the end `agent-events.jsonl` and `agent-status.json` are copied into the
+  run dir and the state dir is removed. Anyone typing in the pane makes the
+  run invalid (see `run.validity` and the input log in `launch_pi`).
+- Any other harness stays the bench's child, and its pane follows the
+  harness logs (`tail -F --pid`); the pane closes with the harness.
+
+When herdr is unavailable, or placement or the pane start fails, the run
+proceeds headless with one stderr line (pi on RPC). The record says which:
+`placement` herdr with the pane id, or headless, and for pi `transport` tui or
+rpc.
 
 Level limits are read from the level's settings in the arm config
 (`wall_clock` and `stall_limit`, seconds) unless passed; there is no default.

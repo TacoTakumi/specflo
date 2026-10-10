@@ -499,7 +499,10 @@ def assemble_record(
     fields = outcome.record_fields()
     report = outcome.harness_report or {}
     harness_version = report.get("harness") if isinstance(report.get("harness"), str) else None
-    valid = validity(run.entry, log, diag, grade, input_log(run_dir))
+    inputs = input_log(run_dir)
+    if inputs is None and run.harness == "pi":
+        inputs = []  # the input log is written at the first input: no file, nobody typed
+    valid = validity(run.entry, log, diag, grade, inputs)
     run_dir = Path(run_dir)
     logs = {
         "run_dir": str(run_dir),

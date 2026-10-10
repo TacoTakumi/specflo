@@ -50,6 +50,15 @@ latter. Release tags are of the form `vX.Y.Z`.
   fail names its fix. A missing harness or herdr is a skip. The check loads
   no model and never prompts. `--json` gives the same report; the command
   exits 1 when a check fails.
+- **The bench's pi runs in its herdr pane.** With herdr running, a pi run's
+  pane shows the interactive pi session, and herdr lists the pane as a pi
+  agent; before, the pane showed pi's raw RPC event stream. The bench types
+  `/specflo-continue auto` into the pane once and judges the run from the
+  events the specflo extension mirrors. A headless run, or one whose pane
+  start fails, runs pi on RPC as before. The record's `lifecycle.transport`
+  says which (`tui` or `rpc`). Every pi run also logs each pi input with its
+  source to `inputs.jsonl` in the run dir, and a run where someone typed in
+  the pane is invalid.
 - **Theme switch in the daemon web UI.** The user page has an
   Auto/Light/Dark switch. The choice is kept in a `specflo_theme` cookie for
   a year and every page follows it, the sign-in page too; Auto follows the

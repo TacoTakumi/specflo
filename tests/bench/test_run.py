@@ -304,6 +304,8 @@ def test_a_synthetic_run_writes_a_record_that_passes_the_schema(synthetic):
     # The session's model ids are the entry, no protected path was named, the tree was graded.
     assert rec["valid"] is True, rec["validity"]
     assert rec["validity"]["model_ids"] == [ENTRY]
+    # A pi run that wrote no input log had no input: the operator check ran and found none.
+    assert rec["validity"]["operator_inputs"] == 0
     assert 0.0 <= rec["score"] <= 1.0 and rec["grade"]["total"] > 0
     assert rec["metrics"]["turns"] > 0
     assert rec["diagnostics"]["contaminated"] is False
