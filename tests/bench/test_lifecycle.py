@@ -215,6 +215,15 @@ elif mode == "complete-busy":
     idle_forever()
 elif mode == "exit":
     sys.exit(3)
+elif mode == "hang":
+    # A child in its own session: only the run token finds it.
+    import subprocess
+    child = subprocess.Popen(["sleep", "600"], start_new_session=True)
+    with open(os.environ["HARNESS_PIDS"], "w") as f:
+        json.dump([os.getpid(), child.pid], f)
+    while True:
+        emit({"type": "message_update"})
+        time.sleep(0.2)
 else:
     idle_forever()
 '''
@@ -631,6 +640,31 @@ def test_build_pi_gives_rpc_argv_and_a_pane_start_without_the_rpc_mode(tmp_path:
     assert spec.tui is not None and spec.tui.argv == spec.argv[:-2]
     assert "--mode" not in spec.tui.argv
     assert spec.tui.ignition == lc.IGNITION
+
+
+
+def test_tui_exit_of_pi_by_itself_ends_harness_exit_and_closes_the_tab(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("exit"), herdr=herdr)
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.end_reason == lc.END_HARNESS_EXIT
+    assert outcome.end_detail == "pi in the pane exited"
+    assert outcome.survivors == []
+    assert ["tab", "close", "w1:t1"] in _calls(log)
+
+
+def test_tui_cleanup_at_the_wall_clock_cap_leaves_no_process_of_the_run(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.pi_tui("hang"), herdr=herdr, wall_clock=3.0, stall=30.0)
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.end_reason == lc.END_TIMEOUT
+    assert outcome.survivors == []
+    started = bench.started()
+    assert len(started) == 2 and _alive(started) == []
+    assert outcome.pid == started[0]
+    assert ["tab", "close", "w1:t1"] in _calls(log)
 
 
 # -- the pane launcher ---------------------------------------------------------------
