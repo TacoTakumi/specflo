@@ -148,9 +148,14 @@ def _log(path: Path) -> Check:
 
 
 def _herdr(available: Callable[[], bool]) -> Check:
-    if available():
-        return Check("ok", "herdr", "answers; each run gets a pane")
-    return Check("skip", "herdr", "not available; runs go headless (or pass --headless)")
+    # herdr is optional: whatever goes wrong asking it, a run goes headless.
+    try:
+        if available():
+            return Check("ok", "herdr", "answers; each run gets a pane")
+        why = "not available"
+    except Exception as exc:  # noqa: BLE001
+        why = f"not usable ({exc})"
+    return Check("skip", "herdr", f"{why}; runs go headless (or pass --headless)")
 
 
 def _matplotlib() -> Check:

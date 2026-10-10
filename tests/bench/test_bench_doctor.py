@@ -386,3 +386,22 @@ def test_harness_version_lookup_that_times_out_is_a_skip(home, hung):
     [check] = [c for c in checks if c.subject == f"harness {hung}"]
     assert check.status == "skip"
     assert "timed out" in check.detail
+
+
+@pytest.mark.parametrize("script,mode", [
+    ("#!/bin/sh\necho ready\n", 0o644),  # on PATH but not executable
+    ("#!/bin/sh\necho '[]'\n", 0o755),  # answers JSON that is not an object
+])
+def test_herdr_that_errors_is_the_headless_skip(home, tmp_path, monkeypatch, script, mode):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    herdr = bin_dir / "herdr"
+    herdr.write_text(script)
+    herdr.chmod(mode)
+    monkeypatch.setenv("PATH", str(bin_dir))
+
+    checks = bench_doctor.run_checks(None, base_url=_closed_url(), versions=NO_HARNESS)
+
+    [check] = _by_subject(checks, "herdr")
+    assert check.status == "skip"
+    assert "--headless" in check.detail
