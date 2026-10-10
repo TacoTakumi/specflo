@@ -98,6 +98,35 @@ latter. Release tags are of the form `vX.Y.Z`.
   from the daemon's record, and the header never authenticates an API call.
   The daemon refuses to start when the trusted list is empty, holds a
   wildcard or holds an invalid entry. The README shows an Apache setup.
+- **Task worktrees for fan-out.** `specflo task start T-NN --worktree` gives
+  a task its own git worktree at `.specflo/worktrees/<project>/T-NN` on a new
+  branch `specflo/<project>/T-NN` cut from HEAD, and records the worktree and
+  its base branch and sha on the task. The paths listed in
+  `.specflo/worktree-include` (one per line) are copied in, and a listed path
+  that does not exist is named. Worktree starts run one at a time under a
+  lock. A worktree task holds no files in the ready set, so two tasks that
+  share a file can run at once. The brief names the worktree and says to edit
+  and test only there and never commit.
+- **`specflo task land T-NN [--message <text>]`.** Turns what a worktree task
+  holds, committed or not, into one commit on its base branch, replayed onto
+  the branch's tip, fast-forwards the checkout, records the commit on the
+  task, and removes the worktree and its branch. The task stays in progress
+  until `task done`. It refuses, changing nothing, a change under the projects
+  directory, a checkout on another branch, an uncommitted edit to a file the
+  task changes, and a conflict with the base branch (it names the files and
+  leaves no rebase in progress). Files changed outside the task's Files are
+  printed and noted on the task. `task reopen` of a worktree task saves its
+  changes as a patch, then removes the worktree and branch. The worktree
+  verbs are refused for a project hosted on a daemon.
+- **`specflo task start --force`.** `task start` now refuses a task whose
+  dependencies are not all done, naming each one; `--force` starts it anyway.
+- **`specflo task done --commit <sha>`.** Records the task's commit as a full
+  sha in a `Commit:` field; a value that names no commit is refused.
+  `task show` prints each dependency's title, commit and notes, and `--json`
+  carries them in `dependencies`.
+- **`specflo review scope "<line>"` and `specflo review clean`.** Write the
+  open round's Scope reviewed line and record a round with no findings, so a
+  reviewer never edits the round file by hand. The reviewer brief names both.
 
 ### Changed
 - **Breaking: the daemon's `tokens.json` is cut.** On first start with a
@@ -130,6 +159,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   tokens. The daemon serves the frame stylesheet (`specflo.css`), its own
   rules (`daemon.css`) and a vendored github-markdown-css 5.9.0 (MIT, notice
   in `daemon/assets/LICENSES.md`) from `/assets`.
+- **Fan-out briefs carry the subagent rules.** On a fan-out project
+  `task show` lists the read-only git a subagent may run, forbids `git stash`,
+  other git writes and specflo, states the test policy (Verify, one parallel
+  run of the touched test files, the full suite once before review) and lets
+  a subagent update a test that pins a fixed list. `specflo execution fan-out`
+  points at the execute skill's Fan-out section, which now gives the
+  worktree loop.
+- **No shared-file warning.** `validate plan` no longer warns about two tasks
+  that share a file with no edge between them, and the plan skill no longer
+  asks for that edge: an edge means a task needs another's result. The plan
+  skill now asks to grep for every file a change touches before tasks are
+  recorded, and a task that needs a pool states its rig state in its Scope.
 
 ### Removed
 - **Breaking: `specflo serve token add` is gone.** Humans get personal tokens
