@@ -166,3 +166,93 @@ def test_batch_file_needs_a_session(client, root):
     response = client.get(batch_file("pilot", "index.html"))
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+# --- the runs ------------------------------------------------------------------
+
+
+def run_file(run_name, name):
+    return f"{MENU}/runs/{run_name}/{name}"
+
+
+def run(root, name, session=True):
+    """A run folder with its record, its normalised session when asked, and its raw output."""
+    folder = root / "bench" / "runs" / name
+    plant(folder / "record.json", f'{{"run": "{name}"}}')
+    if session:
+        plant(folder / "session.norm.json", '{"calls": []}')
+    plant(folder / "harness.out", SECRET)
+    plant(folder / "pi-agent" / "auth.json", SECRET)
+    return folder
+
+
+def test_run_list_on_the_developer_menu_only(client, root):
+    run(root, "run-a")
+    run(root, "run-b", session=False)
+    plant(root / "bench" / "runs" / "probes" / "probe.json", "{}")
+    sign_in(client, root, "developer")
+    found = [link for link in links(client.get(MENU).text) if link.startswith(MENU + "/runs/")]
+    assert found == [
+        run_file("run-a", "record.json"),
+        run_file("run-a", "session.norm.json"),
+        run_file("run-b", "record.json"),
+    ]
+    requester = TestClient(client.app, follow_redirects=False)
+    html = sign_in(requester, root, "requester").get(MENU).text
+    assert "run-a" not in html and "run-b" not in html
+    assert MENU + "/runs/" not in html
+
+
+def test_run_files_for_the_developer(client, root):
+    run(root, "run-a")
+    sign_in(client, root, "developer")
+    for name, body in (("record.json", b'{"run": "run-a"}'), ("session.norm.json", b'{"calls": []}')):
+        response = client.get(run_file("run-a", name))
+        assert response.status_code == 200, name
+        assert response.headers["content-type"].startswith("application/json")
+        assert response.content == body
+
+
+def test_run_files_refused_to_the_requester(client, root):
+    run(root, "run-a")
+    sign_in(client, root, "requester")
+    for name in ("record.json", "session.norm.json"):
+        response = client.get(run_file("run-a", name))
+        assert response.status_code == 403, name
+        assert '"calls"' not in response.text and '"run": ' not in response.text
+
+
+def test_run_refuses_what_is_not_a_record(client, root, tmp_path):
+    folder = run(root, "run-a")
+    plant(root / "bench" / "state" / "loaded-by-bench.json", SECRET)
+    outside = plant(tmp_path / "outside" / "record.json", SECRET)
+    (root / "bench" / "runs" / "linked-run").symlink_to(outside.parent)
+    (folder / "pi-agent" / "record.json").write_text(SECRET)
+    sign_in(client, root, "developer")
+    for path in (
+        run_file("run-a", "harness.out"),
+        f"{MENU}/runs/run-a/pi-agent/auth.json",
+        run_file("run-a", "pi-agent%2Fauth.json"),
+        run_file("run-a", "pi-agent%2Frecord.json"),
+        run_file("..%2Fstate", "loaded-by-bench.json"),
+        run_file("%2e%2e", "record.json"),
+        run_file("linked-run", "record.json"),
+        run_file("missing", "record.json"),
+    ):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert SECRET not in response.text, path
+
+
+def test_run_file_needs_a_session(client, root):
+    run(root, "run-a")
+    response = client.get(run_file("run-a", "record.json"))
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
+
+
+def test_run_routes_are_no_static_mount(client):
+    from starlette.routing import Mount
+
+    mounts = [route.path for route in client.app.routes if isinstance(route, Mount)]
+    assert not [path for path in mounts if path.startswith(MENU)]

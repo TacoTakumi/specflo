@@ -14,4 +14,20 @@
   <p class="empty">No bench results yet.</p>
   {% endif %}
 </section>
+{% if runs is not none %}
+<section id="runs">
+  <h2>Runs</h2>
+  {% if runs %}
+  <ul>
+    {% for run in runs %}
+    <li data-run="{{ run.name }}">{{ run.name }}:
+      {% for name, url in run.files %}<a href="{{ url }}">{{ name }}</a>{% if not loop.last %}, {% endif %}{% endfor %}
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No bench runs yet.</p>
+  {% endif %}
+</section>
+{% endif %}
 {% endblock %}
