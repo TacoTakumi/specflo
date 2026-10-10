@@ -11,8 +11,13 @@
 .site-nav { display: flex; gap: 4px; }
 .site-nav a { color: var(--fg); padding: 4px 8px; border-radius: var(--radius); }
 .site-nav a:hover { text-decoration: none; background: var(--bg-hover); }
-/* The user's name, a link to their page, keeps to the right edge before Sign out. */
-.identity { margin-left: auto; color: var(--fg); font-weight: 600; }
+/* The user's name keeps to the right edge, then the Settings link and Sign out. */
+.identity { margin-left: auto; color: var(--fg-muted); }
+.identity strong { color: var(--fg); font-weight: 600; }
+@media (max-width: 767px) {
+  .identity { display: none; }
+  .settings { margin-left: auto; }
+}
 
 /* ---------- Messages ---------- */
 .error { color: var(--danger); }

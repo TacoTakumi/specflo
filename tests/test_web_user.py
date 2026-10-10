@@ -69,7 +69,7 @@ def test_the_page_names_the_user_and_has_the_theme_and_tokens_sections(app, root
 
     assert response.status_code == 200
     page = content(response.text)
-    assert "<h1>alice</h1>" in page
+    assert "<h1>User settings for alice</h1>" in page
     assert '<section id="theme">' in page and '<section id="tokens">' in page
     assert web.NO_TOKENS in section(response.text, "tokens")
 
@@ -151,7 +151,8 @@ def test_the_header_names_the_user_not_the_role_and_links_to_the_page(app, root)
     html = client.get(web.HOME_PATH).text
 
     header = re.search(r'<header class="site-header">(.*?)</header>', html, re.S).group(1)
-    assert f'<a class="identity" href="{web.USER_PATH}">alice</a>' in header
+    assert "Signed in as <strong>alice</strong>" in header
+    assert f'<a class="settings" href="{web.USER_PATH}">Settings</a>' in header
     assert "developer" not in header
 
 

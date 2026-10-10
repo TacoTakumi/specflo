@@ -64,7 +64,7 @@ def test_the_sign_in_page_links_the_stylesheets_and_shows_the_brand(client):
     for name in ("github-markdown.css", "specflo.css", "daemon.css"):
         assert f'<link rel="stylesheet" href="{web.ASSETS_PATH}/{name}">' in html
     assert re.search(rf'<a class="brand" href="{web.HOME_PATH}">\s*<svg[^>]*>.*?</svg>\s*specflo\s*</a>', header(html), re.S)
-    assert 'class="identity"' not in header(html)
+    assert 'class="identity"' not in header(html) and 'class="settings"' not in header(html)
     assert f'href="{web.POOL_PATH}"' not in header(html)
     assert 'class="theme"' not in header(html) and 'class="signout"' not in header(html)
 
@@ -78,10 +78,13 @@ def test_a_signed_in_page_shows_the_links_the_user_and_sign_out_in_the_header(tm
 
     assert f'<a class="brand" href="{web.HOME_PATH}">' in top
     assert f'<a href="{web.POOL_PATH}">Pool</a>' in top
-    # the user's name links to their page; the role is not shown
-    assert f'<a class="identity" href="{web.USER_PATH}">developer</a>' in top
-    assert re.search(r'class="identity".*?</a>\s*<form class="signout"', top, re.S)
-    for gone in ('class="theme"', 'class="tokens"', 'class="password"', "signed in as"):
+    # the user's name, then a link to their page, then sign-out
+    assert re.search(
+        rf'<span class="identity">Signed in as <strong>developer</strong></span>\s*'
+        rf'<a class="settings" href="{web.USER_PATH}">Settings</a>\s*<form class="signout"',
+        top,
+    )
+    for gone in ('class="theme"', 'class="tokens"', 'class="password"'):
         assert gone not in top
 
 

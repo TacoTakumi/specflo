@@ -26,8 +26,9 @@
         <a href="{{ bench_path }}">Bench</a>
       </nav>
       {% if viewer %}
-      <a class="identity" href="{{ user_path }}">{{ viewer }}</a>
+      <span class="identity">Signed in as <strong>{{ viewer }}</strong></span>
       {% endif %}
+      <a class="settings" href="{{ user_path }}">Settings</a>
       <form class="signout" method="post" action="{{ signout_path }}">
         <input type="hidden" name="session" value="{{ session }}">
         <button type="submit">Sign out</button>

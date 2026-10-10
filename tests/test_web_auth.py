@@ -150,9 +150,8 @@ def test_signing_in_sets_a_session_cookie_and_the_pages_name_the_user(client, ro
     page = client.get(web.HOME_PATH)
 
     assert page.status_code == 200
-    # the user is named after the role: the header names the user, never the role
-    assert f'<a class="identity" href="{web.USER_PATH}">{role}</a>' in page.text
-    assert "signed in as" not in page.text
+    # the user is named after the role, so the page shows it as the user's name
+    assert f"Signed in as <strong>{role}</strong>" in page.text
     other = next(name for name in ("requester", "developer") if name != role)
     assert other not in page.text
 
@@ -292,7 +291,7 @@ def test_a_session_survives_a_restart(client, root):
     page = restarted.get(web.HOME_PATH)
 
     assert page.status_code == 200
-    assert f'<a class="identity" href="{web.USER_PATH}">developer</a>' in page.text
+    assert "Signed in as <strong>developer</strong>" in page.text
 
 
 def test_a_page_acts_under_the_role_the_user_holds_now(client, root):

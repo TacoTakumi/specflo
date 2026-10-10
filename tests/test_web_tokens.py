@@ -80,7 +80,8 @@ def test_the_header_links_to_the_page_for_a_signed_in_user(app, root, role):
     html = client.get(web.HOME_PATH).text
 
     header = re.search(r'<header class="site-header">.*?</header>', html, re.S).group(0)
-    assert f'<a class="identity" href="{web.USER_PATH}">{role}</a>' in header
+    assert f"Signed in as <strong>{role}</strong>" in header
+    assert f'<a class="settings" href="{web.USER_PATH}">Settings</a>' in header
 
 
 def test_the_sign_in_page_has_no_link(app):
