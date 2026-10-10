@@ -255,6 +255,8 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Ask the running daemon, as the developer, to read its pool directory again; a directory with faults changes nothing."},
     {"name": "bench init", "group": "daemon", "args": "[--root <dir>]",
      "summary": "Write the model bench's arm and matrix config templates into <daemon root>/bench; keeps files that exist."},
+    {"name": "bench doctor", "group": "daemon", "args": "[--json] [--base-url <url>] [--llama-swap-log <path>]",
+     "summary": "Check the bench setup: root, arm config, llama-swap entries, harnesses, herdr, log stamps, matplotlib; each fail names its fix."},
     {"name": "bench run", "group": "daemon", "args": "--entry <id> --harness pi|claude-code --level <level> ...",
      "summary": "One model-bench run to a scored, checked record under <daemon root>/bench/runs."},
     {"name": "bench batch", "group": "daemon", "args": "--matrix <name> [--dry-run] ...",
