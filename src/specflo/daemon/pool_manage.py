@@ -60,6 +60,7 @@ from ..pool.definitions import (
     DefinitionError, load_definition, not_a_file, serialise_definition,
 )
 from ..pool.teams import ROLE_FIELDS, TEAMS_DIR, Role, Team, check_team, serialise_team
+from .permissions import POOL_MANAGE, can, who_can
 from .pool_routes import NO_POOL, reload_pool
 from .routes import audit
 from .web import (
@@ -67,9 +68,6 @@ from .web import (
     EDIT_TEAM_PATH, NEW_DEFINITION_PATH, NEW_TEAM_PATH, TEAMS_PATH, current_session,
     form_fields, render, session_refused, session_secret,
 )
-
-# The one identity that is shown these pages and may post to them.
-MANAGER = "developer"
 
 # What a save and a delete are audited as.
 SAVED = "definition_save"
@@ -306,13 +304,14 @@ pages = APIRouter()
 
 
 def _not_manager(identity: str) -> Response | None:
-    """The 403 page for any identity but the manager's, or None for the manager."""
-    if identity == MANAGER:
+    """The 403 page for a role that does not manage the pool directory, or None
+    for one that does."""
+    if can(identity, POOL_MANAGE):
         return None
     return render(
         "error.html", status_code=403, identity=identity,
-        message=f"The pool directory is managed from these pages by the {MANAGER} identity "
-        f"only, and this session is the {identity} identity's.",
+        message=f"The pool directory is managed from these pages by {who_can(POOL_MANAGE)} "
+        f"only, and this session is the {identity} role's.",
     )
 
 

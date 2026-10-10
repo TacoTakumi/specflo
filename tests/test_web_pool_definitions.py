@@ -664,7 +664,7 @@ def test_the_requesters_session_gets_no_management_page(root):
     for url in (LIST, NEW, edit_url("worker")):
         response = client.get(url)
         assert response.status_code == 403, url
-        assert "developer identity only" in shown(response)
+        assert "developer role only" in shown(response)
         assert "You are a worker." not in response.text
 
 
@@ -675,7 +675,7 @@ def test_the_requesters_posts_are_refused_and_change_nothing(root):
     for url in (LIST, edit_url("worker"), delete_url("worker")):
         response = post(client, url, **FIELDS)
         assert response.status_code == 403, url
-        assert "developer identity only" in shown(response)
+        assert "developer role only" in shown(response)
     assert snapshot(root) == before
     assert audit_records(root) == []
 

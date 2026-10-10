@@ -51,6 +51,7 @@ from ..pool import config as pool_config
 from ..pool.runner import RunnerError
 from ..pool.service import PoolService, UnknownLease
 from . import poolstore
+from .permissions import POOL_MANAGE, POOL_RELEASE, can, who_can
 from .routes import audit
 from .web import (
     POOL_PATH, current_session, form_fields, render, session_refused, session_secret,
@@ -65,10 +66,9 @@ LEASED = "leased"
 
 NO_POOL = "No pool is configured on this daemon."
 
-# The route of the control that releases a lease, the one identity that is
-# shown it and may post it, and the cause its transition records.
+# The route of the control that releases a lease, and the cause its transition
+# records; who is shown it and may post it is the permissions table's matter.
 RELEASE_PATH = POOL_PATH + "/leases/{lease_id}/release"
-RELEASER = "developer"
 RELEASED_BY_DEVELOPER = "released by developer"
 
 _log = logging.getLogger(__name__)
@@ -146,7 +146,7 @@ class PoolView:
     @property
     def releases(self) -> bool:
         """Whether the viewer is shown the control that releases a lease."""
-        return self.viewer == RELEASER
+        return can(self.viewer, POOL_RELEASE)
 
 
 def span(delta: timedelta) -> str:
@@ -289,10 +289,14 @@ def pool_page(request: Request, identity: str = Depends(current_session)) -> Res
     errors = [str(error) for error in getattr(request.app.state, "pool_errors", ())]
     service = getattr(request.app.state, "pool", None)
     if service is None:
-        return render("pool.html", identity=identity, view=None, errors=errors, no_pool=NO_POOL)
+        return render(
+            "pool.html", identity=identity, manages=can(identity, POOL_MANAGE), view=None,
+            errors=errors, no_pool=NO_POOL,
+        )
     _expire_due(service)
     return render(
-        "pool.html", identity=identity, view=pool_view(service, identity), errors=errors,
+        "pool.html", identity=identity, manages=can(identity, POOL_MANAGE),
+        view=pool_view(service, identity), errors=errors,
         limit=limit, amount=amount, cause_shown=cause_shown, release_url=release_url,
         session=session_secret(request),
     )
@@ -324,7 +328,7 @@ def _release(service: PoolService, lease_id: str) -> str | None:
             service, lease_ids, "released", cause=RELEASED_BY_DEVELOPER
         )
     except RunnerError as exc:
-        _log.warning("a lease released by %s: %s", RELEASER, exc)
+        _log.warning("a lease %s: %s", RELEASED_BY_DEVELOPER, exc)
         return target
     # A lease that ended some other way in between was not released by this post.
     mine = [end for end in ended if (end.state, end.cause) == ("released", RELEASED_BY_DEVELOPER)]
@@ -348,11 +352,11 @@ async def release_lease(
     refused = session_refused(request, fields, identity)
     if refused is not None:
         return refused
-    if identity != RELEASER:
+    if not can(identity, POOL_RELEASE):
         return render(
             "error.html", status_code=403, identity=identity,
-            message=f"A lease is released from this page by the {RELEASER} identity only, "
-            f"and this session is the {identity} identity's.",
+            message=f"A lease is released from this page by {who_can(POOL_RELEASE)} only, "
+            f"and this session is the {identity} role's.",
         )
     service = getattr(request.app.state, "pool", None)
     if service is None:

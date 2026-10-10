@@ -84,10 +84,10 @@ every member lease; a token of any member lease proves the team's holder. One
 member lease of a team is not released by itself: that is refused with the
 team lease id named. No route here takes anything from one member to another.
 
-A developer's console is attached to its slot, and detached, by the
-developer identity and no other: a requester or an agent that asks is
-answered 403. The agent attached is a host that runs on this host, named in
-the body, and both acts are audited under the slot.
+A developer's console is attached to its slot, and detached, by a role that
+holds the console permission, today the developer alone: a requester or an
+agent that asks is answered 403. The agent attached is a host that runs on
+this host, named in the body, and both acts are audited under the slot.
 
 A lease is its holder's, and the holder is whoever presents the lease token:
 the bearer token says which identity asks, not which orchestrator. So a
@@ -128,6 +128,7 @@ from ..service.pool_remote import (
     WAITING_MEDIA_TYPE,
 )
 from . import seat
+from .permissions import CONSOLE, POOL_MANAGE, can, who_can
 from .poolstore import Lease, PoolStore, open_pool_store
 from .routes import audit, current_identity
 
@@ -774,18 +775,16 @@ def _team_release(
 
 # --- consoles -----------------------------------------------------------------
 
-# The one identity that attaches and detaches a console.
-CONSOLE_IDENTITY = "developer"
-
-
-def _developer(identity: str, act: str = "A console is attached and detached") -> None:
-    """Refuse a route to any identity but the developer's; *act* is what the
-    route does, as the refusal says it."""
-    if identity != CONSOLE_IDENTITY:
+def _permitted(
+    identity: str, permission: str = CONSOLE, act: str = "A console is attached and detached"
+) -> None:
+    """Refuse a route to a role that does not hold *permission*; *act* is what
+    the route does, as the refusal says it."""
+    if not can(identity, permission):
         raise HTTPException(
             status_code=403,
-            detail=f"{act} by the {CONSOLE_IDENTITY} identity "
-            f"only, and this token is the {identity} identity's.",
+            detail=f"{act} by {who_can(permission)} "
+            f"only, and this token is the {identity} role's.",
         )
 
 
@@ -805,7 +804,7 @@ def console_attach(
 ) -> dict:
     """Attach the named agent host, which runs on this host, to the named
     console slot; from then on the slot is matched like any member."""
-    _developer(identity)
+    _permitted(identity)
     fields = _body(body, required=("slot", "agent"))
     slot, agent = _required(fields, "slot"), _required(fields, "agent")
     try:
@@ -827,7 +826,7 @@ def console_detach(
 ) -> dict:
     """Detach the named console slot: it takes no new lease, and the lease
     that is out on it stands."""
-    _developer(identity)
+    _permitted(identity)
     slot = _required(_body(body, required=("slot",)), "slot")
     try:
         state = console.detach(service, slot)
@@ -849,7 +848,7 @@ def pool_reload(
     """Read the pool directory again and put it in force: the daemon's process
     id, the directory, and how much of each kind stands now. It does not
     depend on a pool that stands, since it is what gives a daemon one."""
-    _developer(identity, "The pool configuration is reloaded")
+    _permitted(identity, POOL_MANAGE, "The pool configuration is reloaded")
     _body(body, required=())
     app = request.app
     faults = reload_pool(app, identity)

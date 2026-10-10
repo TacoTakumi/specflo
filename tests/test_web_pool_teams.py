@@ -637,7 +637,7 @@ def test_the_requesters_session_gets_no_management_page(team_root):
     for url in (LIST, NEW, edit_url("review")):
         response = client.get(url)
         assert response.status_code == 403, url
-        assert "developer identity only" in shown(response)
+        assert "developer role only" in shown(response)
         assert "critics" not in response.text
 
 
@@ -648,7 +648,7 @@ def test_the_requesters_posts_are_refused_and_change_nothing(team_root):
     for url in (LIST, edit_url("review"), delete_url("review")):
         response = post(client, url, **FIELDS)
         assert response.status_code == 403, url
-        assert "developer identity only" in shown(response)
+        assert "developer role only" in shown(response)
     assert snapshot(team_root) == before
     assert audit_records(team_root) == []
 
@@ -721,10 +721,8 @@ def test_every_form_posts_to_a_url_helper_and_the_lists_link_to_each_other():
     assert 'href="{{ pool_path }}"' in templates["pool_teams.html"]
     assert 'href="{{ definitions_path }}"' in templates["pool_teams.html"]
     assert 'href="{{ teams_path }}"' in templates["pool_definitions.html"]
-    # the pool page links the list for the developer alone
-    manage = re.search(
-        r'{% if identity == "developer" %}(.*?){% endif %}', templates["pool.html"], re.S
-    ).group(1)
+    # the pool page links the list only for a role that manages the pool
+    manage = re.search(r'{% if manages %}(.*?){% endif %}', templates["pool.html"], re.S).group(1)
     assert 'href="{{ teams_path }}"' in manage
     assert templates["pool.html"].count("teams_path") == 1
 

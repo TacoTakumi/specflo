@@ -26,10 +26,8 @@ from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import FileResponse
 
 from ..bench.cli import HOME_DIRNAME
+from .permissions import BENCH_RUNS, can, who_can
 from .web import BENCH_PATH, current_session, render
-
-# The one identity that reads the run files.
-RUN_READER = "developer"
 
 RESULTS_DIRNAME = "results"
 INDEX_NAME = "index.html"
@@ -139,7 +137,7 @@ def bench_page(request: Request, identity: str = Depends(current_session)) -> Re
         "bench.html",
         identity=identity,
         batches=batches(root),
-        runs=runs(root) if identity == RUN_READER else None,
+        runs=runs(root) if can(identity, BENCH_RUNS) else None,
     )
 
 
@@ -159,10 +157,10 @@ def batch_file(
 def run_file(
     request: Request, run: str, name: str, identity: str = Depends(current_session)
 ) -> Response:
-    if identity != RUN_READER:
+    if not can(identity, BENCH_RUNS):
         return render(
             "error.html", status_code=403, identity=identity,
-            message="Only the developer reads the run files.",
+            message=f"The run files are read by {who_can(BENCH_RUNS)} only.",
         )
     folder = bench_home(request.app.state.root) / RUNS_DIRNAME
     path = served_file(folder, run, name) if name in RUN_FILES else None
