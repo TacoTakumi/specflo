@@ -116,3 +116,18 @@ def test_the_guide_lists_the_verb():
     entries = {entry["name"]: entry for entry in guide.COMMANDS}
     assert entries["task land"]["args"] == "<T-NN> [--message <text>]"
     assert "--worktree" in entries["task start"]["args"]
+
+
+def test_a_tag_named_like_the_branch_does_not_stop_the_land(tmp_path, monkeypatch):
+    cfg, ids = make_repo(tmp_path)
+    git(tmp_path, "tag", "main")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0], "--worktree"]).exit_code == 0
+    assert task(tmp_path, cfg, ids[0]).base.split()[0] == "main"
+    path = tmp_path / ".specflo" / "worktrees" / SLUG / ids[0]
+    (path / "src" / "a.py").write_text("a = 2\n")
+
+    result = runner.invoke(app, ["task", "land", ids[0]])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "src" / "a.py").read_text() == "a = 2\n"

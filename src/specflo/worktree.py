@@ -59,6 +59,19 @@ def _run(cwd: Path, *args: str, env: dict | None = None) -> subprocess.Completed
         raise SpecfloError(f"git {args[0]} could not run: {exc}") from exc
 
 
+def current_branch(root: Path) -> str | None:
+    """The branch the checkout is on, or None for a detached HEAD.
+
+    Read from the full symbolic ref, so a tag that shares the branch's name
+    cannot turn it into an ambiguous short name.
+    """
+    result = _run(Path(root), "symbolic-ref", "--quiet", "HEAD")
+    ref = result.stdout.strip()
+    if result.returncode != 0 or not ref.startswith("refs/heads/"):
+        return None
+    return ref.removeprefix("refs/heads/")
+
+
 def worktrees_dir(root: Path) -> Path:
     """``<root>/.specflo/worktrees``, made with a self-ignoring ``.gitignore``,
     so no worktree under it shows in the checkout's ``git status``."""
@@ -103,8 +116,8 @@ def create(root: Path, slug: str, task_id: str) -> Created:
     HEAD is on no branch, or when the task's path or branch is taken.
     """
     root = Path(root)
-    base_branch = git(root, "rev-parse", "--abbrev-ref", "HEAD")
-    if base_branch == "HEAD":
+    base_branch = current_branch(root)
+    if base_branch is None:
         raise SpecfloError(
             "The checkout is on no branch (detached HEAD); check out the branch the"
             " task lands on first."
@@ -289,7 +302,7 @@ def land(
     Uncommitted changes to other files stay as they are.
     """
     root = Path(root)
-    current = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    current = current_branch(root) or "no branch (detached HEAD)"
     if current != base_branch:
         raise SpecfloError(
             f"The checkout is on {current}, not {base_branch}, the branch the task"
