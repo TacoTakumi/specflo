@@ -47,9 +47,10 @@ not planning.
    - **Files.** List every file a task edits in `--files`; the CLI parses it
      into the task's ownership set (a trailing parenthetical note per entry is
      allowed: `~/x/y (venv, outside repo)`).
-   - **Shared files get an edge.** Wherever two tasks **share a file**, add a
-     `--depends-on` edge so they never run at once; `specflo validate plan`
-     warns naming the pair when you miss one.
+   - **Edges mean results.** A `--depends-on` edge means a task needs another
+     task's result. It never means that two tasks share a file: the ready set
+     keeps two sharers in one tree apart, and a task in its own worktree lands
+     its change after the other.
    - **Parallel producers, one merge.** Give tasks that produce results in
      parallel their own per-task output files, then add one deterministic
      **merge task** that depends on all of them — never have producers append
@@ -59,10 +60,17 @@ not planning.
      can proceed against it at once.
    - **Pools.** Declare hardware and shared environments (a GPU, a venv, a
      port) with `--needs <pool>` and size them with `specflo pool add <name>
-     --size N`; an undeclared pool has one slot.
+     --size N`; an undeclared pool has one slot. A task that needs a pool
+     states in its `--scope` the rig state it requires (which model is loaded,
+     which service runs, what must be free).
    - **User in the loop.** Mark a task that needs the user (a by-eye verdict,
      a desktop session) with `--needs user`; it is never delegated.
-4. **Capture inline** — run `specflo task add` with `--text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …] [--files …] [--needs <pool> …]` the moment each task
+4. **Find every file first** — before you record the tasks, grep for every
+   file each change will touch and name them all in `--files`: the module, its
+   callers, the shared test helpers it uses, and the tests that pin a fixed
+   list the change extends (forms, routes, guide commands, reply shapes). A
+   file you miss here is found by a subagent mid-task.
+5. **Capture inline** — run `specflo task add` with `--text … --acceptance … --verify … --from REQ-NN [--from REQ-NN …] [--depends-on T-NN …] [--files …] [--needs <pool> …]` the moment each task
    lands (un-batched). **Emit artifact-writing add calls sequentially: one at a
    time, never batched in parallel.** The CLI's advisory lock (D-01) makes
    concurrent adds safe but cannot fix ordering — minted `T-NN`/`M-NN` IDs follow
@@ -72,15 +80,15 @@ not planning.
    replaces that one section's body and leaves every task and milestone
    untouched (Tasks, Milestones, and Pools are refused there — they belong to
    their own verbs).
-5. **Scope-reduction guard** — the plan delivers what each `REQ-NN`/`D-NN`
+6. **Scope-reduction guard** — the plan delivers what each `REQ-NN`/`D-NN`
    requires; never silently degrade to "v1 / simplified / for now / a stub." On
    genuine overflow, recommend a phase split or a superseding requirement. Clear
    `specflo validate plan` scope-reduction warnings before advancing.
-6. **Coverage by construction** — every active `REQ-NN` is implemented by ≥1 task,
+7. **Coverage by construction** — every active `REQ-NN` is implemented by ≥1 task,
    and every task cites ≥1 live `REQ-NN`. Aim for this so `specflo validate plan` passes first try.
-7. **Self-review** — coverage both ways, no placeholders, dependencies ordered and
+8. **Self-review** — coverage both ways, no placeholders, dependencies ordered and
    acyclic, ≤~5 files per task, every task has acceptance + verification.
-8. **Readiness + phase boundary** — get an explicit user **"ready?"**, then
+9. **Readiness + phase boundary** — get an explicit user **"ready?"**, then
    `specflo validate plan` → fix issues + address warnings → re-validate. Then
    **pause at the boundary, don't auto-advance**: the plan is complete and
    validated, the **checkpoint is saved** (the project's `checkpoint.md`; resume any

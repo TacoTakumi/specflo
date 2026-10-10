@@ -40,8 +40,7 @@ def test_skill_has_fan_out_capable_decomposition_rules():
     rules = text.split("Decomposition rules", 1)[1].split("\n## ", 1)[0]
     low = rules.lower()
     assert "files" in low                                    # list every file edited
-    assert "share a file" in low or "same file" in low       # edge between sharers
-    assert "validate plan" in low                            # the warning names the pair
+    assert "share a file" in low                             # sharing is no edge
     assert "merge task" in low                               # parallel producers + one merge
     assert "contract" in low                                 # contract-first ordering
     assert "--needs" in rules and "pool add" in rules        # hardware / shared envs
@@ -70,3 +69,34 @@ def test_skill_directs_corrections_to_task_edit_and_task_note():
 def test_skill_forbids_hand_editing_plan_md():
     text = SKILL.read_text().lower()
     assert "never hand-edit `plan.md`" in text or "never hand-edit plan.md" in text
+
+
+def _decomposition_rules():
+    return SKILL.read_text().split("Decomposition rules", 1)[1].split("\n## ", 1)[0]
+
+
+def test_skill_finds_every_file_before_tasks_are_recorded():
+    text = SKILL.read_text()
+    step = text.split("**Find every file first**", 1)[1].split("**Capture inline**", 1)[0]
+    low = step.lower()
+    assert "grep" in low and "--files" in step
+    assert "shared test helpers" in low
+    assert "pin a fixed" in low
+    assert text.index("**Find every file first**") < text.index("specflo task add` with")
+
+
+def test_skill_puts_a_pool_task_rig_state_in_its_scope():
+    low = _decomposition_rules().lower()
+    assert "--scope" in low and "rig state" in low
+
+
+def test_skill_says_an_edge_means_a_result_not_a_shared_file():
+    low = _decomposition_rules().lower()
+    assert "needs another" in low and "result" in low
+    assert "never means that two tasks share a file" in low
+
+
+def test_skill_drops_the_shared_files_edge_rule():
+    text = SKILL.read_text()
+    assert "Shared files get an edge" not in text
+    assert "warns naming the pair" not in text
