@@ -30,6 +30,7 @@ from . import graph as graph_module
 from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
+from . import worktree as worktree_module
 from . import workflow
 from .agent import cli as agent_cli
 from .agent.cli import agent_app
@@ -2300,17 +2301,55 @@ def task_start(
     force: bool = typer.Option(
         False, "--force", help="Start it even though a task it depends on is not done."
     ),
+    in_worktree: bool = typer.Option(
+        False, "--worktree",
+        help="Give the task its own git worktree and branch, cut from HEAD.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mark a task in_progress."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
+    if not in_worktree:
+        try:
+            task = svc.start_task(slug, task_id, force=force)
+        except SpecfloError as exc:
+            raise _die(str(exc))
+        _refresh_checkpoint(svc, slug)
+        _report_transition(task, json_output)
+        return
     try:
-        task = svc.start_task(slug, task_id, force=force)
+        current = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
+        if current is None:
+            raise SpecfloError(f"No task {task_id}.")
+        if current.progress == "in_progress":
+            raise SpecfloError(
+                f"{task_id} is in progress already; a worktree is made only when a"
+                " task starts."
+            )
+        created = worktree_module.create(root, slug, task_id)
     except SpecfloError as exc:
         raise _die(str(exc))
+    where = worktree_module.relative(root, created.path)
+    try:
+        task = svc.start_task(
+            slug, task_id, force=force, worktree=where,
+            base=f"{created.base_branch} {created.base_sha}",
+        )
+    except SpecfloError as exc:
+        # The task did not start, so its worktree goes too.
+        worktree_module.remove(root, created.path, created.branch)
+        raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
-    _report_transition(task, json_output)
+    if json_output:
+        typer.echo(json.dumps({
+            "id": task.id, "progress": task.progress, "blocked": task.blocked,
+            "worktree": where, "branch": created.branch,
+            "base_branch": created.base_branch, "base_sha": created.base_sha,
+        }))
+    else:
+        typer.echo(f"{task.id} -> {task.progress}")
+        typer.echo(f"Worktree: {where} (branch {created.branch})")
 
 
 @task_app.command("done", epilog="Example: specflo task done T-01")

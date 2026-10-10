@@ -152,6 +152,8 @@ class Task:
     notes: list[dict] = field(default_factory=list)
     notes_malformed: list[str] = field(default_factory=list)
     commit: str | None = None
+    worktree: str | None = None
+    base: str | None = None
 
     @property
     def file_list(self) -> list[str]:
@@ -286,6 +288,8 @@ def _parse_tasks(doc: str) -> list[Task]:
             notes=notes,
             notes_malformed=notes_malformed,
             commit=fields.get("Commit"),
+            worktree=fields.get("Worktree"),
+            base=fields.get("Base"),
         ))
     return tasks
 
@@ -1333,6 +1337,7 @@ def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     progress: str, reason: str | None = None, note: str | None = None,
     today: str | None = None, require_deps: bool = False, commit: str | None = None,
+    worktree: str | None = None, base: str | None = None,
 ) -> Task:
     if progress not in PROGRESS_STATES:
         raise SpecfloError(f"Unknown progress state {progress!r}.")
@@ -1354,6 +1359,11 @@ def _set_progress(
                 f"{task_id} must be in_progress before it can be done "
                 f"(run `specflo task start {task_id}` first)."
             )
+        if worktree is not None and task.progress == "in_progress":
+            raise SpecfloError(
+                f"{task_id} is in progress already; a worktree is made only when a"
+                " task starts."
+            )
         if require_deps:
             # The same rule as the ready set: a dependency is met only by an
             # active task that is done.
@@ -1372,22 +1382,35 @@ def _set_progress(
             doc = markdown.clear_entry_field(doc, task_id, "Blocked")
         if commit is not None:
             doc = markdown.set_entry_field(doc, task_id, "Commit", commit)
+        if worktree is not None:
+            doc = markdown.set_entry_field(doc, task_id, "Worktree", worktree)
+            doc = markdown.set_entry_field(doc, task_id, "Base", base or "")
         if note_value is not None:
             doc = markdown.append_entry_field(doc, task_id, NOTE_FIELD, note_value)
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     if commit is not None:
         task.commit = commit
+    if worktree is not None:
+        task.worktree, task.base = worktree, base
     task.progress = progress
     task.blocked = reason if progress == "blocked" else None
     return task
 
 
-def start_task(root, cfg, slug, task_id, force=False, today=None) -> Task:
+def start_task(
+    root, cfg, slug, task_id, force=False, worktree=None, base=None, today=None
+) -> Task:
     """Mark a task in_progress; refused while a task it depends on is not done,
-    unless ``force``."""
+    unless ``force``.
+
+    ``worktree`` (the worktree's path from the checkout root) and ``base``
+    (``<branch> <sha>``) record that the task runs in its own worktree; a
+    task in progress already is then refused.
+    """
     return _set_progress(
-        root, cfg, slug, task_id, "in_progress", today=today, require_deps=not force
+        root, cfg, slug, task_id, "in_progress", today=today, require_deps=not force,
+        worktree=worktree, base=base,
     )
 
 

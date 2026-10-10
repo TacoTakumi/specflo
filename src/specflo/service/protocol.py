@@ -278,8 +278,12 @@ class ProjectService(Protocol):
         """Append a dated note to a task."""
         ...
 
-    def start_task(self, slug: str, task_id: str, *, force: bool = False) -> Task:
-        """Mark a task in progress; refused while a dependency is not done, unless ``force``."""
+    def start_task(
+        self, slug: str, task_id: str, *, force: bool = False,
+        worktree: str | None = None, base: str | None = None,
+    ) -> Task:
+        """Mark a task in progress; refused while a dependency is not done, unless
+        ``force``. ``worktree`` and ``base`` record the task's own worktree."""
         ...
 
     def done_task(
