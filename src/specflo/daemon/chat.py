@@ -10,7 +10,9 @@ ends on its own when the project no longer maps to its agent.
 What lands in the log, per frame the extension mirrors or broadcasts:
 
 - a ``message_start`` with a user message is one user entry, its author the
-  seat the text names itself with, the developer's pane when it names none;
+  user the text names itself with (the name from 'rob (developer): '), an
+  old bare seat or the daemon as they stand, the developer's pane when it
+  names none;
 - ``message_update`` text deltas assemble one assistant message that lands
   as one entry at ``message_end``;
 - ``agent_start``, ``agent_settled``, ``ui_prompt_start`` and
@@ -65,8 +67,9 @@ def message_text(message: object) -> str:
 def post_message(root: Path, slug: str, author: str, text: str) -> None:
     """Deliver ``text`` from ``author`` to the project's agent as a prompt.
 
-    The text goes out prefixed with the author's label, so the session
-    reports it back with its seat and the pump attributes it. Nothing is
+    The text goes out prefixed with the author's label, ``author`` as
+    :func:`chatlog.user_author` writes it for a signed-in user, so the
+    session reports it back with its author and the pump attributes it. Nothing is
     written to the log here: the entry lands when the agent reports the
     message, like a line typed in the pane. An agent mid-run gets the
     message with steering behaviour; the call returns once the agent has

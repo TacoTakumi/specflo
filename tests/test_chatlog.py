@@ -169,3 +169,42 @@ def test_concurrent_appends_mint_distinct_sequential_ids(root):
 def test_open_log_hands_back_the_same_log_for_the_same_project(root):
     assert chatlog.open_log(root, "login-fix") is chatlog.open_log(root, "login-fix")
     assert chatlog.open_log(root, "login-fix") is not chatlog.open_log(root, "dark-mode")
+
+
+# --- labels: who a user line says it is from ---------------------------------
+
+
+def test_a_user_label_names_the_user_and_the_role_and_splits_back_to_the_name():
+    author = chatlog.user_author("rob", "developer")
+    assert author == "rob (developer)"
+    assert chatlog.label(author, "hello") == "rob (developer): hello"
+    assert chatlog.split_label("rob (developer): hello", "developer") == ("rob", "hello")
+    assert chatlog.split_label("ann.lee@corp (requester): a: b", "developer") == ("ann.lee@corp", "a: b")
+    assert chatlog.split_label("ci-1 (agent): done", "developer") == ("ci-1", "done")
+
+
+def test_the_old_bare_labels_and_the_daemon_still_split_as_before():
+    assert chatlog.split_label("requester: hi", "developer") == ("requester", "hi")
+    assert chatlog.split_label("developer: hi", "requester") == ("developer", "hi")
+    assert chatlog.split_label("daemon: hi: there", "developer") == ("daemon", "hi: there")
+
+
+def test_a_line_with_no_label_takes_the_default():
+    assert chatlog.split_label("just typed in the pane", "developer") == ("developer", "just typed in the pane")
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "note (draft): x",  # not a known role
+        "Rob (developer): x",  # not a user name: names are lower case
+        "-rob (developer): x",  # a name starts with a letter or digit
+        "rob (developer):x",  # no space after the colon
+        "rob  (developer): x",  # two spaces
+        "my notes say rob (developer): x",  # the label opens the line or not at all
+        "a" * 65 + " (developer): x",  # a name is 64 characters at most
+        "agent: hi",  # a bare label only for a seat or the daemon
+    ],
+)
+def test_text_that_only_looks_like_a_label_is_not_split(text):
+    assert chatlog.split_label(text, "developer") == ("developer", text)

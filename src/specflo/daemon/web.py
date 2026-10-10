@@ -940,17 +940,20 @@ async def start_agent(
 
 @pages.post(CHAT_PATH, include_in_schema=False)
 async def post_message(
-    request: Request, slug: str, identity: str = Depends(current_session)
+    request: Request, slug: str, user: User = Depends(current_user)
 ) -> Response:
-    """Send the signed-in identity's message to the project's agent.
+    """Send the signed-in user's message to the project's agent.
 
     The form echoes the session secret like every mutating form. The text
-    goes to the agent prefixed with the identity's label; an agent mid-run
+    goes to the agent prefixed with the user's name and role, as
+    'rob (developer): ', so the agent knows the seat and the transcript
+    shows the name; an agent mid-run
     takes it as a steer, and the post returns once the agent has the
     prompt, not when the run settles. A project past the phase that has an
     agent is a 409 page; an agent that does not serve, or refuses, is a
     502 page; a blank message is a 400 page and reaches no socket.
     """
+    identity = user.role
     fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
@@ -983,7 +986,7 @@ async def post_message(
             "error.html", status_code=400, identity=identity, message="The message is empty.",
         )
     try:
-        await run_in_threadpool(chat.post_message, root, slug, identity, text)
+        await run_in_threadpool(chat.post_message, root, slug, chatlog.user_author(user.name, user.role), text)
     except seat.AgentMessageError as exc:
         _log.warning("post to %s: %s", slug, exc)
         return render("error.html", status_code=502, identity=identity, message=exc.public)

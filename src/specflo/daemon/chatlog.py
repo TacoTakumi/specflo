@@ -20,16 +20,26 @@ from __future__ import annotations
 import dataclasses
 import datetime
 import json
+import re
 import threading
 from pathlib import Path
 
 from ..projects import validate_slug
+from .auth import IDENTITIES, USER_NAME_PATTERN
 
 CHAT_DIRNAME = "chat"
-# The author a user line names itself with on the wire: a seat, or the
-# daemon for the prompts it sends on its own account.
+# The author a user line names itself with on the wire: a signed-in user as
+# '<name> (<role>)', or the daemon for the prompts it sends on its own
+# account. Lines logged before users had names carry a bare seat instead.
 DAEMON_AUTHOR = "daemon"
 LABEL_SEPARATOR = ": "
+BARE_AUTHORS = ("requester", "developer", DAEMON_AUTHOR)
+# A user label opens the line: a user name, one space, a known role in
+# brackets, then the separator. Anything else, such as 'note (draft): ', is
+# the text itself.
+_USER_LABEL = re.compile(
+    rf"({USER_NAME_PATTERN.pattern}) \(({'|'.join(map(re.escape, IDENTITIES))})\){re.escape(LABEL_SEPARATOR)}"
+)
 # Every field an entry carries, in the order a line writes them.
 ENTRY_FIELDS = ("id", "time", "kind", "author", "text")
 
@@ -45,13 +55,29 @@ class Entry:
     text: str
 
 
+def user_author(name: str, role: str) -> str:
+    """How a signed-in user names itself on a line: the name, then the role in brackets.
+
+    The agent reads the role to know which seat is talking; the transcript
+    shows the name.
+    """
+    return f"{name} ({role})"
+
+
 def label(author: str, text: str) -> str:
     """``text`` as ``author`` sends it: prefixed with the author's label."""
     return f"{author}{LABEL_SEPARATOR}{text}"
 
 
-def split_label(text: str, default: str, known: tuple[str, ...] = ("requester", "developer", DAEMON_AUTHOR)) -> tuple[str, str]:
-    """The author a user line names itself with, and the rest; ``default`` when it names none."""
+def split_label(text: str, default: str, known: tuple[str, ...] = BARE_AUTHORS) -> tuple[str, str]:
+    """The author a user line names itself with, and the rest; ``default`` when it names none.
+
+    A user label gives the user's name, not the role; a bare seat or the
+    daemon gives itself.
+    """
+    match = _USER_LABEL.match(text)
+    if match:
+        return match.group(1), text[match.end():]
     for author in known:
         prefix = author + LABEL_SEPARATOR
         if text.startswith(prefix):

@@ -152,6 +152,17 @@ def test_a_user_message_logs_one_entry_with_the_seat_it_names(root, agent, pump)
     ]
 
 
+def test_a_user_message_labelled_with_a_user_name_logs_the_name(root, agent, pump):
+    agent.emit(user_message("ann (requester): hi"))
+    agent.emit(user_message("note (draft): not a label"))
+
+    assert wait_until(lambda: len(entries(root)) == 2)
+    assert entries(root) == [
+        ("user", "ann", "hi"),
+        ("user", "developer", "note (draft): not a label"),
+    ]
+
+
 def test_text_deltas_assemble_into_one_assistant_entry_at_message_end(root, agent, pump):
     message = {"role": "assistant", "content": [{"type": "text", "text": "Hello there"}]}
     agent.emit({"type": "message_start", "message": {"role": "assistant", "content": []}})

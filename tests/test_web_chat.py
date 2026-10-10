@@ -202,8 +202,8 @@ def test_a_requester_post_to_an_idle_agent_is_a_prompt_with_the_requester_label(
     assert response.status_code == 303, response.text
     assert response.headers["location"] == web.PROJECT_PATH.format(slug=slug)
     [prompt] = idle_agent.received()
-    assert prompt["message"] == chatlog.label(seat.REQUESTER_SEAT, "Hello, I need the login fixed")
-    assert prompt["message"].startswith(seat.REQUESTER_SEAT + chatlog.LABEL_SEPARATOR)
+    # The user signed in as the requester fixture is named after its role.
+    assert prompt["message"] == "requester (requester): Hello, I need the login fixed"
     assert "streamingBehavior" not in prompt
 
 
@@ -215,7 +215,7 @@ def test_a_developer_post_while_the_agent_works_is_a_steer_that_returns_before_s
     assert response.status_code == 303, response.text
     assert elapsed < POST_BOUND
     [prompt] = working_agent.received()
-    assert prompt["message"] == chatlog.label(seat.DEVELOPER_SEAT, "Skip the landscape scan")
+    assert prompt["message"] == chatlog.label(chatlog.user_author("developer", seat.DEVELOPER_SEAT), "Skip the landscape scan")
     assert prompt["streamingBehavior"] == "steer"
     # The fake never settles: the post came back with the run still on.
     assert working_agent.state == "working"
@@ -233,7 +233,30 @@ def test_a_prompt_refused_as_busy_goes_again_as_a_steer(requester, slug, idle_ag
     plain, steered = idle_agent.received()
     assert "streamingBehavior" not in plain
     assert steered["streamingBehavior"] == "steer"
-    assert steered["message"] == plain["message"] == chatlog.label(seat.REQUESTER_SEAT, "one more thing")
+    assert steered["message"] == plain["message"] == chatlog.label(chatlog.user_author("requester", seat.REQUESTER_SEAT), "one more thing")
+
+
+def test_a_named_user_posts_under_the_name_and_role_and_the_transcript_shows_the_name(root, slug, idle_agent):
+    rob = TestClient(create_app(root), follow_redirects=False)
+    web_sign_in(rob, root, seat.DEVELOPER_SEAT, "rob")
+
+    response = post(rob, slug, "hello")
+
+    assert response.status_code == 303, response.text
+    [prompt] = idle_agent.received()
+    assert prompt["message"] == "rob (developer): hello"
+    # The session reports the message back; the pump logs it under the name.
+    pump = chat.Pump(root, slug, seat.agent_name(slug))
+    pump.handle({"type": "message_start", "message": {"role": "user", "content": prompt["message"]}})
+    pump.handle({"type": "message_start", "message": {"role": "user", "content": "typed in the pane"}})
+    log(root, slug).append(chat.USER_KIND, seat.REQUESTER_SEAT, "an entry from before names")
+
+    _, shown = transcript(rob.get(web.PROJECT_PATH.format(slug=slug)).text)
+    assert [(label, text) for _, label, _, text in shown] == [
+        ("rob", "hello"),
+        (seat.DEVELOPER_SEAT, "typed in the pane"),
+        (seat.REQUESTER_SEAT, "an entry from before names"),
+    ]
 
 
 def test_the_post_runs_its_socket_calls_off_the_event_loop(requester, root, slug, monkeypatch):
@@ -259,7 +282,7 @@ def test_the_post_runs_its_socket_calls_off_the_event_loop(requester, root, slug
 
     assert response.status_code == 303, response.text
     assert probed == [slug]
-    assert sent == [(seat.agent_name(slug), chatlog.label(seat.REQUESTER_SEAT, "hello"))]
+    assert sent == [(seat.agent_name(slug), chatlog.label(chatlog.user_author("requester", seat.REQUESTER_SEAT), "hello"))]
 
 
 def test_the_page_offers_the_form_with_the_session_secret_to_a_live_agent(requester, slug, idle_agent):
