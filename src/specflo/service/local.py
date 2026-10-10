@@ -426,8 +426,10 @@ class LocalProjectService:
     def start_task(self, slug: str, task_id: str, *, force: bool = False) -> Task:
         return plan.start_task(self.root, self.cfg, slug, task_id, force=force)
 
-    def done_task(self, slug: str, task_id: str, *, note: str | None = None) -> Task:
-        return plan.done_task(self.root, self.cfg, slug, task_id, note=note)
+    def done_task(
+        self, slug: str, task_id: str, *, note: str | None = None, commit: str | None = None
+    ) -> Task:
+        return plan.done_task(self.root, self.cfg, slug, task_id, note=note, commit=commit)
 
     def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:
         return plan.briefs_completed_by(self.root, self.cfg, slug, task_id)

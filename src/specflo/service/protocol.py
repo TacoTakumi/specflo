@@ -282,8 +282,10 @@ class ProjectService(Protocol):
         """Mark a task in progress; refused while a dependency is not done, unless ``force``."""
         ...
 
-    def done_task(self, slug: str, task_id: str, *, note: str | None = None) -> Task:
-        """Mark a task done, recording ``note`` in the same write."""
+    def done_task(
+        self, slug: str, task_id: str, *, note: str | None = None, commit: str | None = None
+    ) -> Task:
+        """Mark a task done, recording ``note`` and the full sha ``commit`` in the same write."""
         ...
 
     def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:

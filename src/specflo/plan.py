@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import subprocess
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -150,6 +151,7 @@ class Task:
     fixes: list[str] = field(default_factory=list)
     notes: list[dict] = field(default_factory=list)
     notes_malformed: list[str] = field(default_factory=list)
+    commit: str | None = None
 
     @property
     def file_list(self) -> list[str]:
@@ -283,6 +285,7 @@ def _parse_tasks(doc: str) -> list[Task]:
             milestone=fields.get("Milestone"),
             notes=notes,
             notes_malformed=notes_malformed,
+            commit=fields.get("Commit"),
         ))
     return tasks
 
@@ -1364,7 +1367,7 @@ def add_note(
 def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     progress: str, reason: str | None = None, note: str | None = None,
-    today: str | None = None, require_deps: bool = False,
+    today: str | None = None, require_deps: bool = False, commit: str | None = None,
 ) -> Task:
     if progress not in PROGRESS_STATES:
         raise SpecfloError(f"Unknown progress state {progress!r}.")
@@ -1402,10 +1405,14 @@ def _set_progress(
             doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
         else:
             doc = markdown.clear_entry_field(doc, task_id, "Blocked")
+        if commit is not None:
+            doc = markdown.set_entry_field(doc, task_id, "Commit", commit)
         if note_value is not None:
             doc = markdown.append_entry_field(doc, task_id, NOTE_FIELD, note_value)
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
+    if commit is not None:
+        task.commit = commit
     task.progress = progress
     task.blocked = reason if progress == "blocked" else None
     return task
@@ -1419,8 +1426,31 @@ def start_task(root, cfg, slug, task_id, force=False, today=None) -> Task:
     )
 
 
-def done_task(root, cfg, slug, task_id, note=None, today=None) -> Task:
-    return _set_progress(root, cfg, slug, task_id, "done", note=note, today=today)
+def done_task(root, cfg, slug, task_id, note=None, commit=None, today=None) -> Task:
+    """Mark a task done; ``commit``, a full sha, is recorded in its Commit field."""
+    if commit is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
+        raise SpecfloError(f"{commit!r} is not a full commit sha.")
+    return _set_progress(
+        root, cfg, slug, task_id, "done", note=note, commit=commit, today=today
+    )
+
+
+def resolve_commit(root: Path, ref: str) -> str:
+    """The full sha of the commit ``ref`` names in the git checkout at ``root``."""
+    sha = ""
+    if ref and not ref.startswith("-"):
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"],
+                cwd=root, capture_output=True, text=True, timeout=30,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            result = None
+        if result is not None and result.returncode == 0:
+            sha = result.stdout.strip()
+    if not sha:
+        raise SpecfloError(f"{ref!r} does not name a commit in this checkout.")
+    return sha
 
 
 def block_task(root, cfg, slug, task_id, reason=None, today=None) -> Task:

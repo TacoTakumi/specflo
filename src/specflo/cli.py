@@ -2320,11 +2320,20 @@ def task_done(
         help="A follow-up this task settles; closed with the task as its Closed by"
              " (repeatable).",
     ),
+    commit: str = typer.Option(
+        None, "--commit", metavar="<sha>",
+        help="The commit that carries the task; its full sha is recorded on the task.",
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mark a task done."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     closes = list(dict.fromkeys(closes or []))
+    if commit is not None:
+        try:
+            commit = plan.resolve_commit(root, commit)
+        except SpecfloError as exc:
+            raise _die(str(exc))
     if closes:
         _require_checkout_project(root, slug)
         try:
@@ -2335,7 +2344,7 @@ def task_done(
             raise _die(str(exc))
     svc = _service(root, cfg)
     try:
-        task = svc.done_task(slug, task_id, note=note)
+        task = svc.done_task(slug, task_id, note=note, commit=commit)
     except SpecfloError as exc:
         raise _die(str(exc))
     closed = []
