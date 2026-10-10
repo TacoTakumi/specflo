@@ -2356,6 +2356,47 @@ def task_start(
             typer.echo(f"Not found, not copied: {name} (listed in .specflo/worktree-include)")
 
 
+@task_app.command("land", epilog="Example: specflo task land T-01")
+def task_land(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to land."),
+    message: str = typer.Option(
+        None, "--message", metavar="<text>",
+        help="The commit message (default: the task title).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Land a worktree task's changes on its base branch as one commit."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        task = next((t for t in svc.list_tasks(slug) if t.id == task_id), None)
+        if task is None:
+            raise SpecfloError(f"No task {task_id}.")
+        if task.progress != "in_progress":
+            raise SpecfloError(f"{task_id} is {task.progress}; only a task in progress lands.")
+        if not task.worktree or not task.base or len(task.base.split()) != 2:
+            raise SpecfloError(
+                f"{task_id} runs in the shared tree, not a worktree; there is nothing"
+                " to land. Commit its files and run `specflo task done`."
+            )
+        base_branch, base_sha = task.base.split()
+        landed = worktree_module.land(
+            root, root / task.worktree, worktree_module.task_branch(slug, task_id),
+            base_branch, base_sha, message or task.text or task_id,
+        )
+        svc.record_commit(slug, task_id, landed.sha)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    if json_output:
+        typer.echo(json.dumps({
+            "id": task_id, "commit": landed.sha, "branch": base_branch, "files": landed.files,
+        }))
+    else:
+        typer.echo(f"Landed {task_id} on {base_branch} as {landed.sha[:12]}.")
+        typer.echo(f"Run the task's Verify, then `specflo task done {task_id}`.")
+
+
 @task_app.command("done", epilog="Example: specflo task done T-01")
 def task_done(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to mark done."),

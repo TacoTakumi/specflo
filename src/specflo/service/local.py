@@ -436,6 +436,9 @@ class LocalProjectService:
     ) -> Task:
         return plan.done_task(self.root, self.cfg, slug, task_id, note=note, commit=commit)
 
+    def record_commit(self, slug: str, task_id: str, commit: str) -> Task:
+        return plan.record_commit(self.root, self.cfg, slug, task_id, commit)
+
     def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:
         return plan.briefs_completed_by(self.root, self.cfg, slug, task_id)
 

@@ -12,6 +12,7 @@ hosted project gets no worktree.
 from __future__ import annotations
 
 import contextlib
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass, field
@@ -164,3 +165,61 @@ def remove(root: Path, path: Path, branch: str) -> None:
     git(root, "worktree", "prune")
     if _run(root, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").returncode == 0:
         git(root, "branch", "-D", branch)
+
+
+@dataclass
+class Landed:
+    """A landed task: its one commit on the base branch and the files it changed."""
+
+    sha: str
+    files: list[str]
+
+
+def snapshot_tree(path: Path) -> str:
+    """The tree of everything the worktree at ``path`` holds, committed or not.
+
+    Built in a scratch index, so the worktree's own index, branch and files
+    are left as they are. Ignored files stay out, as they would from a commit.
+    """
+    index = Path(git(path, "rev-parse", "--path-format=absolute", "--git-path",
+                     "specflo-land-index"))
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    try:
+        git(path, "read-tree", "HEAD", env=env)
+        git(path, "add", "-A", env=env)
+        return git(path, "write-tree", env=env)
+    finally:
+        index.unlink(missing_ok=True)
+
+
+def land(
+    root: Path, path: Path, branch: str, base_branch: str, base_sha: str, message: str,
+) -> Landed:
+    """Land the task worktree at ``path`` on ``base_branch`` as one commit.
+
+    What the worktree holds, its branch's commits and its uncommitted
+    changes alike, becomes one commit on ``base_sha``. That commit is
+    replayed onto the base branch's tip with ``git merge-tree``, which
+    touches no worktree, and the checkout at ``root`` is fast-forwarded to
+    it. The worktree and its branch are removed last. Refused, with nothing
+    changed, when the worktree holds no change.
+    """
+    root = Path(root)
+    current = git(root, "rev-parse", "--abbrev-ref", "HEAD")
+    if current != base_branch:
+        raise SpecfloError(
+            f"The checkout is on {current}, not {base_branch}, the branch the task"
+            f" lands on. Check out {base_branch} first."
+        )
+    tree = snapshot_tree(path)
+    if tree == git(root, "rev-parse", f"{base_sha}^{{tree}}"):
+        raise SpecfloError(f"{relative(root, path)} holds no change to land.")
+    tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
+    if tip != base_sha:
+        squashed = git(root, "commit-tree", tree, "-p", base_sha, "-m", message)
+        tree = git(root, "merge-tree", "--write-tree", "--merge-base", base_sha, tip, squashed)
+    sha = git(root, "commit-tree", tree.splitlines()[0], "-p", tip, "-m", message)
+    files = git(root, "diff", "--name-only", tip, sha).splitlines()
+    git(root, "merge", "--ff-only", "-q", sha)
+    remove(root, path, branch)
+    return Landed(sha, files)

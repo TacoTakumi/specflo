@@ -198,6 +198,8 @@ def _drive_every_operation(service, projects_root, reported=None):
     assert svc.block_task(slug, first.id, reason="waiting").blocked == "waiting"
     assert svc.reopen_task(slug, first.id, note="unblocked").progress == "pending"
     svc.start_task(slug, first.id)
+    sha = "0123456789abcdef0123456789abcdef01234567"
+    assert svc.record_commit(slug, first.id, sha).commit == sha
     assert svc.done_task(slug, first.id, note="shipped").progress == "done"
     replacement = svc.add_task(
         slug, "Polish help again", "help is tidy", "uv run pytest", [requirement.id],

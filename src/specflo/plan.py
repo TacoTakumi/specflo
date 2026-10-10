@@ -1414,13 +1414,38 @@ def start_task(
     )
 
 
+_FULL_SHA_RE = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
+
+
 def done_task(root, cfg, slug, task_id, note=None, commit=None, today=None) -> Task:
     """Mark a task done; ``commit``, a full sha, is recorded in its Commit field."""
-    if commit is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", commit):
+    if commit is not None and not _FULL_SHA_RE.fullmatch(commit):
         raise SpecfloError(f"{commit!r} is not a full commit sha.")
     return _set_progress(
         root, cfg, slug, task_id, "done", note=note, commit=commit, today=today
     )
+
+
+def record_commit(root, cfg, slug, task_id, commit, today=None) -> Task:
+    """Record the full sha ``commit`` in an in-progress task's Commit field,
+    leaving its progress as it is."""
+    if not _FULL_SHA_RE.fullmatch(commit or ""):
+        raise SpecfloError(f"{commit!r} is not a full commit sha.")
+    path = plan_path(root, cfg, slug)
+    if not path.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    with locked(lock_path_for(root, slug, path)):
+        doc = path.read_text()
+        task = next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+        if task is None:
+            raise SpecfloError(f"No task {task_id}.")
+        if task.progress != "in_progress":
+            raise SpecfloError(f"{task_id} is not in progress.")
+        doc = markdown.set_entry_field(doc, task_id, "Commit", commit)
+        doc = markdown.bump_updated(doc, today)
+        path.write_text(doc)
+    task.commit = commit
+    return task
 
 
 def resolve_commit(root: Path, ref: str) -> str:

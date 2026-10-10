@@ -292,6 +292,10 @@ class ProjectService(Protocol):
         """Mark a task done, recording ``note`` and the full sha ``commit`` in the same write."""
         ...
 
+    def record_commit(self, slug: str, task_id: str, commit: str) -> Task:
+        """Record the full sha ``commit`` on an in-progress task; it stays in progress."""
+        ...
+
     def briefs_completed_by(self, slug: str, task_id: str) -> list[str]:
         """The briefs ``task_id`` cites whose every active task is done."""
         ...
