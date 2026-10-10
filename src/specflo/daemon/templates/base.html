@@ -25,19 +25,8 @@
         <a href="{{ pool_path }}">Pool</a>
         <a href="{{ bench_path }}">Bench</a>
       </nav>
-      <span class="identity">signed in as <strong>{{ identity }}</strong></span>
-      {% endif %}
-      <form class="theme" method="post" action="{{ theme_path }}" aria-label="Theme">
-        <input type="hidden" name="next" value="{{ theme_next }}">
-        {% for value in themes %}
-        <button name="theme" value="{{ value }}" aria-pressed="{{ 'true' if value == theme else 'false' }}">{{ value | capitalize }}</button>
-        {% endfor %}
-      </form>
-      {% if identity %}
-      {# After the theme switch: the stylesheet places the switch right after the identity. #}
-      <a class="tokens" href="{{ user_path }}">My tokens</a>
-      {% if password_session %}
-      <a class="password" href="{{ user_path }}#password">Password</a>
+      {% if viewer %}
+      <a class="identity" href="{{ user_path }}">{{ viewer }}</a>
       {% endif %}
       <form class="signout" method="post" action="{{ signout_path }}">
         <input type="hidden" name="session" value="{{ session }}">

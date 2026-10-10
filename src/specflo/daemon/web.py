@@ -59,14 +59,14 @@ from . import seat
 from .products import Products
 from . import chat, chatlog
 from .routes import audit, project_lock
-from .store import Product, User, WorkItem, open_store
+from .store import Product, Session, User, WorkItem, open_store
 from .workitems import FULL_DEV_PATH, WorkItems
 
 HOME_PATH = "/"
 SIGNIN_PATH = "/signin"
 # Where the header's sign-out form posts; it needs a live session.
 SIGNOUT_PATH = "/signout"
-# Where the header's theme switch posts; like sign-in, it needs no session.
+# Where the user page's theme switch posts; like sign-in, it needs no session.
 THEME_PATH = "/theme"
 ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
@@ -402,10 +402,10 @@ class SessionCookieMiddleware:
         await self.app(scope, receive, send_with_cookie)
 
 
-# The theme the request's cookie chose and the path it asked for, as the
-# middleware below set them for this request. Every page reads them here, so
-# no route has to pass the request on to render().
-_page_theme: ContextVar[tuple[str, str]] = ContextVar("page_theme", default=(DEFAULT_THEME, HOME_PATH))
+# The theme the request's cookie chose, as the middleware below set it for
+# this request. Every page reads it here, so no route has to pass the
+# request on to render().
+_page_theme: ContextVar[str] = ContextVar("page_theme", default=DEFAULT_THEME)
 # The request's session cookie, which the header's sign-out form echoes on
 # every page, as the middleware below set it for this request.
 _page_session: ContextVar[str] = ContextVar("page_session", default="")
@@ -419,7 +419,7 @@ _page_state: ContextVar[dict | None] = ContextVar("page_state", default=None)
 
 
 class ThemeMiddleware:
-    """Set the request's theme, path and session cookie for render() before the route runs."""
+    """Set the request's theme and session cookie for render() before the route runs."""
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -428,17 +428,7 @@ class ThemeMiddleware:
         if scope["type"] == "http":
             conn = HTTPConnection(scope)
             theme = conn.cookies.get(THEME_COOKIE)
-            # The switch sends the browser back with a GET, so only a page
-            # that answers a GET is one to come back to; a page that answers
-            # a post (a refusal, an error) sends it home.
-            if scope["method"] in ("GET", "HEAD"):
-                raw = scope.get("raw_path")
-                path = raw.decode("latin-1") if raw else quote(scope["path"])
-                query = scope.get("query_string", b"").decode("latin-1")
-                back = f"{path}?{query}" if query else path
-            else:
-                back = HOME_PATH
-            _page_theme.set((theme if theme in THEMES else DEFAULT_THEME, back))
+            _page_theme.set(theme if theme in THEMES else DEFAULT_THEME)
             _page_session.set(conn.cookies.get(SESSION_COOKIE, ""))
             _page_state.set(scope.setdefault("state", {}))
             app = scope.get("app")
@@ -452,27 +442,36 @@ def render(template: str, status_code: int = 200, **context) -> HTMLResponse:
     The page depends on the theme cookie as well as the session one, so the
     response varies on Cookie. ``session`` is the session secret every
     mutating form echoes, the header's sign-out form among them; a route
-    that passes it passes the same cookie value. ``password_session`` tells
-    the header of a signed-in page whether to link the change password page.
+    that passes it passes the same cookie value. On a signed-in page
+    ``viewer`` is the name of the session's user, which the header links to
+    the user page, and ``password_session`` tells the user page whether to
+    show the change password form.
     """
-    theme, path = _page_theme.get()
+    theme = _page_theme.get()
     state = _page_state.get() or {}
     context.setdefault("session", state.get(SESSION_OPENED_STATE) or _page_session.get())
-    if context.get("identity") and "password_session" not in context:
+    if context.get("identity") and ("viewer" not in context or "password_session" not in context):
         root = _page_root.get()
-        context["password_session"] = (
-            root is not None and session_method(root, context["session"]) == PASSWORD_METHOD
+        session = _session(root, context["session"]) if root is not None else None
+        context.setdefault("viewer", session.user if session is not None else None)
+        context.setdefault(
+            "password_session", session is not None and session.method == PASSWORD_METHOD
         )
-    html = _templates.get_template(template).render(theme=theme, theme_next=path, **context)
+    html = _templates.get_template(template).render(theme=theme, **context)
     return HTMLResponse(html, status_code=status_code, headers={"Vary": "Cookie"})
+
+
+def _session(root: Path, secret: str) -> Session | None:
+    """The session ``secret`` stands for; None for no session."""
+    if not secret:
+        return None
+    with open_store(root) as store:
+        return store.get_session(hash_token(secret))
 
 
 def session_method(root: Path, secret: str) -> str | None:
     """How the session ``secret`` stands for was opened, 'password' or 'proxy'; None for no session."""
-    if not secret:
-        return None
-    with open_store(root) as store:
-        session = store.get_session(hash_token(secret))
+    session = _session(root, secret)
     return session.method if session is not None else None
 
 
@@ -556,7 +555,7 @@ async def set_theme(request: Request) -> Response:
     """Keep the posted theme in its cookie and go back to the page it came from.
 
     It changes no state of the daemon, only the browser's own preference, so
-    it asks for no session: the sign-in page carries the switch too.
+    it asks for no session.
     """
     form = parse_qs((await request.body()).decode(errors="replace"), keep_blank_values=True)
     theme = form.get("theme", [""])[0]

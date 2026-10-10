@@ -230,7 +230,7 @@ def test_an_unknown_product_is_a_page_of_the_ui_not_json(client, root):
 
     assert response.status_code == 404
     assert response.headers["content-type"].startswith("text/html")
-    assert "No product 'nothing'." in unescape(response.text) and "signed in as" in response.text
+    assert "No product 'nothing'." in unescape(response.text) and 'class="identity"' in response.text
 
 
 def test_a_bare_product_names_the_verb_that_sets_a_vision(client, root):

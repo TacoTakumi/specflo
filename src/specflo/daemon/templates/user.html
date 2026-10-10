@@ -6,7 +6,7 @@
   <h2>Theme</h2>
   <p>The theme this browser shows the daemon in. Auto follows the browser's colour scheme.</p>
   <form class="theme" method="post" action="{{ theme_path }}" aria-label="Theme">
-    <input type="hidden" name="next" value="{{ theme_next }}">
+    <input type="hidden" name="next" value="{{ user_path }}">
     {% for value in themes %}
     <button name="theme" value="{{ value }}" aria-pressed="{{ 'true' if value == theme else 'false' }}">{{ value | capitalize }}</button>
     {% endfor %}

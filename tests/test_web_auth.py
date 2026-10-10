@@ -138,7 +138,7 @@ def test_every_script_on_a_rendered_page_comes_from_the_assets_directory(client,
 
 
 @pytest.mark.parametrize("role", ("requester", "developer"))
-def test_signing_in_sets_a_session_cookie_and_the_pages_show_the_role(client, root, role):
+def test_signing_in_sets_a_session_cookie_and_the_pages_name_the_user(client, root, role):
     response = web_sign_in(client, root, role)
 
     assert response.headers["location"] == web.HOME_PATH
@@ -150,7 +150,9 @@ def test_signing_in_sets_a_session_cookie_and_the_pages_show_the_role(client, ro
     page = client.get(web.HOME_PATH)
 
     assert page.status_code == 200
-    assert "signed in as" in page.text and role in page.text
+    # the user is named after the role: the header names the user, never the role
+    assert f'<a class="identity" href="{web.USER_PATH}">{role}</a>' in page.text
+    assert "signed in as" not in page.text
     other = next(name for name in ("requester", "developer") if name != role)
     assert other not in page.text
 
@@ -290,7 +292,7 @@ def test_a_session_survives_a_restart(client, root):
     page = restarted.get(web.HOME_PATH)
 
     assert page.status_code == 200
-    assert "signed in as" in page.text
+    assert f'<a class="identity" href="{web.USER_PATH}">developer</a>' in page.text
 
 
 def test_a_page_acts_under_the_role_the_user_holds_now(client, root):

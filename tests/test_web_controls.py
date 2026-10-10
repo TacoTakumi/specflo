@@ -42,7 +42,7 @@ CONTROLS = {
     "change password": "password_path",
 }
 FRONT_DOOR = "signin_path"
-# The header's theme switch sets the browser's own cookie and nothing else;
+# The user page's theme switch sets the browser's own cookie and nothing else;
 # it posts with no session, as the sign-in form does.
 THEME_SWITCH = "theme_path"
 # htmx 4 aborts a request after this many milliseconds unless told otherwise.
@@ -72,7 +72,7 @@ def test_the_mutating_controls_are_exactly_the_listed_ones_and_the_front_door():
             seen.setdefault(names[0], []).append(path.name)
     assert set(seen) == set(CONTROLS) | {"sign in", "theme"}, seen
     assert seen["sign in"] == ["signin.html"]
-    assert seen["theme"] == ["base.html", "user.html"]
+    assert seen["theme"] == ["user.html"]
 
 
 def test_every_form_but_the_front_door_posts_and_carries_the_session_secret():

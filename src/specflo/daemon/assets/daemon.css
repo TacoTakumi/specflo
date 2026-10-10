@@ -11,14 +11,8 @@
 .site-nav { display: flex; gap: 4px; }
 .site-nav a { color: var(--fg); padding: 4px 8px; border-radius: var(--radius); }
 .site-nav a:hover { text-decoration: none; background: var(--bg-hover); }
-.identity { margin-left: auto; color: var(--fg-muted); }
-/* The switch keeps to the right edge; the identity, when shown, takes that place. */
-.site-header .theme { margin-left: auto; }
-.identity + .theme { margin-left: 0; }
-.identity strong { color: var(--fg); font-weight: 600; }
-@media (max-width: 767px) {
-  .identity { display: none; }
-}
+/* The user's name, a link to their page, keeps to the right edge before Sign out. */
+.identity { margin-left: auto; color: var(--fg); font-weight: 600; }
 
 /* ---------- Messages ---------- */
 .error { color: var(--danger); }
@@ -34,6 +28,10 @@ label { display: block; margin: 8px 0; }
 .transcript .author { color: var(--accent); font-weight: 600; }
 .transcript time { color: var(--fg-muted); }
 .transcript .line-state .text { color: var(--fg-muted); font-style: italic; }
+
+/* ---------- User page ---------- */
+/* The theme switch sits in the page, not the header: as wide as its buttons. */
+main .theme { width: max-content; margin-left: 0; }
 
 /* ---------- Page text ---------- */
 main section { margin-top: 28px; }

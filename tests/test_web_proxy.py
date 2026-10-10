@@ -89,7 +89,7 @@ def test_a_trusted_peer_naming_a_user_gets_the_page_as_that_user(root):
     response = client.get(web.HOME_PATH, headers={HEADER: " Rob "})
 
     assert response.status_code == 200
-    assert "signed in as <strong>developer</strong>" in response.text
+    assert f'<a class="identity" href="{web.USER_PATH}">rob</a>' in response.text
     cookie = response.headers["set-cookie"]
     assert cookie.startswith(f"{web.SESSION_COOKIE}=")
     assert "HttpOnly" in cookie and "SameSite=lax" in cookie and "Max-Age=43200" in cookie
@@ -208,7 +208,7 @@ def test_a_proxy_only_user_signs_in_through_the_proxy(root):
     response = client.get(web.HOME_PATH, headers={HEADER: "ann"})
 
     assert response.status_code == 200
-    assert "signed in as <strong>requester</strong>" in response.text
+    assert f'<a class="identity" href="{web.USER_PATH}">ann</a>' in response.text
     assert session_of(client, root).user == "ann"
 
 
@@ -347,7 +347,7 @@ def test_the_header_naming_another_user_replaces_the_live_session(root):
     response = client.get(web.HOME_PATH, headers={HEADER: "ann"})
 
     assert response.status_code == 200
-    assert "signed in as <strong>requester</strong>" in response.text
+    assert f'<a class="identity" href="{web.USER_PATH}">ann</a>' in response.text
     assert response.headers["set-cookie"].startswith(f"{web.SESSION_COOKIE}=")
     with open_store(root) as store:
         assert store.get_session(auth.hash_token(old)) is None

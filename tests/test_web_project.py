@@ -491,7 +491,7 @@ def test_a_refusal_while_rendering_any_page_is_a_500_page(client, root, monkeypa
     assert response.status_code == 500
     assert response.headers["content-type"].startswith("text/html")
     assert "the store is unreadable" in response.text
-    assert "signed in as" in response.text
+    assert 'class="identity"' in response.text
 
 
 @pytest.mark.parametrize("raw", ["%2e%2e", "a%2Fb", "Upper", ".hidden"])

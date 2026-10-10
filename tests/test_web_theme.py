@@ -1,10 +1,11 @@
 """The theme switch: auto, light or dark, kept in a cookie, no script.
 
-The header holds a form that posts the choice to the theme path. The daemon
-sets the theme cookie for a year and sends the browser back to the page it
-came from, when that is a path on this site, else home. The route needs no
-session, so the sign-in page carries the switch too. Every page depends on
-the cookie, so every page varies on it.
+The user page holds a form that posts the choice to the theme path; no
+other page has one. The daemon sets the theme cookie for a year and sends
+the browser back to the page it came from, when that is a path on this
+site, else home. The route needs no session. Every page, the sign-in page
+included, follows the cookie and varies on it; a browser with no choice
+gets dark.
 """
 
 import re
@@ -84,71 +85,76 @@ def test_a_signed_in_page_varies_on_the_cookie(client, root):
 # --- what the pages show -----------------------------------------------------------
 
 
+def named(html):
+    """The theme the page's <html> names."""
+    return re.search(r'<html lang="en" data-theme="([^"]+)">', html).group(1)
+
+
+def switches(html):
+    return re.findall(rf'<form class="theme" method="post" action="{web.THEME_PATH}"[^>]*>(.*?)</form>', html, re.S)
+
+
 def switch(html):
-    """The theme the page's <html> names and the pressed button of its switch."""
-    named = re.search(r'<html lang="en" data-theme="([^"]+)">', html).group(1)
-    form = re.search(rf'<form class="theme" method="post" action="{web.THEME_PATH}"[^>]*>(.*?)</form>', html, re.S).group(1)
+    """The theme the page's <html> names, the pressed button of its switch and every button."""
+    (form,) = switches(html)
     pressed = re.findall(r'<button name="theme" value="([^"]+)" aria-pressed="true">', form)
     buttons = re.findall(r'<button name="theme" value="([^"]+)"', form)
-    return named, pressed, buttons
+    return named(html), pressed, buttons
 
 
 @pytest.mark.parametrize("cookie, expected", [
     (None, "dark"), ("auto", "auto"), ("light", "light"), ("dark", "dark"), ("sepia", "dark"),
 ])
-def test_the_sign_in_page_follows_the_cookie(client, cookie, expected):
+def test_the_sign_in_page_follows_the_cookie_and_has_no_switch(client, cookie, expected):
     if cookie is not None:
         client.cookies.set(web.THEME_COOKIE, cookie)
 
-    named, pressed, buttons = switch(client.get(web.SIGNIN_PATH).text)
+    html = client.get(web.SIGNIN_PATH).text
 
-    assert named == expected
-    assert pressed == [expected]
+    assert named(html) == expected
+    assert switches(html) == []
+
+
+@pytest.mark.parametrize("cookie, expected", [(None, "dark"), ("dark", "dark"), ("bogus", "dark"), ("auto", "auto")])
+def test_the_user_page_switch_follows_the_cookie(client, root, cookie, expected):
+    sign_in(client, root)
+    if cookie is not None:
+        client.cookies.set(web.THEME_COOKIE, cookie)
+
+    named_theme, pressed, buttons = switch(client.get(web.USER_PATH).text)
+
+    assert (named_theme, pressed) == (expected, [expected])
     assert buttons == list(web.THEMES)
 
 
-@pytest.mark.parametrize("cookie, expected", [(None, "dark"), ("dark", "dark"), ("bogus", "dark")])
-def test_a_signed_in_page_follows_the_cookie(client, root, cookie, expected):
+@pytest.mark.parametrize("cookie, expected", [(None, "dark"), ("light", "light")])
+def test_a_signed_in_page_follows_the_cookie_and_has_no_switch(client, root, cookie, expected):
     sign_in(client, root)
     if cookie is not None:
         client.cookies.set(web.THEME_COOKIE, cookie)
 
-    named, pressed, _ = switch(client.get(web.HOME_PATH).text)
+    html = client.get(web.HOME_PATH).text
 
-    assert (named, pressed) == (expected, [expected])
-
-
-def test_the_switch_sends_the_browser_back_to_the_page_it_is_on(client, root):
-    sign_in(client, root)
-
-    html = client.get(web.HOME_PATH + "?a=1&b=2").text
-
-    assert '<input type="hidden" name="next" value="/?a=1&amp;b=2">' in html
+    assert named(html) == expected
+    assert switches(html) == []
 
 
 def switch_next(html):
-    return re.search(r'<input type="hidden" name="next" value="([^"]*)">', html).group(1)
+    return re.search(r'<input type="hidden" name="next" value="([^"]*)">', switches(html)[0]).group(1)
 
 
-@pytest.mark.parametrize("path", [
-    web.TAKE_PATH.format(slug="nothing"),
-    web.CHAT_PATH.format(slug="nothing"),
-    web.START_AGENT_PATH.format(slug="nothing"),
-    web.START_PROJECT_PATH.format(slug="nothing", item_id=1),
-])
-def test_a_page_that_answers_a_post_sends_the_switch_home(client, root, path):
-    # A post without the session secret is refused with a page; a GET of the
-    # posted path would not be that page, or no page at all.
+def test_the_switch_sends_the_browser_back_to_the_user_page(client, root):
     sign_in(client, root)
 
-    response = client.post(path, data={})
-
-    assert response.status_code == 403
-    assert switch_next(response.text) == web.HOME_PATH
+    assert switch_next(client.get(web.USER_PATH + "?a=1").text) == web.USER_PATH
 
 
-def test_a_refused_sign_in_post_sends_the_switch_home(client):
-    response = client.post(web.SIGNIN_PATH, data={"identity": "developer", "token": "wrong"})
+def test_the_switch_on_the_page_a_post_answers_with_goes_back_to_the_user_page(client, root):
+    sign_in(client, root)
 
-    assert response.status_code == 400
-    assert switch_next(response.text) == web.HOME_PATH
+    response = client.post(
+        web.TOKENS_PATH, data={"session": client.cookies[web.SESSION_COOKIE], "name": "laptop"},
+    )
+
+    assert response.status_code == 200
+    assert switch_next(response.text) == web.USER_PATH

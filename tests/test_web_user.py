@@ -143,3 +143,13 @@ def test_a_browser_with_no_session_is_sent_to_sign_in(app, path):
 
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+def test_the_header_names_the_user_not_the_role_and_links_to_the_page(app, root):
+    client = signed_in(app, root, "alice", "developer")
+
+    html = client.get(web.HOME_PATH).text
+
+    header = re.search(r'<header class="site-header">(.*?)</header>', html, re.S).group(1)
+    assert f'<a class="identity" href="{web.USER_PATH}">alice</a>' in header
+    assert "developer" not in header
