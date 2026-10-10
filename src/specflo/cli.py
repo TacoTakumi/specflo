@@ -2383,6 +2383,7 @@ def task_land(
         landed = worktree_module.land(
             root, root / task.worktree, worktree_module.task_branch(slug, task_id),
             base_branch, base_sha, message or task.text or task_id,
+            projects_dir=root / cfg.projects_dir,
         )
         svc.record_commit(slug, task_id, landed.sha)
     except SpecfloError as exc:

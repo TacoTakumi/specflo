@@ -175,6 +175,34 @@ class Landed:
     files: list[str]
 
 
+def _under(top: Path, directory: Path) -> str | None:
+    """``directory`` relative to the repository's top, or None outside it."""
+    resolved = Path(directory).resolve()
+    if not resolved.is_relative_to(top):
+        return None
+    return resolved.relative_to(top).as_posix()
+
+
+def _uncommitted(root: Path) -> set[str]:
+    """Every path, from the repository's top, that the checkout has changed,
+    staged or not, and every untracked one."""
+    out = _run(root, "status", "--porcelain", "-z", "--untracked-files=all").stdout
+    entries = out.split("\0")
+    paths: set[str] = set()
+    i = 0
+    while i < len(entries):
+        entry = entries[i]
+        if len(entry) > 3:
+            paths.add(entry[3:])
+            # A rename or copy carries its source path as the next entry.
+            if entry[0] in "RC":
+                i += 1
+                if i < len(entries) and entries[i]:
+                    paths.add(entries[i])
+        i += 1
+    return paths
+
+
 def snapshot_tree(path: Path) -> str:
     """The tree of everything the worktree at ``path`` holds, committed or not.
 
@@ -194,6 +222,7 @@ def snapshot_tree(path: Path) -> str:
 
 def land(
     root: Path, path: Path, branch: str, base_branch: str, base_sha: str, message: str,
+    projects_dir: Path | None = None,
 ) -> Landed:
     """Land the task worktree at ``path`` on ``base_branch`` as one commit.
 
@@ -201,8 +230,14 @@ def land(
     changes alike, becomes one commit on ``base_sha``. That commit is
     replayed onto the base branch's tip with ``git merge-tree``, which
     touches no worktree, and the checkout at ``root`` is fast-forwarded to
-    it. The worktree and its branch are removed last. Refused, with nothing
-    changed, when the worktree holds no change.
+    it. The worktree and its branch are removed last.
+
+    Refused, with nothing changed: when the checkout is not on
+    ``base_branch``; when the worktree holds no change; when the change
+    touches a path under ``projects_dir``, whose documents only specflo
+    writes, in the checkout; when the replay conflicts; and when the
+    checkout has uncommitted changes to a file the commit changes.
+    Uncommitted changes to other files stay as they are.
     """
     root = Path(root)
     current = git(root, "rev-parse", "--abbrev-ref", "HEAD")
@@ -214,12 +249,29 @@ def land(
     tree = snapshot_tree(path)
     if tree == git(root, "rev-parse", f"{base_sha}^{{tree}}"):
         raise SpecfloError(f"{relative(root, path)} holds no change to land.")
+    top = Path(git(root, "rev-parse", "--show-toplevel")).resolve()
+    touched = git(root, "diff", "--name-only", base_sha, tree).splitlines()
+    guarded = _under(top, projects_dir) if projects_dir is not None else None
+    if guarded is not None:
+        documents = [f for f in touched if f == guarded or f.startswith(guarded + "/")]
+        if documents:
+            raise SpecfloError(
+                f"The task changes {', '.join(documents)}, under {guarded}: project"
+                " documents change only through specflo. Undo that in the worktree,"
+                " then land again."
+            )
     tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
     if tip != base_sha:
         squashed = git(root, "commit-tree", tree, "-p", base_sha, "-m", message)
         tree = git(root, "merge-tree", "--write-tree", "--merge-base", base_sha, tip, squashed)
     sha = git(root, "commit-tree", tree.splitlines()[0], "-p", tip, "-m", message)
     files = git(root, "diff", "--name-only", tip, sha).splitlines()
+    dirty = sorted(set(files) & _uncommitted(root))
+    if dirty:
+        raise SpecfloError(
+            f"The checkout has uncommitted changes to {', '.join(dirty)}, which the"
+            " task also changes. Commit or move them aside, then land again."
+        )
     git(root, "merge", "--ff-only", "-q", sha)
     remove(root, path, branch)
     return Landed(sha, files)
