@@ -69,3 +69,11 @@ def test_daemon_signin_paragraph_advises_another_host_only():
     paragraph = _flat(_daemon_signin_paragraph())
     assert "another host or address" not in paragraph
     assert "on another host" in paragraph
+
+
+def test_readme_apache_example_forwards_https_for_a_secure_cookie():
+    # The daemon reads X-Forwarded-Proto only from a trusted address, and
+    # Apache does not send it on its own.
+    section = _readme_proxy_section()
+    assert 'RequestHeader set X-Forwarded-Proto "https"' in section
+    assert "Secure" in _flat(section)

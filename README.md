@@ -663,13 +663,17 @@ when `auth_proxy` is on and the trusted list is empty, holds a wildcard (`*`,
 
 An Apache example: authenticate, then set the header and pass the request on.
 Use `RequestHeader set`, never `add`, so a header the client sent is replaced,
-and unset it wherever no authentication runs.
+and unset it wherever no authentication runs. A proxy that terminates TLS must
+also send `X-Forwarded-Proto: https`, which Apache does not do on its own; the
+daemon reads it only from a trusted address, and without it the session cookie
+is not marked Secure.
 
 ```apache
 <Location "/">
     # Your authentication here, for example AuthType openid-connect
     Require valid-user
     RequestHeader set X-WEBAUTH-USER "%{REMOTE_USER}s"
+    RequestHeader set X-Forwarded-Proto "https"
     ProxyPass "http://127.0.0.1:8741/"
     ProxyPassReverse "http://127.0.0.1:8741/"
 </Location>
