@@ -326,16 +326,18 @@ def snapshot_tree(path: Path) -> str:
 
 
 def land(
-    root: Path, path: Path, branch: str, base_branch: str, base_sha: str, message: str,
+    root: Path, path: Path, branch: str, base_branch: str, message: str,
     projects_dir: Path | None = None,
 ) -> Landed:
     """Land the task worktree at ``path`` on ``base_branch`` as one commit.
 
     What the worktree holds, its branch's commits and its uncommitted
-    changes alike, becomes one commit on ``base_sha``. That commit is
-    replayed onto the base branch's tip with ``git merge-tree``, which
-    touches no worktree, and the checkout at ``root`` is fast-forwarded to
-    it. The worktree and its branch are removed last.
+    changes alike, becomes one commit on the merge base of the worktree's
+    HEAD and the base branch's tip: the sha it was cut from, until it takes in
+    the base branch, as it does to resolve a conflict. That commit is
+    replayed onto the tip with ``git merge-tree``, which touches no
+    worktree, and the checkout at ``root`` is fast-forwarded to it. The
+    worktree and its branch are removed last.
 
     Refused, with nothing changed: when the checkout is not on
     ``base_branch``; when the worktree holds no change; when the change
@@ -352,6 +354,8 @@ def land(
             f" lands on. Check out {base_branch} first."
         )
     tree = snapshot_tree(path)
+    tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
+    base_sha = git(root, "merge-base", git(path, "rev-parse", "HEAD"), tip)
     if tree == git(root, "rev-parse", f"{base_sha}^{{tree}}"):
         raise SpecfloError(f"{relative(root, path)} holds no change to land.")
     top = Path(git(root, "rev-parse", "--show-toplevel")).resolve()
@@ -365,7 +369,6 @@ def land(
                 " documents change only through specflo. Undo that in the worktree,"
                 " then land again."
             )
-    tip = git(root, "rev-parse", f"refs/heads/{base_branch}")
     if tip != base_sha:
         squashed = git(root, "commit-tree", tree, "-p", base_sha, "-m", message)
         tree = _replay(root, base_sha, tip, squashed, base_branch)

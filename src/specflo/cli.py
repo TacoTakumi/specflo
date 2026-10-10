@@ -2384,10 +2384,10 @@ def task_land(
                 f"{task_id} runs in the shared tree, not a worktree; there is nothing"
                 " to land. Commit its files and run `specflo task done`."
             )
-        base_branch, base_sha = task.base.split()
+        base_branch = task.base.split()[0]
         landed = worktree_module.land(
             root, root / task.worktree, worktree_module.task_branch(slug, task_id),
-            base_branch, base_sha, message or task.text or task_id,
+            base_branch, message or task.text or task_id,
             projects_dir=root / cfg.projects_dir,
         )
         svc.record_commit(slug, task_id, landed.sha)
