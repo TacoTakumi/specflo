@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Bench - specflo{% endblock %}
+{% block content %}
+<h1>Bench</h1>
+<section id="results">
+  <h2>Results</h2>
+  {% if batches %}
+  <ul>
+    {% for batch in batches %}
+    <li data-batch="{{ batch.name }}"><a href="{{ batch.url }}">{{ batch.name }}</a></li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="empty">No bench results yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

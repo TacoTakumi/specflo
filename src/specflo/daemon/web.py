@@ -91,6 +91,8 @@ TEAMS_PATH = POOL_PATH + "/teams"
 NEW_TEAM_PATH = TEAMS_PATH + "/new"
 EDIT_TEAM_PATH = TEAMS_PATH + "/{name}/edit"
 DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
+# The model bench's pages; their routes live in the bench_web module.
+BENCH_PATH = "/bench"
 SESSION_COOKIE = "specflo_session"
 # The theme switch's choice lives in this cookie for a year; auto follows the
 # browser's colour scheme.
@@ -126,6 +128,7 @@ _templates.globals.update(
     themes=THEMES,
     assets_path=ASSETS_PATH,
     pool_path=POOL_PATH,
+    bench_path=BENCH_PATH,
     identities=BROWSER_IDENTITIES,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
@@ -933,6 +936,10 @@ def install(app: FastAPI) -> None:
 
     app.include_router(pool_manage.pages)
     app.include_router(pool_manage.team_pages)
+    # The bench pages, imported here for the same reason.
+    from . import bench_web
+
+    app.include_router(bench_web.pages)
     app.include_router(pages)
     app.mount(ASSETS_PATH, StaticFiles(directory=ASSETS_DIR), name="assets")
     app.add_middleware(ThemeMiddleware)
