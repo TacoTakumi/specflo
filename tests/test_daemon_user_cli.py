@@ -10,6 +10,7 @@ shows who exists and what they hold, never a hash or a secret.
 """
 
 import hashlib
+import time
 
 import click
 import pytest
@@ -20,7 +21,7 @@ from specflo import daemon
 from specflo.cli import app
 from specflo.daemon import auth
 from specflo.daemon.cli import user_app
-from specflo.daemon.store import Token, open_store
+from specflo.daemon.store import Session, Token, open_store
 from specflo.errors import SpecfloError
 
 runner = CliRunner()
@@ -38,6 +39,40 @@ def _user(root, *args, input=None):
 def _users(root):
     with open_store(root) as store:
         return store.list_users()
+
+
+def _get(root, name):
+    with open_store(root) as store:
+        return store.get_user(name)
+
+
+def _open_session(root, user, secret, expires=None):
+    """A session row for ``user`` whose cookie secret is ``secret``."""
+    now = time.time()
+    with open_store(root) as store:
+        store.add_session(
+            Session(
+                hash=auth.hash_token(secret),
+                user=user,
+                method="password",
+                expires=expires if expires is not None else now + 3600,
+                written=now,
+            )
+        )
+
+
+def _add_token(root, owner, name):
+    secret = f"secret-{owner}-{name}"
+    with open_store(root) as store:
+        store.add_token(
+            Token(
+                owner=owner,
+                name=name,
+                hash=hashlib.sha256(secret.encode()).hexdigest(),
+                last4=secret[-4:],
+                created="2026-10-10",
+            )
+        )
 
 
 # --- names ------------------------------------------------------------------
@@ -231,18 +266,8 @@ def test_user_list_with_no_users_says_so(root):
 def test_user_list_shows_name_role_password_and_token_count_and_no_secret(root):
     rob = auth.add_user(root, "rob", "developer", "s3cret")
     auth.add_user(root, "ada", "requester", None)
-    with open_store(root) as store:
-        for owner, name in (("rob", "laptop"), ("rob", "desk"), ("agent", "runner")):
-            secret = f"secret-{owner}-{name}"
-            store.add_token(
-                Token(
-                    owner=owner,
-                    name=name,
-                    hash=hashlib.sha256(secret.encode()).hexdigest(),
-                    last4=secret[-4:],
-                    created="2026-10-10",
-                )
-            )
+    for owner, name in (("rob", "laptop"), ("rob", "desk"), ("agent", "runner")):
+        _add_token(root, owner, name)
 
     result = _user(root, "list")
 
@@ -259,10 +284,187 @@ def test_user_list_shows_name_role_password_and_token_count_and_no_secret(root):
     assert "secret-" not in result.output
 
 
+# --- sessions -----------------------------------------------------------------
+
+
+def test_session_user_answers_the_user_of_a_live_session(root):
+    auth.add_user(root, "rob", "developer", None)
+    _open_session(root, "rob", "cookie-rob")
+
+    user = auth.session_user(root, "cookie-rob")
+
+    assert (user.name, user.role) == ("rob", "developer")
+
+
+def test_session_user_answers_none_for_an_unknown_or_empty_secret(root):
+    auth.add_user(root, "rob", "developer", None)
+    _open_session(root, "rob", "cookie-rob")
+
+    assert auth.session_user(root, "another") is None
+    assert auth.session_user(root, "") is None
+
+
+def test_session_user_answers_none_once_the_session_expires(root):
+    auth.add_user(root, "rob", "developer", None)
+    _open_session(root, "rob", "cookie-rob", expires=1000.0)
+
+    assert auth.session_user(root, "cookie-rob", now=999.0) is not None
+    assert auth.session_user(root, "cookie-rob", now=1000.0) is None
+    assert auth.session_user(root, "cookie-rob") is None
+
+
+# --- passwd -------------------------------------------------------------------
+
+
+def test_user_passwd_sets_a_new_password_and_ends_the_sessions(root):
+    auth.add_user(root, "rob", "developer", "old-one")
+    auth.add_user(root, "ada", "requester", None)
+    _open_session(root, "rob", "cookie-rob")
+    _open_session(root, "ada", "cookie-ada")
+
+    result = _user(root, "passwd", "Rob", input="new-one\nnew-one\n")
+
+    assert result.exit_code == 0, result.output
+    stored = _get(root, "rob").password_hash
+    assert auth.verify_password("new-one", stored)
+    assert not auth.verify_password("old-one", stored)
+    assert auth.session_user(root, "cookie-rob") is None
+    assert auth.session_user(root, "cookie-ada").name == "ada"
+    assert "new-one" not in result.output
+
+
+def test_user_passwd_gives_a_proxy_only_user_a_password(root):
+    auth.add_user(root, "ada", "requester", None)
+
+    result = _user(root, "passwd", "ada", input="s3cret\ns3cret\n")
+
+    assert result.exit_code == 0, result.output
+    assert auth.verify_password("s3cret", _get(root, "ada").password_hash)
+
+
+@pytest.mark.parametrize("typed, message", [("one\nother\n", "do not match"), ("\n\n", "empty")])
+def test_user_passwd_with_a_bad_entry_changes_nothing(root, typed, message):
+    auth.add_user(root, "rob", "developer", "old-one")
+    _open_session(root, "rob", "cookie-rob")
+    before = _get(root, "rob").password_hash
+
+    result = _user(root, "passwd", "rob", input=typed)
+
+    assert result.exit_code == 1
+    assert message in result.stderr
+    assert _get(root, "rob").password_hash == before
+    assert auth.session_user(root, "cookie-rob") is not None
+
+
+def test_user_passwd_clear_makes_the_user_proxy_only_without_asking(root):
+    auth.add_user(root, "rob", "developer", "old-one")
+    _open_session(root, "rob", "cookie-rob")
+
+    result = _user(root, "passwd", "rob", "--clear")
+
+    assert result.exit_code == 0, result.output
+    assert _get(root, "rob").password_hash is None
+    assert "assword:" not in result.stderr
+    assert auth.session_user(root, "cookie-rob") is None
+    assert "proxy" in result.output
+
+
+def test_user_passwd_refuses_an_unknown_user(root):
+    result = _user(root, "passwd", "nobody", input="s3cret\ns3cret\n")
+
+    assert result.exit_code == 1
+    assert "No user" in result.stderr
+    assert "assword:" not in result.stderr
+    assert _users(root) == []
+
+
+def test_user_passwd_clear_refuses_an_unknown_user(root):
+    result = _user(root, "passwd", "nobody", "--clear")
+
+    assert result.exit_code == 1
+    assert "No user" in result.stderr
+
+
+def test_user_passwd_takes_no_password_as_an_option_value(root):
+    auth.add_user(root, "rob", "developer", None)
+
+    result = _user(root, "passwd", "rob", "s3cret")
+
+    assert result.exit_code != 0
+    assert _get(root, "rob").password_hash is None
+    command = typer.main.get_command(user_app).commands["passwd"]
+    for param in command.params:
+        if isinstance(param, click.Option):
+            assert param.is_flag, param.name
+
+
+# --- role ---------------------------------------------------------------------
+
+
+def test_user_role_applies_at_the_next_request_of_an_existing_session(root):
+    auth.add_user(root, "rob", "requester", None)
+    _open_session(root, "rob", "cookie-rob")
+    assert auth.session_user(root, "cookie-rob").role == "requester"
+
+    result = _user(root, "role", "rob", "developer")
+
+    assert result.exit_code == 0, result.output
+    assert _get(root, "rob").role == "developer"
+    assert auth.session_user(root, "cookie-rob").role == "developer"
+
+
+def test_user_role_refuses_an_unknown_user(root):
+    result = _user(root, "role", "nobody", "developer")
+
+    assert result.exit_code == 1
+    assert "No user" in result.stderr
+
+
+def test_user_role_refuses_an_unknown_role_and_keeps_the_old(root):
+    auth.add_user(root, "rob", "requester", None)
+
+    result = _user(root, "role", "rob", "admin")
+
+    assert result.exit_code == 1
+    assert "developer, requester" in result.stderr
+    assert _get(root, "rob").role == "requester"
+
+
+# --- remove -------------------------------------------------------------------
+
+
+def test_user_remove_drops_the_user_tokens_and_sessions(root):
+    auth.add_user(root, "rob", "developer", "s3cret")
+    auth.add_user(root, "ada", "requester", None)
+    _add_token(root, "rob", "laptop")
+    _add_token(root, "ada", "desk")
+    _open_session(root, "rob", "cookie-rob")
+    _open_session(root, "ada", "cookie-ada")
+
+    result = _user(root, "remove", "Rob")
+
+    assert result.exit_code == 0, result.output
+    assert [user.name for user in _users(root)] == ["ada"]
+    with open_store(root) as store:
+        assert [token.owner for token in store.list_tokens()] == ["ada"]
+    assert auth.session_user(root, "cookie-rob") is None
+    assert auth.session_user(root, "cookie-ada").name == "ada"
+
+
+def test_user_remove_refuses_an_unknown_name(root):
+    auth.add_user(root, "ada", "requester", None)
+
+    result = _user(root, "remove", "nobody")
+
+    assert result.exit_code == 1
+    assert "No user" in result.stderr
+    assert [user.name for user in _users(root)] == ["ada"]
+
+
 # --- help ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("command", [["add"], ["list"]])
+@pytest.mark.parametrize("command", [["add"], ["list"], ["passwd"], ["role"], ["remove"]])
 def test_user_commands_have_help_and_an_example(root, command):
     result = _user(root, *command, "--help")
 

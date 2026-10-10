@@ -15,8 +15,11 @@ Named users sign in with a password, kept only as a scrypt hash. The hash
 string names its own parameters, ``scrypt$N$r$p$<salt>$<hash>`` with salt
 and hash in hex, so a hash made under older parameters still verifies and
 :func:`needs_rehash` tells the caller to replace it at the next sign-in.
-A user is added on the serve side with :func:`add_user`; the rows live in
-the state store, and this module holds only the rules a new user must meet.
+A user is added and changed on the serve side with :func:`add_user` and
+the verbs after it; the rows live in the state store, and this module holds
+only the rules a user must meet. A browser session carries no role: each
+request reads the current user row through :func:`session_user`, so a role
+change applies at the user's next request.
 """
 
 from __future__ import annotations
@@ -27,6 +30,7 @@ import hmac
 import json
 import re
 import secrets
+import time
 from pathlib import Path
 
 from ..errors import SpecfloError
@@ -185,6 +189,78 @@ def list_users(root: Path) -> list[tuple[User, int]]:
     """Every user in name order, each with the number of tokens they own."""
     with open_store(root) as store:
         return [(user, len(store.list_tokens(user.name))) for user in store.list_users()]
+
+
+def require_user(root: Path, name: str) -> User:
+    """The user called ``name`` (in any case), or a refusal saying there is none."""
+    with open_store(root) as store:
+        user = store.get_user(name.lower())
+    if user is None:
+        raise SpecfloError(f"No user named {name.lower()!r}.")
+    return user
+
+
+def set_password(root: Path, name: str, password: str | None) -> User:
+    """Replace the password of ``name``, or clear it with None; the updated user.
+
+    Every session of the user ends with it, so a browser signed in under
+    the old password, or before the account went proxy-only, must sign in
+    again. An empty password and an unknown user are refused.
+    """
+    if password is not None and not password:
+        raise SpecfloError("A password may not be empty.")
+    name = require_user(root, name).name
+    password_hash = hash_password(password) if password is not None else None
+    with open_store(root) as store:
+        # The password first, then the sessions: a session opened under the
+        # old password just before the change is still among those dropped.
+        user = store.set_user_password(name, password_hash)
+        store.remove_user_sessions(name)
+    if user is None:
+        raise SpecfloError(f"No user named {name!r}.")
+    return user
+
+
+def set_role(root: Path, name: str, role: str) -> User:
+    """Replace the role of ``name``; the updated user. Unknown user or role is refused."""
+    validate_role(role)
+    name = require_user(root, name).name
+    with open_store(root) as store:
+        user = store.set_user_role(name, role)
+    if user is None:
+        raise SpecfloError(f"No user named {name!r}.")
+    return user
+
+
+def remove_user(root: Path, name: str) -> str:
+    """Remove ``name`` with their tokens and sessions; the name removed.
+
+    The store drops all three in one transaction. An unknown user is refused.
+    """
+    name = name.lower()
+    with open_store(root) as store:
+        removed = store.remove_user(name)
+    if not removed:
+        raise SpecfloError(f"No user named {name!r}.")
+    return name
+
+
+def session_user(root: Path, secret: str, now: float | None = None) -> User | None:
+    """The user a browser session cookie stands for, read live, or None.
+
+    The session is found by the SHA-256 of ``secret``. None for an empty or
+    unknown secret, or a session whose expiry is at or before ``now``.
+    Otherwise the user's row as it is now, so a role changed since the
+    session opened is the role this request acts under.
+    """
+    if not secret:
+        return None
+    now = time.time() if now is None else now
+    with open_store(root) as store:
+        session = store.get_session(hash_token(secret))
+        if session is None or session.expires <= now:
+            return None
+        return store.get_user(session.user)
 
 
 def hash_password(password: str) -> str:

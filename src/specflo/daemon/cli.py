@@ -258,3 +258,70 @@ def user_list(ctx: typer.Context) -> None:
     widths = [max(len(row[column]) for row in table) for column in range(3)]
     for row in table:
         typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths)) + "  " + row[3])
+
+
+@user_app.command(
+    "passwd",
+    epilog="Example: specflo serve --root ~/specflo-daemon user passwd rob",
+)
+def user_passwd(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., metavar="<name>", help="The user whose password changes."),
+    clear: bool = typer.Option(
+        False,
+        "--clear",
+        help="Remove the password instead of asking for one: the user becomes proxy-only.",
+    ),
+) -> None:
+    """Set a new password for <name>, asked twice, and end their sessions."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        # Check before asking, so nobody types a password for no user.
+        auth.require_user(root, name)
+        secret = None if clear else _ask_password()
+        user = auth.set_password(root, name, secret)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    if user.password_hash:
+        typer.echo(f"Set a new password for {user.name}; their sessions have ended.")
+    else:
+        typer.echo(
+            f"Cleared the password of {user.name}: proxy-only now; their sessions have ended."
+        )
+
+
+@user_app.command(
+    "role",
+    epilog="Example: specflo serve --root ~/specflo-daemon user role rob developer",
+)
+def user_role(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., metavar="<name>", help="The user whose role changes."),
+    role: str = typer.Argument(
+        ..., metavar="<developer|requester>", help="The role the user holds from now on."
+    ),
+) -> None:
+    """Give <name> a new role; it applies at their next request, sessions included."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        user = auth.set_role(root, name, role)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    typer.echo(f"{user.name} is a {user.role} now.")
+
+
+@user_app.command(
+    "remove",
+    epilog="Example: specflo serve --root ~/specflo-daemon user remove rob",
+)
+def user_remove(
+    ctx: typer.Context,
+    name: str = typer.Argument(..., metavar="<name>", help="The user to remove."),
+) -> None:
+    """Remove <name> with every token and session they hold."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        removed = auth.remove_user(root, name)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    typer.echo(f"Removed user {removed} with their tokens and sessions.")
