@@ -15,6 +15,8 @@ Named users sign in with a password, kept only as a scrypt hash. The hash
 string names its own parameters, ``scrypt$N$r$p$<salt>$<hash>`` with salt
 and hash in hex, so a hash made under older parameters still verifies and
 :func:`needs_rehash` tells the caller to replace it at the next sign-in.
+A user is added on the serve side with :func:`add_user`; the rows live in
+the state store, and this module holds only the rules a new user must meet.
 """
 
 from __future__ import annotations
@@ -23,10 +25,12 @@ import datetime
 import hashlib
 import hmac
 import json
+import re
 import secrets
 from pathlib import Path
 
 from ..errors import SpecfloError
+from .store import ROLES, Conflict, User, open_store
 
 IDENTITIES = ("requester", "developer", "agent")
 # The identities a browser can sign in as. The agent has no browser: the
@@ -44,6 +48,18 @@ SCRYPT_KEY_BYTES = 32
 # The ceiling on what one stored hash may ask scrypt to allocate; a stored
 # string past it verifies false instead of exhausting memory.
 SCRYPT_MAX_MEMORY = 256 * 1024 * 1024
+
+# A user name: 1 to 64 characters from a-z 0-9 . _ - @, starting with a
+# letter or digit. Short and plain, so it is safe in a URL, a log line and a
+# token listing without quoting.
+USER_NAME_PATTERN = re.compile(r"[a-z0-9][a-z0-9._@-]{0,63}")
+USER_NAME_RULE = (
+    "a user name is 1 to 64 characters from a-z 0-9 . _ - @,"
+    " starting with a letter or digit"
+)
+# Names no user may take: 'agent' is the built-in principal the working
+# agents act as, and a user by that name would be mistaken for them.
+RESERVED_USER_NAMES = ("agent",)
 
 
 def tokens_path(root: Path) -> Path:
@@ -101,6 +117,74 @@ def identity_for(root: Path, secret: str) -> str | None:
         if secrets.compare_digest(str(entry.get("hash", "")), digest):
             return entry["identity"]
     return None
+
+
+def validate_user_name(name: str) -> str:
+    """``name`` lowercased, or a refusal naming the rule it breaks.
+
+    The check runs on the lowercased name, so 'Rob' is kept as 'rob'.
+    """
+    lowered = name.lower()
+    if not USER_NAME_PATTERN.fullmatch(lowered):
+        raise SpecfloError(f"Bad user name {name!r}: {USER_NAME_RULE}.")
+    if lowered in RESERVED_USER_NAMES:
+        raise SpecfloError(
+            f"The user name {lowered!r} is reserved for the built-in principal"
+            " of the working agents."
+        )
+    return lowered
+
+
+def validate_role(role: str) -> str:
+    """``role``, or a refusal naming the roles a user may hold."""
+    if role not in ROLES:
+        raise SpecfloError(f"Unknown role {role!r}: expected one of " + ", ".join(ROLES) + ".")
+    return role
+
+
+def check_new_user(root: Path, name: str, role: str) -> str:
+    """The name a new user would be stored under, or a refusal.
+
+    Refuses a bad name, an unknown role and a name already taken, so a
+    caller can check before it asks for a password.
+    """
+    name = validate_user_name(name)
+    validate_role(role)
+    with open_store(root) as store:
+        if store.get_user(name) is not None:
+            raise SpecfloError(f"A user named {name!r} already exists.")
+    return name
+
+
+def add_user(root: Path, name: str, role: str, password: str | None, today: str | None = None) -> User:
+    """Add the user ``name`` with ``role``; the user as stored.
+
+    The name is stored lowercase. With ``password`` only its scrypt hash is
+    kept; with None the user has no password and is a proxy-only account.
+    An empty password is refused, as is anything :func:`check_new_user`
+    refuses.
+    """
+    name = check_new_user(root, name, role)
+    if password is not None and not password:
+        raise SpecfloError("A password may not be empty.")
+    user = User(
+        name=name,
+        role=role,
+        password_hash=hash_password(password) if password is not None else None,
+        created=today or datetime.date.today().isoformat(),
+    )
+    with open_store(root) as store:
+        try:
+            store.add_user(user)
+        except Conflict:
+            raise SpecfloError(f"A user named {name!r} already exists.") from None
+    return user
+
+
+def list_users(root: Path) -> list[tuple[User, int]]:
+    """Every user in name order, each with the number of tokens they own."""
+    with open_store(root) as store:
+        return [(user, len(store.list_tokens(user.name))) for user in store.list_users()]
 
 
 def hash_password(password: str) -> str:

@@ -30,6 +30,9 @@ serve_app = typer.Typer(
 token_app = typer.Typer(help="Mint the bearer tokens clients present to the daemon.")
 serve_app.add_typer(token_app, name="token")
 
+user_app = typer.Typer(help="Add and list the named users who sign in to the daemon.")
+serve_app.add_typer(user_app, name="user")
+
 # The pool commands read files under the root and never start the daemon.
 serve_app.add_typer(pool_app, name="pool")
 
@@ -175,3 +178,83 @@ def token_add(
         f"Minted a token for {identity} under {root}; it is shown once, store it now.",
         err=True,
     )
+
+
+def _fail(message: str) -> None:
+    typer.secho(f"error: {message}", fg=typer.colors.RED, err=True)
+    raise typer.Exit(code=1)
+
+
+def _ask_password() -> str:
+    """A password typed twice at the terminal, or a refusal.
+
+    Asked here rather than taken as an option value, so it never lands in
+    shell history or the process list. Two different entries or an empty
+    one fail at once instead of asking again. On stderr, like the root
+    question, so stdout keeps to what the command prints.
+    """
+    first = typer.prompt("Password", hide_input=True, default="", show_default=False, err=True)
+    if not first:
+        _fail("A password may not be empty.")
+    second = typer.prompt(
+        "Repeat password", hide_input=True, default="", show_default=False, err=True
+    )
+    if first != second:
+        _fail("The two passwords do not match; no user was added.")
+    return first
+
+
+@user_app.command(
+    "add",
+    epilog="Example: specflo serve --root ~/specflo-daemon user add rob --role developer --password",
+)
+def user_add(
+    ctx: typer.Context,
+    name: str = typer.Argument(
+        ...,
+        metavar="<name>",
+        help="1 to 64 characters from a-z 0-9 . _ - @, starting with a letter or digit;"
+        " stored lowercase. 'agent' is reserved.",
+    ),
+    role: str = typer.Option(
+        ..., "--role", metavar="<developer|requester>", help="The role the user holds."
+    ),
+    password: bool = typer.Option(
+        False,
+        "--password",
+        help="Ask for a password at the terminal, twice. Without it the user has no"
+        " password and can act only through a proxy session.",
+    ),
+) -> None:
+    """Add the user <name> with a role; with --password, ask for their password."""
+    root = prepare_root(ctx.obj["root"])
+    try:
+        # Check before asking, so nobody types a password for a user who
+        # cannot be added.
+        name = auth.check_new_user(root, name, role)
+        secret = _ask_password() if password else None
+        user = auth.add_user(root, name, role, secret)
+    except SpecfloError as exc:
+        _fail(str(exc))
+    kind = "with a password" if user.password_hash else "proxy-only, no password"
+    typer.echo(f"Added user {user.name} ({user.role}, {kind}).")
+
+
+@user_app.command(
+    "list",
+    epilog="Example: specflo serve --root ~/specflo-daemon user list",
+)
+def user_list(ctx: typer.Context) -> None:
+    """List every user: name, role, whether a password is set, and tokens owned."""
+    root = prepare_root(ctx.obj["root"])
+    rows = auth.list_users(root)
+    if not rows:
+        typer.echo("No users yet. `specflo serve user add <name> --role <role>` adds the first.")
+        return
+    table = [("NAME", "ROLE", "PASSWORD", "TOKENS")] + [
+        (user.name, user.role, "yes" if user.password_hash else "no", str(count))
+        for user, count in rows
+    ]
+    widths = [max(len(row[column]) for row in table) for column in range(3)]
+    for row in table:
+        typer.echo("  ".join(cell.ljust(width) for cell, width in zip(row, widths)) + "  " + row[3])
