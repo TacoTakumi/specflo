@@ -678,9 +678,15 @@ and unset it wherever no authentication runs.
 Keep the daemon bound to the loopback address behind the proxy (the default,
 or `specflo serve --bind 127.0.0.1`) so its port cannot be reached directly. A
 user with a password who can reach the port signs in without the proxy's own
-rules, such as MFA; a proxy-only user (no password) never can. The daemon runs
-uvicorn without proxy-header rewriting, so the trust check sees the real peer
-address.
+rules, such as MFA. The daemon runs uvicorn without proxy-header rewriting, so
+the trust check sees the real peer address.
+
+A trusted address is trusted for any user. Any process that can connect from
+it can set the header and sign in as any user, proxy-only users included, and
+then mint a personal token. With the loopback default that is any process on
+the daemon host, the daemon's own project agents included. Where agents share
+the host, trust only the proxy's own address: run the proxy on another host or
+address and list only that, or keep `auth_proxy` off.
 
 ## The config file
 
