@@ -98,3 +98,71 @@ def test_menu_needs_a_session(client):
     response = client.get(MENU)
     assert response.status_code == 303
     assert response.headers["location"] == web.SIGNIN_PATH
+
+
+# --- the batch files -----------------------------------------------------------
+
+
+def batch_file(batch_name, name):
+    return f"{MENU}/results/{batch_name}/{name}"
+
+
+@pytest.mark.parametrize("identity", ["requester", "developer"])
+def test_batch_files_for_each_identity(client, root, identity):
+    folder = batch(root, "pilot")
+    (folder / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    sign_in(client, root, identity)
+    for name, kind, body in (
+        ("index.html", "text/html", b"<h1>pilot</h1>"),
+        ("chart.png", "image/png", b"\x89PNG\r\n\x1a\nfake"),
+        ("chart.txt", "text/plain", b"pass rate 0.5"),
+    ):
+        response = client.get(batch_file("pilot", name))
+        assert response.status_code == 200, name
+        assert response.headers["content-type"].startswith(kind)
+        assert response.content == body
+
+
+SECRET = "planted-secret-5521"
+
+
+def test_batch_refuses_what_is_not_a_chart(client, root):
+    folder = batch(root, "pilot")
+    plant(folder / "data.json", SECRET)
+    plant(folder / "nested" / "chart.txt", SECRET)
+    plant(root / "bench" / "results" / "secret.txt", SECRET)
+    plant(root / "bench" / "state" / "loaded-by-bench.json", SECRET)
+    sign_in(client, root, "developer")
+    for path in (
+        batch_file("pilot", "data.json"),
+        f"{MENU}/results/pilot/nested/chart.txt",
+        batch_file("pilot", "nested%2Fchart.txt"),
+        batch_file("pilot", "..%2Fsecret.txt"),
+        batch_file("pilot", "%2e%2e%2fsecret.txt"),
+        batch_file("..", "secret.txt"),
+        batch_file("%2e%2e", "secret.txt"),
+        batch_file("..%2F..%2Fstate", "loaded-by-bench.json"),
+        batch_file("pilot", "missing.txt"),
+    ):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert SECRET not in response.text, path
+
+
+def test_batch_refuses_a_link_out_of_the_bench(client, root, tmp_path):
+    outside = plant(tmp_path / "outside" / "secret.txt", SECRET)
+    folder = batch(root, "pilot")
+    (folder / "linked.txt").symlink_to(outside)
+    (root / "bench" / "results" / "linked-batch").symlink_to(outside.parent)
+    sign_in(client, root, "developer")
+    for path in (batch_file("pilot", "linked.txt"), batch_file("linked-batch", "secret.txt")):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert SECRET not in response.text, path
+
+
+def test_batch_file_needs_a_session(client, root):
+    batch(root, "pilot")
+    response = client.get(batch_file("pilot", "index.html"))
+    assert response.status_code == 303
+    assert response.headers["location"] == web.SIGNIN_PATH
