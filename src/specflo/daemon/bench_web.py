@@ -24,7 +24,9 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import FileResponse
+from markupsafe import Markup
 
+from ..bench import index_page
 from ..bench.cli import HOME_DIRNAME
 from .permissions import BENCH_RUNS, can, who_can
 from .web import BENCH_PATH, current_session, render
@@ -150,6 +152,16 @@ def batch_file(
     path = served_file(results, batch, name) if kind else None
     if path is None:
         return _missing(identity)
+    if name == INDEX_NAME:
+        # The page is drawn from the batch folder in the daemon's layout and
+        # theme; the file on disk is the standalone copy for reading off the rig.
+        return render(
+            "bench_batch.html",
+            identity=identity,
+            title=index_page.page_title(path.parent),
+            body=Markup(index_page.render_body(path.parent)),
+            stylesheet=index_page.PAGE_STYLESHEET,
+        )
     return FileResponse(path, media_type=kind)
 
 

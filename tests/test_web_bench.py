@@ -112,8 +112,11 @@ def test_batch_files_for_each_identity(client, root, identity):
     folder = batch(root, "pilot")
     (folder / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
     sign_in(client, root, identity)
+    page = client.get(batch_file("pilot", "index.html"))
+    assert page.status_code == 200
+    assert page.headers["content-type"].startswith("text/html")
+    assert "<h1>Model bench: pilot</h1>" in page.text
     for name, kind, body in (
-        ("index.html", "text/html", b"<h1>pilot</h1>"),
         ("chart.png", "image/png", b"\x89PNG\r\n\x1a\nfake"),
         ("chart.txt", "text/plain", b"pass rate 0.5"),
     ):
@@ -121,6 +124,97 @@ def test_batch_files_for_each_identity(client, root, identity):
         assert response.status_code == 200, name
         assert response.headers["content-type"].startswith(kind)
         assert response.content == body
+
+
+DISCLOSURE = (
+    "level: quick; compared variable: harness; excluded runs: 0\n"
+    "entry-a / pi: arm.entry=entry-a; arm.harness=pi; runs=2\n"
+    "entry-a / claude-code: arm.entry=entry-a; arm.harness=claude-code; runs=2\n"
+)
+
+
+def graphed_batch(root, name):
+    """A result batch folder with one comparison: its two graphs and the disclosure beside each."""
+    folder = batch(root, name)
+    for kind in ("pass-rate", "metrics"):
+        (folder / f"quick-by-harness-{kind}.png").write_bytes(b"\x89PNG\r\n\x1a\nfake")
+        plant(folder / f"quick-by-harness-{kind}.txt", DISCLOSURE)
+    return folder
+
+
+def test_batch_page_has_the_daemon_top_bar(client, root):
+    graphed_batch(root, "pilot")
+    sign_in(client, root, "developer")
+    response = client.get(batch_file("pilot", "index.html"))
+    assert response.status_code == 200
+    assert f'<a href="{web.BENCH_PATH}">Bench</a>' in response.text
+    assert re.search(
+        rf'<span class="identity">Signed in as <strong>developer</strong></span>\s*'
+        rf'<a class="settings" href="{web.USER_PATH}">Settings</a>\s*<form class="signout"',
+        response.text,
+    )
+
+
+def test_batch_page_takes_the_daemon_theme(client, root):
+    graphed_batch(root, "pilot")
+    sign_in(client, root, "developer")
+    page = client.get(batch_file("pilot", "index.html")).text
+    assert '<html lang="en" data-theme="dark">' in page
+    assert 'name="theme"' not in page
+    client.cookies.set(web.THEME_COOKIE, "light")
+    page = client.get(batch_file("pilot", "index.html")).text
+    assert '<html lang="en" data-theme="light">' in page
+    assert 'name="theme"' not in page
+
+
+def test_batch_page_shows_the_results_and_its_graphs_load(client, root):
+    graphed_batch(root, "pilot")
+    sign_in(client, root, "developer")
+    page = client.get(batch_file("pilot", "index.html")).text
+    for text in ("<h1>Model bench: pilot</h1>", "How to read a graph", 'id="level-quick"',
+                 '<tr class="differs"><th>arm.harness</th>', "What the metrics mean"):
+        assert text in page, text
+    sources = re.findall(r'<img src="([^"]+)"', page)
+    assert sources == ["quick-by-harness-pass-rate.png", "quick-by-harness-metrics.png"]
+    for src in sources:
+        image = client.get(batch_file("pilot", src))
+        assert image.status_code == 200, src
+        assert image.headers["content-type"].startswith("image/png")
+
+
+def test_batch_page_links_the_bench_stylesheet(client, root):
+    graphed_batch(root, "pilot")
+    sign_in(client, root, "developer")
+    page = client.get(batch_file("pilot", "index.html")).text
+    href = f"{web.ASSETS_PATH}/bench.css"
+    assert f'<link rel="stylesheet" href="{href}">' in page
+    sheet = client.get(href)
+    assert sheet.status_code == 200
+    assert sheet.headers["content-type"].startswith("text/css")
+
+
+def test_a_folder_without_an_index_page_is_no_batch(client, root):
+    folder = root / "bench" / "results" / "half"
+    plant(folder / "quick-by-harness-pass-rate.png", "png")
+    sign_in(client, root, "developer")
+    assert "half" not in client.get(MENU).text
+    response = client.get(batch_file("half", "index.html"))
+    assert response.status_code == 404
+    assert "No such bench file." in response.text
+
+
+def test_batch_page_of_a_linked_or_missing_batch_is_a_404(client, root, tmp_path):
+    outside = graphed_batch(tmp_path / "elsewhere", "pilot")
+    (root / "bench" / "results").mkdir(parents=True, exist_ok=True)
+    (root / "bench" / "results" / "linked").symlink_to(outside)
+    sign_in(client, root, "developer")
+    for path in (batch_file("linked", "index.html"), batch_file("missing", "index.html"),
+                 batch_file("%2e%2e", "index.html")):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert "No such bench file." in response.text, path
+    # An encoded slash makes a path no route matches, so it never reaches the batch route.
+    assert client.get(batch_file("..%2Fresults", "index.html")).status_code == 404
 
 
 SECRET = "planted-secret-5521"
