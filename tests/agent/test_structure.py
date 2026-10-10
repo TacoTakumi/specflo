@@ -40,6 +40,11 @@ POOL_RUNNER_ALLOWED = (
 POOL_LEASE_CLI = SRC / "pool" / "cli_lease.py"
 POOL_LEASE_CLI_ALLOWED = ("specflo.agent.lease",)
 
+# The model bench places a run's harness in a herdr pane to watch, so it takes
+# the herdr adapter and nothing else of the agent subsystem.
+BENCH_DIR = SRC / "bench"
+BENCH_ALLOWED_PREFIX = "specflo.agent.herdr"
+
 # Controller-side sentinel conventions the HOST must never know about.
 SENTINEL_LITERALS = ("QUESTION:", "BLOCKED:", "Completed project")
 
@@ -95,6 +100,8 @@ def test_pipeline_modules_import_no_agent_code():
         }
         if DAEMON_DIR in path.parents:
             offending = {n for n in offending if not n.startswith(DAEMON_ALLOWED_PREFIX)}
+        if BENCH_DIR in path.parents:
+            offending = {n for n in offending if not n.startswith(BENCH_ALLOWED_PREFIX)}
         if path == POOL_RUNNER:
             offending = {
                 n

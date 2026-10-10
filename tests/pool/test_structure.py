@@ -56,6 +56,11 @@ OS_CALL_PREFIXES = ("os.exec", "os.spawn", "os.posix_spawn")
 # function would be a child of the launcher, not of the host.
 LAUNCHER = ("pool/runner.py", "_become_pi")
 
+# The model bench runs pi and Claude Code as the programs under test, each as
+# a plain command line in a sealed workdir; it holds no lease and never speaks
+# a frame, so only the start check passes over it.
+BENCH_PACKAGE = "bench"
+
 
 def python_files(root: Path, *, outside_agent: bool = True) -> list[Path]:
     agent_dir = root / AGENT_PACKAGE
@@ -173,6 +178,8 @@ def pi_spawns(root: Path) -> list[str]:
     whose program is pi, or whose program the source does not name."""
     found = []
     for path in python_files(root):
+        if root / BENCH_PACKAGE in path.parents:
+            continue
         tree = parse(path)
         aliases = import_aliases(tree)
         starts = ProcessStarts(aliases)
