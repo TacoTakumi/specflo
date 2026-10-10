@@ -2293,13 +2293,16 @@ def _report_transition(
 @task_app.command("start", epilog="Example: specflo task start T-01")
 def task_start(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to start."),
+    force: bool = typer.Option(
+        False, "--force", help="Start it even though a task it depends on is not done."
+    ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Mark a task in_progress."""
     root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
     svc = _service(root, cfg)
     try:
-        task = svc.start_task(slug, task_id)
+        task = svc.start_task(slug, task_id, force=force)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)

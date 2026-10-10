@@ -2241,7 +2241,7 @@ def test_edit_task_force_note_is_not_written_for_an_unfinished_task(root, cfg, p
 
 def test_edit_task_force_note_covers_dependency_edges(root, cfg, project):
     _first, second, third = _three_tasks(root, cfg, project)
-    plan.start_task(root, cfg, project, third.id, today="2026-08-30")
+    plan.start_task(root, cfg, project, third.id, force=True, today="2026-08-30")
     plan.done_task(root, cfg, project, third.id, today="2026-08-30")
     plan.edit_task(root, cfg, project, third.id, add_depends_on=[second.id],
                    force=True, today="2026-08-30")

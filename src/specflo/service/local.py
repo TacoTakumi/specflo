@@ -423,8 +423,8 @@ class LocalProjectService:
     ) -> dict:
         return plan.add_note(self.root, self.cfg, slug, task_id, text, label=label)
 
-    def start_task(self, slug: str, task_id: str) -> Task:
-        return plan.start_task(self.root, self.cfg, slug, task_id)
+    def start_task(self, slug: str, task_id: str, *, force: bool = False) -> Task:
+        return plan.start_task(self.root, self.cfg, slug, task_id, force=force)
 
     def done_task(self, slug: str, task_id: str, *, note: str | None = None) -> Task:
         return plan.done_task(self.root, self.cfg, slug, task_id, note=note)

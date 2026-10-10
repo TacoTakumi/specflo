@@ -1364,7 +1364,7 @@ def add_note(
 def _set_progress(
     root: Path, cfg: SpecfloConfig, slug: str, task_id: str,
     progress: str, reason: str | None = None, note: str | None = None,
-    today: str | None = None,
+    today: str | None = None, require_deps: bool = False,
 ) -> Task:
     if progress not in PROGRESS_STATES:
         raise SpecfloError(f"Unknown progress state {progress!r}.")
@@ -1386,6 +1386,17 @@ def _set_progress(
                 f"{task_id} must be in_progress before it can be done "
                 f"(run `specflo task start {task_id}` first)."
             )
+        if require_deps:
+            # The same rule as the ready set: a dependency is met only by an
+            # active task that is done.
+            done_ids = {t.id for t in _parse_tasks(doc)
+                        if t.status == "active" and t.progress == "done"}
+            unmet = [d for d in task.depends_on if d not in done_ids]
+            if unmet:
+                raise SpecfloError(
+                    f"{task_id} depends on {', '.join(unmet)}, not done yet. "
+                    f"Finish it first, or pass --force to start {task_id} anyway."
+                )
         doc = markdown.set_entry_field(doc, task_id, "Progress", progress)
         if progress == "blocked" and reason:
             doc = markdown.set_entry_field(doc, task_id, "Blocked", reason)
@@ -1400,8 +1411,12 @@ def _set_progress(
     return task
 
 
-def start_task(root, cfg, slug, task_id, today=None) -> Task:
-    return _set_progress(root, cfg, slug, task_id, "in_progress", today=today)
+def start_task(root, cfg, slug, task_id, force=False, today=None) -> Task:
+    """Mark a task in_progress; refused while a task it depends on is not done,
+    unless ``force``."""
+    return _set_progress(
+        root, cfg, slug, task_id, "in_progress", today=today, require_deps=not force
+    )
 
 
 def done_task(root, cfg, slug, task_id, note=None, today=None) -> Task:
