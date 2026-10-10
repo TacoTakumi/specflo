@@ -11,24 +11,29 @@ latter. Release tags are of the form `vX.Y.Z`.
 ## [0.17.0]
 
 ### Added
-- **Model bench.** `bench/` holds a development tool, not part of the
-  installed package, that measures how well a local model drives specflo. A
-  run seeds a specflo project at the quick, fast or full level in a small
-  fixture repo (tinytodo), runs it unattended under `specflo auto` with pi or
-  Claude Code against a llama-swap entry, and grades the final tree with a
-  held-out test suite the agent never sees. Each run writes a record with the
-  score, behaviour metrics (turns, output tokens per turn, tool calls, tool
-  errors, wall time), diagnostics and server telemetry. A run that names
-  another model id is invalid, and a run whose tool calls touch the bench or
-  the held-out tests is contaminated. Both are left out of every result.
-  `bench/mb.py` has the commands `run`, `batch` (a matrix of arms, levels and
-  run indexes), `records`, `probe`, `grade` and `graph`. `graph` draws
-  pass-rate and metrics graphs for comparisons that change one variable only
-  (the entry or the harness), each with a full disclosure of versions and
-  settings, and refuses any other comparison. matplotlib is in a new `bench`
-  dependency group. `BENCH.md` explains the bench and how to run it, and the
-  README links to it.
-- **Bench index page.** `mb.py graph` also writes `index.html` in its output
+- **Model bench.** `specflo bench` measures how well a local model drives
+  specflo. A run seeds a specflo project at the quick, fast or full level in
+  a small fixture repo (tinytodo), runs it unattended under `specflo auto`
+  with pi or Claude Code against a llama-swap entry, and grades the final
+  tree with a held-out test suite the agent never sees. Each run writes a
+  record with the score, behaviour metrics (turns, output tokens per turn,
+  tool calls, tool errors, wall time), diagnostics, server telemetry and the
+  version of each harness, which runs as installed. A run that names another
+  model id is invalid, and a run whose tool calls touch the installed bench,
+  the held-out tests or the bench home is contaminated. Both are left out of
+  every result. The commands are `init`, `run`, `batch` (a matrix of arms,
+  levels and run indexes), `records`, `probe`, `grade` and `graph`. `graph`
+  draws pass-rate and metrics graphs for comparisons that change one variable
+  only (the entry or the harness), each with a full disclosure of versions
+  and settings, and refuses any other comparison. The operator's configs
+  (`arms.yaml`, `matrices.yaml`, `pi-models.json`), runs, state and results
+  live in the bench home, `<daemon root>/bench`, found as `specflo serve`
+  finds the root; `specflo bench init` writes the config templates there.
+  matplotlib comes with a new `bench` extra (`pip install 'specflo[bench]'`).
+  Claude Code is the first `claude` on PATH that is not a script, or the one
+  `SPECFLO_BENCH_CLAUDE` names. `BENCH.md` explains the bench and how to run
+  it, and the README links to it.
+- **Bench index page.** `specflo bench graph` also writes `index.html` in its output
   directory. The page shows every graph in the directory with its arms as a
   table, and explains the bench, how to read a graph, each level and each
   metric.

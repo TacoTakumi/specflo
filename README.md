@@ -855,8 +855,9 @@ to multiply every limit and settle pause of that helper, for example
 
 ## Model bench
 
-`bench/` holds a model bench that measures how well a local model drives
-specflo. It runs a seeded specflo project (quick, fast or full) unattended
+`specflo bench` is a model bench that measures how well a local model drives
+specflo; install it with `pip install 'specflo[bench]'` and start with
+`specflo bench init`. It runs a seeded specflo project (quick, fast or full) unattended
 under pi or Claude Code against a model served by llama-swap, grades the
 final tree with a held-out test suite and graphs the pass rates with behaviour
 metrics. Each comparison changes one variable: the model, the engine or the
