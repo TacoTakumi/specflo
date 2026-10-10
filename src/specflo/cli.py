@@ -2386,15 +2386,26 @@ def task_land(
             projects_dir=root / cfg.projects_dir,
         )
         svc.record_commit(slug, task_id, landed.sha)
+        # Files the task did not name are noted, not refused: the plan missed
+        # them, and the next planner should know.
+        outside = [f for f in landed.files if f not in task.file_list]
+        if outside:
+            svc.add_note(
+                slug, task_id,
+                f"Landed {landed.sha[:12]} also changed files outside Files: {', '.join(outside)}",
+            )
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     if json_output:
         typer.echo(json.dumps({
             "id": task_id, "commit": landed.sha, "branch": base_branch, "files": landed.files,
+            "outside_files": outside,
         }))
     else:
         typer.echo(f"Landed {task_id} on {base_branch} as {landed.sha[:12]}.")
+        if outside:
+            typer.echo(f"Changed outside the task's Files (noted on {task_id}): {', '.join(outside)}")
         typer.echo(f"Run the task's Verify, then `specflo task done {task_id}`.")
 
 
