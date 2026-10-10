@@ -99,3 +99,65 @@ def test_a_shared_tree_reopen_is_unchanged(tmp_path, monkeypatch):
     result = runner.invoke(app, ["task", "reopen", ids[0], "--json"])
 
     assert json.loads(result.output) == {"id": ids[0], "progress": "pending", "blocked": None}
+
+
+def _reopen_patch(root, task_id):
+    result = runner.invoke(app, ["task", "reopen", task_id])
+    assert result.exit_code == 0, result.output
+    return root / re.search(r"(\.specflo/\S+\.patch)", result.output).group(1)
+
+
+def _clone_at(root, sha, tmp_path_factory):
+    clone = tmp_path_factory.mktemp("clone")
+    subprocess.run(["git", "clone", "-q", str(root), str(clone)], check=True)
+    git(clone, "checkout", "-q", sha)
+    return clone
+
+
+def test_a_crlf_and_a_non_utf8_edit_survive_the_patch(tmp_path, monkeypatch, tmp_path_factory):
+    cfg, ids = make_repo(tmp_path)
+    (tmp_path / "win.txt").write_bytes(b"one\r\ntwo\r\n")
+    (tmp_path / "latin.txt").write_bytes(b"caf\xe9\n")
+    git(tmp_path, "add", "win.txt", "latin.txt")
+    git(tmp_path, "commit", "-qm", "text files")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0], "--worktree"]).exit_code == 0
+    path = tmp_path / ".specflo" / "worktrees" / SLUG / ids[0]
+    (path / "win.txt").write_bytes(b"one\r\nTWO\r\n")
+    (path / "latin.txt").write_bytes(b"caf\xe9 cr\xe8me\n")
+    base = task(tmp_path, cfg, ids[0]).base.split()[1]
+
+    patch = _reopen_patch(tmp_path, ids[0])
+
+    clone = _clone_at(tmp_path, base, tmp_path_factory)
+    git(clone, "apply", str(patch))
+    assert (clone / "win.txt").read_bytes() == b"one\r\nTWO\r\n"
+    assert (clone / "latin.txt").read_bytes() == b"caf\xe9 cr\xe8me\n"
+
+
+def test_the_patch_ignores_diff_config(started, tmp_path_factory):
+    root, cfg, task_id, path = started
+    git(root, "config", "diff.noprefix", "true")
+    git(root, "config", "color.diff", "always")
+    git(root, "config", "color.ui", "always")
+    base = task(root, cfg, task_id).base.split()[1]
+
+    patch = _reopen_patch(root, task_id)
+
+    clone = _clone_at(root, base, tmp_path_factory)
+    git(clone, "apply", str(patch))
+    assert (clone / "src" / "a.py").read_text() == "a = 2\n"
+
+
+def test_a_patch_that_does_not_apply_keeps_the_worktree(started, monkeypatch):
+    from specflo import worktree
+
+    root, cfg, task_id, path = started
+    monkeypatch.setattr(worktree, "_applies", lambda *args: False)
+
+    result = runner.invoke(app, ["task", "reopen", task_id])
+
+    assert result.exit_code != 0 and "does not apply" in result.output
+    assert path.is_dir() and (path / "src" / "a.py").read_text() == "a = 2\n"
+    assert f"specflo/{SLUG}/{task_id}" in git(root, "branch", "--list")
+    assert task(root, cfg, task_id).progress == "in_progress"

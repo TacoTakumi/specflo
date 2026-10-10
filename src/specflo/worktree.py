@@ -50,13 +50,21 @@ def git(cwd: Path, *args: str, check: bool = True, env: dict | None = None) -> s
     return result.stdout.strip()
 
 
-def _run(cwd: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+def _run(
+    cwd: Path, *args: str, env: dict | None = None, raw: bool = False,
+) -> subprocess.CompletedProcess:
+    """Run git in ``cwd``. Output is text, with bytes that are not UTF-8
+    kept as surrogates; ``raw`` keeps stdout as the bytes git wrote."""
     try:
-        return subprocess.run(
-            ["git", *args], cwd=cwd, capture_output=True, text=True, timeout=120, env=env,
+        result = subprocess.run(
+            ["git", *args], cwd=cwd, capture_output=True, timeout=120, env=env,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise SpecfloError(f"git {args[0]} could not run: {exc}") from exc
+    if not raw:
+        result.stdout = result.stdout.decode("utf-8", "surrogateescape")
+    result.stderr = result.stderr.decode("utf-8", "replace")
+    return result
 
 
 def current_branch(root: Path) -> str | None:
@@ -200,16 +208,41 @@ def save_patch(root: Path, path: Path, base_sha: str, slug: str, task_id: str,
     Returns its path, or None when the worktree holds no change.
     """
     tree = snapshot_tree(path)
-    diff = _run(Path(root), "diff", "--binary", "--full-index", base_sha, tree)
+    # Plumbing with fixed prefixes and raw bytes: no user diff config, colour
+    # or newline translation reaches the patch.
+    diff = _run(
+        Path(root), "diff-tree", "-r", "-p", "--binary", "--full-index", "--no-color",
+        "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", base_sha, tree, raw=True,
+    )
     if diff.returncode != 0:
-        raise SpecfloError(f"git diff failed: {(diff.stderr or diff.stdout).strip()}")
+        raise SpecfloError(f"git diff-tree failed: {diff.stderr.strip()}")
     if not diff.stdout:
         return None
     directory = worktrees_dir(root) / PATCHES_DIRNAME / slug
     directory.mkdir(parents=True, exist_ok=True)
     patch = directory / f"{task_id}-{stamp}.patch"
-    patch.write_text(diff.stdout)
+    patch.write_bytes(diff.stdout)
+    if not _applies(root, base_sha, patch):
+        raise SpecfloError(
+            f"The saved patch {relative(root, patch)} does not apply on {base_sha[:12]};"
+            f" the worktree {relative(root, path)} is kept as it is."
+        )
     return patch
+
+
+def _applies(root: Path, base_sha: str, patch: Path) -> bool:
+    """Whether ``patch`` applies with ``git apply`` on ``base_sha``, checked
+    in a scratch index so no worktree or index changes."""
+    index = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path",
+                     "specflo-patch-index"))
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+    # From a subdirectory git apply skips paths outside it, so it runs at the top.
+    top = Path(git(root, "rev-parse", "--show-toplevel"))
+    try:
+        git(top, "read-tree", base_sha, env=env)
+        return _run(top, "apply", "--cached", "--check", str(patch), env=env).returncode == 0
+    finally:
+        index.unlink(missing_ok=True)
 
 
 def _under(top: Path, directory: Path) -> str | None:
