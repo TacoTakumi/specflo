@@ -8,10 +8,13 @@ deny list). pi itself is whatever is installed; the record names its version. It
 key, and the provider's `apiKey` is the dummy `no-key` with `authHeader` off.
 
 Extensions are not committed under the frozen directory. Each run gets a copy
-of the frozen directory in its own run directory, and the copy gets exactly two
+of the frozen directory in its own run directory, and the copy gets exactly three
 extensions, materialised from the installed specflo: specflo's pi extension (the same
-files `specflo extension install` copies) and the pool deny list (deny.ts, as a
-single-file extension). They come from specflo because they are part of
+files `specflo extension install` copies), the pool deny list (deny.ts, as a
+single-file extension) and the input log (input-log.ts, as a single-file
+extension), which appends every pi input event with its source to
+`inputs.jsonl` in the run dir, so the bench can tell an operator's typing from
+the auto chain's messages. They come from specflo because they are part of
 the specflo under test, which the run record names in `versions.specflo`; a
 committed copy would go stale without notice. The run copy also takes pi's own
 writes (sessions, trust), so a run never writes into the package.
@@ -34,8 +37,8 @@ permission prompts; `--no-approve` makes pi ignore project-local `.pi` files
 instead of asking to trust them, and `--no-skills` keeps skills found outside
 the run copy (such as `~/.agents/skills`) out of the run. `--no-extensions`
 turns off discovery and pi's built-in extensions (`builtin:llama.cpp`, which
-can manage models on a llama.cpp router, and `builtin:mcp`), and the two run
-copy extensions are then loaded by `-e`, so pi runs with exactly those two.
+can manage models on a llama.cpp router, and `builtin:mcp`), and the three run
+copy extensions are then loaded by `-e`, so pi runs with exactly those three.
 """
 
 from __future__ import annotations
@@ -60,12 +63,16 @@ MODELS_FILE = "models.json"
 HOME_MODELS_FILE = "pi-models.json"
 
 DENY_SOURCE = PACKAGE.parent / "pool" / "pi_extension" / "deny.ts"
+INPUT_LOG_SOURCE = PACKAGE.parent / "pool" / "pi_extension" / "input-log.ts"
 SPECFLO_EXTENSION = "specflo"
 DENY_EXTENSION = "specflo-pool-deny.ts"
-EXTENSIONS = (SPECFLO_EXTENSION, DENY_EXTENSION)
+INPUT_LOG_EXTENSION = "specflo-bench-input-log.ts"
+EXTENSIONS = (SPECFLO_EXTENSION, DENY_EXTENSION, INPUT_LOG_EXTENSION)
 
 AGENT_DIR_ENV = "PI_CODING_AGENT_DIR"
 DENY_ENV = "SPECFLO_POOL_DENY"
+INPUT_LOG_ENV = "SPECFLO_INPUT_LOG"
+INPUT_LOG_FILE = "inputs.jsonl"
 AGENT_DIR_NAME = "pi-agent"
 
 # Files a frozen directory must never hold: credentials and pi's own writes.
@@ -73,7 +80,7 @@ FORBIDDEN = ("auth.json", "mcp-auth.json", "sessions", "trust.json", "extensions
 
 # Variables dropped from the inherited environment: each would point pi or the
 # deny list somewhere other than the run copy.
-_DROPPED_ENV = ("PI_CODING_AGENT_SESSION_DIR", "PI_PACKAGE_DIR", DENY_ENV)
+_DROPPED_ENV = ("PI_CODING_AGENT_SESSION_DIR", "PI_PACKAGE_DIR", DENY_ENV, INPUT_LOG_ENV)
 
 # Set on every run: no catalog refresh or tool download, no version request,
 # no telemetry.
@@ -164,7 +171,7 @@ def tree_hash(path: Path | str) -> str:
 
 
 def materialise(run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR) -> Path:
-    """Copy the frozen directory into `run_dir` and add the two extensions.
+    """Copy the frozen directory into `run_dir` and add the three extensions.
 
     Returns the run copy, the directory pi gets as its agent dir. Refuses a
     frozen directory holding a credential, pi's own writes or extensions of its
@@ -186,6 +193,7 @@ def materialise(run_dir: Path | str, frozen_dir: Path | str = FROZEN_DIR) -> Pat
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(file, target)
     shutil.copyfile(DENY_SOURCE, extensions / DENY_EXTENSION)
+    shutil.copyfile(INPUT_LOG_SOURCE, extensions / INPUT_LOG_EXTENSION)
     return agent_dir
 
 
@@ -250,6 +258,7 @@ def build_launch(
     env.update(_FIXED_ENV)
     env[AGENT_DIR_ENV] = str(agent_dir)
     env[DENY_ENV] = json.dumps(list(frozen.deny))
+    env[INPUT_LOG_ENV] = str(Path(run_dir).resolve() / INPUT_LOG_FILE)
 
     argv = [
         pi_bin,

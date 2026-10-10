@@ -107,7 +107,7 @@ def test_frozen_dir_with_a_credential_is_refused(tmp_path: Path):
 # -- run copy and extension set ----------------------------------------------
 
 
-def test_run_copy_extensions_are_exactly_specflo_and_the_deny_list(launch):
+def test_run_copy_extensions_are_exactly_specflo_the_deny_list_and_the_input_log(launch):
     assert launch_pi.extension_names(launch.agent_dir) == sorted(launch_pi.EXTENSIONS)
     ext = launch.agent_dir / "extensions"
     assert (ext / "specflo" / "package.json").is_file()
@@ -115,6 +115,7 @@ def test_run_copy_extensions_are_exactly_specflo_and_the_deny_list(launch):
     assert not (ext / "specflo" / "test").exists()
     deny_src = launch_pi.DENY_SOURCE.read_bytes()
     assert (ext / launch_pi.DENY_EXTENSION).read_bytes() == deny_src
+    assert (ext / launch_pi.INPUT_LOG_EXTENSION).read_bytes() == launch_pi.INPUT_LOG_SOURCE.read_bytes()
 
 
 def test_run_copy_declares_only_the_run_entry_and_makes_it_the_default(launch):
@@ -148,6 +149,7 @@ def test_env_points_pi_at_the_run_copy_with_the_frozen_deny_list(launch):
     assert env["PI_TELEMETRY"] == "0"
     assert env["HOME"] == "/home/x"
     assert "PI_CODING_AGENT_SESSION_DIR" not in env
+    assert env["SPECFLO_INPUT_LOG"] == str(launch.agent_dir.parent / "inputs.jsonl")
 
 
 def test_argv_runs_the_arm_entry_with_no_approve(launch, tmp_path: Path):

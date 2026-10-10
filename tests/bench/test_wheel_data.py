@@ -22,6 +22,7 @@ SHIPPED = (
     "specflo/bench/data/configs/pi/frozen.json",
     "specflo/bench/data/configs/pi/models.json",
     "specflo/bench/data/configs/claude/frozen.json",
+    "specflo/pool/pi_extension/input-log.ts",
 )
 
 
