@@ -32,6 +32,7 @@ the file aside.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import functools
 import hashlib
@@ -40,7 +41,9 @@ import json
 import logging
 import re
 import secrets
+import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 from ..errors import SpecfloError
@@ -441,6 +444,15 @@ def check_password(root: Path, name: str, password: str, now: float | None = Non
     consults the lockout: a token or a proxy sign-in never does.
     """
     now = time.time() if now is None else now
+    # One user's attempts run one at a time, from the lockout check to the
+    # failure record, so a burst of wrong passwords cannot all be checked
+    # before the first is counted. Other users' sign-ins do not wait.
+    with _signin_lock(name):
+        return _check_password(root, name, password, now)
+
+
+def _check_password(root: Path, name: str, password: str, now: float) -> User | None:
+    # check_password under the user's sign-in lock.
     with open_store(root) as store:
         user = store.get_user(name.lower())
         if user is not None and _locked(store, user.name, now):
@@ -477,6 +489,34 @@ def _locked(store: Store, user: str, now: float) -> bool:
         return False
     last = failures[-1]
     return sum(1 for at in failures if at > last - SIGNIN_LOCK_WINDOW) >= SIGNIN_LOCK_FAILURES
+
+
+# Each name with a sign-in running or waiting: its lock and how many hold or
+# wait on it. The guard covers the dict and the counts.
+_signin_locks: dict[str, list] = {}
+_signin_locks_guard = threading.Lock()
+
+
+@contextlib.contextmanager
+def _signin_lock(name: str) -> Iterator[None]:
+    """Run the password sign-ins for ``name`` (in any case) one at a time.
+
+    The daemon is one process, so a lock per name is enough. A name's lock
+    lives only while a sign-in for it holds or waits on it, so names tried
+    once, known or not, leave nothing behind.
+    """
+    key = name.lower()
+    with _signin_locks_guard:
+        entry = _signin_locks.setdefault(key, [threading.Lock(), 0])
+        entry[1] += 1
+    try:
+        with entry[0]:
+            yield
+    finally:
+        with _signin_locks_guard:
+            entry[1] -= 1
+            if not entry[1]:
+                del _signin_locks[key]
 
 
 @functools.cache

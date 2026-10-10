@@ -9,6 +9,8 @@ name or a proxy-only user has nothing to lock. Bearer tokens never consult
 the lockout.
 """
 
+import threading
+
 import pytest
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
@@ -220,3 +222,55 @@ def test_a_token_still_works_while_the_user_is_locked(client, root, clock):
 
     assert response.status_code == 200
     assert_locked(attempt(client, PASSWORD))
+
+
+# --- concurrent sign-ins -----------------------------------------------------
+
+
+def test_concurrent_wrong_passwords_record_at_most_five_and_lock(root):
+    # The sign-in route checks passwords on a thread pool, so a burst of
+    # wrong passwords arrives at once: each must see the failures before it.
+    now = 1_800_000_000.0
+    start = threading.Barrier(20)
+    errors = []
+
+    def sign_in():
+        start.wait()
+        try:
+            assert auth.check_password(root, "rob", WRONG, now) is None
+        except auth.SignInLocked:
+            pass
+        except BaseException as error:  # pragma: no cover - reported below
+            errors.append(error)
+
+    threads = [threading.Thread(target=sign_in) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    assert len(failures(root)) <= auth.SIGNIN_LOCK_FAILURES
+    with pytest.raises(auth.SignInLocked):
+        auth.check_password(root, "rob", PASSWORD, now)
+    assert auth._signin_locks == {}
+
+
+def test_concurrent_sign_ins_for_another_user_do_not_wait(root):
+    auth.add_user(root, "ann", "requester", PASSWORD)
+    signed_in = []
+
+    def sign_in():
+        signed_in.append(auth.check_password(root, "ann", PASSWORD))
+
+    # One user's sign-in lock held, as while their password is checked,
+    # leaves another user's sign-in free to finish.
+    with auth._signin_lock("Rob"):
+        assert list(auth._signin_locks) == ["rob"]
+        other = threading.Thread(target=sign_in)
+        other.start()
+        other.join(timeout=30)
+        assert not other.is_alive()
+
+    assert [user.name for user in signed_in] == ["ann"]
+    assert auth._signin_locks == {}
