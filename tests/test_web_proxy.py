@@ -5,9 +5,12 @@ carrying the configured header with an existing user's name, signs that
 user in without the form: a session opened with the method 'proxy', its
 cookie on the response. The peer is the socket peer only, so an untrusted
 peer gets the form whatever X-Forwarded-For says, and only the header's own
-name counts, not an underscore spelling of it. Proxy sign-in checks no
-password, so the lockout does not stop it. The header never unlocks the
-API, which reads only the Authorization header.
+name counts, not an underscore spelling of it. The header wins over a live
+session of another user, which ends; a name no user has gets a 403 that
+says how to add one, never the form. The role is the user row's: no role
+or group header is read. Proxy sign-in checks no password, so the lockout
+does not stop it. The header never unlocks the API, which reads only the
+Authorization header.
 
 That ``specflo serve`` hands uvicorn ``proxy_headers=False``, so a request's
 peer is the socket peer, is tested in test_daemon_proxy_config.py.
@@ -289,26 +292,95 @@ def test_the_header_twice_signs_no_one_in(root):
     assert_sent_to_sign_in(response)
 
 
-def test_an_unknown_user_is_treated_as_no_header(root):
+def assert_refused_unknown(response, name):
+    assert response.status_code == 403
+    assert "specflo serve user add" in response.text
+    assert name in response.text
+    assert 'name="password"' not in response.text
+    assert "set-cookie" not in response.headers
+
+
+def users(root):
+    with open_store(root) as store:
+        return [user.name for user in store.list_users()]
+
+
+@pytest.mark.parametrize("path", [web.HOME_PATH, web.SIGNIN_PATH, web.TOKENS_PATH])
+def test_an_unknown_user_is_refused_and_not_created(root, path):
     client = client_for(root)
 
-    assert_sent_to_sign_in(client.get(web.HOME_PATH, headers={HEADER: "nobody"}))
+    response = client.get(path, headers={HEADER: "Nobody"})
+
+    assert_refused_unknown(response, "specflo serve user add nobody")
+    assert users(root) == ["rob"]
     assert sessions(root) == 0
 
 
-def test_a_live_session_for_another_user_is_kept(root):
-    # Switching to the user the header names is not done here: the live
-    # session stands.
+def test_the_unknown_name_is_escaped_on_the_refusal(root):
+    client = client_for(root)
+
+    response = client.get(web.HOME_PATH, headers={HEADER: "<b>x</b>"})
+
+    assert response.status_code == 403
+    assert "<b>x</b>" not in response.text
+    assert "&lt;b&gt;x&lt;/b&gt;" in response.text
+
+
+def test_an_unknown_user_is_refused_beside_a_live_session_which_is_left_alone(root):
+    client = client_for(root)
+    client.post(web.SIGNIN_PATH, data={"name": "rob", "password": PASSWORD})
+    before = session_of(client, root)
+
+    response = client.get(web.HOME_PATH, headers={HEADER: "nobody"})
+
+    assert_refused_unknown(response, "nobody")
+    assert session_of(client, root) == before
+    assert sessions(root) == 1
+
+
+def test_the_header_naming_another_user_replaces_the_live_session(root):
     auth.add_user(root, "ann", "requester", PASSWORD)
     client = client_for(root)
-    client.post(web.SIGNIN_PATH, data={"name": "ann", "password": PASSWORD})
+    client.post(web.SIGNIN_PATH, data={"name": "rob", "password": PASSWORD})
+    old = client.cookies[web.SESSION_COOKIE]
+
+    response = client.get(web.HOME_PATH, headers={HEADER: "ann"})
+
+    assert response.status_code == 200
+    assert "signed in as <strong>requester</strong>" in response.text
+    assert response.headers["set-cookie"].startswith(f"{web.SESSION_COOKIE}=")
+    with open_store(root) as store:
+        assert store.get_session(auth.hash_token(old)) is None
+    session = session_of(client, root)
+    assert session.user == "ann" and session.method == "proxy"
+    assert sessions(root) == 1
+
+
+def test_the_header_naming_the_session_user_keeps_a_password_session(root):
+    client = client_for(root)
+    client.post(web.SIGNIN_PATH, data={"name": "rob", "password": PASSWORD})
+    secret = client.cookies[web.SESSION_COOKIE]
 
     response = client.get(web.HOME_PATH, headers={HEADER: "rob"})
 
     assert response.status_code == 200
-    assert "signed in as <strong>requester</strong>" in response.text
-    assert session_of(client, root).user == "ann"
+    assert client.cookies[web.SESSION_COOKIE] == secret
+    assert session_of(client, root).method == "password"
     assert sessions(root) == 1
+
+
+def test_role_and_group_headers_are_never_read(root):
+    auth.add_user(root, "ann", "requester", None)
+    client = client_for(root)
+    headers = {
+        HEADER: "ann", "X-WEBAUTH-ROLE": "developer", "X-WEBAUTH-GROUPS": "developer",
+    }
+
+    response = client.get(web.DEFINITIONS_PATH, headers=headers)
+
+    assert response.status_code == 403
+    assert "requester" in response.text
+    assert session_of(client, root).user == "ann"
 
 
 # --- the API -------------------------------------------------------------------

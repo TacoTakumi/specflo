@@ -144,6 +144,12 @@ NO_USERS = (
     "No user exists yet. Whoever runs the daemon adds the first one with"
     " `specflo serve user add <name> --role developer --password`."
 )
+# What a browser is told when a trusted proxy names a user the daemon does
+# not have: no form, as no password would help, and no account is made.
+PROXY_USER_UNKNOWN = (
+    "There is no account named {name} on this daemon. Ask a developer to add"
+    " it with `specflo serve user add {name}`."
+)
 INBOX_EMPTY = "Nothing waits on {identity}."
 # What the tokens page says beside a new token's secret, and with no token.
 SHOWN_ONCE = "Copy it now: it will not be shown again."
@@ -207,6 +213,14 @@ class SignInRequired(Exception):
     """A page was asked for by a browser with no live session."""
 
 
+class ProxyUserUnknown(Exception):
+    """A trusted proxy named a user the daemon does not have."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
+
+
 def _now() -> float:
     return time.time()
 
@@ -219,24 +233,24 @@ def current_user(request: Request) -> User:
     session's expiry marks the request's state, so the response refreshes
     the cookie.
 
-    With no live session, a trusted proxy's header naming an existing user
-    signs that user in: see :func:`_proxy_sign_in`.
+    A trusted proxy's header wins over the cookie: naming a user other than
+    the live session's, or with no live session, it signs that user in; see
+    :func:`_proxy_sign_in`. Naming the live session's own user, it keeps
+    that session, however it was opened. The role is always the user row's:
+    no header the proxy sends sets it.
     """
     # A session this request already opened from the header is the live one,
     # so a second look in the same request opens no other.
     secret = session_secret(request)
     live = resume_session(request.app.state.root, secret, _now())
+    named = proxy_user_name(request)
+    if named is not None and (live is None or live[0].name != named):
+        return _proxy_sign_in(request, named, replacing=secret if live is not None else None)
     if live is None:
-        named = proxy_user_name(request)
-        user = _proxy_sign_in(request, named) if named is not None else None
-        if user is None:
-            raise SignInRequired()
-        return user
+        raise SignInRequired()
     user, moved = live
     if moved:
         setattr(request.state, SESSION_REFRESH_STATE, secret)
-    # A header naming another user than the live session's is not acted on
-    # yet: the live session stands.
     return user
 
 
@@ -275,19 +289,25 @@ def _trusted_peer(host: str, trusted) -> bool:
     return any(address in network for network in trusted)
 
 
-def _proxy_sign_in(request: Request, name: str) -> User | None:
-    """Sign in the user ``name`` a trusted proxy sent, with no form; None if there is none.
+def _proxy_sign_in(request: Request, name: str, replacing: str | None = None) -> User:
+    """Sign in the user ``name`` a trusted proxy sent, with no form.
 
-    A session opened with the method 'proxy' goes on the request's state:
-    the response sets its cookie whichever route made it, and the forms it
-    carries echo its secret. No password is checked, so the password
-    lockout never applies. A name no user has is treated as no header.
+    The live session of another user, whose secret is ``replacing``, ends:
+    its row goes from the store. A session opened with the method 'proxy'
+    goes on the request's state: the response sets its cookie whichever
+    route made it, and the forms it carries echo its secret. No password is
+    checked, so the password lockout never applies.
+
+    A name no user has raises :class:`ProxyUserUnknown` before anything
+    changes: no user is made, no session opened and none ended.
     """
     root = request.app.state.root
     with open_store(root) as store:
         user = store.get_user(name)
-    if user is None:
-        return None
+        if user is None:
+            raise ProxyUserUnknown(name)
+        if replacing:
+            store.remove_session(hash_token(replacing))
     secret = open_session(root, user.name, PROXY_METHOD, _now())
     setattr(request.state, SESSION_REFRESH_STATE, secret)
     setattr(request.state, SESSION_OPENED_STATE, secret)
@@ -436,6 +456,14 @@ def same_site_path(target: str) -> str:
 
 def _to_sign_in(request: Request, exc: SignInRequired) -> RedirectResponse:
     return RedirectResponse(SIGNIN_PATH, status_code=303)
+
+
+def _refuse_unknown_proxy_user(request: Request, exc: ProxyUserUnknown) -> HTMLResponse:
+    """The 403 for a trusted proxy naming no user: what to ask for, and no sign-in form."""
+    return render(
+        "error.html", status_code=403, identity=None,
+        message=PROXY_USER_UNKNOWN.format(name=exc.name),
+    )
 
 
 # The routes a browser reaches without a session.
@@ -1310,6 +1338,7 @@ def _to_error_page(request: Request, exc: SpecfloError) -> HTMLResponse:
 def install(app: FastAPI) -> None:
     """Add the web UI to ``app``: its pages, the sign-in routes, and the assets."""
     app.add_exception_handler(SignInRequired, _to_sign_in)
+    app.add_exception_handler(ProxyUserUnknown, _refuse_unknown_proxy_user)
     app.add_exception_handler(SpecfloError, _to_error_page)
     app.include_router(front_door)
     # The pool page is built on this module, so it is imported only here. Its
