@@ -1,4 +1,4 @@
-"""The My tokens page: a signed-in user creates, lists and revokes their own personal tokens.
+"""The user page's tokens: a signed-in user creates, lists and revokes their own personal tokens.
 
 A new token's secret shows once, on the page the create answers with, and
 that response is never cached; the store keeps only its hash, so no later
@@ -80,7 +80,7 @@ def test_the_header_links_to_the_page_for_a_signed_in_user(app, root, role):
     html = client.get(web.HOME_PATH).text
 
     header = re.search(r'<header class="site-header">.*?</header>', html, re.S).group(0)
-    assert f'href="{web.TOKENS_PATH}"' in header
+    assert f'href="{web.USER_PATH}"' in header
     # the theme switch still follows the identity, as the stylesheet expects
     assert re.search(r'class="identity".*?</span>\s*<form class="theme"', header, re.S)
 
@@ -88,14 +88,15 @@ def test_the_header_links_to_the_page_for_a_signed_in_user(app, root, role):
 def test_the_sign_in_page_has_no_link(app):
     client = TestClient(app, follow_redirects=False)
 
-    assert f'href="{web.TOKENS_PATH}"' not in client.get(web.SIGNIN_PATH).text
+    assert f'href="{web.USER_PATH}"' not in client.get(web.SIGNIN_PATH).text
 
 
 def test_a_browser_with_no_session_is_sent_to_sign_in(app):
     client = TestClient(app, follow_redirects=False)
 
     for response in (
-        client.get(web.TOKENS_PATH),
+        client.get(web.USER_PATH),
+        client.get(web.OLD_TOKENS_PATH),
         client.post(web.TOKENS_PATH, data={"name": "laptop"}),
         client.post(web.REVOKE_TOKEN_PATH, data={"name": "laptop"}),
     ):
@@ -109,7 +110,7 @@ def test_the_page_lists_only_the_users_own_tokens(app, root):
     auth.mint_user_token(root, "rob", "laptop", today="2026-03-01")
     auth.mint_user_token(root, "ann", "desktop")
 
-    html = client.get(web.TOKENS_PATH).text
+    html = client.get(web.USER_PATH).text
 
     shown = rows(html)
     assert list(shown) == ["laptop"]
@@ -126,7 +127,7 @@ def test_a_used_token_shows_when_it_was_last_used(app, root):
     assert whoami(client, secret).status_code == 200
     (token,) = auth.list_user_tokens(root, "rob")
 
-    shown = rows(client.get(web.TOKENS_PATH).text)
+    shown = rows(client.get(web.USER_PATH).text)
 
     assert token.last_used in shown["laptop"]
     assert "never" not in shown["laptop"]
@@ -135,7 +136,7 @@ def test_a_used_token_shows_when_it_was_last_used(app, root):
 def test_with_no_token_the_page_says_so(app, root):
     client = signed_in(app, root)
 
-    html = client.get(web.TOKENS_PATH).text
+    html = client.get(web.USER_PATH).text
 
     assert rows(html) == {}
     assert web.NO_TOKENS in html
@@ -157,7 +158,7 @@ def test_creating_a_token_shows_its_secret_once_and_it_acts_as_the_user(app, roo
     assert auth.principal_for(root, secret) == ("rob", "developer")
     assert whoami(client, secret).json()["user"] == "rob"
     # a reload shows the token and never its secret again
-    again = client.get(web.TOKENS_PATH).text
+    again = client.get(web.USER_PATH).text
     assert "laptop" in rows(again)
     assert secret not in again
     assert not SECRET.search(again)
@@ -207,10 +208,10 @@ def test_revoking_an_own_token_ends_it(app, root):
     response = revoke(client, "laptop")
 
     assert response.status_code == 303
-    assert response.headers["location"] == web.TOKENS_PATH
+    assert response.headers["location"] == web.TOKENS_SECTION
     assert names(root, "rob") == ["desktop"]
     assert whoami(client, secret).status_code == 401
-    assert list(rows(client.get(web.TOKENS_PATH).text)) == ["desktop"]
+    assert list(rows(client.get(web.USER_PATH).text)) == ["desktop"]
     log = (root / routes.AUDIT_FILENAME).read_text()
     assert '"operation": "revoke_token"' in log
 
@@ -233,7 +234,7 @@ def test_each_token_has_a_revoke_form_for_its_name(app, root):
     client = signed_in(app, root)
     auth.mint_user_token(root, "rob", "laptop")
 
-    body = rows(client.get(web.TOKENS_PATH).text)["laptop"]
+    body = rows(client.get(web.USER_PATH).text)["laptop"]
 
     (form,) = re.findall(r"<form[^>]*>.*?</form>", body, re.S)
     assert f'action="{web.REVOKE_TOKEN_PATH}"' in form

@@ -103,11 +103,15 @@ EDIT_TEAM_PATH = TEAMS_PATH + "/{name}/edit"
 DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
 # The model bench's pages; their routes live in the bench_web module.
 BENCH_PATH = "/bench"
-# The signed-in user's own personal tokens. A new token is posted to the
-# page's own path; a revoke carries the token's name in the form, so no name
-# a token can carry is taken by a route.
-TOKENS_PATH = "/tokens"
+# The signed-in user's own page: the theme switch and their personal tokens.
+USER_PATH = "/user"
+# Where the user page's token forms post. A revoke carries the token's name
+# in the form, so no name a token can carry is taken by a route.
+TOKENS_PATH = USER_PATH + "/tokens"
 REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
+# The tokens section of the user page, and the old tokens page that leads there.
+TOKENS_SECTION = USER_PATH + "#tokens"
+OLD_TOKENS_PATH = "/tokens"
 # The change password page, which only a session opened with a password has.
 PASSWORD_PATH = "/password"
 # How a session opened on the sign-in form records its method in the store,
@@ -180,6 +184,7 @@ _templates.globals.update(
     assets_path=ASSETS_PATH,
     pool_path=POOL_PATH,
     bench_path=BENCH_PATH,
+    user_path=USER_PATH,
     tokens_path=TOKENS_PATH,
     password_path=PASSWORD_PATH,
     revoke_token_path=REVOKE_TOKEN_PATH,
@@ -1173,14 +1178,14 @@ async def post_message(
     return RedirectResponse(PROJECT_PATH.format(slug=slug), status_code=303)
 
 
-def _tokens_page(user: User, root: Path, minted: tuple[str, str] | None = None) -> HTMLResponse:
-    """The tokens page of ``user``; ``minted`` is a new token's (name, secret), shown this once.
+def _user_page(user: User, root: Path, minted: tuple[str, str] | None = None) -> HTMLResponse:
+    """The user page of ``user``; ``minted`` is a new token's (name, secret), shown this once.
 
     The response that carries a secret is never cached, so a back button
     or a shared cache cannot show it again.
     """
     response = render(
-        "tokens.html", identity=user.role, user=user.name,
+        "user.html", identity=user.role, user=user.name,
         tokens=list_user_tokens(root, user.name), minted=minted,
         shown_once=SHOWN_ONCE, no_tokens=NO_TOKENS,
     )
@@ -1189,18 +1194,27 @@ def _tokens_page(user: User, root: Path, minted: tuple[str, str] | None = None) 
     return response
 
 
-@pages.get(TOKENS_PATH, include_in_schema=False)
-def tokens_page(request: Request, user: User = Depends(current_user)) -> Response:
-    """The signed-in user's personal tokens: name, created, last used and last 4 characters."""
-    return _tokens_page(user, request.app.state.root)
+@pages.get(USER_PATH, include_in_schema=False)
+def user_page(request: Request, user: User = Depends(current_user)) -> Response:
+    """The signed-in user's page: the theme switch and their personal tokens.
+
+    Each token shows its name, created, last used and last 4 characters.
+    """
+    return _user_page(user, request.app.state.root)
+
+
+@pages.get(OLD_TOKENS_PATH, include_in_schema=False)
+def old_tokens_page(identity: str = Depends(current_session)) -> Response:
+    """The old My tokens page, now the tokens section of the user page."""
+    return RedirectResponse(TOKENS_SECTION, status_code=303)
 
 
 @pages.post(TOKENS_PATH, include_in_schema=False)
 async def create_token(request: Request, user: User = Depends(current_user)) -> Response:
     """Mint a personal token for the signed-in user and show its secret, once.
 
-    The form echoes the session secret like every mutating form. The page
-    answers the post itself rather than redirecting, so the secret is in
+    The form echoes the session secret like every mutating form. The user
+    page answers the post itself rather than redirecting, so the secret is in
     this one response and no later page has it: the store keeps only its
     hash. A blank name is a 400 page; a name the user already has is a 409
     page with the refusal. The mint is audited as the user, by name and role.
@@ -1221,12 +1235,12 @@ async def create_token(request: Request, user: User = Depends(current_user)) -> 
     except SpecfloError as exc:
         return render("error.html", status_code=409, identity=identity, message=str(exc))
     audit(root, user.name, user.role, "add_token", None, name)
-    return _tokens_page(user, root, minted=(name, secret))
+    return _user_page(user, root, minted=(name, secret))
 
 
 @pages.post(REVOKE_TOKEN_PATH, include_in_schema=False)
 async def revoke_token(request: Request, user: User = Depends(current_user)) -> Response:
-    """Revoke the signed-in user's token by the name the form carries, then back to the page.
+    """Revoke the signed-in user's token by the name the form carries, then back to the user page.
 
     The form echoes the session secret like every mutating form. The revoke
     looks only among the user's own tokens, so a name another user's token
@@ -1245,7 +1259,7 @@ async def revoke_token(request: Request, user: User = Depends(current_user)) -> 
     except SpecfloError as exc:
         return render("error.html", status_code=404, identity=identity, message=str(exc))
     audit(root, user.name, user.role, "revoke_token", None, name)
-    return RedirectResponse(TOKENS_PATH, status_code=303)
+    return RedirectResponse(TOKENS_SECTION, status_code=303)
 
 
 def _password_page(user: User, status_code: int = 200, **context) -> HTMLResponse:

@@ -72,7 +72,7 @@ def test_the_mutating_controls_are_exactly_the_listed_ones_and_the_front_door():
             seen.setdefault(names[0], []).append(path.name)
     assert set(seen) == set(CONTROLS) | {"sign in", "theme"}, seen
     assert seen["sign in"] == ["signin.html"]
-    assert seen["theme"] == ["base.html"]
+    assert seen["theme"] == ["base.html", "user.html"]
 
 
 def test_every_form_but_the_front_door_posts_and_carries_the_session_secret():

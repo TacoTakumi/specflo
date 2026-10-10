@@ -162,7 +162,7 @@ def test_a_second_look_in_the_same_request_opens_no_other_session(root):
 def test_a_route_with_its_own_response_sets_the_cookie_too(root):
     client = client_for(root)
 
-    response = client.get(web.TOKENS_PATH, headers={HEADER: "rob"})
+    response = client.get(web.USER_PATH, headers={HEADER: "rob"})
 
     assert response.status_code == 200
     assert response.headers["set-cookie"].startswith(f"{web.SESSION_COOKIE}=")
@@ -305,7 +305,7 @@ def users(root):
         return [user.name for user in store.list_users()]
 
 
-@pytest.mark.parametrize("path", [web.HOME_PATH, web.SIGNIN_PATH, web.TOKENS_PATH])
+@pytest.mark.parametrize("path", [web.HOME_PATH, web.SIGNIN_PATH, web.USER_PATH])
 def test_an_unknown_user_is_refused_and_not_created(root, path):
     client = client_for(root)
 
