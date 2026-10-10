@@ -72,6 +72,28 @@ describe("a pi run with an input log", () => {
     ]);
   });
 
+  it("logs the slash commands pi marks as the operator's, and not the auto chain's", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "input-log-")), "inputs.jsonl");
+    const pi = load({ [INPUT_LOG_ENV]: path });
+
+    await pi.fire("session_compact", { reason: "manual", fromExtension: false });
+    await pi.fire("session_compact", { reason: "manual", fromExtension: true });
+    await pi.fire("session_compact", { reason: "threshold", fromExtension: false });
+    for (const reason of ["startup", "new", "resume", "fork", "reload"]) {
+      await pi.fire("session_start", { reason });
+    }
+    await pi.fire("session_tree", { newLeafId: "b", oldLeafId: "a", fromExtension: false });
+    await pi.fire("session_tree", { newLeafId: "c", oldLeafId: "b", fromExtension: true });
+
+    assert.deepEqual(lines(path).map(({ kind, source, text }) => ({ kind, source, text })), [
+      { kind: "command", source: "interactive", text: "/compact" },
+      { kind: "command", source: "interactive", text: "/resume" },
+      { kind: "command", source: "interactive", text: "/fork" },
+      { kind: "command", source: "interactive", text: "/reload" },
+      { kind: "command", source: "interactive", text: "/tree" },
+    ]);
+  });
+
   it("leaves the input as it was", async () => {
     const path = join(mkdtempSync(join(tmpdir(), "input-log-")), "inputs.jsonl");
 

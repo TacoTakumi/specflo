@@ -57,10 +57,11 @@ latter. Release tags are of the form `vX.Y.Z`.
   events the specflo extension mirrors. A headless run, or one whose pane
   start fails, runs pi on RPC as before. The record's `lifecycle.transport`
   says which (`tui` or `rpc`). Every pi run also logs each pi input with its
-  source to `inputs.jsonl` in the run dir. A run where someone typed a prompt
-  or a `!` command, or changed the model or thinking level, in the pane is
-  invalid. pi reports slash commands such as `/new` or `/compact` to no
-  extension, so those go unseen.
+  source to `inputs.jsonl` in the run dir. A run where someone typed a
+  prompt, a `!` command, a model or thinking change, or `/compact`,
+  `/resume`, `/fork`, `/reload` or `/tree` in the pane is invalid. `/new` and
+  extension commands go unseen: pi reports them the same as the auto chain's
+  own.
 - **Theme switch in the daemon web UI.** The user page has an
   Auto/Light/Dark switch. The choice is kept in a `specflo_theme` cookie for
   a year and every page follows it, the sign-in page too; Auto follows the

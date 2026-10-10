@@ -38,10 +38,11 @@ The record's `logs` names every one of these paths.
 Validity: a run is valid when the model ids its requests recorded are exactly
 the arm's entry, no tool call named a protected path (the installed bench
 package and its held-out archive, the bench home, and other runs' workdirs and
-run dirs), the tree could be graded and, on a pi run, nobody typed a prompt
-or a `!` command or changed the model or thinking level in the run's pane (the
-input log holds no interactive entry but the ignition; pi reports slash
-commands such as /new or /compact to no extension, so they go unseen).
+run dirs), the tree could be graded and, on a pi run, nobody acted in the
+run's pane: a prompt, a `!` command, a model or thinking change, or a /compact,
+/resume, /fork, /reload or /tree (the input log holds no interactive entry but
+the ignition). /new and extension commands go unseen: pi reports them the same
+as the auto chain's own.
 `validity` says which check failed.
 
 Telemetry: when the llama-swap log has no stamped line, or no server timing
@@ -437,8 +438,9 @@ def input_log(run_dir: Path) -> list[dict] | None:
 def operator_inputs(inputs: Sequence[Mapping[str, Any]]) -> list[str]:
     """What someone other than the bench did in the pane: interactive entries but the ignition.
 
-    That is a prompt, a `!` command, or a model or thinking change. Slash
-    commands such as /new or /compact leave no entry (see the input log).
+    That is a prompt, a `!` command, a model or thinking change, or a /compact,
+    /resume, /fork, /reload or /tree. /new and extension commands leave no
+    entry (see the input log).
     """
     return [str(e.get("text")) for e in inputs
             if e.get("source") == "interactive" and e.get("text") != lifecycle.IGNITION]
