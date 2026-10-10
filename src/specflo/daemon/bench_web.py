@@ -108,15 +108,15 @@ def plain_name(name: str) -> bool:
 def served_file(base: Path, folder: str, name: str) -> Path | None:
     """The file ``name`` directly inside the folder ``folder`` of ``base``, or None.
 
-    Both names must be plain, and the resolved file must still sit in the
-    resolved folder, which must still sit in ``base``: a link planted in a
-    bench folder serves nothing outside it.
+    Both names must be plain, and neither the folder nor the file may be a
+    link: a link planted in a bench folder could serve another file, beside
+    it or outside the bench, under a name the allow-list lets through.
     """
     if not (plain_name(folder) and plain_name(name)):
         return None
-    inside = (base / folder).resolve()
-    path = (inside / name).resolve()
-    if inside.parent != base.resolve() or path.parent != inside or not path.is_file():
+    inside = base / folder
+    path = inside / name
+    if inside.is_symlink() or path.is_symlink() or not path.is_file():
         return None
     return path
 

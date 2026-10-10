@@ -244,6 +244,30 @@ def test_run_refuses_what_is_not_a_record(client, root, tmp_path):
         assert SECRET not in response.text, path
 
 
+def test_run_refuses_a_link_to_a_file_beside_it(client, root):
+    folder = run(root, "run-a", session=False)
+    (folder / "session.norm.json").symlink_to(folder / "harness.out")
+    other = run(root, "run-b")
+    (other / "record.json").unlink()
+    (other / "record.json").symlink_to(other / "harness.out")
+    sign_in(client, root, "developer")
+    for path in (run_file("run-a", "session.norm.json"), run_file("run-b", "record.json")):
+        response = client.get(path)
+        assert response.status_code == 404, path
+        assert SECRET not in response.text, path
+
+
+def test_batch_refuses_a_link_to_a_file_beside_it(client, root):
+    folder = batch(root, "pilot")
+    plant(folder / "data.json", SECRET)
+    (folder / "chart.txt").unlink()
+    (folder / "chart.txt").symlink_to(folder / "data.json")
+    sign_in(client, root, "developer")
+    response = client.get(batch_file("pilot", "chart.txt"))
+    assert response.status_code == 404
+    assert SECRET not in response.text
+
+
 def test_run_file_needs_a_session(client, root):
     run(root, "run-a")
     response = client.get(run_file("run-a", "record.json"))
