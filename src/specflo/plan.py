@@ -2048,6 +2048,15 @@ def render_task_brief(brief: dict) -> str:
         lines.append("  Notes:")
         for note in t["notes"]:
             lines.append(f"    {note['date']} [{note['label']}] {note['text']}")
+    # What each dependency left behind: its commit and its notes, so the work
+    # builds on what was done without reading the plan.
+    if brief.get("dependencies"):
+        lines.append("  Dependencies:")
+        for dep in brief["dependencies"]:
+            commit = f"commit {dep['commit']}" if dep["commit"] else "no commit recorded"
+            lines.append(f"    {dep['id']} - {dep['title']}  ({commit})")
+            for note in dep["notes"]:
+                lines.append(f"      {note['date']} [{note['label']}] {note['text']}")
     lines.append("")
     for req in brief["requirements"]:
         lines.append(req["section"].rstrip() if req["section"]
@@ -2150,6 +2159,11 @@ def task_brief(
             requirements.append(
                 {"id": req, "section": spec_mod.requirement_section(spec_doc, req)}
             )
+    by_id = {t.id: t for t in _parse_tasks(doc)}
+    dependencies = [
+        {"id": dep.id, "title": dep.text, "commit": dep.commit, "notes": dep.notes}
+        for dep in (by_id.get(d) for d in task.depends_on) if dep is not None
+    ]
     return {
         "task": {
             "id": task.id, "text": task.text, "acceptance": task.acceptance,
@@ -2160,6 +2174,7 @@ def task_brief(
             "scope": task.scope, "progress": task.progress,
             "notes": task.notes,
         },
+        "dependencies": dependencies,
         "requirements": requirements,
         "briefs": briefs,
         "global_constraints": constraints,
