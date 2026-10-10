@@ -53,8 +53,10 @@ from ..pool.service import PoolService, UnknownLease
 from . import poolstore
 from .permissions import POOL_MANAGE, POOL_RELEASE, can, who_can
 from .routes import audit
+from .store import User
 from .web import (
-    POOL_PATH, current_session, form_fields, render, session_refused, session_secret,
+    POOL_PATH, current_session, current_user, form_fields, render, session_refused,
+    session_secret,
 )
 
 # How many of the latest transitions the page lists.
@@ -337,7 +339,7 @@ def _release(service: PoolService, lease_id: str) -> str | None:
 
 @pages.post(RELEASE_PATH, include_in_schema=False)
 async def release_lease(
-    request: Request, lease_id: str, identity: str = Depends(current_session)
+    request: Request, lease_id: str, user: User = Depends(current_user)
 ) -> Response:
     """End the lease *lease_id* for the developer, and come back to the page.
 
@@ -345,9 +347,11 @@ async def release_lease(
     anything is read, and then any identity but the developer's. The lease
     ends through the service's one function that ends a lease, as the release
     verb's does, with the developer as the cause, and the release is audited
-    like one over the API. What a runner said of a member that did not stop
-    is not shown: it can name paths on this host and repeat a member's output.
+    like one over the API, under the signed-in user and their role. What a
+    runner said of a member that did not stop is not shown: it can name paths
+    on this host and repeat a member's output.
     """
+    identity = user.role
     fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
@@ -372,5 +376,5 @@ async def release_lease(
             message=f"No lease {lease_id!r}.",
         )
     if released is not None:
-        audit(request.app.state.root, identity, identity, "lease_release", None, released)
+        audit(request.app.state.root, user.name, identity, "lease_release", None, released)
     return RedirectResponse(POOL_PATH, status_code=303)

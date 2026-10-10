@@ -15,7 +15,8 @@ another's, nothing changes and the faults are what the page shows beside the
 form, with what was posted kept: a directory with a fault could not be put in
 force, so a save into one is refused unless it is the save that mends it.
 With none, the file is replaced in one step or removed, the change is audited
-with the acting identity, and the running pool reads its directory again.
+with the acting user and their role, and the running pool reads its directory
+again.
 
 A definition that a pool binds is not deleted, and the refusal names the pool.
 
@@ -63,10 +64,11 @@ from ..pool.teams import ROLE_FIELDS, TEAMS_DIR, Role, Team, check_team, seriali
 from .permissions import POOL_MANAGE, can, who_can
 from .pool_routes import NO_POOL, reload_pool
 from .routes import audit
+from .store import User
 from .web import (
     DEFINITIONS_PATH, DELETE_DEFINITION_PATH, DELETE_TEAM_PATH, EDIT_DEFINITION_PATH,
     EDIT_TEAM_PATH, NEW_DEFINITION_PATH, NEW_TEAM_PATH, TEAMS_PATH, current_session,
-    form_fields, render, session_refused, session_secret,
+    current_user, form_fields, render, session_refused, session_secret,
 )
 
 # What a save and a delete are audited as.
@@ -195,16 +197,16 @@ def _replace(target: Path, text: str) -> None:
 
 
 def put_file(
-    app, identity: str, relative: Path, text: str | None, operation: str, named: str
+    app, user: User, relative: Path, text: str | None, operation: str, named: str
 ) -> list[ConfigError]:
     """Write *text* to the file at *relative* in the pool directory of the
     daemon application *app*, or remove the file for a *text* of None; the
     faults that refused it, none for a change that was made.
 
     With a fault nothing changes. A change that was made is audited under
-    *identity* as *operation* on *named*, and then the running pool reads the
-    directory again; what that reload said is kept on the application, as
-    after any reload.
+    *user*, by name and role, as *operation* on *named*, and then the running
+    pool reads the directory again as that user; what that reload said is kept
+    on the application, as after any reload.
     """
     directory = pool_dir(app.state.root)
     with _changing:
@@ -215,8 +217,8 @@ def put_file(
             (directory / relative).unlink()
         else:
             _replace(directory / relative, text)
-        audit(app.state.root, identity, identity, operation, None, named)
-        reload_pool(app, identity)
+        audit(app.state.root, user.name, user.role, operation, None, named)
+        reload_pool(app, user.role, user.name)
     return []
 
 
@@ -435,11 +437,12 @@ async def _guarded(request: Request, identity: str) -> tuple[dict[str, str], Res
 
 @pages.post(DEFINITIONS_PATH, include_in_schema=False)
 async def create_definition(
-    request: Request, identity: str = Depends(current_session)
+    request: Request, user: User = Depends(current_user)
 ) -> Response:
     """Write a new definition file under the name the form gives, and come
     back to the list. A name that is not a plain one, or that a file has, is
     refused before anything is checked."""
+    identity = user.role
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -453,15 +456,16 @@ async def create_definition(
             name_fault=f"there is a definition '{name}' already; edit that one, or take "
             "another name.",
         )
-    return await _save(request, identity, None, values)
+    return await _save(request, user, None, values)
 
 
 @pages.post(EDIT_DEFINITION_PATH, include_in_schema=False)
 async def save_definition(
-    request: Request, name: str, identity: str = Depends(current_session)
+    request: Request, name: str, user: User = Depends(current_user)
 ) -> Response:
     """Write what the form holds over the file of the definition *name*, and
     come back to the list. The name is the path's: a save renames nothing."""
+    identity = user.role
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -471,17 +475,19 @@ async def save_definition(
     odd = odd_entry(file, f"definition '{name}'")
     if odd is not None:
         return _no_form(identity, odd)
-    return await _save(request, identity, name, posted_values(fields, name))
+    return await _save(request, user, name, posted_values(fields, name))
 
 
 async def _save(
-    request: Request, identity: str, name: str | None, values: dict[str, str]
+    request: Request, user: User, name: str | None, values: dict[str, str]
 ) -> Response:
-    """Save the definition *values* describe; *name* is None for a new one."""
+    """Save the definition *values* describe, as *user*; *name* is None for a
+    new one."""
+    identity = user.role
     relative = Path(DEFINITIONS_DIR) / f"{values['name']}.md"
     text = serialise_definition(posted_definition(values))
     faults = await run_in_threadpool(
-        put_file, request.app, identity, relative, text, SAVED, values["name"]
+        put_file, request.app, user, relative, text, SAVED, values["name"]
     )
     if faults:
         return _form(request, identity, name, values, faults)
@@ -490,10 +496,11 @@ async def _save(
 
 @pages.post(DELETE_DEFINITION_PATH, include_in_schema=False)
 async def delete_definition(
-    request: Request, name: str, identity: str = Depends(current_session)
+    request: Request, name: str, user: User = Depends(current_user)
 ) -> Response:
     """Remove the file of the definition *name*, and come back to the list. A
     definition that a pool binds stays, and the refusal names the pool."""
+    identity = user.role
     _, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -519,7 +526,7 @@ async def delete_definition(
             "another definition in the pool file first.",
         )
     relative = Path(DEFINITIONS_DIR) / f"{name}.md"
-    faults = await run_in_threadpool(put_file, request.app, identity, relative, None, DELETED, name)
+    faults = await run_in_threadpool(put_file, request.app, user, relative, None, DELETED, name)
     if faults:
         return _list(
             request, identity, status_code=409,
@@ -698,10 +705,11 @@ def edit_team_page(
 
 
 @team_pages.post(TEAMS_PATH, include_in_schema=False)
-async def create_team(request: Request, identity: str = Depends(current_session)) -> Response:
+async def create_team(request: Request, user: User = Depends(current_user)) -> Response:
     """Write a new team file under the name the form gives, and come back to
     the list. A name that is not a plain one, or that a file has, is refused
     before anything is checked."""
+    identity = user.role
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -712,15 +720,16 @@ async def create_team(request: Request, identity: str = Depends(current_session)
     if name in _team_files(pool_dir(request.app.state.root)):
         taken = f"there is a team '{name}' already; edit that one, or take another name."
         return _team_form(request, identity, None, values, beside={"name": [taken]})
-    return await _save_team(request, identity, None, values)
+    return await _save_team(request, user, None, values)
 
 
 @team_pages.post(EDIT_TEAM_PATH, include_in_schema=False)
 async def save_team(
-    request: Request, name: str, identity: str = Depends(current_session)
+    request: Request, name: str, user: User = Depends(current_user)
 ) -> Response:
     """Write what the form holds over the file of the team *name*, and come
     back to the list. The name is the path's: a save renames nothing."""
+    identity = user.role
     fields, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -730,21 +739,22 @@ async def save_team(
     odd = odd_entry(file, f"team '{name}'")
     if odd is not None:
         return _no_form(identity, odd)
-    return await _save_team(request, identity, name, posted_team(fields, name))
+    return await _save_team(request, user, name, posted_team(fields, name))
 
 
 async def _save_team(
-    request: Request, identity: str, name: str | None, values: dict[str, str]
+    request: Request, user: User, name: str | None, values: dict[str, str]
 ) -> Response:
-    """Save the team *values* describe; *name* is None for a new one. A line
-    that is not a role is refused before anything is checked."""
+    """Save the team *values* describe, as *user*; *name* is None for a new
+    one. A line that is not a role is refused before anything is checked."""
+    identity = user.role
     roles, problems = posted_roles(values["roles"])
     if problems:
         return _team_form(request, identity, name, values, beside={"roles": problems})
     relative = Path(TEAMS_DIR) / f"{values['name']}.md"
     text = serialise_team(Team(name=values["name"], roles=roles, notes=values["notes"]))
     faults = await run_in_threadpool(
-        put_file, request.app, identity, relative, text, TEAM_SAVED, values["name"]
+        put_file, request.app, user, relative, text, TEAM_SAVED, values["name"]
     )
     if faults:
         return _team_form(request, identity, name, values, faults)
@@ -753,11 +763,12 @@ async def _save_team(
 
 @team_pages.post(DELETE_TEAM_PATH, include_in_schema=False)
 async def delete_team(
-    request: Request, name: str, identity: str = Depends(current_session)
+    request: Request, name: str, user: User = Depends(current_user)
 ) -> Response:
     """Remove the file of the team *name*, and come back to the list. A lease
     of the team that is out ends as it would have: its members are those of
     the pools, which stand."""
+    identity = user.role
     _, refused = await _guarded(request, identity)
     if refused is not None:
         return refused
@@ -774,7 +785,7 @@ async def delete_team(
         )
     relative = Path(TEAMS_DIR) / f"{name}.md"
     faults = await run_in_threadpool(
-        put_file, request.app, identity, relative, None, TEAM_DELETED, name
+        put_file, request.app, user, relative, None, TEAM_DELETED, name
     )
     if faults:
         return _team_list(

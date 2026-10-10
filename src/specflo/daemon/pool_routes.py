@@ -40,8 +40,9 @@ the same is asked where the pool opens, and such a directory gives no pool.
 
 The routes are written out, like the product routes. Each one runs as the
 identity behind its bearer token, and one that changes the pool appends an
-audit record with that identity and the lease it acted on. The service takes
-its own turns, so a route holds no lock of the daemon's.
+audit record with the user behind that token, its role and the lease it acted
+on. What a route may do is its role's matter. The service takes its own
+turns, so a route holds no lock of the daemon's.
 
 A refusal from the pool is a 400 carrying its message. A member that does not
 start or stop is a 502: what the agent CLI said of it can name paths on this
@@ -130,7 +131,7 @@ from ..service.pool_remote import (
 from . import seat
 from .permissions import CONSOLE, POOL_MANAGE, can, who_can
 from .poolstore import Lease, PoolStore, open_pool_store
-from .routes import audit, current_identity
+from .routes import audit, current_identity, current_principal
 
 # The daemon's own credential on its members' hosts, kept under the root so
 # that a restarted daemon can still end the leases it finds in its store.
@@ -276,15 +277,16 @@ def _in_the_way(old: PoolConfig, new: PoolConfig, store: PoolStore) -> list[Conf
     return held_members(old, new, store) + attached_names(new, store)
 
 
-def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
-    """Read the pool directory of the daemon application *app* again, as
-    *identity*, and put it in force; the faults that kept it from that, none
-    for a reload that passed.
+def reload_pool(app, identity: str, user: str | None = None) -> tuple[ConfigError, ...]:
+    """Read the pool directory of the daemon application *app* again, as the
+    user *user* acting under the role *identity*, and put it in force; the
+    faults that kept it from that, none for a reload that passed.
 
     The faults are kept on ``app.state.pool_errors`` either way. With any,
     ``app.state.pool`` is what it was: no pool for a daemon that had none,
     and the service under its last valid configuration otherwise. A reload
-    that passed is audited under *identity*. A root with no pool directory
+    that passed is audited under *user* and *identity*; a caller that names
+    no user is audited under the role alone. A root with no pool directory
     and no pool has nothing to read, and nothing changes.
     """
     root = app.state.root
@@ -301,7 +303,7 @@ def reload_pool(app, identity: str) -> tuple[ConfigError, ...]:
         faults = tuple(errors) or service.swap(config, _in_the_way)
     app.state.pool_errors = faults
     if not faults:
-        audit(root, identity, identity, "pool_reload", None, None)
+        audit(root, user or identity, identity, "pool_reload", None, None)
     return faults
 
 
@@ -411,21 +413,23 @@ class _ClientGone(Exception):
     """The client of a request closed its connection before it was answered."""
 
 
-def _look(asked: waiting.Waiting, root: Path, identity: str) -> Grant | teamlease.TeamGrant | None:
-    """One look at *asked* for *identity*, in a worker thread. A grant is
-    audited there and then, so a lease this route made has its record whatever
-    becomes of the route. A team's grant is one act, audited under the team
-    lease id."""
+def _look(
+    asked: waiting.Waiting, root: Path, principal: tuple[str, str]
+) -> Grant | teamlease.TeamGrant | None:
+    """One look at *asked* for *principal*, the (name, role) of the user that
+    asks, in a worker thread. A grant is audited there and then, so a lease
+    this route made has its record whatever becomes of the route. A team's
+    grant is one act, audited under the team lease id."""
     grant = asked.attempt()
     if grant is not None:
         team = isinstance(grant, teamlease.TeamGrant)
         granted = grant.team_lease_id if team else grant.lease_id
-        audit(root, identity, identity, "lease_request", None, granted)
+        audit(root, *principal, "lease_request", None, granted)
     return grant
 
 
 async def _granted(
-    request: Request, identity: str, asked: waiting.Waiting
+    request: Request, principal: tuple[str, str], asked: waiting.Waiting
 ) -> Grant | teamlease.TeamGrant:
     """The grant of *asked*, looked for until there is one, the request's time
     is up or its client is gone. However the wait ends, the request leaves the
@@ -433,7 +437,7 @@ async def _granted(
     root = request.app.state.root
     try:
         while True:
-            grant = await run_in_threadpool(_look, asked, root, identity)
+            grant = await run_in_threadpool(_look, asked, root, principal)
             if grant is not None:
                 return grant
             if await request.is_disconnected():
@@ -445,10 +449,10 @@ async def _granted(
 
 
 def _first_look(
-    asked: waiting.Waiting, root: Path, identity: str
+    asked: waiting.Waiting, root: Path, principal: tuple[str, str]
 ) -> tuple[Grant | teamlease.TeamGrant | None, int | None]:
     """The grant of *asked* if it fits now, or its place among those that wait."""
-    grant = _look(asked, root, identity)
+    grant = _look(asked, root, principal)
     return grant, None if grant is not None else asked.place()
 
 
@@ -529,17 +533,19 @@ class _Waited(StreamingResponse):
     leaves the queue, and a grant whose line was not sent is given back."""
 
     def __init__(
-        self, request: Request, identity: str, asked: waiting.Waiting, notice: dict
+        self, request: Request, principal: tuple[str, str], asked: waiting.Waiting, notice: dict
     ) -> None:
-        super().__init__(self._lines(request, identity, notice), media_type=WAITING_MEDIA_TYPE)
+        super().__init__(self._lines(request, principal, notice), media_type=WAITING_MEDIA_TYPE)
         self._asked = asked
         # The grant, from when the pool gives it until its line has been sent.
         self._unsent: Grant | teamlease.TeamGrant | None = None
 
-    async def _lines(self, request: Request, identity: str, notice: dict) -> AsyncIterator[bytes]:
+    async def _lines(
+        self, request: Request, principal: tuple[str, str], notice: dict
+    ) -> AsyncIterator[bytes]:
         yield _line({"waiting": notice})
         try:
-            self._unsent = await _granted(request, identity, self._asked)
+            self._unsent = await _granted(request, principal, self._asked)
         except Exception as exc:
             refused = _failed(self._asked, exc)
             yield _line({"refused": {"status": refused.status_code, "detail": refused.detail}})
@@ -566,13 +572,14 @@ class _Waited(StreamingResponse):
 async def lease_request(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
     service: PoolService = Depends(pool_service),
 ) -> dict | StreamingResponse:
     """Grant a lease on a free member of the named pool, or on every role
     member of the named team, started in the named directory; a request with
     a time to wait waits that long, and a client that reads notices is told
     at once that it waits."""
+    _, identity = principal
     fields = _body(
         body, required=("cwd",),
         optional=("pool", "team", "idle_limit", "label", "wait", "egress", "project"),
@@ -627,16 +634,16 @@ async def lease_request(
     waits_on = False
     try:
         grant, place = await run_in_threadpool(
-            _first_look, asked, request.app.state.root, identity
+            _first_look, asked, request.app.state.root, principal
         )
         if grant is None and reads_notices:
             # Nothing is sent yet, so what is refused above has the status it always had.
             waits_on = True
             named = {"pool": pool} if team is None else {"team": team}
             notice = {**named, "full": asked.full, "place": place, "wait": wait}
-            return _Waited(request, identity, asked, notice)
+            return _Waited(request, principal, asked, notice)
         if grant is None:
-            grant = await _granted(request, identity, asked)
+            grant = await _granted(request, principal, asked)
     except Exception as exc:
         raise _failed(asked, exc)
     finally:
@@ -697,7 +704,7 @@ def lease_release(
     lease_id: str,
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
     service: PoolService = Depends(pool_service),
 ) -> dict:
     """End the lease for the holder its token proves; an ended lease is
@@ -711,7 +718,7 @@ def lease_release(
     if lease is None:
         members = teamlease.team_leases(service, lease_id)
         if members:
-            return _team_release(request, identity, service, lease_id, members, token)
+            return _team_release(request, principal, service, lease_id, members, token)
         raise HTTPException(status_code=400, detail=f"There is no lease '{lease_id}'.")
     held = _holds(lease, token)
     if lease.state != "active":
@@ -725,20 +732,20 @@ def lease_release(
         teamlease.refuse_member_release(lease)
         ended = service.end_lease(lease_id, "released")
     except RunnerError as exc:
-        # The lease has ended all the same, and this identity ended it.
-        audit(request.app.state.root, identity, identity, "lease_release", None, lease_id)
+        # The lease has ended all the same, and this user ended it.
+        audit(request.app.state.root, *principal, "lease_release", None, lease_id)
         raise _member_failed(f"pool '{lease.pool}'", exc)
     except SpecfloError as exc:
         raise _refused(exc)
     # A lease that ended some other way in between was not released by this call.
     if ended.state == "released":
-        audit(request.app.state.root, identity, identity, "lease_release", None, lease_id)
+        audit(request.app.state.root, *principal, "lease_release", None, lease_id)
     return {"result": {"lease_id": lease_id, "state": ended.state, "held": True}}
 
 
 def _team_release(
     request: Request,
-    identity: str,
+    principal: tuple[str, str],
     service: PoolService,
     team_lease_id: str,
     members: list[Lease],
@@ -760,15 +767,15 @@ def _team_release(
     try:
         ended = teamlease.release_team(service, team_lease_id)
     except RunnerError as exc:
-        # Every member lease has ended all the same, and this identity ended them.
-        audit(request.app.state.root, identity, identity, "lease_release", None, team_lease_id)
+        # Every member lease has ended all the same, and this user ended them.
+        audit(request.app.state.root, *principal, "lease_release", None, team_lease_id)
         raise _member_failed(f"team lease '{team_lease_id}'", exc)
     except SpecfloError as exc:
         raise _refused(exc)
     # Members that ended some other way in between were not released by this call.
     released = [end for end in ended if end.state == "released"]
     if released:
-        audit(request.app.state.root, identity, identity, "lease_release", None, team_lease_id)
+        audit(request.app.state.root, *principal, "lease_release", None, team_lease_id)
     state = "released" if released else ended[-1].state
     return {"result": {"lease_id": team_lease_id, "state": state, "held": True}}
 
@@ -799,19 +806,19 @@ def _required(fields: dict, name: str) -> str:
 def console_attach(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
     service: PoolService = Depends(pool_service),
 ) -> dict:
     """Attach the named agent host, which runs on this host, to the named
     console slot; from then on the slot is matched like any member."""
-    _permitted(identity)
+    _permitted(principal[1])
     fields = _body(body, required=("slot", "agent"))
     slot, agent = _required(fields, "slot"), _required(fields, "agent")
     try:
         attached = console.attach(service, slot, agent)
     except SpecfloError as exc:
         raise _refused(exc)
-    audit(request.app.state.root, identity, identity, "console_attach", None, slot)
+    audit(request.app.state.root, *principal, "console_attach", None, slot)
     return {"result": {
         "slot": attached.slot, "agent": attached.agent, "state": console.ATTACHED,
     }}
@@ -821,18 +828,18 @@ def console_attach(
 def console_detach(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
     service: PoolService = Depends(pool_service),
 ) -> dict:
     """Detach the named console slot: it takes no new lease, and the lease
     that is out on it stands."""
-    _permitted(identity)
+    _permitted(principal[1])
     slot = _required(_body(body, required=("slot",)), "slot")
     try:
         state = console.detach(service, slot)
     except SpecfloError as exc:
         raise _refused(exc)
-    audit(request.app.state.root, identity, identity, "console_detach", None, slot)
+    audit(request.app.state.root, *principal, "console_detach", None, slot)
     return {"result": {"slot": slot, "state": state}}
 
 
@@ -843,15 +850,16 @@ def console_detach(
 def pool_reload(
     request: Request,
     body: dict = Body(default_factory=dict),
-    identity: str = Depends(current_identity),
+    principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
     """Read the pool directory again and put it in force: the daemon's process
     id, the directory, and how much of each kind stands now. It does not
     depend on a pool that stands, since it is what gives a daemon one."""
+    user, identity = principal
     _permitted(identity, POOL_MANAGE, "The pool configuration is reloaded")
     _body(body, required=())
     app = request.app
-    faults = reload_pool(app, identity)
+    faults = reload_pool(app, identity, user)
     if faults:
         kept = (
             "The pool stays off" if app.state.pool is None
