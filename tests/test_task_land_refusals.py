@@ -110,3 +110,25 @@ def test_a_dirty_plan_does_not_block_the_land(started):
     assert f"- Worktree: .specflo/worktrees/{SLUG}/{ids[0]}" in text
     assert f"- Commit: {git(root, 'rev-parse', 'HEAD')}" in text
     assert plan_md.relative_to(root).as_posix() in git(root, "status", "--porcelain")
+
+
+def test_moving_a_document_out_of_the_projects_dir_is_refused(started):
+    root, cfg, ids, path = started
+    (path / "docs" / "projects" / SLUG / "spec.md").rename(path / "spec-moved.md")
+
+    _refused(root, cfg, ids[0], path, f"docs/projects/{SLUG}/spec.md")
+    assert (root / "docs" / "projects" / SLUG / "spec.md").is_file()
+
+
+def test_an_uncommitted_edit_to_a_renamed_file_is_refused(started):
+    root, cfg, ids, path = started
+    (path / "src" / "a.py").rename(path / "src" / "c.py")
+    (root / "src" / "a.py").write_text("mine\n")
+    before = git(root, "rev-parse", "HEAD")
+
+    result = runner.invoke(app, ["task", "land", ids[0]])
+
+    assert result.exit_code != 0 and "src/a.py" in result.output
+    assert git(root, "rev-parse", "HEAD") == before
+    assert (root / "src" / "a.py").read_text() == "mine\n"
+    assert (path / "src" / "c.py").is_file()

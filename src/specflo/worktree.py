@@ -281,10 +281,10 @@ def _replay(root: Path, base_sha: str, tip: str, squashed: str, base_branch: str
     the conflicting files.
     """
     result = _run(
-        root, "merge-tree", "--write-tree", "--name-only", "--no-messages",
+        root, "merge-tree", "--write-tree", "-z", "--name-only", "--no-messages",
         "--merge-base", base_sha, tip, squashed,
     )
-    lines = result.stdout.splitlines()
+    lines = result.stdout.split("\0")
     if result.returncode == 1:
         conflicts = list(dict.fromkeys(line for line in lines[1:] if line))
         raise SpecfloError(
@@ -292,10 +292,20 @@ def _replay(root: Path, base_sha: str, tip: str, squashed: str, base_branch: str
             " Nothing was landed. Resolve it in the worktree against"
             f" {base_branch}, or reopen the task and dispatch it again."
         )
-    if result.returncode != 0 or not lines:
+    if result.returncode != 0 or not lines[0]:
         detail = (result.stderr or result.stdout).strip()
         raise SpecfloError(f"git merge-tree failed: {detail}")
     return lines[0]
+
+
+def changed_paths(root: Path, old: str, new: str) -> list[str]:
+    """Every path, from the repository's top, that differs between ``old`` and ``new``.
+
+    Renames are not detected, so a moved file counts at both its old and its
+    new path, and ``-z`` keeps each name as it is, unquoted.
+    """
+    out = git(root, "diff", "-z", "--name-only", "--no-renames", old, new)
+    return [name for name in out.split("\0") if name]
 
 
 def snapshot_tree(path: Path) -> str:
@@ -345,7 +355,7 @@ def land(
     if tree == git(root, "rev-parse", f"{base_sha}^{{tree}}"):
         raise SpecfloError(f"{relative(root, path)} holds no change to land.")
     top = Path(git(root, "rev-parse", "--show-toplevel")).resolve()
-    touched = git(root, "diff", "--name-only", base_sha, tree).splitlines()
+    touched = changed_paths(root, base_sha, tree)
     guarded = _under(top, projects_dir) if projects_dir is not None else None
     if guarded is not None:
         documents = [f for f in touched if f == guarded or f.startswith(guarded + "/")]
@@ -360,7 +370,7 @@ def land(
         squashed = git(root, "commit-tree", tree, "-p", base_sha, "-m", message)
         tree = _replay(root, base_sha, tip, squashed, base_branch)
     sha = git(root, "commit-tree", tree, "-p", tip, "-m", message)
-    files = git(root, "diff", "--name-only", tip, sha).splitlines()
+    files = changed_paths(root, tip, sha)
     dirty = sorted(set(files) & _uncommitted(root))
     if dirty:
         raise SpecfloError(

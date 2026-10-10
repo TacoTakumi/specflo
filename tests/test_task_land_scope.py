@@ -55,3 +55,18 @@ def test_a_land_inside_files_adds_no_note(started):
     assert result.exit_code == 0, result.output
     assert "outside" not in result.output
     assert task(root, cfg, task_id).notes == []
+
+
+def test_a_non_ascii_file_in_files_is_not_noted(tmp_path, monkeypatch):
+    cfg, ids = make_repo(tmp_path, tasks=(("Accents", "src/caf\u00e9.py"),))
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0], "--worktree"]).exit_code == 0
+    path = tmp_path / ".specflo" / "worktrees" / SLUG / ids[0]
+    (path / "src" / "caf\u00e9.py").write_text("x = 1\n")
+
+    result = runner.invoke(app, ["task", "land", ids[0], "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["files"] == ["src/caf\u00e9.py"]
+    assert json.loads(result.output)["outside_files"] == []
+    assert task(tmp_path, cfg, ids[0]).notes == []

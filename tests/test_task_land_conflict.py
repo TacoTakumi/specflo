@@ -36,3 +36,19 @@ def test_a_conflict_names_the_file_and_changes_nothing(tmp_path, monkeypatch):
     assert not (path / git_dir / "rebase-apply").exists()
     assert f"specflo/{SLUG}/{task_id}" in git(tmp_path, "branch", "--list")
     assert task(tmp_path, cfg, task_id).commit is None
+
+
+def test_a_conflict_on_a_non_ascii_name_is_named_unquoted(tmp_path, monkeypatch):
+    cfg, ids = make_repo(tmp_path)
+    name = "src/caf\u00e9.py"
+    commit(tmp_path, name, "x = 0\n")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0], "--worktree"]).exit_code == 0
+    path = tmp_path / ".specflo" / "worktrees" / SLUG / ids[0]
+    (path / name).write_text("x = 'worktree'\n")
+    commit(tmp_path, name, "x = 'main'\n")
+
+    result = runner.invoke(app, ["task", "land", ids[0]])
+
+    assert result.exit_code != 0
+    assert name in result.output and "\\303" not in result.output
