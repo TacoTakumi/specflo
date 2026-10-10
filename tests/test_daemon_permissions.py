@@ -30,7 +30,7 @@ from specflo.daemon.permissions import (
 )
 from specflo.service.pool_remote import CONSOLE_ATTACH_PATH, CONSOLE_DETACH_PATH, RELOAD_PATH
 
-from conftest import web_sign_in
+from conftest import role_token, web_sign_in
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "specflo"
 DEVELOPER_ONLY = (POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET)
@@ -98,7 +98,7 @@ def browser(application, role: str) -> TestClient:
 
 def bearer(application, role: str) -> TestClient:
     client = TestClient(application)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(application.state.root, role)}"
+    client.headers["Authorization"] = f"Bearer {role_token(application.state.root, role)}"
     return client
 
 

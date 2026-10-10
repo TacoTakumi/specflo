@@ -17,10 +17,11 @@ import pytest
 from pathlib import Path
 
 from specflo import config, daemon
-from specflo.daemon import auth
 from specflo.errors import SpecfloError
 from specflo.service import LocalProjectService, ProjectService
 from specflo.service.remote import RemoteProjectService
+
+from conftest import role_token
 
 
 def operations() -> list[str]:
@@ -615,7 +616,7 @@ def remote(daemon_root):
 
     from specflo.daemon.app import create_app
 
-    token = auth.mint_token(daemon_root, "developer")
+    token = role_token(daemon_root, "developer")
     return RemoteProjectService(
         "http://testserver", token, client=TestClient(create_app(daemon_root))
     )
@@ -686,7 +687,7 @@ def test_remote_service_sends_the_bearer_token_on_every_request(daemon_root):
 
     from specflo.daemon.app import create_app
 
-    token = auth.mint_token(daemon_root, "requester")
+    token = role_token(daemon_root, "requester")
     service = RemoteProjectService(
         "http://testserver", token, client=TestClient(create_app(daemon_root))
     )

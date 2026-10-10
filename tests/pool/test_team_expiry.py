@@ -33,12 +33,13 @@ from fastapi.testclient import TestClient
 
 from specflo.agent.cli import EXIT_UNREACHABLE
 from specflo.agent.client import connect
-from specflo.daemon import auth
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import Lease, Resource
 from specflo.pool import expiry, service, teamlease
 from specflo.pool.config import Pool
 from specflo.service.pool_remote import release_path
+
+from conftest import role_token
 
 from .test_expiry import TEN_MINUTES, at, prompt, text
 from .test_runner import pid_alive, wait_until
@@ -353,7 +354,7 @@ def test_the_release_route_answers_released_and_records_no_member_as_expired(poo
     app = create_app(pool_rig.root)
     app.state.pool = svc
     client = TestClient(app)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(pool_rig.root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(pool_rig.root, 'developer')}"
 
     # what the release verb prints is this answer's state
     response = client.post(

@@ -32,6 +32,8 @@ from specflo.daemon.workitems import WORK_ITEMS_PATH, RemoteWorkItems, Spawned, 
 from specflo.errors import SpecfloError
 from specflo.service.local import LocalProjectService
 
+from conftest import role_token
+
 runner = CliRunner()
 
 
@@ -42,7 +44,7 @@ def root(tmp_path):
 
 @pytest.fixture
 def token(root):
-    return auth.mint_token(root, "developer")
+    return role_token(root, "developer")
 
 
 @pytest.fixture
@@ -502,7 +504,7 @@ def test_the_route_hands_the_daemons_own_url_to_the_seat(root, rpc_rig, monkeypa
     monkeypatch.setattr(seat, "DEFAULT_PI_CMD", rpc_rig["pi_cmd"])
     application = create_app(root, url="http://daemon.local:9000")
     client = TestClient(application)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
     try:
         assert client.post(f"{WORK_ITEMS_PATH}/1/start-project").status_code == 200
     finally:

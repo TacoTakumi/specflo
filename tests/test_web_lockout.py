@@ -19,6 +19,8 @@ from specflo.daemon import auth, routes, web
 from specflo.daemon.app import create_app
 from specflo.daemon.store import open_store
 
+from conftest import role_token
+
 PASSWORD = "correct horse battery staple"
 WRONG = "not the password"
 MINUTE = 60
@@ -212,7 +214,7 @@ def test_removing_the_user_removes_their_failures(client, root, clock):
 
 def test_a_token_still_works_while_the_user_is_locked(client, root, clock):
     fail(client, 5)
-    token = auth.mint_token(root, "developer")
+    token = role_token(root, "developer")
 
     response = client.get(routes.WHOAMI_PATH, headers={"Authorization": f"Bearer {token}"})
 

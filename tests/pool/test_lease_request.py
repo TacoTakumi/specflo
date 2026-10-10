@@ -38,6 +38,8 @@ from specflo.pool import config as pool_config
 from specflo.service.pool_remote import LEASES_PATH, RemotePool
 from waits import settle, wait_until
 
+from conftest import role_token
+
 from .test_runner import pid_alive
 
 runner = CliRunner()
@@ -98,7 +100,7 @@ def pool_daemon(pool_rig):
     yield {
         "root": pool_rig.root,
         "url": f"http://127.0.0.1:{port}",
-        "token": auth.mint_token(pool_rig.root, "developer"),
+        "token": role_token(pool_rig.root, "developer"),
     }
     server.should_exit = True
     thread.join(timeout=10)
@@ -468,7 +470,7 @@ def test_a_daemon_root_with_no_pool_directory_starts_and_refuses_a_request(tmp_p
 
     root = daemon.prepare_root(tmp_path / "plain")
     client = TestClient(create_app(root))
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
 
     assert client.get("/whoami").status_code == 200
     response = client.post(LEASES_PATH, json={"pool": "rebasers", "cwd": str(tmp_path)})

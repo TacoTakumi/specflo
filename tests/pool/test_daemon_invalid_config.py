@@ -25,7 +25,7 @@ from fastapi.testclient import TestClient
 
 from specflo import daemon
 from specflo.cli import app
-from specflo.daemon import auth, pool_routes
+from specflo.daemon import pool_routes
 from specflo.daemon.app import create_app
 from specflo.pool import cli_admin
 from specflo.pool import config as pool_config
@@ -38,7 +38,7 @@ from specflo.service.pool_remote import (
     release_path,
 )
 
-from conftest import web_sign_in
+from conftest import role_token, web_sign_in
 
 from . import test_lease_request
 from .test_cli_validate import WORKER, _validate, _write, _write_three_faults
@@ -50,7 +50,7 @@ NO_POOL = "No pool is configured on this daemon."
 def client_on(root) -> TestClient:
     """The daemon on *root*, asked as the developer."""
     client = TestClient(create_app(root))
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
     return client
 
 
@@ -231,7 +231,7 @@ def test_a_reload_onto_a_file_that_is_not_utf8_keeps_the_configuration_in_force(
     root = _write(tmp_path / "daemon")
     application = create_app(root)
     client = TestClient(application)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
     in_force = application.state.pool.config
     save_as_latin1(root)
 
@@ -254,7 +254,7 @@ def test_a_daemon_on_a_valid_pool_directory_serves_the_pool(tmp_path):
     root = _write(tmp_path / "daemon")
     application = create_app(root)
     client = TestClient(application)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
 
     response = client.get(STATUS_PATH)
 
@@ -271,7 +271,7 @@ def test_a_root_with_no_pool_directory_serves_projects_and_says_no_pool_is_confi
     root = daemon.prepare_root(tmp_path / "plain")
     application = create_app(root)
     client = TestClient(application)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
 
     assert client.post(wire.route_path("list_projects"), json={}).status_code == 200
     for asked, response in ask_every_pool_route(client):

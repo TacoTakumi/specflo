@@ -33,13 +33,14 @@ from specflo import config as checkout_config
 from specflo.agent.client import connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.cli import app
-from specflo.daemon import auth
 from specflo.daemon.poolstore import ConsoleAttachment
 from specflo.pool import cli_admin, console, ledger, service, waiting
 from specflo.pool import config as pool_config
 from specflo.pool.config import Member
 from specflo.service.pool_remote import RemotePool
 from waits import scaled, settle, wait_until
+
+from conftest import role_token
 
 from . import test_lease_request
 from .test_config_roster import HOSTED, LOCAL, _changed, _refused, _write
@@ -450,7 +451,7 @@ def console_daemon(monkeypatch, request):
 
 def register_as(identity: str, served: dict) -> str:
     """Register the daemon once more, under a token of *identity*; the remote's name."""
-    token = auth.mint_token(served["root"], identity)
+    token = role_token(served["root"], identity)
     added = runner.invoke(app, ["remote", "add", identity, served["url"], "--token", token])
     assert added.exit_code == 0, added.output
     return identity

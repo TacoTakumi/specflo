@@ -43,7 +43,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from specflo.cli import app
-from specflo.daemon import auth, pool_routes, web
+from specflo.daemon import pool_routes, web
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import WaitingRequest
 from specflo.pool import accounts, bridge, cli_admin, events, watch
@@ -61,7 +61,7 @@ from specflo.service.pool_remote import (
     release_path,
 )
 
-from conftest import web_sign_in
+from conftest import role_token, web_sign_in
 from waits import settle
 
 from . import test_lease_request
@@ -207,7 +207,7 @@ class Served:
 
     def client(self, identity: str) -> TestClient:
         client = TestClient(self.application)
-        client.headers["Authorization"] = f"Bearer {auth.mint_token(self.rig.root, identity)}"
+        client.headers["Authorization"] = f"Bearer {role_token(self.rig.root, identity)}"
         return client
 
     @property
@@ -876,7 +876,7 @@ def test_the_reload_verb_prints_every_fault_and_the_old_configuration_serves_on(
 
 
 def test_the_reload_verb_is_refused_to_a_requesters_token(checkout, pool_rig, pool_daemon):
-    token = auth.mint_token(pool_daemon["root"], "requester")
+    token = role_token(pool_daemon["root"], "requester")
     added = runner.invoke(app, ["remote", "add", "guest", pool_daemon["url"], "--token", token])
     assert added.exit_code == 0, added.output
 

@@ -1,28 +1,25 @@
-"""Bearer tokens bound to the three identities the daemon knows.
+"""Every request to the daemon carries a bearer token that names who acts.
 
-Every request to the daemon carries a bearer token minted on the serve side
-for one of three identities: requester, developer, or agent. The daemon
-stores only the token's hash, refuses a request with no or an unknown token,
-and hands every route the identity the token is bound to. The agent identity
-is for the pipeline agent the daemon runs: it acts over the API like the
-other two and every mutation it makes is audited under its own name.
+A request with no token, or one the daemon does not know, is refused with a
+401 that says where to get a personal token. A known token hands every route
+the principal it acts as: a user under the role their row holds, or the
+built-in agent, the pipeline agent the daemon runs. The agent acts over the
+API like a user and every mutation it makes is audited under its own name.
+Minting a token for a fixed identity into the older tokens file is gone; how
+that file is moved into the store is covered in test_daemon_migration.py.
 """
 
-import hashlib
 import json
 
 import pytest
 from fastapi.testclient import TestClient
-from typer.testing import CliRunner
 
 from specflo import daemon
-from specflo.cli import app
 from specflo.daemon import auth, routes
 from specflo.daemon.app import create_app
-from specflo.errors import SpecfloError
 from specflo.service import wire
 
-runner = CliRunner()
+from conftest import role_token
 
 
 @pytest.fixture
@@ -30,96 +27,8 @@ def root(tmp_path):
     return daemon.prepare_root(tmp_path / "daemon")
 
 
-def _stored(root):
-    return json.loads((root / auth.TOKENS_FILENAME).read_text())["tokens"]
-
-
 def _bearer(secret):
     return {"Authorization": f"Bearer {secret}"}
-
-
-# --- minting ----------------------------------------------------------------
-
-
-def test_mint_stores_only_the_hash_bound_to_the_identity(root):
-    secret = auth.mint_token(root, "requester", today="2026-09-06")
-
-    assert _stored(root) == [
-        {
-            "identity": "requester",
-            "hash": hashlib.sha256(secret.encode()).hexdigest(),
-            "created": "2026-09-06",
-        }
-    ]
-    assert secret not in (root / auth.TOKENS_FILENAME).read_text()
-
-
-def test_mint_refuses_an_identity_outside_the_three(root):
-    with pytest.raises(SpecfloError, match="requester, developer, agent"):
-        auth.mint_token(root, "admin")
-
-    assert not (root / auth.TOKENS_FILENAME).exists()
-
-
-def test_each_mint_is_a_fresh_secret_and_every_token_stays_valid(root):
-    first = auth.mint_token(root, "developer")
-    second = auth.mint_token(root, "developer")
-
-    assert first != second
-    assert auth.identity_for(root, first) == "developer"
-    assert auth.identity_for(root, second) == "developer"
-    assert auth.identity_for(root, "not-a-token") is None
-    assert auth.identity_for(root, "") is None
-
-
-def test_identity_for_answers_none_before_any_token_exists(root):
-    assert auth.identity_for(root, "anything") is None
-
-
-# --- the command ------------------------------------------------------------
-
-
-def test_token_add_prints_the_secret_once_and_starts_no_server(root, monkeypatch):
-    import uvicorn
-
-    monkeypatch.setattr(
-        uvicorn, "run", lambda *args, **kwargs: pytest.fail("token add started a server")
-    )
-
-    result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "requester"])
-
-    assert result.exit_code == 0, result.output
-    secret = result.stdout.strip()
-    assert "\n" not in secret and len(secret) >= 32
-    assert auth.identity_for(root, secret) == "requester"
-    assert secret not in (root / auth.TOKENS_FILENAME).read_text()
-    assert "shown once" in result.stderr
-
-
-def test_token_add_prepares_a_root_that_does_not_exist_yet(tmp_path):
-    root = tmp_path / "fresh"
-
-    result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "developer"])
-
-    assert result.exit_code == 0, result.output
-    assert (root / daemon.PROJECTS_DIRNAME).is_dir()
-    assert auth.identity_for(root, result.stdout.strip()) == "developer"
-
-
-def test_token_add_refuses_an_unknown_identity(root):
-    result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "admin"])
-
-    assert result.exit_code == 1
-    assert "requester, developer, agent" in result.stderr
-    assert result.stdout == ""
-
-
-def test_token_add_mints_an_agent_token(root):
-    result = runner.invoke(app, ["serve", "--root", str(root), "token", "add", "agent"])
-
-    assert result.exit_code == 0, result.output
-    assert auth.identity_for(root, result.stdout.strip()) == "agent"
-    assert "token for agent" in result.stderr
 
 
 # --- requests ---------------------------------------------------------------
@@ -135,24 +44,26 @@ def test_a_request_without_a_token_gets_401(client):
 
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
+    assert response.json()["detail"] == auth.TOKEN_REQUIRED
 
 
 def test_a_request_with_an_unknown_token_gets_401(root, client):
-    auth.mint_token(root, "requester")
+    role_token(root, "requester")
 
-    assert client.get("/whoami", headers=_bearer("not-a-token")).status_code == 401
+    refused = client.get("/whoami", headers=_bearer("not-a-token"))
+    assert refused.status_code == 401
+    assert refused.json()["detail"] == auth.TOKEN_REQUIRED
     assert client.get("/whoami", headers={"Authorization": "Basic abc"}).status_code == 401
 
 
-def test_the_daemon_knows_exactly_three_identities():
+def test_the_daemon_knows_exactly_three_roles():
     assert auth.IDENTITIES == ("requester", "developer", "agent")
-    assert auth.BROWSER_IDENTITIES == ("requester", "developer")
 
 
 def test_a_valid_token_attaches_its_identity_to_the_request(root, client):
     assert "agent" in auth.IDENTITIES
     for identity in auth.IDENTITIES:
-        secret = auth.mint_token(root, identity)
+        secret = role_token(root, identity)
 
         response = client.get("/whoami", headers=_bearer(secret))
 
@@ -169,12 +80,12 @@ def test_the_generated_docs_and_schema_are_not_served(client, root, path):
     # They would hand every API path to a browser without a token; the
     # token guard is the contract, so the daemon does not generate them.
     assert client.get(path).status_code == 404
-    secret = auth.mint_token(root, "developer")
+    secret = role_token(root, "developer")
     assert client.get(path, headers=_bearer(secret)).status_code == 404
 
 
 def test_a_mutation_by_the_agent_is_audited_as_agent(root, client):
-    secret = auth.mint_token(root, "agent")
+    secret = role_token(root, "agent")
     headers = _bearer(secret)
 
     def post(operation, **body):

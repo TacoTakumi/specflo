@@ -21,7 +21,7 @@ from specflo.daemon import auth, routes, web
 from specflo.daemon.app import create_app
 from specflo.daemon.store import SqliteStore, open_store
 
-from conftest import WEB_PASSWORD, web_sign_in
+from conftest import WEB_PASSWORD, role_token, web_sign_in
 
 
 @pytest.fixture
@@ -187,7 +187,7 @@ def test_the_session_cookie_is_neither_the_password_nor_a_token(client, root):
     response = web_sign_in(client, root)
 
     assert WEB_PASSWORD not in response.headers["set-cookie"]
-    assert auth.identity_for(root, client.cookies[web.SESSION_COOKIE]) is None
+    assert auth.principal_for(root, client.cookies[web.SESSION_COOKIE]) is None
 
 
 def test_a_signed_in_browser_asking_for_sign_in_goes_home(client, root):
@@ -232,7 +232,7 @@ def test_wrong_password_unknown_name_and_proxy_only_user_fail_alike(client, root
 
 
 def test_the_agent_cannot_sign_in_with_its_token(client, root):
-    token = auth.mint_token(root, "agent")
+    token = role_token(root, "agent")
 
     response = client.post(web.SIGNIN_PATH, data={"name": "agent", "password": token})
 

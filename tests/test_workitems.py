@@ -18,7 +18,7 @@ from typer.testing import CliRunner
 
 from specflo import config, daemon
 from specflo.cli import app
-from specflo.daemon import auth, routes
+from specflo.daemon import routes
 from specflo.daemon import store as store_module
 from specflo.daemon.products import Products
 from specflo.daemon.workitems import (
@@ -33,6 +33,8 @@ from specflo.daemon.workitems import (
 from specflo.daemon.app import create_app
 from specflo.errors import SpecfloError
 
+from conftest import role_token
+
 runner = CliRunner()
 
 ISSUE = "https://git.example/me/thing/issues/7"
@@ -45,7 +47,7 @@ def root(tmp_path):
 
 @pytest.fixture
 def token(root):
-    return auth.mint_token(root, "developer")
+    return role_token(root, "developer")
 
 
 @pytest.fixture

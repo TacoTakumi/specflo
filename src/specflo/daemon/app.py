@@ -27,7 +27,7 @@ from fastapi import FastAPI
 
 from ..pool import accounts, bridge, events, service, watch
 from ..pool.cli_admin import pool_dir
-from . import HEALTH_PATH, chat, pool_routes, prepare_root, web
+from . import HEALTH_PATH, auth, chat, pool_routes, prepare_root, web
 from .routes import router
 
 
@@ -87,9 +87,12 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     """The application serving the daemon root at ``root``.
 
     ``url`` is where the daemon answers, as its own agents must reach it;
-    the seat a project's agent runs in is scaffolded with it.
+    the seat a project's agent runs in is scaffolded with it. A root that
+    still holds the tokens file from before named users has it moved into
+    the state store first, before anything serves.
     """
     root = prepare_root(root)
+    auth.migrate_legacy_tokens(root)
     # No generated docs or schema routes: those would serve every API path
     # to a browser without a token, and the token guard is the contract.
     app = FastAPI(

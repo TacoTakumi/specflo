@@ -110,6 +110,29 @@ def web_sign_in(client, root, role: str = "developer", name: str | None = None):
     return response
 
 
+def role_token(root, role: str) -> str:
+    """A fresh personal token that acts under ``role``; its secret.
+
+    For 'agent' the token belongs to the built-in agent and acts as
+    ('agent', 'agent'). For a user role it belongs to a user named after the
+    role, made as :func:`web_sign_in` makes one when the root does not have
+    it yet and reused as it is otherwise, so it acts as (role, role). Each
+    call mints under a new name, so a test may hold several.
+    """
+    import secrets
+
+    from specflo.daemon import auth
+    from specflo.daemon.store import User, open_store
+
+    if role != auth.AGENT_PRINCIPAL:
+        with open_store(root) as store:
+            if store.get_user(role) is None:
+                store.add_user(
+                    User(name=role, role=role, password_hash=_web_password_hash(), created="2026-01-01")
+                )
+    return auth.mint_user_token(root, role, f"test-{secrets.token_hex(4)}")
+
+
 @pytest.fixture(autouse=True)
 def _no_directory_override(monkeypatch):
     """Keep ``SPECFLO_DIRECTORY`` out of the suite's environment.
@@ -207,7 +230,6 @@ def live_daemon(tmp_path):
     import uvicorn
 
     from specflo import daemon
-    from specflo.daemon import auth
     from specflo.daemon.app import create_app
 
     root = daemon.prepare_root(tmp_path / "daemon")
@@ -224,7 +246,7 @@ def live_daemon(tmp_path):
     yield {
         "root": root,
         "url": f"http://127.0.0.1:{port}",
-        "token": auth.mint_token(root, "developer"),
+        "token": role_token(root, "developer"),
     }
     server.should_exit = True
     thread.join(timeout=10)

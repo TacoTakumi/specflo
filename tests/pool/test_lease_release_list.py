@@ -23,6 +23,8 @@ from specflo.daemon import auth
 from specflo.daemon.app import create_app
 from specflo.service.pool_remote import HELD_PATH, LEASES_PATH, STATUS_PATH, RemotePool
 
+from conftest import role_token
+
 from .test_lease_request import (  # noqa: F401  (fixtures)
     audit_records,
     checkout,
@@ -43,7 +45,7 @@ def other_checkout(tmp_path, monkeypatch, pool_daemon, identity: str = "develope
     other.mkdir()
     config.init_config(other)
     monkeypatch.chdir(other)
-    token = auth.mint_token(pool_daemon["root"], identity)
+    token = role_token(pool_daemon["root"], identity)
     registered = runner.invoke(app, ["remote", "add", "home", pool_daemon["url"], "--token", token])
     assert registered.exit_code == 0, registered.output
     return other

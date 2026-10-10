@@ -26,7 +26,7 @@ from specflo.daemon import auth, seat
 from specflo.errors import SpecfloError
 from specflo.service.local import LocalProjectService
 
-from conftest import web_sign_in
+from conftest import role_token, web_sign_in
 from waits import settle, wait_until
 
 runner = CliRunner()
@@ -132,7 +132,7 @@ def test_scaffold_refuses_a_slug_that_is_not_one(root):
 
 def test_a_cli_run_from_the_seat_resolves_the_project_as_hosted(root, live_daemon, monkeypatch):
     slug = hosted(live_daemon["root"])
-    token = auth.mint_token(live_daemon["root"], "agent")
+    token = role_token(live_daemon["root"], "agent")
     workspace = seat.scaffold(live_daemon["root"], slug, live_daemon["url"], token)
     monkeypatch.chdir(workspace)
 
@@ -483,7 +483,7 @@ def test_starting_the_agent_again_keeps_the_seats_token(root, agent_rig):
 def test_a_seat_whose_token_the_daemon_does_not_know_gets_a_fresh_one(root, agent_rig):
     slug = scaffolded(root)
     config.write_value(root, config.field_for("agent_transport"), "rpc")
-    assert auth.identity_for(root, "agent-secret") is None
+    assert auth.principal_for(root, "agent-secret") is None
 
     seat.start_project_agent(root, slug, "developer", "developer", url="http://127.0.0.1:8741", pi_cmd=agent_rig["stub_cmd"]("fresh"))
 
@@ -555,12 +555,17 @@ def test_a_seat_that_lost_its_agent_token_gets_the_named_one_replaced(root):
 
 
 def test_a_seat_still_holding_a_legacy_agent_token_keeps_it(root):
+    # A token from the older tokens file, carried into the store at start.
     slug = hosted(root)
-    legacy = auth.mint_token(root, "agent")
+    legacy = "legacy-agent-secret"
+    (root / auth.LEGACY_TOKENS_FILENAME).write_text(json.dumps({"tokens": [
+        {"identity": "agent", "hash": auth.hash_token(legacy), "created": "2026-09-06"},
+    ]}))
+    auth.migrate_legacy_tokens(root)
     seat.scaffold(root, slug, "http://127.0.0.1:8741", legacy)
 
     assert seat.seat_token(root, slug) == legacy
-    assert agent_tokens(root) == []
+    assert [t.name for t in agent_tokens(root)] == ["legacy-1"]
 
 
 def test_the_agent_cannot_sign_in_on_the_page_with_its_token_or_any_password(root):
@@ -645,7 +650,7 @@ def daemon_client(root):
     app = create_app(root)
     _apps.append(app)
     client = TestClient(app)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(root, 'developer')}"
     return client
 
 

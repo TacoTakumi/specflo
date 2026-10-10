@@ -27,9 +27,6 @@ serve_app = typer.Typer(
     help="Run the specflo daemon: host projects for CLI clients over HTTP.",
 )
 
-token_app = typer.Typer(help="Mint the bearer tokens clients present to the daemon.")
-serve_app.add_typer(token_app, name="token")
-
 user_app = typer.Typer(help="Add and list the named users who sign in to the daemon.")
 serve_app.add_typer(user_app, name="user")
 
@@ -155,32 +152,6 @@ def root_command(
         return
     typer.echo(found[0])
     typer.secho(f"From {found[1]}.", err=True)
-
-
-@token_app.command(
-    "add",
-    epilog="Example: specflo serve --root ~/specflo-daemon token add requester",
-)
-def token_add(
-    ctx: typer.Context,
-    identity: str = typer.Argument(
-        ...,
-        metavar="<requester|developer|agent>",
-        help="The identity the token is bound to.",
-    ),
-) -> None:
-    """Mint a token for <identity>: the secret prints once, only its hash is kept."""
-    root = prepare_root(ctx.obj["root"])
-    try:
-        secret = auth.mint_token(root, identity)
-    except SpecfloError as exc:
-        typer.secho(f"error: {exc}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(code=1)
-    typer.echo(secret)
-    typer.secho(
-        f"Minted a token for {identity} under {root}; it is shown once, store it now.",
-        err=True,
-    )
 
 
 def _fail(message: str) -> None:

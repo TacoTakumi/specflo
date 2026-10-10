@@ -394,9 +394,9 @@ def test_a_lease_passing_its_idle_limit_grants_the_waiting_request_with_no_other
 
 
 def _token(root: Path) -> str:
-    from specflo.daemon import auth
+    from conftest import role_token
 
-    return auth.mint_token(root, "developer")
+    return role_token(root, "developer")
 
 
 def test_a_client_that_goes_away_while_it_waits_leaves_no_waiting_record(

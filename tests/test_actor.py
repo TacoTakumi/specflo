@@ -20,6 +20,8 @@ from specflo.daemon.app import create_app
 from specflo.service import wire
 from specflo.service.local import LocalProjectService
 
+from conftest import role_token
+
 runner = CliRunner()
 
 
@@ -135,7 +137,7 @@ def daemon_root(tmp_path):
 
 def _client(daemon_root, identity):
     client = TestClient(create_app(daemon_root))
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(daemon_root, identity)}"
+    client.headers["Authorization"] = f"Bearer {role_token(daemon_root, identity)}"
     return client
 
 

@@ -16,9 +16,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo.agent.statefiles import AgentPaths
-from specflo.daemon import auth
 from specflo.pool import runner
 from specflo.service.pool_remote import release_path
+
+from conftest import role_token
 
 from .conftest import no_real_llama_swap, no_real_provider, pool_rig  # noqa: F401  (fixtures)
 from .test_lease_request import audit_records
@@ -35,7 +36,7 @@ def failing_removal(monkeypatch):
 
 def api(app) -> TestClient:
     client = TestClient(app)
-    client.headers["Authorization"] = f"Bearer {auth.mint_token(app.state.root, 'developer')}"
+    client.headers["Authorization"] = f"Bearer {role_token(app.state.root, 'developer')}"
     return client
 
 

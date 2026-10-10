@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from specflo import settings
 from specflo.cli import app
 from specflo.config import find_root
-from specflo.daemon import auth
+from specflo.daemon import STATE_STORE_FILENAME, auth
 from specflo.daemon import cli as serve_cli
 
 runner = CliRunner()
@@ -98,8 +98,15 @@ def _serve(*args):
     return runner.invoke(app, ["serve", *args])
 
 
+# A serve subcommand that writes under the root it resolves: it mints a
+# personal token of the built-in agent and prints only the secret.
+MINT = ("user", "token", "add", "agent", "--name", "probe")
+
+
 def _has_tokens(root):
-    return (root / auth.TOKENS_FILENAME).is_file()
+    if not (root / STATE_STORE_FILENAME).is_file():
+        return False
+    return bool(auth.list_user_tokens(root, auth.AGENT_PRINCIPAL))
 
 
 def test_serve_option_wins_and_is_not_saved(cli_home, tmp_path, monkeypatch):
@@ -107,7 +114,7 @@ def test_serve_option_wins_and_is_not_saved(cli_home, tmp_path, monkeypatch):
     monkeypatch.setenv(settings.DAEMON_ROOT_ENV, str(tmp_path / "env"))
     before = settings.settings_path(cli_home).read_text()
 
-    result = _serve("--root", str(tmp_path / "opt"), "token", "add", "requester")
+    result = _serve("--root", str(tmp_path / "opt"), *MINT)
 
     assert result.exit_code == 0, result.output
     assert _has_tokens(tmp_path / "opt")
@@ -119,7 +126,7 @@ def test_serve_env_wins_over_the_saved_root(cli_home, tmp_path, monkeypatch):
     _save(cli_home, tmp_path / "saved")
     monkeypatch.setenv(settings.DAEMON_ROOT_ENV, str(tmp_path / "env"))
 
-    result = _serve("token", "add", "requester")
+    result = _serve(*MINT)
 
     assert result.exit_code == 0, result.output
     assert _has_tokens(tmp_path / "env") and not _has_tokens(tmp_path / "saved")
@@ -128,7 +135,7 @@ def test_serve_env_wins_over_the_saved_root(cli_home, tmp_path, monkeypatch):
 def test_serve_reads_the_saved_root(cli_home, tmp_path):
     _save(cli_home, tmp_path / "saved")
 
-    result = _serve("token", "add", "requester")
+    result = _serve(*MINT)
 
     assert result.exit_code == 0, result.output
     assert _has_tokens(tmp_path / "saved")
@@ -141,7 +148,7 @@ def test_serve_asks_a_terminal_and_saves_the_answer(cli_home, tmp_path, monkeypa
     expected = typed if answer else cli_home / "specflo-daemon"
 
     result = runner.invoke(
-        app, ["serve", "token", "add", "requester"], input=f"{typed if answer else ''}\n"
+        app, ["serve", *MINT], input=f"{typed if answer else ''}\n"
     )
 
     assert result.exit_code == 0, result.output
@@ -152,7 +159,7 @@ def test_serve_asks_a_terminal_and_saves_the_answer(cli_home, tmp_path, monkeypa
 
 
 def test_serve_off_a_terminal_fails_with_the_command_that_sets_the_root(cli_home):
-    result = _serve("token", "add", "requester")
+    result = _serve(*MINT)
 
     assert result.exit_code == 1
     assert "specflo serve root" in result.stderr
@@ -198,7 +205,7 @@ def test_root_command_with_nothing_set_says_so_without_asking(cli_home, monkeypa
 
 
 @pytest.mark.parametrize("terminal", [True, False])
-@pytest.mark.parametrize("command", [["token", "add"], ["pool", "validate"]])
+@pytest.mark.parametrize("command", [["user", "token", "add"], ["pool", "validate"]])
 def test_help_on_a_subcommand_needs_no_root(cli_home, monkeypatch, terminal, command):
     monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: terminal)
 
@@ -214,11 +221,11 @@ def test_first_run_prompt_keeps_stdout_to_the_secret(cli_home, tmp_path, monkeyp
     monkeypatch.setattr(serve_cli, "_stdin_is_terminal", lambda: True)
 
     result = runner.invoke(
-        app, ["serve", "token", "add", "requester"], input=f"{tmp_path / 'typed'}\n"
+        app, ["serve", *MINT], input=f"{tmp_path / 'typed'}\n"
     )
 
     assert result.exit_code == 0, result.output
     assert "Daemon root" in result.stderr
     lines = result.stdout.splitlines()
     assert len(lines) == 1, result.stdout
-    assert auth.identity_for(tmp_path / "typed", lines[0]) == "requester"
+    assert auth.principal_for(tmp_path / "typed", lines[0]) == ("agent", "agent")

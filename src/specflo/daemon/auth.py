@@ -1,15 +1,12 @@
-"""Bearer tokens bound to the three identities the daemon knows.
+"""Who a request to the daemon acts as: named users, their tokens and sessions.
 
-The daemon serves three fixed identities: requester, developer, and agent.
-The first two are people at a browser or a CLI; agent is the pipeline agent
-the daemon drives, which acts over the API only. A token is minted on the
-serve side for one of them and shown once; the daemon keeps only the token's
-hash, beside the state store under its root. A request resolves its bearer
-token to the identity it was minted for, so every route knows who is acting
-and a mutation can record it.
+The daemon knows named users, each holding the role developer or requester,
+and the built-in agent, the principal the working agents act as over the API
+only. Every route learns from a request's bearer token or browser session
+who is acting, so a mutation can record it.
 
-Plain files and the standard library only: minting a token needs no web
-stack, so it works wherever the daemon root does.
+Plain files and the standard library only: managing users and tokens needs
+no web stack, so it works wherever the daemon root does.
 
 Named users sign in with a password, kept only as a scrypt hash. The hash
 string names its own parameters, ``scrypt$N$r$p$<salt>$<hash>`` with salt
@@ -24,8 +21,13 @@ request reads the current user row through :func:`session_user` or
 A user, or the built-in agent, may also hold personal tokens, minted with
 :func:`mint_user_token` and kept in the state store as a SHA-256 and the
 secret's last four characters. Like a session, a token carries no role:
-:func:`principal_for` reads the owner's row on every request. The tokens
-file above stays readable beside them until its tokens are moved over.
+:func:`principal_for` reads the owner's row on every request.
+
+A daemon root from before named users kept bearer tokens for three fixed
+identities in a tokens file. :func:`migrate_legacy_tokens` runs once when
+the application is made: it carries the agent's tokens into the store under
+their own hashes, drops the requester's and the developer's, and renames
+the file aside.
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ import functools
 import hashlib
 import hmac
 import json
+import logging
 import re
 import secrets
 import time
@@ -43,11 +46,27 @@ from pathlib import Path
 from ..errors import SpecfloError
 from .store import ROLES, Conflict, Session, Store, Token, User, open_store
 
+# Every role a request may act under: the two a user holds and the
+# built-in agent's.
 IDENTITIES = ("requester", "developer", "agent")
-# The identities a person at a browser or a CLI acts as; the agent has no
-# browser. A browser now signs in as a named user, never with a token.
-BROWSER_IDENTITIES = ("requester", "developer")
-TOKENS_FILENAME = "tokens.json"
+
+# The tokens file a daemon root kept before named users, and the name it is
+# renamed to once its tokens are moved into the store.
+LEGACY_TOKENS_FILENAME = "tokens.json"
+LEGACY_MIGRATED_SUFFIX = ".migrated"
+# A carried token is named legacy-1, legacy-2, ... among the agent's tokens.
+# Its secret was never kept, so its last four characters are unknown: the
+# listing shows this placeholder in their place.
+LEGACY_TOKEN_PREFIX = "legacy-"
+LEGACY_TOKEN_LAST4 = "????"
+# What a request with no token, or one the daemon does not know, is told.
+TOKEN_REQUIRED = (
+    "A personal bearer token is required: get one from the My tokens page of"
+    " this daemon's web UI, or from whoever runs the daemon"
+    " (`specflo serve user token add`)."
+)
+
+_log = logging.getLogger(__name__)
 
 # The scrypt parameters a new password hash is made with: N=2**14, r=8,
 # p=5, a 16-byte salt per hash and a 32-byte key.
@@ -102,61 +121,9 @@ class SignInLocked(SpecfloError):
     """Password sign-in for this user is refused for now: too many wrong passwords."""
 
 
-def tokens_path(root: Path) -> Path:
-    """Where the daemon root keeps its token hashes."""
-    return Path(root) / TOKENS_FILENAME
-
-
 def hash_token(secret: str) -> str:
     """The stored form of a token: its SHA-256 hex digest."""
     return hashlib.sha256(secret.encode()).hexdigest()
-
-
-def validate_identity(identity: str) -> str:
-    """``identity``, or a refusal naming the three the daemon knows."""
-    if identity not in IDENTITIES:
-        raise SpecfloError(
-            f"Unknown identity {identity!r}: expected one of " + ", ".join(IDENTITIES) + "."
-        )
-    return identity
-
-
-def _entries(root: Path) -> list[dict]:
-    path = tokens_path(root)
-    if not path.is_file():
-        return []
-    return json.loads(path.read_text()).get("tokens", [])
-
-
-def mint_token(root: Path, identity: str, today: str | None = None) -> str:
-    """Mint a fresh token for ``identity`` and return the secret, once.
-
-    Only the hash is written, with the identity and the mint date. Every
-    token minted before stays valid; there is one file and it is appended to.
-    """
-    identity = validate_identity(identity)
-    secret = secrets.token_urlsafe(32)
-    entries = _entries(root)
-    entries.append({
-        "identity": identity,
-        "hash": hash_token(secret),
-        "created": today or datetime.date.today().isoformat(),
-    })
-    path = tokens_path(root)
-    path.touch(mode=0o600, exist_ok=True)
-    path.write_text(json.dumps({"tokens": entries}, indent=2) + "\n")
-    return secret
-
-
-def identity_for(root: Path, secret: str) -> str | None:
-    """The identity ``secret`` was minted for, or None for an unknown token."""
-    if not secret:
-        return None
-    digest = hash_token(secret)
-    for entry in _entries(root):
-        if secrets.compare_digest(str(entry.get("hash", "")), digest):
-            return entry["identity"]
-    return None
 
 
 def mint_user_token(root: Path, owner: str, name: str, today: str | None = None) -> str:
@@ -214,9 +181,7 @@ def principal_for(root: Path, secret: str, now: float | None = None) -> tuple[st
     a role change applies at the next request and a removed user's tokens
     resolve to nobody. The token's last use is recorded at ``now`` (epoch
     seconds) when it has none yet or the one recorded is at least
-    :data:`TOKEN_WRITE_EVERY` old. A secret not in the store is looked up
-    in the tokens file, and a token there acts as its identity, for both
-    name and role.
+    :data:`TOKEN_WRITE_EVERY` old.
     """
     if not secret:
         return None
@@ -233,9 +198,6 @@ def principal_for(root: Path, secret: str, now: float | None = None) -> tuple[st
             principal = (user.name, user.role) if user is not None else None
         if principal is not None and _token_due(token.last_used, now):
             store.touch_token(digest, _utc(now))
-    if token is None:
-        identity = identity_for(root, secret)
-        return (identity, identity) if identity is not None else None
     return principal
 
 
@@ -253,6 +215,73 @@ def _token_due(last_used: str | None, now: float) -> bool:
 def _utc(epoch: float) -> str:
     """``epoch`` as an ISO UTC timestamp to the second, as the store keeps times."""
     return datetime.datetime.fromtimestamp(epoch, datetime.timezone.utc).isoformat(timespec="seconds")
+
+
+def migrate_legacy_tokens(root: Path) -> tuple[int, int] | None:
+    """Move the older tokens file into the store; (agent tokens carried, human tokens dropped).
+
+    None, and nothing done, for a root without the file. Each agent entry
+    becomes a token of the built-in agent under the entry's own hash and
+    date, so a seat or a script holding its secret keeps working. It is
+    named ``legacy-<n>`` with the first number the agent does not use yet,
+    and as the secret was never kept its last four characters are
+    :data:`LEGACY_TOKEN_LAST4`. A hash the store already holds is skipped,
+    so a migration stopped before the rename carries nothing twice. The
+    requester and developer entries are dropped: a person now gets a
+    personal token of their own.
+
+    The file is then renamed to ``tokens.json.migrated``; if an older one by
+    that name is there, it is kept and the new one gets the first free
+    ``.1``, ``.2``, ... after it. One line is logged with both counts. A
+    file that is not the JSON the older mint wrote is refused, and kept as
+    it is, so the daemon does not start with its tokens half-read.
+    """
+    path = Path(root) / LEGACY_TOKENS_FILENAME
+    if not path.is_file():
+        return None
+    try:
+        entries = json.loads(path.read_text()).get("tokens", [])
+        agent = [entry for entry in entries if entry.get("identity") == AGENT_PRINCIPAL]
+    except (ValueError, AttributeError):
+        raise SpecfloError(
+            f"{path} is not a readable tokens file: fix it or move it aside, then start again."
+        ) from None
+    carried = 0
+    with open_store(root) as store:
+        taken = {token.name for token in store.list_tokens(AGENT_PRINCIPAL)}
+        number = 0
+        for entry in agent:
+            digest = str(entry.get("hash", ""))
+            if not digest or store.find_token(digest) is not None:
+                continue
+            number += 1
+            while f"{LEGACY_TOKEN_PREFIX}{number}" in taken:
+                number += 1
+            name = f"{LEGACY_TOKEN_PREFIX}{number}"
+            store.add_token(Token(
+                owner=AGENT_PRINCIPAL, name=name, hash=digest, last4=LEGACY_TOKEN_LAST4,
+                created=str(entry.get("created") or datetime.date.today().isoformat()),
+            ))
+            taken.add(name)
+            carried += 1
+    dropped = len(entries) - len(agent)
+    path.rename(_migrated_path(path))
+    _log.warning(
+        "tokens file migrated: %d agent token%s carried into the state store,"
+        " %d human token%s dropped (those users need a personal token now)",
+        carried, "" if carried == 1 else "s", dropped, "" if dropped == 1 else "s",
+    )
+    return carried, dropped
+
+
+def _migrated_path(path: Path) -> Path:
+    """Where the tokens file at ``path`` is renamed to: the first free migrated name."""
+    target = path.with_name(path.name + LEGACY_MIGRATED_SUFFIX)
+    number = 0
+    while target.exists():
+        number += 1
+        target = path.with_name(f"{path.name}{LEGACY_MIGRATED_SUFFIX}.{number}")
+    return target
 
 
 def validate_user_name(name: str) -> str:

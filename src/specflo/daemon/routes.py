@@ -43,7 +43,7 @@ from ..errors import SpecfloError
 from ..projects import validate_slug
 from ..service import wire
 from ..service.local import LocalProjectService
-from .auth import IDENTITIES, principal_for, require_user
+from .auth import TOKEN_REQUIRED, principal_for, require_user
 from .permissions import EGRESS_SET, GATE_RELAY, can, who_can
 from .products import PRODUCTS_PATH, Products
 from .store import open_store
@@ -104,9 +104,7 @@ def current_principal(request: Request) -> tuple[str, str]:
     if principal is None:
         raise HTTPException(
             status_code=401,
-            detail="A bearer token bound to one of "
-            + " or ".join(IDENTITIES)
-            + " is required.",
+            detail=TOKEN_REQUIRED,
             headers={"WWW-Authenticate": "Bearer"},
         )
     request.state.principal = principal

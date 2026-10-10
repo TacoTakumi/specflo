@@ -25,7 +25,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from specflo import daemon
-from specflo.daemon import auth, pool_routes, pool_web, web
+from specflo.daemon import pool_routes, pool_web, web
 from specflo.daemon.app import create_app
 from specflo.daemon.poolstore import AccountFigures, ConsoleAttachment, Reload, Transition
 from specflo.pool import cli_admin
@@ -33,7 +33,7 @@ from specflo.pool import config as pool_config
 from specflo.pool.service import Grant, hash_token
 from specflo.service.pool_remote import HELD_PATH, LEASES_PATH, release_path
 
-from conftest import web_sign_in
+from conftest import role_token, web_sign_in
 
 # The pool tests' rig and helpers, imported rather than copied. The rig's
 # fixtures are named here so that pytest finds them from this module.
@@ -429,7 +429,7 @@ def test_what_a_member_answered_is_in_no_pool_page_and_no_pool_route_response(po
     pool_rig.scenario(reply=MARKER)
     app = create_app(pool_rig.root)
     api = TestClient(app)
-    api.headers["Authorization"] = f"Bearer {auth.mint_token(pool_rig.root, 'developer')}"
+    api.headers["Authorization"] = f"Bearer {role_token(pool_rig.root, 'developer')}"
     answers = []
     asked = api.post(LEASES_PATH, json={"pool": "rebasers", "cwd": str(pool_rig.work)})
     assert asked.status_code == 200, asked.text

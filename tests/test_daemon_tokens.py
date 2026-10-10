@@ -7,8 +7,7 @@ request with the token acts as the token's owner, under the role the owner
 holds now: a role change applies at the next call, and a removed user's
 tokens stop working at once. The built-in agent may own tokens too, without
 a user row. The last-used time is written at most once a minute, so a busy
-client does not write on every call. Tokens from the older tokens file keep
-working beside the new ones.
+client does not write on every call.
 """
 
 import datetime
@@ -288,16 +287,3 @@ def test_an_operation_route_acts_under_the_tokens_role(root, client):
     response = client.post(wire.route_path("list_projects"), headers=_bearer(secret), json={})
 
     assert response.status_code == 200, response.text
-
-
-# --- the older tokens file --------------------------------------------------
-
-
-def test_tokens_from_the_older_file_still_authenticate(root, client):
-    for identity in auth.IDENTITIES:
-        secret = auth.mint_token(root, identity)
-
-        assert auth.principal_for(root, secret) == (identity, identity)
-        response = client.get(routes.WHOAMI_PATH, headers=_bearer(secret))
-        assert response.status_code == 200
-        assert response.json() == {"identity": identity, "user": identity, "role": identity}

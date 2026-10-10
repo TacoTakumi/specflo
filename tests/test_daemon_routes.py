@@ -27,6 +27,8 @@ from specflo.review import ClosedRound
 from specflo.service import ProjectService, wire
 from specflo.service.local import LocalProjectService
 
+from conftest import role_token
+
 
 def operations() -> list[str]:
     return [
@@ -43,7 +45,7 @@ def root(tmp_path):
 
 @pytest.fixture
 def token(root):
-    return auth.mint_token(root, "developer")
+    return role_token(root, "developer")
 
 
 @pytest.fixture
