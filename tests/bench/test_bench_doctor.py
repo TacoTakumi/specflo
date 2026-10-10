@@ -252,6 +252,7 @@ def test_harness_without_a_config_checks_every_known_harness(home):
 def test_harness_version_is_what_a_run_records(monkeypatch):
     monkeypatch.setattr(bench_doctor.launch_pi, "pi_version", lambda: "0.9.0")
     monkeypatch.setattr(bench_doctor.launch_cc, "find_claude", lambda: "/bin/claude")
+    monkeypatch.setattr(bench_doctor.launch_cc, "check_real_binary", lambda path: None)
     monkeypatch.setattr(bench_doctor.launch_cc, "claude_version", lambda path: "2.0.1")
 
     assert bench_doctor.HARNESS_VERSIONS["pi"]() == "pi 0.9.0"
@@ -405,3 +406,17 @@ def test_herdr_that_errors_is_the_headless_skip(home, tmp_path, monkeypatch, scr
     [check] = _by_subject(checks, "herdr")
     assert check.status == "skip"
     assert "--headless" in check.detail
+
+
+def test_harness_claude_wrapper_script_is_a_skip_as_a_run_refuses_it(home, tmp_path, monkeypatch):
+    wrapper = tmp_path / "claude"
+    wrapper.write_text("#!/bin/sh\necho '2.0.1 (Claude Code)'\n")
+    wrapper.chmod(0o755)
+    monkeypatch.setenv(bench_doctor.launch_cc.CLAUDE_ENV, str(wrapper))
+    monkeypatch.setattr(bench_doctor.launch_pi, "pi_version", lambda: _missing())
+
+    checks = _harnesses(bench_doctor.run_checks(None, base_url=_closed_url(), herdr_available=lambda: True))
+
+    [check] = [c for c in checks if c.subject == "harness claude-code"]
+    assert check.status == "skip"
+    assert "script" in check.detail

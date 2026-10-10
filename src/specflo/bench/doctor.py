@@ -91,10 +91,17 @@ def _llama_swap(base_url: str, config: arms.Config | None, config_path: Path | N
     ]
 
 
+def _claude_code_version() -> str:
+    """The claude binary a run would use, refused as a run refuses it, and its version."""
+    binary = str(Path(launch_cc.find_claude()).expanduser().resolve())
+    launch_cc.check_real_binary(binary)
+    return f"claude-code {launch_cc.claude_version(binary)}"
+
+
 # Each harness's version as a run records it in versions.harness, found as its launcher finds it.
 HARNESS_VERSIONS: dict[str, Callable[[], str]] = {
     "pi": lambda: f"pi {launch_pi.pi_version()}",
-    "claude-code": lambda: f"claude-code {launch_cc.claude_version(launch_cc.find_claude())}",
+    "claude-code": _claude_code_version,
 }
 
 
