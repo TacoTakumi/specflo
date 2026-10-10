@@ -105,16 +105,16 @@ DELETE_TEAM_PATH = TEAMS_PATH + "/{name}/delete"
 BENCH_PATH = "/bench"
 # The signed-in user's own page: the theme switch and their personal tokens.
 USER_PATH = "/user"
-# Where the user page's token forms post. A revoke carries the token's name
-# in the form, so no name a token can carry is taken by a route.
-TOKENS_PATH = USER_PATH + "/tokens"
-REVOKE_TOKEN_PATH = TOKENS_PATH + "/revoke"
+# Every form on the user page posts to the page itself, naming its action in
+# an op field, so the browser stays on the page after a post. A revoke
+# carries the token's name in the form, so no name a token can carry is
+# taken by a route.
+ADD_TOKEN_OP = "add_token"
+REVOKE_TOKEN_OP = "revoke_token"
+CHANGE_PASSWORD_OP = "change_password"
 # The tokens section of the user page, and the old tokens page that leads there.
 TOKENS_SECTION = USER_PATH + "#tokens"
 OLD_TOKENS_PATH = "/tokens"
-# Where the user page's change password form posts; only a session opened
-# with a password has the form.
-PASSWORD_PATH = USER_PATH + "/password"
 # The password section of the user page, and the old change password page
 # that leads there.
 PASSWORD_SECTION = USER_PATH + "#password"
@@ -190,9 +190,9 @@ _templates.globals.update(
     pool_path=POOL_PATH,
     bench_path=BENCH_PATH,
     user_path=USER_PATH,
-    tokens_path=TOKENS_PATH,
-    password_path=PASSWORD_PATH,
-    revoke_token_path=REVOKE_TOKEN_PATH,
+    add_token_op=ADD_TOKEN_OP,
+    revoke_token_op=REVOKE_TOKEN_OP,
+    change_password_op=CHANGE_PASSWORD_OP,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
@@ -1216,8 +1216,7 @@ def old_tokens_page(identity: str = Depends(current_session)) -> Response:
     return RedirectResponse(TOKENS_SECTION, status_code=303)
 
 
-@pages.post(TOKENS_PATH, include_in_schema=False)
-async def create_token(request: Request, user: User = Depends(current_user)) -> Response:
+async def _create_token(request: Request, user: User, fields: dict[str, str]) -> Response:
     """Mint a personal token for the signed-in user and show its secret, once.
 
     The form echoes the session secret like every mutating form. The user
@@ -1227,7 +1226,6 @@ async def create_token(request: Request, user: User = Depends(current_user)) -> 
     page with the refusal. The mint is audited as the user, by name and role.
     """
     identity = user.role
-    fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
         return refused
@@ -1245,8 +1243,7 @@ async def create_token(request: Request, user: User = Depends(current_user)) -> 
     return _user_page(user, root, minted=(name, secret))
 
 
-@pages.post(REVOKE_TOKEN_PATH, include_in_schema=False)
-async def revoke_token(request: Request, user: User = Depends(current_user)) -> Response:
+async def _revoke_token(request: Request, user: User, fields: dict[str, str]) -> Response:
     """Revoke the signed-in user's token by the name the form carries, then back to the user page.
 
     The form echoes the session secret like every mutating form. The revoke
@@ -1255,7 +1252,6 @@ async def revoke_token(request: Request, user: User = Depends(current_user)) -> 
     revoke is audited as the user, by name and role.
     """
     identity = user.role
-    fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
         return refused
@@ -1299,24 +1295,21 @@ def old_password_page(identity: str = Depends(current_session)) -> Response:
     return RedirectResponse(PASSWORD_SECTION, status_code=303)
 
 
-@pages.post(PASSWORD_PATH, include_in_schema=False)
-async def change_password(request: Request, user: User = Depends(current_user)) -> Response:
+async def _change_password_form(request: Request, user: User, fields: dict[str, str]) -> Response:
     """Change the signed-in user's password, keeping this session and ending their others.
 
     Only a session opened with a password has the form; a post from any
     other gets a 404 page. The form echoes the session secret like every
     mutating form. A new password that is empty or not typed the same twice,
     and a wrong current password, are refused beside the form on the user
-    page with a 400,
-    and nothing changes. The change is audited as the user, by name and
-    role, with no password or hash in the record.
+    page with a 400, and nothing changes. The change is audited as the user,
+    by name and role, with no password or hash in the record.
     """
     identity = user.role
     root = request.app.state.root
     secret = session_secret(request)
     if session_method(root, secret) != PASSWORD_METHOD:
         return _missing(identity, "No such page.")
-    fields = await form_fields(request)
     refused = session_refused(request, fields, identity)
     if refused is not None:
         return refused
@@ -1332,6 +1325,28 @@ async def change_password(request: Request, user: User = Depends(current_user)) 
         return _user_page(user, root, status_code=400, refused=refusal)
     audit(root, user.name, user.role, "change_password", None, None)
     return _user_page(user, root, changed=PASSWORD_CHANGED)
+
+
+# What each op a user page form posts does.
+_USER_OPS = {
+    ADD_TOKEN_OP: _create_token,
+    REVOKE_TOKEN_OP: _revoke_token,
+    CHANGE_PASSWORD_OP: _change_password_form,
+}
+
+
+@pages.post(USER_PATH, include_in_schema=False)
+async def user_page_form(request: Request, user: User = Depends(current_user)) -> Response:
+    """Run the user page form the post's op names; a 400 page for an op it does not know.
+
+    Every form on the page posts here, so the page a token create or a
+    password change answers with stays at the page's own address.
+    """
+    fields = await form_fields(request)
+    action = _USER_OPS.get(fields.get("op", ""))
+    if action is None:
+        return render("error.html", status_code=400, identity=user.role, message="No such action.")
+    return await action(request, user, fields)
 
 
 @pages.post(SIGNOUT_PATH, include_in_schema=False)

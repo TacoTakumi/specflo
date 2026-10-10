@@ -737,11 +737,9 @@ BROWSER_POSTS = {
     web.THEME_PATH,
     # The header's sign-out: it ends the browser's own session.
     web.SIGNOUT_PATH,
-    # The tokens section of the user page: the signed-in user's own personal tokens.
-    web.TOKENS_PATH,
-    web.REVOKE_TOKEN_PATH,
-    # The user page's change password form, for a session opened with a password.
-    web.PASSWORD_PATH,
+    # Every form of the user page posts to it, naming its op: create and
+    # revoke a personal token, change the password.
+    web.USER_PATH,
     web.START_PROJECT_PATH,
     web.TAKE_PATH,
     web.CHAT_PATH,

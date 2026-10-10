@@ -37,9 +37,10 @@ CONTROLS = {
     "save team": "team_save_url(",
     "delete team": "team_delete_url(",
     "sign out": "signout_path",
-    "create token": "tokens_path",
-    "revoke token": "revoke_token_path",
-    "change password": "password_path",
+    # The user page's forms all post to the page; each names its op.
+    "create token": "add_token_op",
+    "revoke token": "revoke_token_op",
+    "change password": "change_password_op",
 }
 FRONT_DOOR = "signin_path"
 # The user page's theme switch sets the browser's own cookie and nothing else;
@@ -67,7 +68,7 @@ def test_the_mutating_controls_are_exactly_the_listed_ones_and_the_front_door():
             if THEME_SWITCH in action:
                 seen.setdefault("theme", []).append(path.name)
                 continue
-            names = [name for name, helper in CONTROLS.items() if helper in action]
+            names = [name for name, helper in CONTROLS.items() if helper in action or helper in body]
             assert len(names) == 1, (path.name, action)
             seen.setdefault(names[0], []).append(path.name)
     assert set(seen) == set(CONTROLS) | {"sign in", "theme"}, seen

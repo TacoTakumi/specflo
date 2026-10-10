@@ -56,10 +56,10 @@ def proxy_signed_in(app, root, name="rob", role="developer"):
 
 def change(client, current=WEB_PASSWORD, new=NEW, again=None, **extra):
     fields = {
-        "session": client.cookies[web.SESSION_COOKIE],
+        "session": client.cookies[web.SESSION_COOKIE], "op": web.CHANGE_PASSWORD_OP,
         "current": current, "new": new, "again": new if again is None else again,
     }
-    return client.post(web.PASSWORD_PATH, data={**fields, **extra})
+    return client.post(web.USER_PATH, data={**fields, **extra})
 
 
 def signs_in(app, password, name="rob") -> bool:
@@ -86,7 +86,7 @@ def test_a_password_session_has_the_form(app, root):
 
     html = client.get(web.USER_PATH).text
     assert '<section id="password">' in html
-    assert f'action="{web.PASSWORD_PATH}"' in html
+    assert f'name="op" value="{web.CHANGE_PASSWORD_OP}"' in html
     for field in ("current", "new", "again"):
         assert f'name="{field}"' in html
     assert f'name="session" value="{client.cookies[web.SESSION_COOKIE]}"' in html
@@ -99,7 +99,7 @@ def test_a_proxy_session_has_no_form_and_its_post_gets_404(app, root):
     page = client.get(web.USER_PATH)
     assert page.status_code == 200
     assert '<section id="password">' not in page.text
-    assert web.PASSWORD_PATH not in page.text
+    assert web.CHANGE_PASSWORD_OP not in page.text
     assert change(client).status_code == 404
     assert password_hash(root) == before
 
@@ -107,7 +107,10 @@ def test_a_proxy_session_has_no_form_and_its_post_gets_404(app, root):
 def test_a_browser_with_no_session_is_sent_to_sign_in(app):
     client = TestClient(app, follow_redirects=False)
 
-    for response in (client.get(web.OLD_PASSWORD_PATH), client.post(web.PASSWORD_PATH, data={})):
+    for response in (
+        client.get(web.OLD_PASSWORD_PATH),
+        client.post(web.USER_PATH, data={"op": web.CHANGE_PASSWORD_OP}),
+    ):
         assert response.status_code == 303
         assert response.headers["location"] == web.SIGNIN_PATH
 
@@ -164,8 +167,8 @@ def test_a_post_without_the_session_secret_changes_nothing(app, root, fields):
     before = password_hash(root)
 
     response = client.post(
-        web.PASSWORD_PATH,
-        data={"current": WEB_PASSWORD, "new": NEW, "again": NEW, **fields},
+        web.USER_PATH,
+        data={"op": web.CHANGE_PASSWORD_OP, "current": WEB_PASSWORD, "new": NEW, "again": NEW, **fields},
     )
 
     assert response.status_code == 403

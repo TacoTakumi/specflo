@@ -47,11 +47,11 @@ def post(client, path, **fields):
 
 
 def create(client, name):
-    return post(client, web.TOKENS_PATH, name=name)
+    return post(client, web.USER_PATH, op=web.ADD_TOKEN_OP, name=name)
 
 
 def revoke(client, name):
-    return post(client, web.REVOKE_TOKEN_PATH, name=name)
+    return post(client, web.USER_PATH, op=web.REVOKE_TOKEN_OP, name=name)
 
 
 def whoami(client, secret):
@@ -95,8 +95,8 @@ def test_a_browser_with_no_session_is_sent_to_sign_in(app):
     for response in (
         client.get(web.USER_PATH),
         client.get(web.OLD_TOKENS_PATH),
-        client.post(web.TOKENS_PATH, data={"name": "laptop"}),
-        client.post(web.REVOKE_TOKEN_PATH, data={"name": "laptop"}),
+        client.post(web.USER_PATH, data={"op": web.ADD_TOKEN_OP, "name": "laptop"}),
+        client.post(web.USER_PATH, data={"op": web.REVOKE_TOKEN_OP, "name": "laptop"}),
     ):
         assert response.status_code == 303
         assert response.headers["location"] == web.SIGNIN_PATH
@@ -235,7 +235,8 @@ def test_each_token_has_a_revoke_form_for_its_name(app, root):
     body = rows(client.get(web.USER_PATH).text)["laptop"]
 
     (form,) = re.findall(r"<form[^>]*>.*?</form>", body, re.S)
-    assert f'action="{web.REVOKE_TOKEN_PATH}"' in form
+    assert f'action="{web.USER_PATH}"' in form
+    assert f'name="op" value="{web.REVOKE_TOKEN_OP}"' in form
     assert 'name="name" value="laptop"' in form
     assert f'name="session" value="{client.cookies[web.SESSION_COOKIE]}"' in form
 
@@ -247,7 +248,7 @@ def test_each_token_has_a_revoke_form_for_its_name(app, root):
 def test_a_create_without_the_session_secret_changes_nothing(app, root, fields):
     client = signed_in(app, root)
 
-    response = client.post(web.TOKENS_PATH, data={"name": "laptop", **fields})
+    response = client.post(web.USER_PATH, data={"op": web.ADD_TOKEN_OP, "name": "laptop", **fields})
 
     assert response.status_code == 403
     assert NOT_THIS_SESSION in response.text
@@ -260,7 +261,7 @@ def test_a_revoke_without_the_session_secret_changes_nothing(app, root, fields):
     client = signed_in(app, root)
     secret = auth.mint_user_token(root, "rob", "laptop")
 
-    response = client.post(web.REVOKE_TOKEN_PATH, data={"name": "laptop", **fields})
+    response = client.post(web.USER_PATH, data={"op": web.REVOKE_TOKEN_OP, "name": "laptop", **fields})
 
     assert response.status_code == 403
     assert NOT_THIS_SESSION in response.text

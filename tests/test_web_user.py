@@ -113,7 +113,7 @@ def test_a_password_session_has_the_password_section_after_the_tokens(app, root)
 
     page = content(html)
     assert page.index('<section id="theme">') < page.index('<section id="tokens">') < page.index('<section id="password">')
-    assert f'action="{web.PASSWORD_PATH}"' in section(html, "password")
+    assert f'name="op" value="{web.CHANGE_PASSWORD_OP}"' in section(html, "password")
 
 
 def test_a_proxy_session_has_the_theme_and_tokens_sections_and_no_password_section(app, root):
@@ -153,3 +153,44 @@ def test_the_header_names_the_user_not_the_role_and_links_to_the_page(app, root)
     header = re.search(r'<header class="site-header">(.*?)</header>', html, re.S).group(1)
     assert f'<a class="identity" href="{web.USER_PATH}">alice</a>' in header
     assert "developer" not in header
+
+
+def test_every_form_on_the_page_posts_to_the_page(app, root):
+    client = signed_in(app, root)
+    auth.mint_user_token(root, "rob", "laptop")
+
+    page = content(client.get(web.USER_PATH).text)
+
+    actions = re.findall(r'<form [^>]*action="([^"]*)"', page)
+    ops = re.findall(r'<input type="hidden" name="op" value="([^"]*)">', page)
+    assert actions == [web.THEME_PATH] + [web.USER_PATH] * 3
+    assert ops == [web.ADD_TOKEN_OP, web.REVOKE_TOKEN_OP, web.CHANGE_PASSWORD_OP]
+
+
+def test_a_token_create_answers_at_the_page_and_the_page_reloads(app, root):
+    client = signed_in(app, root)
+
+    response = client.post(
+        web.USER_PATH,
+        data={"session": client.cookies[web.SESSION_COOKIE], "op": web.ADD_TOKEN_OP, "name": "laptop"},
+    )
+
+    assert response.status_code == 200
+    assert str(response.url).endswith(web.USER_PATH)
+    assert web.SHOWN_ONCE in response.text
+    reload = client.get(response.url)
+    assert reload.status_code == 200
+    assert web.SHOWN_ONCE not in reload.text
+
+
+@pytest.mark.parametrize("op", ["", "delete_user", "add_token "])
+def test_an_unknown_op_is_refused_and_changes_nothing(app, root, op):
+    client = signed_in(app, root)
+
+    response = client.post(
+        web.USER_PATH, data={"session": client.cookies[web.SESSION_COOKIE], "op": op, "name": "laptop"},
+    )
+
+    assert response.status_code == 400
+    assert "No such action." in response.text
+    assert auth.list_user_tokens(root, "rob") == []

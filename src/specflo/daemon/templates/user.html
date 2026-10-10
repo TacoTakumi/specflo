@@ -24,8 +24,9 @@
   {% endif %}
   <section id="create">
     <h3>Create a token</h3>
-    <form method="post" action="{{ tokens_path }}">
+    <form method="post" action="{{ user_path }}">
       <input type="hidden" name="session" value="{{ session }}">
+      <input type="hidden" name="op" value="{{ add_token_op }}">
       <label>Name
         <input type="text" name="name" required autocomplete="off">
       </label>
@@ -53,8 +54,9 @@
           <td>{{ token.last_used or "never" }}</td>
           <td><code>{{ token.last4 }}</code></td>
           <td>
-            <form method="post" action="{{ revoke_token_path }}">
+            <form method="post" action="{{ user_path }}">
               <input type="hidden" name="session" value="{{ session }}">
+              <input type="hidden" name="op" value="{{ revoke_token_op }}">
               <input type="hidden" name="name" value="{{ token.name }}">
               <button type="submit">Revoke</button>
             </form>
@@ -78,8 +80,9 @@
   {% if changed %}
   <p role="status">{{ changed }}</p>
   {% endif %}
-  <form method="post" action="{{ password_path }}">
+  <form method="post" action="{{ user_path }}">
     <input type="hidden" name="session" value="{{ session }}">
+    <input type="hidden" name="op" value="{{ change_password_op }}">
     <label>Current password
       <input type="password" name="current" required autocomplete="current-password">
     </label>

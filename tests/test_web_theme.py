@@ -153,7 +153,8 @@ def test_the_switch_on_the_page_a_post_answers_with_goes_back_to_the_user_page(c
     sign_in(client, root)
 
     response = client.post(
-        web.TOKENS_PATH, data={"session": client.cookies[web.SESSION_COOKIE], "name": "laptop"},
+        web.USER_PATH,
+        data={"session": client.cookies[web.SESSION_COOKIE], "op": web.ADD_TOKEN_OP, "name": "laptop"},
     )
 
     assert response.status_code == 200
