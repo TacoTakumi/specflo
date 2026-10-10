@@ -1583,8 +1583,13 @@ def _progress_from_tasks(
     # Files held by in-progress work: a dependency-ready pending task that
     # shares a normalized path with one is not ready until that task is done,
     # reopened or blocked (fan-out-plans REQ-06). Tasks with no Files are never
-    # excluded, so a Files-free plan keeps today's ready set.
-    held = {f for t in active if t.progress == "in_progress" for f in t.file_list}
+    # excluded, so a Files-free plan keeps today's ready set. A task in its own
+    # worktree holds none: its change lands on the base branch one task at a
+    # time, after the work of any sharer that landed first.
+    held = {
+        f for t in active if t.progress == "in_progress" and not t.worktree
+        for f in t.file_list
+    }
     # Pool slots (fan-out-plans REQ-09): each in_progress task needing a pool
     # holds one slot; a pending needer is not ready while every slot of any
     # pool it needs is held. Undeclared pools (including 'user') have size 1.
