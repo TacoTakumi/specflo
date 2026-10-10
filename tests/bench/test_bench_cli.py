@@ -184,3 +184,29 @@ def test_the_command_runs_with_the_config_in_force_in_its_environment(home, monk
     assert result.exit_code == 0, result.output
     assert seen["config"] == str(mine if given else home / "arms.yaml")
     assert CONFIG_ENV not in os.environ
+
+
+@pytest.mark.parametrize("form", [["--config", "mine.yaml"], ["--conf", "mine.yaml"], ["--config=mine.yaml"]])
+def test_a_relative_or_abbreviated_config_is_named_by_its_absolute_path(home, monkeypatch, tmp_path, form):
+    import os
+
+    from specflo.bench import CONFIG_ENV, arms, cmd_run
+
+    (tmp_path / "mine.yaml").write_text(arms.DEFAULT_CONFIG.read_text())
+    monkeypatch.chdir(tmp_path)
+    seen = {}
+
+    def main(argv):
+        seen["config"] = os.environ.get(CONFIG_ENV)
+        os.chdir("/")  # the Claude Code loop child runs in its run dir
+        seen["entries"] = list(arms.load_config().entries)
+        return 0
+
+    monkeypatch.setattr(cmd_run, "main", main)
+
+    result = _bench("run", *form)
+
+    assert result.exit_code == 0, result.output
+    assert seen["config"] == str(tmp_path / "mine.yaml")
+    assert seen["entries"]
+

@@ -9,6 +9,7 @@ found as ``specflo serve`` finds it. A flag given on the command line wins.
 
 from __future__ import annotations
 
+import argparse
 import importlib
 import os
 import shutil
@@ -94,7 +95,7 @@ def _run(ctx: typer.Context, command: str, args: list[str]) -> None:
     args = home_defaults(command, home, args) + args
     # The run's own processes, the launchers among them, read the operator's
     # configs through these: the home, and the arm config the command uses.
-    named = {HOME_ENV: str(home), CONFIG_ENV: _last_value(args, "--config") or str(home / "arms.yaml")}
+    named = {HOME_ENV: str(home), CONFIG_ENV: str(_config_in_force(args) or home / "arms.yaml")}
     before = {name: os.environ.get(name) for name in named}
     os.environ.update(named)
     try:
@@ -108,15 +109,15 @@ def _run(ctx: typer.Context, command: str, args: list[str]) -> None:
     raise typer.Exit(code=code)
 
 
-def _last_value(args: list[str], flag: str) -> str | None:
-    """The value of the last ``flag`` in *args*, as argparse reads it."""
-    value = None
-    for i, arg in enumerate(args):
-        if arg == flag and i + 1 < len(args):
-            value = args[i + 1]
-        elif arg.startswith(flag + "="):
-            value = arg.split("=", 1)[1]
-    return value
+def _config_in_force(args: list[str]) -> Path | None:
+    """The absolute path of the arm config *args* name, read as the command's argparse reads it.
+
+    Absolute, since the processes a run starts work in other directories.
+    """
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--config", action="append")
+    named = parser.parse_known_args(args)[0].config
+    return Path(named[-1]).expanduser().resolve() if named else None
 
 
 def _command(name: str, summary: str) -> None:
