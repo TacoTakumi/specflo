@@ -179,9 +179,10 @@ runs, with these changes, until a developer takes over:
   settled; pick up the open points from the note.
 - **Relay the take on the developer's word.** A developer who is with you in
   the pane may say they are taking the project rather than taking it from the
-  page. On their word, run `specflo gate take --by developer`: only your
-  identity may pass `--by`, and it records the developer as the taker. Never
-  take a gate on your own account.
+  page. On their word, run `specflo gate take --by <their user name>`, asking
+  for the name if they have not given it: only your identity may pass `--by`,
+  and it records that user as the taker. Never take a gate on your own
+  account.
 
 ## Fast level
 

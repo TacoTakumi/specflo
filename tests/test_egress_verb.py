@@ -2,10 +2,16 @@
 
 import json
 
+import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
-from specflo import config, projects
+from specflo import config, daemon, projects
 from specflo.cli import app
+from specflo.daemon import auth
+from specflo.daemon.app import create_app
+from specflo.daemon.permissions import EGRESS_SET, can, who_can
+from specflo.service import wire
 
 runner = CliRunner()
 
@@ -96,3 +102,60 @@ def test_the_pin_survives_shelve_resume_and_advance_through_the_cli(tmp_path, mo
     root = config.find_root(tmp_path)
     projects.advance_project(root, config.load_config(root), "thing")
     assert _egress_of(tmp_path) == "local"
+
+
+# --- the pin on a hosted project: the developer's alone ----------------------
+
+
+def test_the_developer_alone_holds_egress_set():
+    assert can("developer", EGRESS_SET)
+    assert not can("requester", EGRESS_SET)
+    assert not can("agent", EGRESS_SET)
+    assert who_can(EGRESS_SET) == "the developer role"
+
+
+@pytest.fixture
+def hosted(tmp_path):
+    """A daemon root holding the project 'thing', pinned local, and a client
+    for each of rob (a developer), ann (a requester) and the agent."""
+    root = daemon.prepare_root(tmp_path / "daemon")
+    auth.add_user(root, "rob", "developer", None)
+    auth.add_user(root, "ann", "requester", None)
+    clients = {}
+    for owner in ("rob", "ann", "agent"):
+        client = TestClient(create_app(root))
+        client.headers["Authorization"] = f"Bearer {auth.mint_user_token(root, owner, 'seat-x')}"
+        clients[owner] = client
+    assert clients["rob"].post(wire.route_path("create_project"), json={"name": "Thing"}).status_code == 200
+    assert _set_egress(clients["rob"], "thing", "local").status_code == 200
+    return root, clients
+
+
+def _set_egress(client, slug, egress_class):
+    return client.post(
+        wire.route_path("set_egress"), json={"slug": slug, "egress_class": egress_class}
+    )
+
+
+def _hosted_egress(root, slug="thing"):
+    return projects.load_project(root, config.load_config(root), slug).egress
+
+
+def test_a_developer_token_sets_the_egress_pin(hosted):
+    root, clients = hosted
+
+    response = _set_egress(clients["rob"], "thing", "open")
+
+    assert response.status_code == 200, response.text
+    assert _hosted_egress(root) == "open"
+
+
+@pytest.mark.parametrize("owner", ["ann", "agent"])
+def test_egress_set_refuses_any_role_but_the_developer(hosted, owner):
+    root, clients = hosted
+
+    response = _set_egress(clients[owner], "thing", "open")
+
+    assert response.status_code == 403, response.text
+    assert "the developer role" in response.json()["detail"]
+    assert _hosted_egress(root) == "local"

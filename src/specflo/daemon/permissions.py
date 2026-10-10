@@ -28,11 +28,13 @@ CONSOLE = "console"
 BENCH_RUNS = "bench.runs"
 # Relay a gate's answer for the pipeline.
 GATE_RELAY = "gate.relay"
+# Pin a project's egress class: which models its requests may reach.
+EGRESS_SET = "egress.set"
 
-PERMISSIONS = frozenset({POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, GATE_RELAY})
+PERMISSIONS = frozenset({POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, GATE_RELAY, EGRESS_SET})
 
 _REQUESTER: frozenset[str] = frozenset()
-_DEVELOPER = _REQUESTER | {POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS}
+_DEVELOPER = _REQUESTER | {POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET}
 _AGENT = frozenset({GATE_RELAY})
 
 # A role to the permissions it holds, in the order a refusal names the roles.

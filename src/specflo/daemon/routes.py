@@ -11,6 +11,12 @@ with that identity as its actor, so an entry added through the daemon
 carries an Actor line, and every mutation that succeeds appends one audit
 record (time, identity, project, operation, minted id) to the daemon root.
 
+An operation only some roles may run is checked against the role table
+before the service sees it: a role without the permission is a 403, and
+nothing changes. A take that names the user it is relayed for (``by``) is
+let through for a role that may relay only, and only when the name is a
+user's.
+
 A refusal from the service is a 400 carrying its message, so a client can
 raise it unchanged. A request naming a wrong argument is a 422. Anything
 else that fails inside the service is a 500 whose detail names the operation
@@ -35,7 +41,8 @@ from ..errors import SpecfloError
 from ..projects import validate_slug
 from ..service import wire
 from ..service.local import LocalProjectService
-from .auth import IDENTITIES, principal_for
+from .auth import IDENTITIES, principal_for, require_user
+from .permissions import EGRESS_SET, GATE_RELAY, can, who_can
 from .products import PRODUCTS_PATH, Products
 from .store import open_store
 from .workitems import WORK_ITEMS_PATH, WorkItems
@@ -189,6 +196,43 @@ def _agent_hook(name: str, root: Path, identity: str, slug: str | None, result) 
         seat.announce_take(root, result)
 
 
+# The operations only some roles may run: each to the permission it needs and
+# what it does, as a refusal says it.
+OPERATION_PERMISSIONS: dict[str, tuple[str, str]] = {
+    "set_egress": (EGRESS_SET, "A project's egress pin is set"),
+}
+
+
+def _permitted(identity: str, permission: str, act: str) -> None:
+    """Refuse a role that does not hold *permission* with a 403; *act* is what
+    the request does, as the refusal says it."""
+    if not can(identity, permission):
+        raise HTTPException(
+            status_code=403,
+            detail=f"{act} by {who_can(permission)} only, and this token is the {identity} role's.",
+        )
+
+
+def _check_access(root: Path, operation: wire.Operation, identity: str, kwargs: dict) -> dict:
+    """The request's arguments once its role may run them; a 403 when it may
+    not, before the service runs, so nothing changes.
+
+    A take's ``by`` names the user the take is relayed for: only a role that
+    may relay passes it, and it must name a user, which is passed on as the
+    store keeps it (lowercase); a name that is no user's is a 400.
+    """
+    required = OPERATION_PERMISSIONS.get(operation.name)
+    if required is not None:
+        _permitted(identity, *required)
+    if operation.name == "take_gate" and kwargs.get("by") is not None:
+        _permitted(identity, GATE_RELAY, "A take is relayed for a user (--by)")
+        try:
+            kwargs = {**kwargs, "by": require_user(root, kwargs["by"]).name}
+        except SpecfloError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return kwargs
+
+
 def _service(root: Path, identity: str) -> LocalProjectService:
     """The local service a request runs as: its identity as actor, its projects hosted."""
     return LocalProjectService(root, load_config(root), actor=identity, hosted=True)
@@ -205,6 +249,7 @@ def _handler(operation: wire.Operation):
         except wire.WireError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
         root = request.app.state.root
+        kwargs = _check_access(root, operation, identity, kwargs)
         service = _service(root, identity)
         slug = kwargs.get("slug") if operation.slug_scoped else None
         # The slug is the one part of a request that becomes a path under the

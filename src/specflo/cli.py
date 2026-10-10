@@ -1533,8 +1533,8 @@ def gate_take(
     by: str = typer.Option(
         None,
         "--by",
-        metavar="<requester|developer>",
-        help="The human this take is relayed for; only the agent identity may pass it.",
+        metavar="<user>",
+        help="The user this take is relayed for; only the agent identity may pass it.",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:

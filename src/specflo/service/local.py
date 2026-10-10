@@ -34,7 +34,8 @@ _COMPLETERS = {
 
 
 # The one identity that acts for a human: it relays the developer's word
-# from the terminal pane, so a take it runs may name who really took it.
+# from the terminal pane, so a take it runs may name the user who really
+# took it.
 RELAYING_ACTOR = "agent"
 
 
@@ -168,14 +169,11 @@ class LocalProjectService:
             if self.actor != RELAYING_ACTOR:
                 acting = f"as {self.actor}" if self.actor else "with no identity"
                 raise SpecfloError(
-                    f"--by names the human the {RELAYING_ACTOR} takes for; "
+                    f"--by names the user the {RELAYING_ACTOR} takes for; "
                     f"this take runs {acting}, so leave it out."
                 )
-            if by not in projects.GATE_ROLES:
-                raise SpecfloError(
-                    f"--by must name a human identity, one of "
-                    + ", ".join(projects.GATE_ROLES) + f"; got {by!r}."
-                )
+            # The daemon has checked that it names a user before the take
+            # reaches here.
             taker = by
         return projects.take_gate(self.root, self.cfg, slug, taken_by=taker)
 

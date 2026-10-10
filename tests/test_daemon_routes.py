@@ -335,3 +335,59 @@ def test_the_review_reads_are_read_operations_and_its_writes_are_audited():
     assert {"start_round", "close_round", "add_finding", "check_finding", "waive_round"} <= (
         routes.AUDITED_OPERATIONS
     )
+
+
+# --- the gate relay -----------------------------------------------------------
+# The agent takes a gate for the human it relays, named by user name; the
+# daemon checks both that the token's role may relay and that the name is a
+# user's, before the service runs.
+
+
+@pytest.fixture
+def relay(root, client):
+    """Clients for rob (a developer), ann (a requester) and the agent, and a
+    hosted project whose gate waits on the developer."""
+    auth.add_user(root, "rob", "developer", None)
+    auth.add_user(root, "ann", "requester", None)
+
+    def bearer(owner):
+        user = TestClient(create_app(root))
+        user.headers["Authorization"] = f"Bearer {auth.mint_user_token(root, owner, 'seat-x')}"
+        return user
+
+    call(client, "create_project", name="Thing")
+    call(client, "open_gate", slug="thing", role="developer", note="Open points")
+    return {"rob": bearer("rob"), "ann": bearer("ann"), "agent": bearer("agent")}
+
+
+def test_the_relay_records_the_user_the_agent_takes_for(relay):
+    taken = call(relay["agent"], "take_gate", slug="thing", by="rob")
+
+    assert taken.gate.taken_by == "rob" and not taken.gate.is_open
+    assert call(relay["rob"], "load_project", slug="thing").gate == taken.gate
+
+
+def test_the_relay_records_the_user_name_lowercased(relay):
+    assert call(relay["agent"], "take_gate", slug="thing", by="Rob").gate.taken_by == "rob"
+
+
+def test_the_relay_refuses_a_name_that_is_no_users(relay):
+    response = relay["agent"].post(wire.route_path("take_gate"), json={"slug": "thing", "by": "nobody"})
+
+    assert response.status_code == 400, response.text
+    assert "No user named 'nobody'" in response.json()["detail"]
+    assert call(relay["rob"], "load_project", slug="thing").gate.is_open
+
+
+@pytest.mark.parametrize("taker", ["rob", "ann"])
+def test_the_relay_refuses_a_user_who_passes_by(relay, taker):
+    response = relay[taker].post(wire.route_path("take_gate"), json={"slug": "thing", "by": "rob"})
+
+    assert response.status_code == 403, response.text
+    detail = response.json()["detail"]
+    assert "--by" in detail and "the agent role" in detail
+    assert call(relay["rob"], "load_project", slug="thing").gate.is_open
+
+
+def test_the_relay_check_leaves_a_take_without_by_alone(relay):
+    assert call(relay["rob"], "take_gate", slug="thing").gate.taken_by == "developer"

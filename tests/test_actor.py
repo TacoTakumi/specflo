@@ -196,13 +196,15 @@ def test_the_agent_takes_a_gate_for_the_human_it_relays(daemon_root):
     _call(agent, "create_project", name="Thing")
     _call(agent, "open_gate", slug="thing", role="developer", note="Open points")
 
-    refused = developer.post(wire.route_path("take_gate"), json={"slug": "thing", "by": "developer"})
-    assert refused.status_code == 400 and "--by" in refused.json()["detail"]
+    auth.add_user(daemon_root, "rob", "developer", None)
+
+    refused = developer.post(wire.route_path("take_gate"), json={"slug": "thing", "by": "rob"})
+    assert refused.status_code == 403 and "--by" in refused.json()["detail"]
     assert _call(developer, "load_project", slug="thing").gate.is_open
 
-    taken = _call(agent, "take_gate", slug="thing", by="developer")
+    taken = _call(agent, "take_gate", slug="thing", by="rob")
 
-    assert taken.gate.taken_by == "developer" and taken.gate.taken_at
+    assert taken.gate.taken_by == "rob" and taken.gate.taken_at
     assert taken.gate.opened_by == "agent"
     records = [json.loads(line) for line in (daemon_root / routes.AUDIT_FILENAME).read_text().splitlines()]
     assert [(r["operation"], r["identity"]) for r in records[-2:]] == [

@@ -362,11 +362,7 @@ def test_only_the_agent_takes_a_gate_on_behalf_of_a_human(tmp_path):
         with pytest.raises(SpecfloError, match="--by"):
             service.take_gate("thing", by="developer")
         assert agent.load_project("thing").gate.is_open
-    with pytest.raises(SpecfloError, match="requester, developer"):
-        agent.take_gate("thing", by="admin")
-    assert agent.load_project("thing").gate.is_open
-
-    assert agent.take_gate("thing", by="developer").gate.taken_by == "developer"
+    assert agent.take_gate("thing", by="rob").gate.taken_by == "rob"
 
 
 def test_local_service_refuses_a_gate_for_a_role_it_does_not_know(local):
