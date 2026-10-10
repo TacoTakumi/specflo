@@ -66,8 +66,56 @@ latter. Release tags are of the form `vX.Y.Z`.
   `record.json` and `session.norm.json`. Nothing else under the bench home is
   served: not `harness.out`, not the harness folder with its credentials, and
   not the bench state.
+- **Named daemon users.** Each person who uses a daemon is a named user with
+  one role, `developer` or `requester`. `specflo serve user add <name> --role
+  developer|requester [--password]` adds one; the password is asked twice at
+  the terminal, and a user without one signs in only through a reverse proxy.
+  `user list`, `user passwd <name> [--clear]` (ends the user's sessions;
+  `--clear` makes the account proxy-only), `user role <name> <role>` and
+  `user remove <name>` (with its tokens and sessions) manage them. A name is 1
+  to 64 characters of `a-z 0-9 . _ - @`, starts with a letter or digit and is
+  stored lowercase; `agent` is reserved. `specflo guide daemon` lists the
+  commands.
+- **Password sign-in with lasting sessions.** The web UI signs in with a user
+  name and password. Sessions live in the daemon's state store, last 12 hours
+  from their last use and survive a restart. The header has a sign-out
+  control. After 5 failed password sign-ins in 15 minutes that user's password
+  sign-in is locked for 15 minutes; `serve user passwd` clears it. A fresh
+  daemon's sign-in page names `specflo serve user add`. A Change password page
+  (`/password`) serves sessions signed in with a password.
+- **Personal API tokens.** `specflo serve user token add <user> --name <name>`,
+  `token list <user>` and `token revoke <user> <name>` mint, list and revoke a
+  user's tokens. A token starts with `sfp_`, prints once, and the daemon keeps
+  only its SHA-256. A My tokens page (`/tokens`) lets a signed-in user create,
+  list and revoke their own. A token acts as its owner with the role read at
+  each request; `specflo remote add` takes one.
+- **Reverse-proxy sign-in.** Off by default. With `auth_proxy: true` in the
+  daemon root's `.specflo/config.yaml`, a request whose socket peer is in
+  `auth_trusted_proxies` (default `127.0.0.1` and `::1`) and whose
+  `auth_proxy_header` (default `X-WEBAUTH-USER`) names a known user is signed
+  in without the form. The header is ignored from any other address, an
+  unknown user is refused with a hint to run `serve user add`, the role comes
+  from the daemon's record, and the header never authenticates an API call.
+  The daemon refuses to start when the trusted list is empty, holds a
+  wildcard or holds an invalid entry. The README shows an Apache setup.
 
 ### Changed
+- **Breaking: the daemon's `tokens.json` is cut.** On first start with a
+  `tokens.json` the daemon carries its agent tokens into the state store,
+  drops the requester and developer tokens, and renames the file to
+  `tokens.json.migrated`. Shared human tokens stop working: add each person
+  with `serve user add`, give them a personal token, and update each existing
+  `remote add` registration with it. The daemon now mints a working agent's
+  token itself, one per seat, owned by the built-in principal `agent`.
+- **One role-to-permissions table.** Pool management (definitions, teams,
+  reload), releasing a lease from the pool page, consoles and bench runs are
+  for the developer role. Setting a project's egress pin is now for the
+  developer only: requesters and agents can no longer set it. Only an agent
+  may relay a gate take with `--by <user>`, which now names a user, not a role.
+- **Records carry the user.** `Actor` lines, a gate's opener and taker and the
+  chat author record the user name. `audit.jsonl` records carry `user` and
+  `role` in place of `identity`. A chat message from the web page reaches the
+  agent as `<name> (<role>): <text>`.
 - **No ask-first reseed during an auto run.** While a `specflo auto` run is
   under way, `specflo hook reseed` and the Claude Code SessionStart hook
   (`hook reseed --format claude`) lead with the continue directive instead of
@@ -82,6 +130,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   tokens. The daemon serves the frame stylesheet (`specflo.css`), its own
   rules (`daemon.css`) and a vendored github-markdown-css 5.9.0 (MIT, notice
   in `daemon/assets/LICENSES.md`) from `/assets`.
+
+### Removed
+- **Breaking: `specflo serve token add` is gone.** Humans get personal tokens
+  with `specflo serve user token add`; the daemon mints agent tokens itself.
 
 ## [0.16.0]
 

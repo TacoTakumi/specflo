@@ -598,6 +598,90 @@ hold an agent pool: a roster of pi agents that orchestrators in any checkout
 lease by name. Both are a heavy work in progress.
 [DAEMON.md](https://github.com/TacoTakumi/specflo/blob/main/DAEMON.md) describes them.
 
+### Users and sign-in
+
+Every person who uses a daemon is a named user with one role, `developer` or
+`requester`. The commands run on the daemon's machine and find the root as
+`specflo serve` does:
+
+- `specflo serve user add <name> --role developer|requester [--password]` - add a user. `--password` asks for a password twice at the terminal; without it the user can sign in only through a reverse proxy. A name is 1 to 64 characters of `a-z 0-9 . _ - @`, starts with a letter or digit and is stored lowercase. `agent` is reserved.
+- `specflo serve user list` - each user with their role, whether a password is set and how many tokens they hold.
+- `specflo serve user passwd <name> [--clear]` - set a new password and end the user's sessions. `--clear` removes the password, so the user signs in only through the proxy.
+- `specflo serve user role <name> developer|requester` - change the role; it applies at the user's next request.
+- `specflo serve user remove <name>` - remove the user with their tokens and sessions.
+- `specflo serve user token add <user> --name <name>` / `token list <user>` / `token revoke <user> <name>` - mint, list and revoke a user's personal API tokens.
+
+A browser signs in with the user name and password. A session lasts 12 hours
+from its last use, is kept in the daemon's state store and survives a restart;
+the header has a sign-out control. After 5 failed password sign-ins in 15
+minutes, password sign-in for that user is locked for 15 minutes;
+`serve user passwd` clears the lock. A user signed in with a password can
+change it on the Change password page (`/password`).
+
+A personal API token starts with `sfp_`, prints once, and the daemon keeps only
+its SHA-256. A signed-in user creates, lists and revokes their own tokens on the
+My tokens page (`/tokens`). A token acts as its owner, with the role read at each
+request. Register a daemon in a checkout with your own token:
+`specflo remote add <name> <url> --token <secret>`. The agents the daemon
+starts get tokens the daemon mints itself, one per seat, owned by the built-in
+`agent` principal.
+
+The developer role alone manages the pool (definitions, teams, reload),
+releases leases from the pool page, uses consoles, runs the bench and sets a
+project's egress pin. The `Actor` lines, the gate records, the chat and
+`audit.jsonl` record the user's name and role.
+
+A daemon root with a `tokens.json` from an older release is migrated on first
+start: its agent tokens move into the state store, its requester and developer
+tokens are dropped, and the file is renamed to `tokens.json.migrated`. Shared
+human tokens stop working, so add each person with `serve user add`, give them
+a personal token, and update each existing `remote add` registration with it.
+
+### Reverse-proxy sign-in
+
+A daemon behind a reverse proxy that already authenticates people (SSO, MFA)
+can take the user name from a request header. It is off by default. Turn it on
+in the daemon root's `.specflo/config.yaml`:
+
+```yaml
+auth_proxy: true
+# The header the proxy sets to the authenticated user name.
+auth_proxy_header: X-WEBAUTH-USER
+# Socket addresses allowed to set it.
+auth_trusted_proxies: [127.0.0.1, "::1"]
+```
+
+When a request comes from a trusted address and the header names a known user,
+the daemon signs that user in without the form. From any other address the
+header is ignored and the password form applies. A header that names a
+different user than the live session switches the session. An unknown user is
+refused (403) with a hint to run `specflo serve user add`; users are never
+created from the header. The role always comes from the daemon's user record,
+and the header never authenticates an API call. The daemon refuses to start
+when `auth_proxy` is on and the trusted list is empty, holds a wildcard (`*`,
+`0.0.0.0/0`, `::/0`) or holds an invalid entry.
+
+An Apache example: authenticate, then set the header and pass the request on.
+Use `RequestHeader set`, never `add`, so a header the client sent is replaced,
+and unset it wherever no authentication runs.
+
+```apache
+<Location "/">
+    # Your authentication here, for example AuthType openid-connect
+    Require valid-user
+    RequestHeader set X-WEBAUTH-USER "%{REMOTE_USER}s"
+    ProxyPass "http://127.0.0.1:8741/"
+    ProxyPassReverse "http://127.0.0.1:8741/"
+</Location>
+```
+
+Keep the daemon bound to the loopback address behind the proxy (the default,
+or `specflo serve --bind 127.0.0.1`) so its port cannot be reached directly. A
+user with a password who can reach the port signs in without the proxy's own
+rules, such as MFA; a proxy-only user (no password) never can. The daemon runs
+uvicorn without proxy-header rewriting, so the trust check sees the real peer
+address.
+
 ## The config file
 
 `.specflo/config.yaml` is written by `specflo init` and documents itself. Every
