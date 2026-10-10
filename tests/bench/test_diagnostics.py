@@ -182,6 +182,26 @@ def test_a_call_naming_the_runs_own_run_dir_is_not_contaminated():
     assert result["contaminated"] is False
 
 
+def test_the_workdir_quoted_in_code_under_a_protected_work_root_is_not_contaminated():
+    # The work root that holds every run's workdir is protected; the run's own workdir is not.
+    for command in (
+        "python -c \"import sys; sys.path.insert(0,'/runs/w1')\"",
+        "python -c \"import sys; sys.path.insert(0, '/runs/w1/src')\"",
+        "python -c \"print((/runs/w1))\"",
+    ):
+        log = _log(("bash", {"command": command}, False))
+        result = diagnostics.diagnose(log, workdir=WORKDIR, protected=["/runs", ARCHIVE],
+                                      initial_dirs=INITIAL, complete=True)
+        assert result["contaminated"] is False, command
+
+
+def test_another_workdir_quoted_in_code_under_the_work_root_is_contaminated():
+    log = _log(("bash", {"command": "python -c \"import sys; sys.path.insert(0,'/runs/w0')\""}, False))
+    result = diagnostics.diagnose(log, workdir=WORKDIR, protected=["/runs", ARCHIVE],
+                                  initial_dirs=INITIAL, complete=True)
+    assert result["contaminated"] is True
+
+
 def test_another_runs_dir_and_the_bench_stay_protected_beside_the_runs_own_dir():
     own = "/repo/bench/runs/arm--pi--fast--001"
     for command in ("cat /repo/bench/runs/arm--pi--fast--000/record.json", "ls /repo/bench/fixture",

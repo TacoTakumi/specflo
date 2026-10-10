@@ -622,6 +622,9 @@ def supervise(
                                 pane_command(proc.pid, [out_path, err_path]))
         if placement is None and herdr is not None:
             print(f"modelbench: {note}; the run is headless", file=sys.stderr)
+        elif placement is not None:
+            print(f"modelbench: herdr workspace {HERDR_WORKSPACE} ({placement.workspace_id}), "
+                  f"tab {label or run_dir.name}, pane {placement.pane_id}", file=sys.stderr)
         activity = Activity([str(out_path), str(err_path), *spec.activity_globs], probes)
         while True:
             now = time.monotonic()

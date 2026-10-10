@@ -148,7 +148,8 @@ def _protected_hit(
     for text in _strings(args):
         for root in protected:
             for m in re.finditer(re.escape(root) + r"(?![\w.-])", text):
-                if not allowed(_resolve(workdir, text[m.start():].split()[0])):
+                # Quotes and brackets around the path in code are not part of it.
+                if not allowed(_resolve(workdir, text[m.start():].split()[0].strip(_TOKEN_STRIP))):
                     return root
     return None
 
