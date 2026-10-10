@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from specflo import config, plan, projects, spec
 from specflo.cli import app
+from test_worktree_start import SLUG, make_repo
 
 runner = CliRunner()
 
@@ -63,3 +64,25 @@ def test_a_linear_brief_carries_none_of_it(tmp_path, monkeypatch):
     assert "git stash" not in brief
     assert "one parallel run" not in brief
     assert "pins a fixed list" not in brief
+
+
+def test_a_worktree_task_brief_names_its_worktree(tmp_path, monkeypatch):
+    cfg, ids = make_repo(tmp_path, execution="fan-out")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0], "--worktree"]).exit_code == 0
+
+    brief = runner.invoke(app, ["task", "show", ids[0]]).output
+
+    path = tmp_path / ".specflo" / "worktrees" / SLUG / ids[0]
+    assert f"Worktree:   {path}" in brief
+    assert "Edit and test only in this worktree, and never commit" in brief
+
+
+def test_a_shared_tree_task_brief_names_no_worktree(tmp_path, monkeypatch):
+    cfg, ids = make_repo(tmp_path, execution="fan-out")
+    monkeypatch.chdir(tmp_path)
+    assert runner.invoke(app, ["task", "start", ids[0]]).exit_code == 0
+
+    brief = runner.invoke(app, ["task", "show", ids[0]]).output
+
+    assert "Worktree:" not in brief and ".specflo/worktrees" not in brief

@@ -2080,6 +2080,12 @@ def render_task_brief(brief: dict) -> str:
                 f"  This task needs the '{USER_POOL}' pool: it is not delegated "
                 "and runs with the user in the main session."
             )
+    if t.get("worktree"):
+        lines.append(f"  Worktree:   {t['worktree']}")
+        lines.append(
+            "  Edit and test only in this worktree, and never commit: the"
+            " orchestrator lands the change."
+        )
     # Notes (task-edit-and-task-note REQ-08): the task's own history, printed
     # only when it has some, so a note-free brief renders exactly as before.
     if t.get("notes"):
@@ -2217,6 +2223,10 @@ def task_brief(
             "needs": task.needs,
             "scope": task.scope, "progress": task.progress,
             "notes": task.notes,
+            "worktree": (
+                str(Path(root) / task.worktree)
+                if task.worktree and task.progress == "in_progress" else None
+            ),
         },
         "dependencies": dependencies,
         "requirements": requirements,
