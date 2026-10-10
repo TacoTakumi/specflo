@@ -1992,6 +1992,20 @@ def current_task_id(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
     return started or _default_actionable(active, _parse_milestones(doc), parse_pools(doc))
 
 
+SUBAGENT_RULES = [
+    "## Subagent rules",
+    "- Git: you may run the read-only `git diff`, `git log`, `git show` and"
+    " `git status`. Do not run `git stash` or any other git command that writes"
+    " (add, commit, checkout, reset, rebase, merge). Do not run specflo: the"
+    " orchestrator owns the plan state and the commits.",
+    "- Tests: run the Verify step, then one parallel run of the test files that"
+    " exercise the modules you changed. The full suite runs once, before the"
+    " review round; it is not yours to run.",
+    "- A test that pins a fixed list (forms, routes, guide commands, reply"
+    " shapes) may be updated when this task's own change breaks it.",
+]
+
+
 def render_task_brief(brief: dict) -> str:
     """Render a :func:`task_brief` payload as the text block ``task show`` prints.
 
@@ -2069,6 +2083,12 @@ def render_task_brief(brief: dict) -> str:
     if brief["global_constraints"]:
         lines.append("## Global constraints")
         lines.append(brief["global_constraints"])
+    # Under fan-out the brief goes to a subagent, which needs the rules the
+    # orchestrator works to.
+    if brief["execution"] == FAN_OUT_EXECUTION:
+        if brief["global_constraints"]:
+            lines.append("")
+        lines.extend(SUBAGENT_RULES)
     # Keep the rendered brief ASCII for terminal/hook output (the em-dash -> ASCII
     # cleanup the CLI output guard locks): em-dashes in authored section headings
     # become hyphens. The structured `brief` dict still carries the verbatim
