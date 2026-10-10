@@ -430,12 +430,15 @@ _ARTIFACT_MODULE_ALLOWLIST = {
     "specflo.projects": {
         "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
         "LEVELS", "QUICK_LEVEL", "FAST_LEVEL", "FULL_LEVEL", "validate_level",
-        "NEW_LEVELS", "HARDEN_LEVEL",
+        "NEW_LEVELS", "HARDEN_LEVEL", "FAN_OUT_EXECUTION",
     },
     "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
     "specflo.spec": {"SPEC_FILENAME"},
+    # A --commit ref is resolved in the caller's checkout, where the commits
+    # are; the service takes the full sha as data.
     "specflo.plan": {
         "PLAN_FILENAME", "Task", "render_task_brief", "boundary_beat_lines", "note_text",
+        "resolve_commit",
     },
     "specflo.checkpoint": {"render_checkpoint", "hosted_view"},
     "specflo.status": {"render_status", "hosted_view"},
