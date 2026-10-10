@@ -392,6 +392,10 @@ class ProjectService(Protocol):
         """
         ...
 
+    def set_review_scope(self, slug: str, text: str) -> Path:
+        """Write ``text`` as the one Scope reviewed line of the open round."""
+        ...
+
     def add_finding(
         self, slug: str, severity: str, text: str, location: str | None = None,
         regression: bool = False,

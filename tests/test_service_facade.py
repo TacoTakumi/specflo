@@ -222,6 +222,7 @@ def _drive_every_operation(service, projects_root, reported=None):
     scope = svc.review_scope(slug)
     assert (scope["scope"], scope["range"], scope["items"]) == ("whole-branch", None, [])
     assert "the whole branch" in svc.review_prompt(slug)
+    assert svc.set_review_scope(slug, "the whole branch") == round_path
     finding_id, finding_round = svc.add_finding(slug, "nit", "A name reads oddly")
     assert (finding_id, finding_round) == ("F-01", round_path)
     with pytest.raises(SpecfloError, match="finding of this round"):

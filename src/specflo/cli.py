@@ -2841,6 +2841,27 @@ def review_waive(
         typer.echo(f"{locator} closed waived")
 
 
+@review_app.command(
+    "scope", epilog="Example: specflo review scope 'the whole branch, src/ and tests/'"
+)
+def review_scope_set(
+    text: str = typer.Argument(..., metavar="<line>", help="What the round read (one line)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Write the open round's Scope reviewed line, replacing any line there."""
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    svc = _service(root, cfg)
+    try:
+        path = svc.set_review_scope(slug, text)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    locator, reported = _artifact_report(root, slug, path)
+    if json_output:
+        typer.echo(json.dumps({"locator": locator, "path": reported, "scope": text.strip()}))
+    else:
+        typer.echo(f"Scope reviewed set in {locator}.")
+
+
 @finding_app.command(
     "add",
     epilog='Example: specflo review finding add --severity blocker --at src/app.py:9-12'

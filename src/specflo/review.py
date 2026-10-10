@@ -34,6 +34,7 @@ _ROUND_RE = re.compile(r"^review-(\d+)\.md$")
 # nit never does.
 SEVERITIES = ("blocker", "should-fix", "nit")
 FINDINGS_HEADER = "## Findings"
+SCOPE_HEADER = "## Scope reviewed"
 # Any F-NN in any round file counts for numbering, so a new ID can never
 # repeat one a round already names, in a finding line or in its prose.
 _ANY_FINDING_ID = re.compile(r"\bF-(\d+)\b")
@@ -1913,6 +1914,35 @@ def add_finding(
             )
         )
     return finding_id, path
+
+
+def set_scope_line(root: Path, cfg: SpecfloConfig, slug: str, text: str) -> Path:
+    """Write ``text`` as the one line under the open round's Scope reviewed section.
+
+    Any line already there is replaced. Returns the round path. Raises
+    ``SpecfloError``, leaving every file untouched, when the text is empty or
+    more than one line, when no round is open, or when the round has no Scope
+    reviewed section.
+    """
+    line = (text or "").strip()
+    if not line:
+        raise SpecfloError("The scope line is empty: say what the round read.")
+    if "\n" in line or "\r" in line:
+        raise SpecfloError("The scope is one line: write it without a line break.")
+    with locked(lock_path_for(root, slug, _LOCK_NAME)):
+        path = open_round(root, cfg, slug)
+        if path is None:
+            raise SpecfloError(
+                "No review is open. Start one with `specflo review start`."
+            )
+        doc = path.read_text()
+        if markdown.section_body(doc, SCOPE_HEADER) is None:
+            raise SpecfloError(
+                f"{path.name} has no '{SCOPE_HEADER}' section. Add the heading"
+                " by hand, then set the scope again."
+            )
+        path.write_text(markdown.replace_section_body(doc, SCOPE_HEADER, line))
+    return path
 
 
 WHOLE_BRANCH = "whole-branch"

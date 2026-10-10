@@ -518,6 +518,9 @@ class LocalProjectService:
             regressions=regressions,
         )
 
+    def set_review_scope(self, slug: str, text: str) -> Path:
+        return review.set_scope_line(self.root, self.cfg, slug, text)
+
     def add_finding(
         self, slug: str, severity: str, text: str, location: str | None = None,
         regression: bool = False,

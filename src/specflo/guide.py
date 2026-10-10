@@ -184,6 +184,8 @@ COMMANDS: list[dict[str, str]] = [
                 "round budget."},
     {"name": "review prompt", "group": "review", "args": "",
      "summary": "Print the reviewer brief for the open round."},
+    {"name": "review scope", "group": "review", "args": "<line>",
+     "summary": "Write the open round's Scope reviewed line, replacing any line there."},
     {"name": "review finding add", "group": "review",
      "args": "--severity <s> --text <t> [--at <file>:<line>[-<line>]]",
      "summary": "Record a finding (F-NN), severity blocker|should-fix|nit; --at names where "
