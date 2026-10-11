@@ -44,7 +44,7 @@ from ..projects import validate_slug
 from ..service import wire
 from ..service.local import LocalProjectService
 from .auth import TOKEN_REQUIRED, principal_for, require_user
-from .permissions import EGRESS_SET, GATE_RELAY, can, who_can
+from .permissions import EGRESS_SET, GATE_RELAY, PRODUCT_MANAGE, can, who_can
 from .products import PRODUCTS_PATH, Products
 from .store import open_store
 from .workitems import WORK_ITEMS_PATH, WorkItems
@@ -333,6 +333,7 @@ def product_add(
     body: dict = Body(default_factory=dict),
     principal: tuple[str, str] = Depends(current_principal),
 ) -> dict:
+    _permitted(principal[1], PRODUCT_MANAGE, "A product is added")
     fields = _fields(body, required=("name",), optional=("slug", "repo"))
     root = request.app.state.root
     with project_lock(root, None), open_store(root) as store:

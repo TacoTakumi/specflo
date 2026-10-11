@@ -148,6 +148,18 @@ def test_product_routes_round_trip_and_record_the_actor(client, root):
     ]
 
 
+@pytest.mark.parametrize("role", ["requester", "agent"])
+def test_only_a_developer_token_adds_a_product(root, role):
+    other = TestClient(create_app(root))
+    other.headers["Authorization"] = f"Bearer {role_token(root, role)}"
+
+    refused = other.post(PRODUCTS_PATH, json={"name": "Thing"})
+    assert refused.status_code == 403
+    assert "the developer role" in refused.json()["detail"]
+    assert other.get(PRODUCTS_PATH).json()["result"] == []
+    assert audit_records(root) == []
+
+
 def test_product_routes_refuse_bad_requests(client, root):
     assert client.post(PRODUCTS_PATH, json={"name": "Thing"}).status_code == 200
 

@@ -30,11 +30,15 @@ BENCH_RUNS = "bench.runs"
 GATE_RELAY = "gate.relay"
 # Pin a project's egress class: which models its requests may reach.
 EGRESS_SET = "egress.set"
+# Add a product, from the products page or the API.
+PRODUCT_MANAGE = "product.manage"
 
-PERMISSIONS = frozenset({POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, GATE_RELAY, EGRESS_SET})
+PERMISSIONS = frozenset(
+    {POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, GATE_RELAY, EGRESS_SET, PRODUCT_MANAGE}
+)
 
 _REQUESTER: frozenset[str] = frozenset()
-_DEVELOPER = _REQUESTER | {POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET}
+_DEVELOPER = _REQUESTER | {POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET, PRODUCT_MANAGE}
 _AGENT = frozenset({GATE_RELAY})
 
 # A role to the permissions it holds, in the order a refusal names the roles.

@@ -26,14 +26,15 @@ from specflo import daemon
 from specflo.daemon import auth, permissions, pool_web, store, web
 from specflo.daemon.app import create_app
 from specflo.daemon.permissions import (
-    BENCH_RUNS, CONSOLE, EGRESS_SET, GATE_RELAY, PERMISSIONS, POOL_MANAGE, POOL_RELEASE, ROLE_PERMISSIONS, can,
+    BENCH_RUNS, CONSOLE, EGRESS_SET, GATE_RELAY, PERMISSIONS, POOL_MANAGE, POOL_RELEASE, PRODUCT_MANAGE,
+    ROLE_PERMISSIONS, can,
 )
 from specflo.service.pool_remote import CONSOLE_ATTACH_PATH, CONSOLE_DETACH_PATH, RELOAD_PATH
 
 from conftest import role_token, web_sign_in
 
 SRC = Path(__file__).resolve().parent.parent / "src" / "specflo"
-DEVELOPER_ONLY = (POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET)
+DEVELOPER_ONLY = (POOL_MANAGE, POOL_RELEASE, CONSOLE, BENCH_RUNS, EGRESS_SET, PRODUCT_MANAGE)
 
 
 # --- the table ------------------------------------------------------------------
