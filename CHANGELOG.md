@@ -10,7 +10,22 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ## [0.18.0]
 
+### Added
+- **Daemon web UI: add a product.** The products page links a developer to a
+  New product page with the fields name, slug, repo and vision. A save adds
+  the product, sets its vision when one is given, writes the same audit lines
+  as the API, and goes to the product's page. A refused save (an empty name,
+  a bad or taken slug) adds nothing and shows the form again with the values
+  typed and the reason beside the field.
+
 ### Changed
+- **Adding a product is for the developer role only.** A new permission,
+  `product.manage`, guards the New product page and `POST /api/products`. A
+  requester or agent token that could add a product before now gets 403, and
+  so does `specflo product add` run with such a token. Setting a product's
+  vision and adding or removing its pieces are unchanged.
+- **The product slug `new` is refused**, given or derived from the name: the
+  New product page has that slug's path.
 - **Model bench: Claude Code runs in its herdr pane.** A Claude Code bench
   run with herdr now runs its pass loop in the pane, and each specflo pass is
   an interactive `claude` started with the pass payload as its prompt, so the
