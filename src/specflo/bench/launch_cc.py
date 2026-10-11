@@ -139,6 +139,11 @@ _FIXED_ENV = {
     "DISABLE_ERROR_REPORTING": "1",
     "CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1",
     "CLAUDE_CODE_NO_MODEL_FALLBACK": "1",
+    # An interactive claude runs the Agent tool in the background and ends its
+    # turn to wait for it; a pane pass ends at the turn end, which would kill
+    # the subagent. In the foreground a turn end means its work is done. Both
+    # transports set it, so they keep one env.
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
 }
 
 PERMISSION_MODE = "dontAsk"

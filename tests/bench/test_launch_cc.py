@@ -217,6 +217,16 @@ def test_env_turns_off_nonessential_traffic_and_auto_update(launch):
     assert launch.env["DISABLE_AUTOUPDATER"] == "1"
 
 
+def test_env_disables_background_tasks_so_a_turn_end_means_its_work_is_done(launch, tmp_path: Path, stub_version):
+    assert launch.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+    workdir = tmp_path / "work2"
+    workdir.mkdir()
+    with launch_cc.build_launch(ENTRY, workdir=workdir, run_dir=tmp_path / "run2",
+                                claude_bin=fake_claude(tmp_path, "2.1.293"),
+                                base_env={"PATH": "/usr/bin", "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "0"}) as other:
+        assert other.env["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
+
+
 def test_env_drops_the_users_account_and_config(launch):
     env = launch.env
     assert "ANTHROPIC_API_KEY" not in env
