@@ -856,6 +856,33 @@ def new_product_page(request: Request, identity: str = Depends(current_session))
     )
 
 
+@pages.post(NEW_PRODUCT_PATH, include_in_schema=False)
+async def add_product(request: Request, user: User = Depends(current_user)) -> Response:
+    """Add the product the form describes, set its vision when it has one, and
+    go to the product's page.
+
+    An empty slug is derived from the name and an empty repo is none. The
+    audit holds what the API's add and vision routes would have written.
+    """
+    identity = user.role
+    fields = await form_fields(request)
+    refused = session_refused(request, fields, identity) or _not_product_manager(identity)
+    if refused is not None:
+        return refused
+    values = {name: fields.get(name, "") for name in ("name", "slug", "repo", "vision")}
+    root = request.app.state.root
+    with project_lock(root, None), open_store(root) as store:
+        products = Products(store)
+        product = products.add(
+            values["name"], slug=values["slug"].strip() or None, repo=values["repo"]
+        )
+        audit(root, user.name, user.role, "product_add", None, product.slug)
+        if values["vision"].strip():
+            products.set_vision(product.slug, values["vision"])
+            audit(root, user.name, user.role, "product_set_vision", None, product.slug)
+    return RedirectResponse(PRODUCT_PATH.format(slug=product.slug), status_code=303)
+
+
 @pages.get(PRODUCT_PATH, include_in_schema=False)
 def product_page(
     request: Request,
