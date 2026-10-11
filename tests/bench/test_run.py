@@ -524,6 +524,58 @@ def test_operator_input_check_leaves_a_run_with_no_input_log_as_before():
     assert "operator_inputs" not in before
 
 
+def _pane_run(tmp_path: Path, prompts: list[tuple[str, str]], passes: dict[str, str] | None) -> Path:
+    """A Claude Code run dir: the pane passes (session id to payload) and the hook log's prompts."""
+    if passes is not None:
+        with open(tmp_path / cc_continue.PANE_PASSES_FILE, "w") as f:
+            for sid, payload in passes.items():
+                f.write(json.dumps({"session_id": sid, "prompt_sha256": cc_continue.prompt_digest(payload)}) + "\n")
+    with open(tmp_path / launch_cc.HOOKS_FILE, "w") as f:
+        for sid, prompt in prompts:
+            f.write(json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": sid, "prompt": prompt}) + "\n")
+            f.write(json.dumps({"hook_event_name": "Stop", "session_id": sid}) + "\n")
+    return tmp_path
+
+
+def test_a_pane_claude_code_run_with_only_its_payloads_has_no_operator_prompt(tmp_path: Path):
+    run_dir = _pane_run(tmp_path, [("s1", "payload one\n"), ("s2", "payload two")],
+                        {"s1": "payload one\n", "s2": "payload two"})
+    typed = run.cc_operator_prompts(run_dir)
+    assert typed == []
+    log = {"requests": [{"model": ENTRY}], "tool_calls": []}
+    result = run.validity(ENTRY, log, {"contaminated": False}, {"score": 1.0}, prompts=typed)
+    assert result["valid"] is True and result["operator_inputs"] == 0
+
+
+def test_a_typed_prompt_in_a_pane_claude_code_run_makes_it_invalid(tmp_path: Path):
+    run_dir = _pane_run(tmp_path, [("s1", "payload one"), ("s1", "use the other file"), ("s3", "a /clear session")],
+                        {"s1": "payload one"})
+    typed = run.cc_operator_prompts(run_dir)
+    assert typed == ["use the other file", "a /clear session"]
+    log = {"requests": [{"model": ENTRY}], "tool_calls": []}
+    result = run.validity(ENTRY, log, {"contaminated": False}, {"score": 1.0}, prompts=typed)
+    assert result["valid"] is False and result["reasons"] == ["operator input in the pane"]
+    assert result["operator_inputs"] == 2
+
+
+def test_a_first_prompt_that_is_not_the_payload_is_an_operator_prompt(tmp_path: Path):
+    run_dir = _pane_run(tmp_path, [("s1", "something else")], {"s1": "payload one"})
+    assert run.cc_operator_prompts(run_dir) == ["something else"]
+
+
+def test_a_headless_claude_code_run_has_no_operator_check(tmp_path: Path):
+    run_dir = _pane_run(tmp_path, [("s1", "payload one")], None)
+    assert run.cc_operator_prompts(run_dir) is None
+
+
+def test_the_record_lifecycle_carries_the_claude_code_transport():
+    outcome = lifecycle.Outcome(
+        end_reason="complete", end_detail="", harness_end_reason=None, placement="headless", pane_id=None,
+        placement_note=None, started_at="t0", ended_at="t1", duration=1.0, pid=1, exit_code=0, survivors=[],
+        stdout_log="o", stderr_log="e", wall_clock_cap=1.0, stall_limit=1.0, transport=lifecycle.TRANSPORT_HEADLESS)
+    assert outcome.record_fields()["lifecycle"]["transport"] == "headless"
+
+
 def test_operator_input_log_is_read_from_the_run_dir(tmp_path: Path):
     assert run.input_log(tmp_path) is None
     (tmp_path / "inputs.jsonl").write_text(

@@ -424,10 +424,10 @@ def grade_tree(tree: Path, level: str, grade: Callable[..., grader.GradeResult] 
         return {"error": f"{type(exc).__name__}: {exc}"}
 
 
-def input_log(run_dir: Path) -> list[dict] | None:
-    """The pi input log of a run (one dict per input event), or None when the run wrote none."""
+def _jsonl(path: Path) -> list[dict] | None:
+    """The JSON objects of a JSONL file, lines that do not parse left out; None when it is missing."""
     try:
-        text = (Path(run_dir) / launch_pi.INPUT_LOG_FILE).read_text(encoding="utf-8")
+        text = Path(path).read_text(encoding="utf-8")
     except OSError:
         return None
     entries = []
@@ -439,6 +439,34 @@ def input_log(run_dir: Path) -> list[dict] | None:
         if isinstance(entry, dict):
             entries.append(entry)
     return entries
+
+
+def input_log(run_dir: Path) -> list[dict] | None:
+    """The pi input log of a run (one dict per input event), or None when the run wrote none."""
+    return _jsonl(Path(run_dir) / launch_pi.INPUT_LOG_FILE)
+
+
+def cc_operator_prompts(run_dir: Path) -> list[str] | None:
+    """The prompts in a pane Claude Code run's hook log that the bench did not send; None off the pane.
+
+    The bench sends each pane pass's payload as the first prompt of that
+    pass's session. Any other prompt, in a pass's session or in a session the
+    bench did not start (a /clear in the pane), was typed.
+    """
+    passes = _jsonl(Path(run_dir) / cc_continue.PANE_PASSES_FILE)
+    if passes is None:
+        return None
+    expected = {p.get("session_id"): p.get("prompt_sha256") for p in passes}
+    sent, typed = set(), []
+    for event in _jsonl(Path(run_dir) / launch_cc.HOOKS_FILE) or []:
+        if event.get("hook_event_name") != "UserPromptSubmit":
+            continue
+        session, prompt = event.get("session_id"), str(event.get("prompt"))
+        if session in expected and session not in sent and cc_continue.prompt_digest(prompt) == expected[session]:
+            sent.add(session)
+            continue
+        typed.append(prompt)
+    return typed
 
 
 def operator_inputs(inputs: Sequence[Mapping[str, Any]]) -> list[str]:
@@ -454,12 +482,13 @@ def operator_inputs(inputs: Sequence[Mapping[str, Any]]) -> list[str]:
 
 def validity(
     entry: str, log: dict, diag: Mapping[str, Any], grade: Mapping[str, Any],
-    inputs: Sequence[Mapping[str, Any]] | None = None,
+    inputs: Sequence[Mapping[str, Any]] | None = None, *, prompts: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Whether the run counts, with each check's result and the reasons it does not.
 
-    `inputs` is the run's pi input log; None (no log, as on a Claude Code run)
-    leaves the operator check out.
+    `inputs` is the run's pi input log, `prompts` a pane Claude Code run's
+    operator prompts (`cc_operator_prompts`); with neither (a headless Claude
+    Code run) the operator check is left out.
     """
     model = preflight.model_validity(entry, log=log)
     reasons = []
@@ -469,13 +498,13 @@ def validity(
         reasons.append("a tool call named a protected path")
     if "error" in grade:
         reasons.append(f"the final tree could not be graded: {grade['error']}")
-    typed = operator_inputs(inputs) if inputs is not None else []
+    typed = operator_inputs(inputs) if inputs is not None else list(prompts or [])
     if typed:
         reasons.append("operator input in the pane")
     result = {"valid": not reasons, "model_ids": model["model_ids"], "model_ids_valid": model["valid"],
               "contaminated": bool(diag.get("contaminated")), "graded": "error" not in grade,
               "reasons": reasons}
-    if inputs is not None:
+    if inputs is not None or prompts is not None:
         result["operator_inputs"] = len(typed)
     return result
 
@@ -516,7 +545,8 @@ def assemble_record(
     inputs = input_log(run_dir)
     if inputs is None and run.harness == "pi":
         inputs = []  # the input log is written at the first input: no file, nobody typed
-    valid = validity(run.entry, log, diag, grade, inputs)
+    prompts = cc_operator_prompts(run_dir) if run.harness == "claude-code" else None
+    valid = validity(run.entry, log, diag, grade, inputs, prompts=prompts)
     run_dir = Path(run_dir)
     logs = {
         "run_dir": str(run_dir),

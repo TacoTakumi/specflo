@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from specflo.bench import cc_continue as cc
-from specflo.bench import launch_cc, norm_cc
+from specflo.bench import launch_cc, norm_cc, run
 
 from .test_launch_cc import ENTRY, HAVE_CLAUDE, AnthropicStub
 
@@ -344,6 +344,8 @@ def test_a_pane_pass_is_an_interactive_claude_with_the_payload_as_its_prompt(tmp
         assert record.result_text == "done" and not record.failed
         assert record.session_file == str(rig.config / "projects" / "-work" / f"{record.session_id}.jsonl")
         assert record.stream_log == "" and record.stderr_log == ""
+    # The payloads the hook log saw are the ones the loop recorded: no operator prompt.
+    assert run.cc_operator_prompts(tmp_path / "run") == []
 
 
 def test_a_pane_turn_that_fails_ends_the_run_as_a_failed_pass(tmp_path: Path):

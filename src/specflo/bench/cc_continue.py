@@ -54,6 +54,7 @@ error result, and the bench did not end it) and `auto-failed` (`specflo auto
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import signal
@@ -87,6 +88,9 @@ TURN_FAILURE = "StopFailure"
 
 PASS_ARGS = ("-p", "--output-format", "stream-json", "--verbose")
 RECORD_FILE = "passes.json"
+# A pane pass's session id and a digest of its payload, written before claude
+# starts: the prompts in the hook log that are not these are the operator's.
+PANE_PASSES_FILE = "pane-passes.jsonl"
 # The launch report, written before the first pass so a run the bench kills still has it.
 LAUNCH_FILE = "cc-launch.json"
 BIN_DIR = "bin"
@@ -461,6 +465,11 @@ def _turn_text(event: dict) -> str | None:
     return None
 
 
+def prompt_digest(prompt: str) -> str:
+    """The digest a pane pass's payload is recorded by; outer whitespace does not count."""
+    return hashlib.sha256(prompt.strip().encode("utf-8")).hexdigest()
+
+
 def run_pane_pass(
     launch: launch_cc.CcLaunch,
     prompt: str,
@@ -491,6 +500,8 @@ def run_pane_pass(
     seams = SeamWatch(record, specflo, launch, window, threshold, before)
     hooks = JsonlTail(hooks_path, from_end=True)
     session: JsonlTail | None = None
+    with open(Path(hooks_path).parent / PANE_PASSES_FILE, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"session_id": session_id, "prompt_sha256": prompt_digest(prompt)}) + "\n")
     timed_out = False
     proc = launch_cc.start(replace(launch, argv=[*launch.argv, "--session-id", session_id, prompt]))
     try:
