@@ -33,7 +33,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/TacoTakumi/specflo"
+Homepage = "https://tacotakumi.github.io/specflo/"
 Repository = "https://github.com/TacoTakumi/specflo"
 Changelog = "https://github.com/TacoTakumi/specflo/blob/main/CHANGELOG.md"
 Issues = "https://github.com/TacoTakumi/specflo/issues"

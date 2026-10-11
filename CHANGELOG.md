@@ -17,6 +17,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   as the API, and goes to the product's page. A refused save (an empty name,
   a bad or taken slug) adds nothing and shows the form again with the values
   typed and the reason beside the field.
+- **Project website** at https://tacotakumi.github.io/specflo/, linked from
+  the README and from the package metadata (the `Homepage` URL, shown on PyPI).
 
 ### Changed
 - **Adding a product is for the developer role only.** A new permission,
