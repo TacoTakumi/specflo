@@ -18,6 +18,13 @@ cannot do, so the bench is the outer loop and a new process is the clear:
    pass.
 4. Repeat, until specflo says stop or a bench limit is hit.
 
+In a herdr pane (`pane=True`) the loop runs on the pane's terminal and each
+pass is an interactive `claude` with the payload as its prompt, so the
+operator watches a real session. A new process is still the clear. An
+interactive claude waits after its turn instead of exiting, so the bench's
+hook log (`launch_cc.HOOKS_FILE`) gives the turn end (Stop, or StopFailure on
+an API error) and the session file stands in for the stream in the seam rule.
+
 Alternatives weighed:
 
 - One long `claude -p` session relying on Claude Code's own compaction: a
@@ -68,10 +75,15 @@ END_PASS_FAILED = "pass-failed"
 END_AUTO_FAILED = "auto-failed"
 
 # How a pass ended: the bench ended it at an armed seam, the process exited by
-# itself, or the run's wall clock ran out.
+# itself (in a pane: the turn ended), or the run's wall clock ran out.
 ENDED_SEAM = "seam"
 ENDED_EXIT = "exit"
 ENDED_TIMEOUT = "timeout"
+
+# The hook events that end an interactive pass's turn: a normal end, and an
+# end on an API error.
+TURN_STOP = "Stop"
+TURN_FAILURE = "StopFailure"
 
 PASS_ARGS = ("-p", "--output-format", "stream-json", "--verbose")
 RECORD_FILE = "passes.json"
@@ -82,6 +94,8 @@ BIN_DIR = "bin"
 # Seconds a specflo call may take, and the grace a pass gets after SIGTERM.
 SPECFLO_TIMEOUT = 120.0
 STOP_GRACE = 30.0
+# Seconds between reads of the hook log and the session file in a pane pass.
+PANE_POLL = 0.2
 # The final result text kept in the pass record, from its end.
 RESULT_TAIL = 2000
 
@@ -116,12 +130,16 @@ class PassRecord:
     result_subtype: str | None = None
     result_is_error: bool | None = None
     result_text: str | None = None
+    # A pane pass: the hook event that ended its turn, None when claude exited first.
+    turn_end: str | None = None
 
     @property
     def failed(self) -> bool:
-        """An exit the bench did not cause, with a non-zero code or an error result."""
+        """An end the bench did not cause: a non-zero exit or an error result; in a pane, no Stop."""
         if self.ended_by != ENDED_EXIT:
             return False
+        if self.turn_end is not None or not self.stream_log:
+            return self.turn_end != TURN_STOP
         return self.exit_code != 0 or self.result_is_error is True or self.result_subtype is None
 
 
@@ -216,9 +234,14 @@ def context_window(entry: str) -> int:
     raise launch_pi.LaunchError(f"no contextWindow for {entry!r} in the pi arm's models.json")
 
 
+def _main(event: dict) -> bool:
+    """Not a subagent's: the stream marks those with parent_tool_use_id, the session file with isSidechain."""
+    return not event.get("parent_tool_use_id") and not event.get("isSidechain")
+
+
 def context_tokens(event: dict) -> int | None:
     """Prompt tokens of a main-conversation assistant event (input, cache write and cache read)."""
-    if event.get("type") != "assistant" or event.get("parent_tool_use_id"):
+    if event.get("type") != "assistant" or not _main(event):
         return None
     usage = (event.get("message") or {}).get("usage")
     if not isinstance(usage, dict):
@@ -235,12 +258,75 @@ def armed(tokens: int, window: int, threshold: int | None) -> bool:
 
 
 def _is_tool_result(event: dict) -> bool:
-    if event.get("type") != "user" or event.get("parent_tool_use_id"):
+    if event.get("type") != "user" or not _main(event):
         return False
     content = (event.get("message") or {}).get("content")
     return isinstance(content, list) and any(
         isinstance(b, dict) and b.get("type") == "tool_result" for b in content
     )
+
+
+class SeamWatch:
+    """The arming and seam rule over a pass's events, from the stream or the session file.
+
+    `feed` takes one event, keeps the context in use on the record and returns
+    the seam once one ends the pass: after a tool result, with the context at
+    the threshold, a status poll that shows a seam while an auto run is under
+    way. A failed poll declares nothing and keeps the baseline.
+    """
+
+    def __init__(self, record: PassRecord, specflo: str, launch: launch_cc.CcLaunch, window: int,
+                 threshold: int | None, last: Snapshot | None) -> None:
+        self.record, self.specflo, self.launch = record, specflo, launch
+        self.window, self.threshold, self.last = window, threshold, last
+        self.tokens = 0
+
+    def feed(self, event: dict) -> str | None:
+        used = context_tokens(event)
+        if used is not None:
+            self.tokens = used
+            self.record.context_tokens = max(self.record.context_tokens, used)
+            return None
+        if self.record.seam is not None or not _is_tool_result(event):
+            return None
+        if not armed(self.tokens, self.window, self.threshold):
+            return None
+        current = snapshot(self.specflo, self.launch.cwd, self.launch.env)
+        if current is None:
+            return None
+        seam = describe_seam(self.last, current) if self.last is not None else None
+        self.last = current
+        if seam is not None and current.under_way:
+            self.record.seam = seam
+            return seam
+        return None
+
+
+class JsonlTail:
+    """The JSON objects appended to a file since the last read; a line not yet ended waits."""
+
+    def __init__(self, path: Path, from_end: bool = False) -> None:
+        self.path = Path(path)
+        self.offset = self.path.stat().st_size if from_end and self.path.exists() else 0
+
+    def read(self) -> list[dict]:
+        try:
+            with open(self.path, "rb") as fh:
+                fh.seek(self.offset)
+                data = fh.read()
+        except OSError:
+            return []
+        end = data.rfind(b"\n") + 1
+        self.offset += end
+        events = []
+        for line in data[:end].splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+        return events
 
 
 # -- one pass -------------------------------------------------------------------
@@ -345,7 +431,7 @@ def _watch(
     The stream is read to its end after the stop too, so the process never
     blocks on a full pipe and its last lines reach the log.
     """
-    tokens = 0
+    seams = SeamWatch(record, specflo, launch, window, threshold, last)
     for line in proc.stdout:
         out.write(line)
         out.flush()
@@ -355,10 +441,6 @@ def _watch(
             continue
         if not isinstance(event, dict):
             continue
-        used = context_tokens(event)
-        if used is not None:
-            tokens = used
-            record.context_tokens = max(record.context_tokens, used)
         if event.get("type") == "system" and event.get("subtype") == "init":
             if event.get("session_id") and event["session_id"] != record.session_id:
                 record.session_id = event["session_id"]
@@ -367,15 +449,88 @@ def _watch(
             record.result_is_error = bool(event.get("is_error"))
             text = event.get("result")
             record.result_text = text[-RESULT_TAIL:] if isinstance(text, str) else None
-        elif record.seam is None and _is_tool_result(event) and armed(tokens, window, threshold):
-            current = snapshot(specflo, launch.cwd, launch.env)
-            if current is None:
-                continue  # a failed poll declares nothing and keeps the baseline
-            seam = describe_seam(last, current) if last is not None else None
-            last = current
-            if seam is not None and current.under_way:
-                record.seam = seam
-                threading.Thread(target=_stop, args=(proc,), daemon=True).start()
+        elif seams.feed(event) is not None:
+            threading.Thread(target=_stop, args=(proc,), daemon=True).start()
+
+
+def _turn_text(event: dict) -> str | None:
+    """The text a turn-end hook carries: the last reply, or the error."""
+    for key in ("last_assistant_message", "error", "error_details"):
+        if isinstance(event.get(key), str):
+            return event[key][-RESULT_TAIL:]
+    return None
+
+
+def run_pane_pass(
+    launch: launch_cc.CcLaunch,
+    prompt: str,
+    *,
+    index: int,
+    specflo: str,
+    window: int,
+    deadline: float,
+    hooks_path: Path,
+    threshold_percent: int | None = None,
+    poll: float = PANE_POLL,
+) -> PassRecord:
+    """Run one fresh interactive claude on `prompt`, on this process's terminal.
+
+    An interactive claude does not exit when its turn ends, so the pass ends
+    when the bench hook logs a Stop or StopFailure for its session, at an
+    armed seam read from its session file, or at the deadline; the bench then
+    stops claude. A claude that exits first ended the pass with no turn end.
+    """
+    session_id = str(uuid.uuid4())
+    before = snapshot(specflo, launch.cwd, launch.env)
+    record = PassRecord(
+        index=index, session_id=session_id, session_file=None, stream_log="", stderr_log="",
+        started=time.time(), phase_before=before.phase if before else None,
+        done_before=before.done if before else None,
+    )
+    threshold = threshold_percent if threshold_percent is not None else (before.threshold if before else None)
+    seams = SeamWatch(record, specflo, launch, window, threshold, before)
+    hooks = JsonlTail(hooks_path, from_end=True)
+    session: JsonlTail | None = None
+    timed_out = False
+    proc = launch_cc.start(replace(launch, argv=[*launch.argv, "--session-id", session_id, prompt]))
+    try:
+        while proc.poll() is None:
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            for event in hooks.read():
+                if event.get("session_id") == session_id and event.get("hook_event_name") in (TURN_STOP, TURN_FAILURE):
+                    record.turn_end = event["hook_event_name"]
+                    record.result_text = _turn_text(event)
+                    break
+            if record.turn_end is not None:
+                break
+            if session is None and (found := session_file(launch.config_dir, session_id)) is not None:
+                session = JsonlTail(found)
+            if session is not None and any(seams.feed(e) is not None for e in session.read()):
+                break
+            time.sleep(poll)
+    finally:
+        _stop(proc)
+    # The turn end can be read before the session file's last lines: count their context use too.
+    if session is None and (found := session_file(launch.config_dir, session_id)) is not None:
+        session = JsonlTail(found)
+    for event in session.read() if session is not None else ():
+        used = context_tokens(event)
+        if used is not None:
+            record.context_tokens = max(record.context_tokens, used)
+    if record.turn_end is not None:
+        record.result_is_error = record.turn_end == TURN_FAILURE
+        record.result_subtype = "success" if record.turn_end == TURN_STOP else "error"
+    record.ended = time.time()
+    record.exit_code = proc.returncode
+    record.ended_by = ENDED_SEAM if record.seam else ENDED_TIMEOUT if timed_out else ENDED_EXIT
+    after = snapshot(specflo, launch.cwd, launch.env)
+    record.phase_after = after.phase if after else None
+    record.done_after = after.done if after else None
+    found = session_file(launch.config_dir, record.session_id)
+    record.session_file = str(found) if found else None
+    return record
 
 
 # -- the run --------------------------------------------------------------------
@@ -392,12 +547,14 @@ def run_passes(
     threshold_percent: int | None = None,
     auto_args: Sequence[str] = (),
     on_pass: Callable[[PassRecord], None] | None = None,
+    pane: bool = False,
 ) -> RunResult:
     """Loop specflo passes over fresh Claude Code processes until specflo or a bench limit stops it.
 
     `threshold_percent` overrides the arming threshold specflo reports (0 arms
-    at once: every seam ends the pass). The pass record is also written to
-    `run_dir/passes.json` after every pass.
+    at once: every seam ends the pass). With `pane` each pass is an interactive
+    claude on this process's terminal (`run_pane_pass`), else a `claude -p`.
+    The pass record is also written to `run_dir/passes.json` after every pass.
     """
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -421,10 +578,17 @@ def run_passes(
         if len(result.passes) >= max_passes:
             result.end_reason, result.end_detail = END_PASS_LIMIT, f"bench cap of {max_passes} passes reached"
             break
-        record = run_pass(
-            launch, report["payload"], index=len(result.passes) + 1, run_dir=run_dir,
-            specflo=specflo, window=window, deadline=deadline, threshold_percent=threshold_percent,
-        )
+        if pane:
+            record = run_pane_pass(
+                launch, report["payload"], index=len(result.passes) + 1, specflo=specflo, window=window,
+                deadline=deadline, hooks_path=Path(launch.env[launch_cc.HOOK_LOG_ENV]),
+                threshold_percent=threshold_percent,
+            )
+        else:
+            record = run_pass(
+                launch, report["payload"], index=len(result.passes) + 1, run_dir=run_dir,
+                specflo=specflo, window=window, deadline=deadline, threshold_percent=threshold_percent,
+            )
         result.passes.append(record)
         save()
         if on_pass is not None:

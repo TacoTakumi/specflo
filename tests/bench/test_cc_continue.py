@@ -68,7 +68,8 @@ FAKE_CLAUDE = r'''
 import json, os, pathlib, subprocess, sys, time
 argv = sys.argv[1:]
 sid = argv[argv.index("--session-id") + 1]
-prompt = sys.stdin.read()
+pane = "-p" not in argv
+prompt = argv[-1] if pane else sys.stdin.read()
 plan_path = os.environ["FAKE_CLAUDE_PLAN"]
 counter = pathlib.Path(plan_path + ".count")
 n = int(counter.read_text()) if counter.exists() else 0
@@ -81,10 +82,20 @@ with open(plan_path + ".calls", "a") as f:
                         "config_dir": os.environ.get("CLAUDE_CONFIG_DIR")}) + "\n")
 session = pathlib.Path(os.environ["CLAUDE_CONFIG_DIR"]) / "projects" / "-work" / (sid + ".jsonl")
 session.parent.mkdir(parents=True, exist_ok=True)
+def hook(event):
+    with open(os.environ["SPECFLO_BENCH_HOOK_LOG"], "a") as f:
+        f.write(json.dumps({**event, "session_id": sid}) + "\n")
 def emit(event):
-    print(json.dumps(event), flush=True)
+    if pane:
+        # The session JSONL marks subagent lines with isSidechain, not parent_tool_use_id.
+        event = {k: v for k, v in event.items() if k != "parent_tool_use_id"}
+        event["isSidechain"] = event.pop("sidechain", False)
+    else:
+        print(json.dumps(event), flush=True)
     with session.open("a") as f:
         f.write(json.dumps(event) + "\n")
+if pane:
+    hook({"hook_event_name": "UserPromptSubmit", "prompt": prompt})
 emit({"type": "system", "subtype": "init", "session_id": sid})
 final = {"type": "result", "subtype": "success", "is_error": False, "result": "done"}
 for i, step in enumerate(steps):
@@ -94,6 +105,9 @@ for i, step in enumerate(steps):
         time.sleep(3600)
     if "error" in step:
         final = {"type": "result", "subtype": "error_during_execution", "is_error": True, "result": step["error"]}
+    if "sidechain_tokens" in step:
+        emit({"type": "assistant", "parent_tool_use_id": "t-sub", "sidechain": True, "message": {
+            "content": [], "usage": {"input_tokens": step["sidechain_tokens"]}}})
     if "bash" in step:
         emit({"type": "assistant", "parent_tool_use_id": None, "message": {
             "content": [{"type": "tool_use", "id": f"t{i}", "name": "Bash", "input": {"command": step["bash"]}}],
@@ -101,6 +115,15 @@ for i, step in enumerate(steps):
         out = subprocess.run(step["bash"], shell=True, capture_output=True, text=True).stdout
         emit({"type": "user", "parent_tool_use_id": None, "message": {
             "content": [{"type": "tool_result", "tool_use_id": f"t{i}", "content": out}]}})
+if pane:
+    # An interactive claude reports the turn end through its hooks and waits for the next prompt.
+    if final["is_error"]:
+        hook({"hook_event_name": "StopFailure", "error": final["result"]})
+    else:
+        hook({"hook_event_name": "Stop", "last_assistant_message": final["result"]})
+    if os.environ.get("FAKE_CLAUDE_EXIT_AT_TURN_END"):
+        sys.exit(0)
+    time.sleep(3600)
 emit(final)
 '''
 
@@ -138,7 +161,8 @@ class Rig:
             argv=[self.claude, "--model", ENTRY],
             env={"PATH": f"{self.bindir}{os.pathsep}/usr/bin{os.pathsep}/bin",
                  "CLAUDE_CONFIG_DIR": str(self.config),
-                 "FAKE_SPECFLO_STATE": str(self.state), "FAKE_CLAUDE_PLAN": str(self.plan)},
+                 "FAKE_SPECFLO_STATE": str(self.state), "FAKE_CLAUDE_PLAN": str(self.plan),
+                 launch_cc.HOOK_LOG_ENV: str(tmp_path / "run" / launch_cc.HOOKS_FILE)},
             cwd=self.workdir, config_dir=self.config, claude_version="test", config_hash="sha256:test",
         )
 
@@ -298,6 +322,80 @@ def test_an_unreadable_auto_report_ends_the_run(tmp_path: Path):
     result = rig.run()
     assert result.end_reason == cc.END_AUTO_FAILED
     assert result.passes == []
+
+
+# -- the pass loop in a pane -------------------------------------------------------
+
+
+def test_a_pane_pass_is_an_interactive_claude_with_the_payload_as_its_prompt(tmp_path: Path):
+    rig = Rig(tmp_path, auto=[_cont("payload one\nline 2"), _cont("payload two")], plan=[[]])
+    started = time.monotonic()
+    result = rig.run(pane=True)
+    assert time.monotonic() - started < 30
+    assert result.end_reason == "project-complete"
+    calls = rig.claude_calls()
+    assert [c["prompt"] for c in calls] == ["payload one\nline 2", "payload two"]
+    for call, record in zip(calls, result.passes, strict=True):
+        argv = call["argv"]
+        assert argv[:2] == ["--model", ENTRY]
+        assert "-p" not in argv and "--output-format" not in argv
+        assert argv[-3:] == ["--session-id", record.session_id, call["prompt"]]
+        assert record.ended_by == cc.ENDED_EXIT and record.turn_end == cc.TURN_STOP
+        assert record.result_text == "done" and not record.failed
+        assert record.session_file == str(rig.config / "projects" / "-work" / f"{record.session_id}.jsonl")
+        assert record.stream_log == "" and record.stderr_log == ""
+
+
+def test_a_pane_turn_that_fails_ends_the_run_as_a_failed_pass(tmp_path: Path):
+    rig = Rig(tmp_path, auto=[_cont("one"), _cont("two")], plan=[[{"error": "API Error: 500"}]])
+    result = rig.run(pane=True)
+    assert result.end_reason == cc.END_PASS_FAILED
+    (record,) = result.passes
+    assert record.turn_end == cc.TURN_FAILURE and record.failed
+    assert record.result_is_error is True and record.result_text == "API Error: 500"
+
+
+def test_a_pane_claude_that_exits_with_no_turn_end_is_a_failed_pass(tmp_path: Path):
+    rig = Rig(tmp_path, auto=[_cont("one"), _cont("two")], plan=[[{"crash": 0}]])
+    result = rig.run(pane=True)
+    assert result.end_reason == cc.END_PASS_FAILED
+    assert result.passes[0].turn_end is None and result.passes[0].failed
+
+
+def test_an_armed_seam_in_the_session_file_ends_a_pane_pass(tmp_path: Path):
+    plan = [[{"bash": "specflo advance", "tokens": 300}, {"hang": True}], []]
+    rig = Rig(tmp_path, auto=[_cont("brainstorm pass"), _cont("spec pass")], plan=plan)
+    result = rig.run(pane=True)
+    first, second = result.passes
+    assert first.ended_by == cc.ENDED_SEAM and first.seam == "the phase is now spec"
+    assert first.context_tokens == 300 and not first.failed
+    assert second.ended_by == cc.ENDED_EXIT and second.turn_end == cc.TURN_STOP
+
+
+def test_an_unarmed_seam_or_sidechain_tokens_do_not_end_a_pane_pass(tmp_path: Path):
+    plan = [[{"sidechain_tokens": 900}, {"bash": "specflo advance", "tokens": 100}]]
+    rig = Rig(tmp_path, auto=[_cont("one")], plan=plan)
+    result = rig.run(pane=True)
+    (record,) = result.passes
+    assert record.ended_by == cc.ENDED_EXIT and record.seam is None
+    assert record.context_tokens == 100
+
+
+def test_the_wall_clock_ends_a_pane_pass(tmp_path: Path):
+    rig = Rig(tmp_path, auto=[_cont("one"), _cont("two")], plan=[[{"hang": True}]])
+    result = rig.run(pane=True, wall_clock=2.0)
+    assert result.end_reason == cc.END_WALL_CLOCK
+    assert result.passes[0].ended_by == cc.ENDED_TIMEOUT
+
+
+def test_hook_events_of_an_earlier_session_do_not_end_a_pane_pass(tmp_path: Path):
+    hooks = tmp_path / "run" / launch_cc.HOOKS_FILE
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    hooks.write_text(json.dumps({"hook_event_name": "Stop", "session_id": "old"}) + "\n")
+    plan = [[{"bash": "specflo advance", "tokens": 100}]]
+    rig = Rig(tmp_path, auto=[_cont("one")], plan=plan)
+    result = rig.run(pane=True)
+    assert result.passes[0].phase_after == "spec"
 
 
 # -- pieces -----------------------------------------------------------------------
