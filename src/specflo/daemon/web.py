@@ -876,7 +876,12 @@ async def add_product(request: Request, user: User = Depends(current_user)) -> R
     refused = session_refused(request, fields, identity) or _not_product_manager(identity)
     if refused is not None:
         return refused
-    values = {name: fields.get(name, "") for name in ("name", "slug", "repo", "vision")}
+    # A browser posts a textarea with CRLF line ends; the store keeps LF, as
+    # the CLI and the API write it.
+    values = {
+        name: fields.get(name, "").replace("\r\n", "\n").replace("\r", "\n")
+        for name in ("name", "slug", "repo", "vision")
+    }
     root = request.app.state.root
     with project_lock(root, None), open_store(root) as store:
         products = Products(store)

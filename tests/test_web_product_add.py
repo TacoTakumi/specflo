@@ -203,3 +203,27 @@ def session_of_page(client):
     """The session secret of *client*, read from a page any role gets."""
     html = client.get(web.HOME_PATH).text
     return re.search(r'name="session" value="([^"]+)"', html).group(1)
+
+
+# --- a browser's line ends --------------------------------------------------------
+
+
+def test_line_ends_a_save_stores_the_vision_plain(developer, root):
+    response = developer.post(web.NEW_PRODUCT_PATH, data={
+        "session": session_of(developer), "name": "Thing", "slug": "", "repo": "",
+        "vision": "Line one.\r\nLine two.\rLine three.\r\n",
+    })
+
+    assert response.status_code == 303
+    [product] = stored(root)
+    assert product.vision == "Line one.\nLine two.\nLine three.\n"
+
+
+def test_line_ends_a_refused_save_shows_the_vision_plain(developer, root):
+    response = developer.post(web.NEW_PRODUCT_PATH, data={
+        "session": session_of(developer), "name": " ", "slug": "", "repo": "",
+        "vision": "Line one.\r\nLine two.",
+    })
+
+    assert response.status_code == 400
+    assert ">Line one.\nLine two.</textarea>" in response.text
