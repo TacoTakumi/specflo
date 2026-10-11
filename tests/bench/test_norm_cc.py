@@ -1,6 +1,7 @@
 """The Claude Code session normaliser: requestId deduplication, subagents, tool calls."""
 
 import json
+import shutil
 from pathlib import Path
 
 from specflo.bench import norm_cc, normlog
@@ -106,3 +107,13 @@ def test_dump_round_trip(tmp_path):
     log = norm_cc.normalise(SESSION)
     normlog.dump(log, tmp_path / "out.json")
     assert normlog.load(tmp_path / "out.json") == log
+
+
+def test_a_torn_line_is_skipped_and_reported_and_the_rest_is_kept(tmp_path):
+    torn = tmp_path / "cc-session.jsonl"
+    torn.write_text(SESSION.read_text(encoding="utf-8") + '{"type": "assistant", "mess')
+    shutil.copytree(SESSION.with_suffix(""), tmp_path / "cc-session")
+    skipped: list[str] = []
+    log = norm_cc.normalise(torn, skipped)
+    assert log == norm_cc.normalise(SESSION)
+    assert len(skipped) == 1 and skipped[0].startswith(f"{torn}:")

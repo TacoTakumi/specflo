@@ -50,13 +50,23 @@ def parse_time(stamp: str) -> float:
     return datetime.fromisoformat(stamp.replace("Z", "+00:00")).timestamp()
 
 
-def _read(path: Path) -> list[dict]:
+def _read(path: Path, skipped: list[str] | None = None) -> list[dict]:
+    """The file's JSON objects; a line that does not parse (a kill can tear the last one) is left out.
+
+    Each left-out line is added to `skipped` as `<path>:<line number>`.
+    """
     lines = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if raw.strip():
+    for number, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        if not raw.strip():
+            continue
+        try:
             item = json.loads(raw)
-            if isinstance(item, dict):
-                lines.append(item)
+        except ValueError:
+            if skipped is not None:
+                skipped.append(f"{path}:{number}")
+            continue
+        if isinstance(item, dict):
+            lines.append(item)
     return lines
 
 
@@ -81,13 +91,16 @@ def session_files(session_path: str | Path) -> list[tuple[Path, str]]:
     return files
 
 
-def normalise(session_path: str | Path) -> dict:
-    """Return the normlog dict for one Claude Code session and its subagents."""
+def normalise(session_path: str | Path, skipped: list[str] | None = None) -> dict:
+    """Return the normlog dict for one Claude Code session and its subagents.
+
+    Lines that do not parse are left out and named in `skipped`.
+    """
     groups: dict[str, dict] = {}
     calls: dict[str, dict] = {}
     results: dict[str, dict] = {}
     for path, file_class in session_files(session_path):
-        for line in _read(path):
+        for line in _read(path, skipped):
             kind, msg = line.get("type"), line.get("message")
             if kind not in ("user", "assistant") or not isinstance(msg, dict):
                 continue

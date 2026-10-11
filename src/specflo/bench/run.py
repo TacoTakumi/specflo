@@ -352,8 +352,8 @@ def session_files(harness: str, run_dir: Path, report: Mapping[str, Any] | None 
     return files + sorted(others, key=lambda f: (f.stat().st_mtime, f.name))
 
 
-def normalise_one(harness: str, path: Path) -> dict:
-    return norm_pi.normalise_file(path) if harness == "pi" else norm_cc.normalise(path)
+def normalise_one(harness: str, path: Path, skipped: list[str] | None = None) -> dict:
+    return norm_pi.normalise_file(path) if harness == "pi" else norm_cc.normalise(path, skipped)
 
 
 def merge_logs(harness: str, logs: Sequence[dict]) -> dict:
@@ -375,24 +375,30 @@ def merge_logs(harness: str, logs: Sequence[dict]) -> dict:
 
 
 def normalised_log(harness: str, files: Sequence[Path]) -> tuple[dict, list[str]]:
-    """The run's merged normalised log and the errors of any session that could not be read."""
+    """The run's merged normalised log and the errors: sessions that could not be read, lines left out."""
     logs, errors = [], []
     for path in files:
+        skipped: list[str] = []
         try:
-            logs.append(normalise_one(harness, path))
+            logs.append(normalise_one(harness, path, skipped))
         except Exception as exc:  # noqa: BLE001 - one unreadable session must not lose the record
             errors.append(f"{path}: {type(exc).__name__}: {exc}")
+        errors += [f"{line}: a line that does not parse was skipped" for line in skipped]
     if not logs:
         return {"format": normlog.FORMAT_VERSION, "harness": harness, "requests": [], "tool_calls": []}, errors
     return merge_logs(harness, logs), errors
 
 
 def pass_count(harness: str, run_dir: Path, sessions: Sequence[Path]) -> int:
-    """Context passes: Claude Code's pass processes, pi's session files."""
+    """Context passes: Claude Code's pass processes, pi's session files.
+
+    passes.json is saved when a pass ends, so a Claude Code run the bench
+    killed has one more session than recorded passes: the pass in flight.
+    """
     if harness == "claude-code":
         passes = (_read_json(Path(run_dir) / cc_continue.RECORD_FILE) or {}).get("passes")
         if isinstance(passes, list):
-            return len(passes)
+            return max(len(passes), len(sessions))
     return len(sessions)
 
 

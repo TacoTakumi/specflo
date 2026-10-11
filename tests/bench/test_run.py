@@ -415,6 +415,21 @@ def test_an_unreadable_session_is_kept_as_an_error(tmp_path):
     assert log["requests"] == [] and len(errors) == 1
 
 
+def test_a_claude_code_session_with_a_torn_line_keeps_its_requests_and_reports_the_line(tmp_path):
+    sample = Path(__file__).resolve().parent / "samples" / "cc-session.jsonl"
+    torn = tmp_path / "s.jsonl"
+    torn.write_text(sample.read_text(encoding="utf-8") + '{"type": "user", "mes')
+    log, errors = run.normalised_log("claude-code", [torn])
+    assert log["requests"] and len(errors) == 1 and "skipped" in errors[0]
+
+
+def test_a_killed_claude_code_run_counts_its_pass_in_flight(tmp_path):
+    (tmp_path / cc_continue.RECORD_FILE).write_text(json.dumps({"passes": [{}, {}]}))
+    sessions = [tmp_path / f"s{i}.jsonl" for i in range(3)]
+    assert run.pass_count("claude-code", tmp_path, sessions) == 3
+    assert run.pass_count("claude-code", tmp_path, sessions[:2]) == 2
+
+
 def test_limits_come_from_arguments_then_the_arm_config_then_the_provisional_defaults():
     config = arms.Config(entries={}, harnesses=arms.HARNESSES,
                          levels={"quick": {"stall_limit": 120}, "fast": {}, "full": {}})
