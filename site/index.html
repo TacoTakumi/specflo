@@ -213,8 +213,8 @@ specflo
 <main class="container" id="top">
 <div class="hero">
 <div>
-<h1>Your coding agent loses the plan when its context fills up.</h1>
-<p class="lead">specflo keeps the plan on disk. Each feature goes through <strong>brainstorm, spec, plan and execute</strong>, and every decision, requirement and task is a markdown file that the CLI checks. The agent works one small, checked task at a time, and a fresh session continues where the last one stopped.</p>
+<h1>Good engineering practice, built into your coding agent.</h1>
+<p class="lead">specflo takes each feature through <strong>brainstorm, research, spec, plan and execute</strong>. Your agent asks the questions a good engineer would ask, checks the facts, writes testable requirements, and builds one verified task at a time. You get the feature you specified, not a vibe-coded guess.</p>
 <div class="install">
 <code id="install-cmd">pip install specflo</code>
 <button class="btn btn-small" type="button" data-copy="install-cmd">Copy</button>
@@ -227,7 +227,7 @@ specflo
 </div>
 
 <div class="box prompt-mock" aria-label="Example: after a context clear the agent reads its place from disk">
-<div class="box-head">Your agent knows where it stopped <small>Example</small></div>
+<div class="box-head">Clear context any time. The plan stays. <small>Example</small></div>
 <div class="ask">
 <span class="who">You, in a fresh session</span>
 <p>Continue the specflo project.</p>
@@ -248,27 +248,28 @@ specflo
 <li style="--i:12">  Verify:     pytest tests/test_charge.py -k idempotency</li>
 <li style="--i:13">  Implements: REQ-03</li>
 </ol>
-<p class="after">The old conversation is gone, and the agent does not need it. It reads the phase, the next task and the check that proves the task from disk, and starts work.</p>
+<p class="after">specflo saves a checkpoint after every step. A fresh session reads the phase, the next task and the check that proves it, and carries on.</p>
 </div>
 </div>
 
 <section id="how">
 <h2>How it works</h2>
-<p class="section-sub">Four phases, each with a document the CLI checks before the work moves on. Small changes take a shorter path: a quick project is one goal and one check, and a fast project is 3 to 7 tasks.</p>
+<p class="section-sub">Each feature moves through four phases. The CLI checks each phase's document before the work moves on, so a gap in the thinking shows up before the code. Small changes take a shorter path: a quick project is one goal and one check, and a fast project is 3 to 7 tasks.</p>
 <div class="split">
 <div class="box">
 <div class="box-head">The pipeline</div>
 <ol class="rows">
-<li><span class="step">1</span><div><strong>Brainstorm</strong><p>The agent asks you one question at a time and records each answer as a decision (<code>D-NN</code>).</p></div></li>
+<li><span class="step">1</span><div><strong>Brainstorm</strong><p>The agent researches what already exists, then asks you one question at a time, each with a recommended answer. It records each answer as a decision (<code>D-NN</code>).</p></div></li>
 <li><span class="step">2</span><div><strong>Spec</strong><p>The decisions become testable requirements (<code>REQ-NN</code>), each traced to the decision behind it.</p></div></li>
 <li><span class="step">3</span><div><strong>Plan</strong><p>The requirements become dependency-ordered tasks (<code>T-NN</code>), each with an acceptance criterion and a verify step.</p></div></li>
-<li><span class="step">4</span><div><strong>Execute</strong><p>The agent works the tasks one at a time. The project completes only after a final review in a fresh context passes.</p></div></li>
+<li><span class="step">4</span><div><strong>Execute</strong><p>The agent builds one task at a time, runs its verify step and commits. The project completes only after a final review in a fresh context passes.</p></div></li>
 </ol>
 </div>
 <div class="points">
-<div><h3>State lives in files</h3><p>Phase, decisions and tasks are on disk, not in the model's context. <code>specflo checkpoint</code> prints the prompt that puts a fresh session back to work, so you can clear context at any point.</p></div>
+<div><h3>Research before decisions</h3><p>Every brainstorm starts with a scan of the tools, libraries and earlier work that already exist. Before a decision that depends on a fact, the agent checks it. A research subagent does the searching, so the noise stays out of your conversation.</p></div>
+<div><h3>Automatic checkpoints</h3><p>specflo rewrites <code>checkpoint.md</code> after every state change, so you can clear context at any point. The Claude Code hook puts a fresh session back on the plan. Once context use passes your threshold, the pi extension offers a clear at the next finished task or phase. In an auto run it clears by itself.</p></div>
 <div><h3>Gates stop the line early</h3><p><code>specflo advance</code> validates the current phase's document before it moves on. A hole in the spec stops the work before execute, not in the middle of it.</p></div>
-<div><h3>One task at a time</h3><p>The agent only has to reason about the next small, checked step. That makes real work practical with smaller local models such as Qwen3.6 27B.</p></div>
+<div><h3>Small steps, smaller models</h3><p>The agent only has to reason about the next small, checked step. That makes real work practical with smaller local models such as Qwen3.6 27B.</p></div>
 <div><h3>Review rounds that track findings</h3><p>The reviewer records each finding as a blocker, should-fix or nit. Each blocker and should-fix item gets a fix task, and the next round checks that the fix holds.</p></div>
 </div>
 </div>
@@ -369,7 +370,7 @@ specflo new "my first project"</pre>
 <div class="box">
 <div class="box-head">Where specflo uses the wiki</div>
 <ul class="rows plain">
-<li><div><strong>Brainstorm <span class="topic-tag">specflo-brainstorm</span></strong><p>Sends the facts a decision depends on to the research subagent before the decision is recorded.</p></div></li>
+<li><div><strong>Brainstorm <span class="topic-tag">specflo-brainstorm</span></strong><p>Every brainstorm starts with a research scan, and that scan reads the wiki first. Earlier decisions and findings are in front of the agent before its first question. Each fact check before a decision starts from the wiki too.</p></div></li>
 <li><div><strong>Research <span class="topic-tag">specflo-research</span></strong><p>Starts from the wiki, checks it against the web for what is missing or out of date, and saves the findings back with their sources and dates.</p></div></li>
 <li><div><strong>No wiki?</strong><p>The wiki is optional. Without it, research uses the web only.</p></div></li>
 </ul>
