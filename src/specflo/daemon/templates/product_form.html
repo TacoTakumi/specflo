@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}New product - specflo{% endblock %}
+{% block content %}
+<p class="crumbs"><a href="{{ home_path }}">Products</a></p>
+<h1>New product</h1>
+<form method="post" action="{{ new_product_path }}">
+  <input type="hidden" name="session" value="{{ session }}">
+  <label>Name
+    <input type="text" name="name" value="{{ values.name }}" required>
+  </label>
+  <label>Slug, the product's name in its address
+    <input type="text" name="slug" value="{{ values.slug }}">
+  </label>
+  <p class="hint">Leave it empty to derive the slug from the name, e.g. My Thing -&gt; my-thing.</p>
+  <label>Repo, where its code lives
+    <input type="text" name="repo" value="{{ values.repo }}" size="60">
+  </label>
+  <label>Vision
+    <textarea name="vision" rows="12" cols="80">{{ values.vision }}</textarea>
+  </label>
+  <button type="submit">Add product</button>
+</form>
+{% endblock %}

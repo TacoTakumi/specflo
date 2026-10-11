@@ -56,7 +56,8 @@ from .auth import (
     verify_password,
 )
 from . import seat
-from .products import Products
+from .permissions import PRODUCT_MANAGE, can, who_can
+from .products import RESERVED_SLUG, Products
 from . import chat, chatlog
 from .routes import audit, project_lock
 from .store import Product, Session, User, WorkItem, open_store
@@ -70,6 +71,8 @@ SIGNOUT_PATH = "/signout"
 THEME_PATH = "/theme"
 ASSETS_PATH = "/assets"
 PRODUCT_PATH = "/products/{slug}"
+# The new product page; the slug it would hide is refused for a product.
+NEW_PRODUCT_PATH = "/products/" + RESERVED_SLUG
 PROJECT_PATH = "/projects/{slug}"
 TAKE_PATH = "/projects/{slug}/take"
 START_AGENT_PATH = "/projects/{slug}/agent/start"
@@ -194,6 +197,7 @@ _templates.globals.update(
     revoke_token_op=REVOKE_TOKEN_OP,
     change_password_op=CHANGE_PASSWORD_OP,
     product_url=lambda slug: PRODUCT_PATH.format(slug=slug),
+    new_product_path=NEW_PRODUCT_PATH,
     project_url=lambda slug: PROJECT_PATH.format(slug=slug),
     take_url=lambda slug: TAKE_PATH.format(slug=slug),
     start_agent_url=lambda slug: START_AGENT_PATH.format(slug=slug),
@@ -818,9 +822,37 @@ def products_page(request: Request, identity: str = Depends(current_session)) ->
     return render(
         "products.html",
         identity=identity,
+        adds_products=can(identity, PRODUCT_MANAGE),
         cards=product_cards(root),
         inbox=inbox_entries(root, identity),
         inbox_empty=INBOX_EMPTY.format(identity=identity),
+    )
+
+
+def _not_product_manager(identity: str) -> Response | None:
+    """The 403 page for a role that may not add a product, or None for one that may."""
+    if can(identity, PRODUCT_MANAGE):
+        return None
+    return render(
+        "error.html", status_code=403, identity=identity,
+        message=f"A product is added by {who_can(PRODUCT_MANAGE)} only, "
+        f"and this session is the {identity} role's.",
+    )
+
+
+def _product_form(request: Request, identity: str, values: dict[str, str]) -> Response:
+    """The new product form, holding *values*."""
+    return render(
+        "product_form.html", identity=identity, values=values, session=session_secret(request)
+    )
+
+
+# Registered before the product page, whose path would otherwise take it.
+@pages.get(NEW_PRODUCT_PATH, include_in_schema=False)
+def new_product_page(request: Request, identity: str = Depends(current_session)) -> Response:
+    """The empty form of a new product."""
+    return _not_product_manager(identity) or _product_form(
+        request, identity, dict.fromkeys(("name", "slug", "repo", "vision"), "")
     )
 
 

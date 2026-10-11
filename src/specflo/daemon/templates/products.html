@@ -20,6 +20,9 @@
 </section>
 
 <h1>Products</h1>
+{% if adds_products %}
+<p><a href="{{ new_product_path }}">New product</a></p>
+{% endif %}
 {% if cards %}
 <table>
   <thead>
