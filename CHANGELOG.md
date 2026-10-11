@@ -8,6 +8,29 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.18.0]
+
+### Changed
+- **Model bench: Claude Code runs in its herdr pane.** A Claude Code bench
+  run with herdr now runs its pass loop in the pane, and each specflo pass is
+  an interactive `claude` started with the pass payload as its prompt, so the
+  operator watches a real session instead of raw stream JSON. A new process
+  per pass is still the context clear. A bench hook in the run's Claude Code
+  config logs every turn end and prompt to `hooks.jsonl`: the loop ends a
+  pass on Stop (or as a failed pass on StopFailure) and reads seams from the
+  session file. Claude Code runs with background tasks off
+  (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`, in both transports), so a
+  subagent finishes inside the turn instead of being cut off when the pass
+  ends. A prompt typed into the pane makes the run invalid. Runs with
+  `--headless`, or when herdr is unavailable, keep `claude -p`, and the
+  record's `lifecycle.transport` says which (tui or headless).
+
+### Fixed
+- **Model bench:** a Claude Code session whose last line was torn by a kill
+  keeps its other lines (the skipped line is listed in `normalise_errors`)
+  instead of dropping out of the normalised log, and a killed Claude Code run
+  counts the pass that was in flight.
+
 ## [0.17.0]
 
 ### Added

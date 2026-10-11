@@ -31,6 +31,9 @@ Where things go:
         session.norm.json   the merged normalised session log
         pi-agent/sessions/  pi's session JSONL (pi arm)
         claude-config/projects/, pass-NN.*, passes.json, cc-result.json (Claude Code arm)
+        hooks.jsonl         every Claude Code turn end and prompt (Claude Code arm)
+        pane-passes.jsonl, cc-loop.pid   each pane pass's session and payload digest, the loop's pid
+                            (Claude Code arm in a pane)
     <work root>/<same name>/   the sealed workdir and the agent's final tree (default under the temp dir)
 
 The record's `logs` names every one of these paths.
