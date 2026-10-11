@@ -634,8 +634,12 @@ def run(
     base_env: Mapping[str, str] | None = None,
     base_url: str | None = None,
     on_pass: Callable[[PassRecord], None] | None = None,
+    pane: bool = False,
 ) -> tuple[RunResult, dict[str, str]]:
-    """Build one launch for the run and loop its passes; returns the result and the launch report."""
+    """Build one launch for the run and loop its passes; returns the result and the launch report.
+
+    With `pane` each pass is an interactive claude on this process's terminal.
+    """
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
     specflo = specflo or find_specflo()
@@ -650,6 +654,6 @@ def run(
         result = run_passes(
             launch, run_dir=run_dir, specflo=str(bindir / "specflo"), window=context_window(entry),
             max_passes=max_passes, wall_clock=wall_clock, threshold_percent=threshold_percent,
-            on_pass=on_pass,
+            on_pass=on_pass, pane=pane,
         )
         return result, launch.report()

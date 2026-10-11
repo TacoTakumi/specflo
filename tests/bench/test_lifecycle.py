@@ -121,6 +121,20 @@ elif mode == "exit":
 elif mode == "env":
     with open(os.environ["HARNESS_ENV"], "w") as f:
         json.dump(dict(os.environ), f)
+elif mode in ("cc-pane", "cc-pane-nopid"):
+    # A stand-in for the Claude Code loop in a pane: it writes its pid (unless
+    # told not to), then its result.
+    run_dir = os.getcwd()
+    with open(os.environ["HARNESS_ENV"], "w") as f:
+        json.dump({"argv": sys.argv[1:], "env": dict(os.environ), "pid": os.getpid()}, f)
+    if mode == "cc-pane-nopid":
+        time.sleep(3600)
+    with open(os.path.join(run_dir, "cc-loop.pid"), "w") as f:
+        f.write(str(os.getpid()))
+    time.sleep(0.3)
+    with open(os.path.join(run_dir, "cc-result.json"), "w") as f:
+        json.dump({"result": {"end_reason": "project-complete", "end_detail": "done in the pane"},
+                   "launch": {"harness": "claude-code test"}}, f)
 elif mode.startswith("cc-"):
     # A stand-in for the Claude Code loop child: write its result and exit.
     run_dir = os.getcwd()
@@ -301,6 +315,13 @@ class Bench:
         self.run_dir.mkdir(parents=True, exist_ok=True)
         spec = lc.cc_spec(self.run_dir / lc.CC_SPEC_FILE, dict(self.env), self.run_dir)
         return replace(spec, argv=[sys.executable, self.harness, mode])
+
+    def cc_pane(self, pane_mode: str, mode: str = "cc-project-complete") -> lc.HarnessSpec:
+        """A Claude Code harness whose pane start runs the stand-in loop in `pane_mode`."""
+        self.env["FAKE_HERDR_TYPED"] = str(self.tmp / "typed.txt")
+        spec = self.cc(mode)
+        assert spec.pane is not None
+        return replace(spec, pane=replace(spec.pane, argv=[sys.executable, self.harness, pane_mode]))
 
     def supervise(self, spec: lc.HarnessSpec, wall_clock: float = 20.0, stall: float = 10.0, **kw) -> lc.Outcome:
         kw = {"poll": 0.05, "stop_grace": 1.0, **kw}
@@ -487,6 +508,34 @@ def test_a_failing_claude_code_loop_records_its_error(tmp_path: Path, monkeypatc
     assert ending.reason == lc.END_HARNESS_EXIT and "no claude here" in ending.detail
 
 
+def test_the_claude_code_pane_start_runs_the_loop_child_in_pane_mode(tmp_path: Path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    spec = lc.cc_spec(run_dir / lc.CC_SPEC_FILE, {"PATH": "/usr/bin"}, run_dir)
+    assert spec.pane.argv == [*spec.argv, lc.CC_PANE_FLAG]
+    assert spec.pane.pid_file == run_dir / lc.CC_PID_FILE
+
+
+def test_the_claude_code_child_in_pane_mode_writes_its_pid_and_runs_pane_passes(tmp_path: Path, monkeypatch):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    arm = arms.Run(entry=ENTRY, harness="claude-code", level="quick", run_index=0)
+    spec = lc.build_cc(arm, workdir=tmp_path / "work", run_dir=run_dir, specflo="/x/specflo",
+                       env={"PATH": "/usr/bin"}, limits=lc.Limits(90.0, 30.0),
+                       settings=lc.AutoSettings("autonomous", 7))
+    seen = {}
+
+    def fake_run(entry, **kw):
+        seen.update(kw, pid=(run_dir / lc.CC_PID_FILE).read_text())
+        return cc_continue.RunResult("project-complete", "done"), {}
+
+    monkeypatch.setattr(cc_continue, "run", fake_run)
+    assert lc.cc_child_main(spec.argv[-1], pane=True) == 0
+    assert seen["pane"] is True and seen["pid"] == str(os.getpid())
+    assert lc.cc_child_main(spec.argv[-1]) == 0
+    assert seen["pane"] is False
+
+
 # -- herdr ---------------------------------------------------------------------------
 
 
@@ -603,6 +652,50 @@ def test_tui_transport_keeps_the_agent_files_and_removes_its_short_state_dir(tmp
     assert events == ["agent_start", "agent_settled"]
     assert json.loads((bench.run_dir / lc.AGENT_STATUS_FILE).read_text())["state"] == "idle"
     assert not (bench.run_dir / lc.LAUNCH_SPEC_FILE).exists()
+
+
+def test_claude_code_with_herdr_runs_its_loop_in_the_pane_watched_by_its_pid(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    spec = bench.cc_pane("cc-pane")
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(spec, herdr=herdr, label="claude-code quick 0")
+    assert outcome.end_reason == lc.END_COMPLETE and outcome.end_detail == "done in the pane"
+    assert outcome.transport == lc.TRANSPORT_TUI
+    assert outcome.placement == lc.PLACEMENT_HERDR and outcome.pane_id == "w1:p7"
+    seen = json.loads((tmp_path / "env.json").read_text())
+    assert outcome.pid == seen["pid"] == int((bench.run_dir / lc.CC_PID_FILE).read_text())
+    assert seen["argv"] == spec.pane.argv[2:]
+    assert seen["env"][lc.RUN_ENV]
+    assert bench.typed() == []
+    pane_runs = [c[3] for c in _calls(log) if c[:2] == ["pane", "run"]]
+    assert len(pane_runs) == 1 and pane_runs[0].startswith("exec ") and "tail " not in pane_runs[0]
+    assert ["tab", "close", "w1:t1"] in _calls(log)
+    assert not (bench.run_dir / lc.LAUNCH_SPEC_FILE).exists()
+
+
+def test_claude_code_whose_pane_loop_never_starts_closes_the_tab_and_runs_headless(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(lc, "TUI_START_TIMEOUT", 1.0)
+    bench = Bench(tmp_path)
+    herdr, log = _pane_herdr(bench, tmp_path, monkeypatch)
+    outcome = bench.supervise(bench.cc_pane("cc-pane-nopid"), herdr=herdr)
+    assert outcome.transport == lc.TRANSPORT_HEADLESS
+    assert outcome.placement == lc.PLACEMENT_HEADLESS
+    assert outcome.placement_note == "the Claude Code loop did not start in 1 s"
+    assert outcome.end_reason == lc.END_COMPLETE
+    assert ["tab", "close", "w1:t1"] in _calls(log)
+    assert not lc.alive(json.loads((tmp_path / "env.json").read_text())["pid"])
+
+
+def test_claude_code_without_herdr_or_with_a_failed_placement_runs_headless(tmp_path: Path, monkeypatch):
+    bench = Bench(tmp_path)
+    outcome = bench.supervise(bench.cc_pane("cc-pane"), herdr=None)
+    assert (outcome.transport, outcome.placement) == (lc.TRANSPORT_HEADLESS, lc.PLACEMENT_HEADLESS)
+    assert outcome.end_reason == lc.END_COMPLETE
+    bench = Bench(tmp_path / "again")
+    herdr, _ = _pane_herdr(bench, tmp_path / "again", monkeypatch, fail="tab create")
+    outcome = bench.supervise(bench.cc_pane("cc-pane"), herdr=herdr)
+    assert (outcome.transport, outcome.placement) == (lc.TRANSPORT_HEADLESS, lc.PLACEMENT_HEADLESS)
+    assert outcome.placement_note.startswith("herdr placement failed")
 
 
 def test_tui_start_without_herdr_runs_rpc_headless(tmp_path: Path):

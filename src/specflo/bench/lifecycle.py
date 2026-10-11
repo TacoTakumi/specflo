@@ -24,7 +24,8 @@ arm's level. `run` then:
      passes.
    - claude-code: a small child python that runs `cc_continue.run` (one fresh
      `claude -p` per specflo pass) and writes `cc-result.json`. A child, not a
-     thread, so the whole loop is one process tree that a cap can remove.
+     thread, so the whole loop is one process tree that a cap can remove. With
+     herdr the same child runs in the pane instead (see herdr below).
 4. Watches it until one end condition holds, then removes the tree.
 
 End reasons (the record's `end_reason`):
@@ -79,13 +80,19 @@ bench workspace, and the tab is closed at cleanup.
   model or thinking change, or /compact, /resume, /fork, /reload or /tree in
   the pane makes the run invalid (see `run.validity` and the input log in
   `launch_pi`); /new and extension commands go unseen.
+- The Claude Code loop runs there through the same launcher, in pane mode:
+  each pass is an interactive claude on the pane's terminal, so the operator
+  watches a real session per pass, and nothing is typed. The loop writes its
+  pid to `cc-loop.pid` and the bench watches that pid; the run ends from
+  `cc-result.json` as on stdio. An operator's prompt in the pane makes the
+  run invalid (see `run.validity` and the hook log in `launch_cc`).
 - Any other harness stays the bench's child, and its pane follows the
   harness logs (`tail -F --pid`); the pane closes with the harness.
 
 When herdr is unavailable, or placement or the pane start fails, the run
-proceeds headless with one stderr line (pi on RPC). The record says which:
-`placement` herdr with the pane id, or headless, and for pi `transport` tui or
-rpc.
+proceeds headless with one stderr line (pi on RPC, Claude Code on `claude
+-p`). The record says which: `placement` herdr with the pane id, or headless,
+and `transport` tui, or rpc for pi and headless for Claude Code.
 
 Level limits are read from the level's settings in the arm config
 (`wall_clock` and `stall_limit`, seconds) unless passed; there is no default.
@@ -135,6 +142,8 @@ PLACEMENT_HEADLESS = "headless"
 # How a pi run talks to pi: the interactive TUI in a herdr pane, or RPC on stdio.
 TRANSPORT_TUI = "tui"
 TRANSPORT_RPC = "rpc"
+# A Claude Code run off the pane: `claude -p` per pass.
+TRANSPORT_HEADLESS = "headless"
 RPC_ARGS = ("--mode", "rpc")
 
 RUN_ENV = "MODELBENCH_RUN"
@@ -152,6 +161,9 @@ TUI_AGENT = "pi"
 TUI_START_TIMEOUT = 60.0
 CC_SPEC_FILE = "cc-spec.json"
 CC_RESULT_FILE = "cc-result.json"
+# The Claude Code loop in a pane writes its pid here, and takes this flag.
+CC_PID_FILE = "cc-loop.pid"
+CC_PANE_FLAG = "--pane"
 
 # The level settings keys in the arm config, in seconds.
 WALL_CLOCK_KEY = "wall_clock"
@@ -634,6 +646,7 @@ class HarnessSpec:
     on_exit: Callable[[int], Ending | None] | None = None
     report: Callable[[], dict] | None = None
     tui: TuiStart | None = None
+    pane: PaneStart | None = None
 
 
 @dataclass(frozen=True)
@@ -647,6 +660,17 @@ class TuiStart:
     argv: list[str]
     ignition: str
     judge: Callable[[Path], tuple[Callable[[], Ending | None], Callable[[], bool]]]
+
+
+@dataclass(frozen=True)
+class PaneStart:
+    """How the harness runs in a herdr pane as it is: the argv there and the file it writes its pid to.
+
+    The harness is judged the same way in the pane as on stdio.
+    """
+
+    argv: list[str]
+    pid_file: Path
 
 
 class PaneProcess:
@@ -750,6 +774,52 @@ def start_tui(
         return None, why
 
 
+@dataclass
+class PaneRun:
+    placement: HerdrPlacement
+    proc: PaneProcess
+
+
+def _pid_file(path: Path, timeout: float) -> int:
+    """The pid the harness wrote to `path`, within `timeout`."""
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            return int(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            time.sleep(0.1)
+    raise TuiStartError(f"the Claude Code loop did not start in {timeout:g} s")
+
+
+def start_pane(
+    herdr: Herdr, pane: PaneStart, *, label: str, cwd: Path, run_dir: Path, env: Mapping[str, str],
+    timeout: float | None = None, workspace: str = HERDR_WORKSPACE,
+) -> tuple[PaneRun | None, str | None]:
+    """Start the harness in a new herdr tab and wait for its pid, or (None, why) when it cannot.
+
+    On any failure the tab is closed and whatever started is killed.
+    """
+    placement = None
+    spec_file = Path(run_dir) / LAUNCH_SPEC_FILE
+    pane.pid_file.unlink(missing_ok=True)
+    try:
+        if not herdr.available():
+            raise TuiStartError("herdr unavailable")
+        placement = herdr.create_tab(herdr.ensure_workspace(workspace), label, str(cwd))
+        herdr.run_in_pane(placement.pane_id,
+                          launcher_command(write_launch_spec(spec_file, pane.argv, env, cwd)))
+        pid = _pid_file(pane.pid_file, TUI_START_TIMEOUT if timeout is None else timeout)
+        return PaneRun(placement=placement, proc=PaneProcess(pid)), None
+    except (HerdrError, KeyError, TypeError, TuiStartError) as exc:
+        if placement is not None:
+            _close(herdr, placement)
+        if env.get(RUN_ENV):
+            _kill_token(env[RUN_ENV])
+        spec_file.unlink(missing_ok=True)
+        why = str(exc) if isinstance(exc, TuiStartError) else f"herdr placement failed: {exc}"
+        return None, why
+
+
 def _keep_agent_files(tui: TuiRun, run_dir: Path) -> None:
     """Copy the pane harness's mirrored events and status into the run dir."""
     for source, name in ((tui.paths.events, AGENT_EVENTS_FILE), (tui.paths.status, AGENT_STATUS_FILE)):
@@ -819,10 +889,10 @@ def supervise(
 ) -> Outcome:
     """Start the harness, watch it to one end condition, remove its tree and report.
 
-    A harness with a `tui` start and a herdr adapter runs in a herdr pane
-    (transport tui); when that start fails it runs headless on stdio instead.
-    Any other harness runs on stdio and its pane, when herdr answers, follows
-    its logs.
+    A harness with a `tui` or `pane` start and a herdr adapter runs in a herdr
+    pane (transport tui); when that start fails it runs headless on stdio
+    instead. Any other harness runs on stdio and its pane, when herdr answers,
+    follows its logs.
     """
     run_dir = Path(run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -834,11 +904,16 @@ def supervise(
     verdict_check, idle_check, on_exit = spec.verdict, spec.idle, spec.on_exit
     globs = [str(out_path), str(err_path), *spec.activity_globs]
     tui: TuiRun | None = None
+    pane: PaneRun | None = None
     note: str | None = None
     if spec.tui is not None and herdr is not None:
         out_path.write_bytes(b"")
         err_path.write_bytes(b"")
         tui, note = start_tui(herdr, spec.tui, label=label, cwd=spec.cwd, run_dir=run_dir, env=env)
+    elif spec.pane is not None and herdr is not None:
+        out_path.write_bytes(b"")
+        err_path.write_bytes(b"")
+        pane, note = start_pane(herdr, spec.pane, label=label, cwd=spec.cwd, run_dir=run_dir, env=env)
     if tui is not None:
         proc: subprocess.Popen | PaneProcess = tui.proc
         verdict_check, idle_check = spec.tui.judge(tui.paths.events)
@@ -846,6 +921,8 @@ def supervise(
         globs.append(str(tui.paths.events))
         # The mirror writes no per-token event, so a long response shows only as pi reading its stream.
         probes = [*probes, read_activity(tui.proc.pid)]
+    elif pane is not None:
+        proc = pane.proc
     else:
         with open(out_path, "wb") as out, open(err_path, "wb") as err:
             proc = subprocess.Popen(
@@ -858,13 +935,13 @@ def supervise(
                 proc.stdin.flush()
             except OSError:
                 pass  # a harness that died at once is left to the watch
-    placement: HerdrPlacement | None = tui.placement if tui else None
+    placement: HerdrPlacement | None = tui.placement if tui else pane.placement if pane else None
     deadline = t0 + limits.wall_clock
     last_active = t0
     pending: Ending | None = None  # complete, waiting for the harness to settle
     exit_code: int | None = None
     try:
-        if spec.tui is None:
+        if spec.tui is None and spec.pane is None:
             placement, note = place(herdr, label, spec.cwd, pane_command(proc.pid, [out_path, err_path]))
         if placement is None and herdr is not None:
             print(f"modelbench: {note}; the run is headless", file=sys.stderr)
@@ -915,10 +992,12 @@ def supervise(
             report = spec.report()
         except Exception as exc:  # noqa: BLE001 - the report must not lose the run's ending
             report = {"error": str(exc)}
-    if tui is not None:
+    if tui is not None or pane is not None:
         transport = TRANSPORT_TUI
     elif spec.tui is not None or spec.harness == "pi":
         transport = TRANSPORT_RPC
+    elif spec.pane is not None:
+        transport = TRANSPORT_HEADLESS
     else:
         transport = None
     return Outcome(
@@ -1006,13 +1085,18 @@ def _read_json(path: Path) -> dict | None:
 
 
 _CC_BOOT = (
-    "import sys; "
-    "from specflo.bench.lifecycle import cc_child_main; sys.exit(cc_child_main(sys.argv[1]))"
+    "import sys; from specflo.bench.lifecycle import cc_child_main; "
+    f"sys.exit(cc_child_main(sys.argv[1], pane={CC_PANE_FLAG!r} in sys.argv[2:]))"
 )
 
 
 def cc_spec(spec_file: Path, env: dict[str, str], run_dir: Path) -> HarnessSpec:
-    """The Claude Code arm's harness: a child running the pass loop the spec file describes."""
+    """The Claude Code arm's harness: a child running the pass loop the spec file describes.
+
+    In a herdr pane the same child runs there in pane mode: each pass is an
+    interactive claude on the pane's terminal, and the child writes its pid
+    for the bench to watch.
+    """
     run_dir = Path(run_dir)
     result_file = run_dir / CC_RESULT_FILE
 
@@ -1022,21 +1106,24 @@ def cc_spec(spec_file: Path, env: dict[str, str], run_dir: Path) -> HarnessSpec:
             return Ending(END_HARNESS_EXIT, f"the Claude Code loop exited with code {code} and no result")
         return cc_ending(result)
 
+    argv = [sys.executable, "-c", _CC_BOOT, str(spec_file)]
     return HarnessSpec(
         harness="claude-code",
-        argv=[sys.executable, "-c", _CC_BOOT, str(spec_file)],
+        argv=argv,
         env=dict(env),
         cwd=run_dir,  # not the workdir: `python -c` puts its cwd on sys.path
         activity_globs=(
             str(run_dir / "pass-*.stream.jsonl"),
             str(run_dir / "pass-*.stderr"),
             str(run_dir / launch_cc.CONFIG_DIR_NAME / "projects" / "**" / "*.jsonl"),
+            str(run_dir / launch_cc.HOOKS_FILE),
         ),
         on_exit=on_exit,
         # cc-result.json is written when the loop ends on its own; a run the bench
         # kills has only the launch report the loop wrote before its first pass.
         report=lambda: ((_read_json(result_file) or {}).get("launch")
                         or _read_json(run_dir / cc_continue.LAUNCH_FILE) or {}),
+        pane=PaneStart(argv=[*argv, CC_PANE_FLAG], pid_file=run_dir / CC_PID_FILE),
     )
 
 
@@ -1069,12 +1156,20 @@ def _follow_streams(run_dir: Path, stop: threading.Event, every: float = 0.5) ->
                 sys.stdout.flush()
 
 
-def cc_child_main(spec_path: str) -> int:
-    """The Claude Code harness process: run the pass loop, write cc-result.json."""
+def cc_child_main(spec_path: str, pane: bool = False) -> int:
+    """The Claude Code harness process: run the pass loop, write cc-result.json.
+
+    In `pane` mode it first writes its pid, and its passes are interactive
+    claudes on its terminal, which show the session; off the pane its stdout
+    follows the pass streams.
+    """
     spec = json.loads(Path(spec_path).read_text(encoding="utf-8"))
     run_dir = Path(spec["run_dir"])
     stop = threading.Event()
-    threading.Thread(target=_follow_streams, args=(run_dir, stop), daemon=True).start()
+    if pane:
+        (run_dir / CC_PID_FILE).write_text(str(os.getpid()), encoding="utf-8")
+    else:
+        threading.Thread(target=_follow_streams, args=(run_dir, stop), daemon=True).start()
 
     def on_pass(rec: cc_continue.PassRecord) -> None:
         print(f"modelbench: pass {rec.index} ended by {rec.ended_by} (exit {rec.exit_code})", flush=True)
@@ -1083,7 +1178,7 @@ def cc_child_main(spec_path: str) -> int:
         result, report = cc_continue.run(
             spec["entry"], workdir=spec["workdir"], run_dir=run_dir, max_passes=spec["max_passes"],
             wall_clock=spec["wall_clock"], specflo=spec["specflo"], base_env=dict(os.environ),
-            on_pass=on_pass,
+            on_pass=on_pass, pane=pane,
         )
         payload: dict[str, Any] = {"result": result.to_dict(), "launch": report}
     except Exception as exc:  # noqa: BLE001 - any failure is the loop's result, recorded
