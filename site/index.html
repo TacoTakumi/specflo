@@ -1,0 +1,406 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>specflo - spec-driven workflow for coding agents</title>
+<meta name="description" content="specflo takes your coding agent through brainstorm, spec, plan and execute, with every decision, requirement and task kept as markdown on disk.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<style>
+/* Same tokens as the daemon web UI (src/specflo/daemon/assets/specflo.css). */
+:root {
+  color-scheme: light dark;
+  --bg:           light-dark(#ffffff, #17191c);
+  --bg-muted:     light-dark(#f6f7f9, #1f2226);
+  --bg-header:    light-dark(#fbfbfc, #1b1d20);
+  --bg-hover:     light-dark(#f0f2f5, #24282d);
+  --fg:           light-dark(#1f2329, #dde0e5);
+  --fg-muted:     light-dark(#5c6570, #9aa1ab);
+  --border:       light-dark(#d5d9de, #353a41);
+  --border-muted: light-dark(#e4e7eb, #2b2f35);
+  --accent:       light-dark(#0e7c7b, #4cc3bd);
+  --on-accent:    light-dark(#ffffff, #111417);
+  --mark:         light-dark(#fff1a6, #5a4a0c);
+}
+:root {
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-soft-hover: color-mix(in srgb, var(--accent) 20%, transparent);
+  --neutral-soft: color-mix(in srgb, var(--fg-muted) 16%, transparent);
+  --radius: 6px;
+  --gutter: 32px;
+  --ui: system-ui, -apple-system, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* ---------- Frame ---------- */
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+html { scroll-behavior: smooth; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--ui); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+code, pre { font-family: var(--mono); }
+p { margin: 0 0 12px; }
+.container { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter); }
+@media (max-width: 1200px) { :root { --gutter: 24px; } }
+@media (max-width: 767px) { :root { --gutter: 16px; } }
+
+/* ---------- Header (as the daemon) ---------- */
+.site-header { background: var(--bg-header); border-top: 3px solid var(--accent);
+  border-bottom: 1px solid var(--border); }
+.site-header .container { display: flex; align-items: center; gap: 16px; min-height: 56px;
+  flex-wrap: wrap; padding-block: 8px; }
+.brand { display: flex; align-items: center; gap: 8px; color: var(--fg); font-weight: 600;
+  font-size: 16px; letter-spacing: -0.01em; }
+.brand:hover { text-decoration: none; }
+.brand svg { width: 30px; height: 22px; color: var(--accent); flex: none; }
+.header-links { margin-left: auto; display: flex; gap: 4px; font-size: 14px; }
+.header-links a { color: var(--fg); padding: 4px 10px; border-radius: var(--radius); }
+.header-links a:hover { background: var(--bg-hover); text-decoration: none; }
+.header-links .gh { display: inline-flex; align-items: center; gap: 6px; }
+.header-links .gh svg { width: 16px; height: 16px; flex: none; }
+.tabs-row { padding-block: 0; }
+.tabs { display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin; margin-bottom: -1px; font-size: 14px; }
+.tabs a { padding: 8px 10px 9px; color: var(--fg); white-space: nowrap;
+  border-bottom: 2px solid transparent; border-radius: var(--radius) var(--radius) 0 0; }
+.tabs a:hover { text-decoration: none; background: var(--bg-hover); }
+.tabs a:first-child { font-weight: 600; border-bottom-color: var(--accent); }
+
+/* ---------- Buttons ---------- */
+.btn { display: inline-flex; align-items: center; font: inherit; font-size: 15px; font-weight: 500;
+  color: var(--fg); background: var(--bg-muted); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 7px 16px; min-height: 38px; cursor: pointer; }
+.btn:hover { background: var(--bg-hover); text-decoration: none; }
+.btn-accent,
+.btn-accent:hover { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn-small { font-size: 12px; padding: 2px 9px; min-height: 0; }
+
+/* ---------- Box with rows (as the daemon) ---------- */
+.box { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); font-size: 14px; }
+.box-head { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 16px; background: var(--bg-muted); border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0; font-weight: 600; }
+.box-head small { font-weight: 400; color: var(--fg-muted); font-size: 13px; }
+.file-head { font-family: var(--mono); font-size: 12px; font-weight: 400; color: var(--fg-muted); }
+.box pre { margin: 0; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; }
+.rows { list-style: none; margin: 0; padding: 0; }
+.rows li { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 4px 12px;
+  padding: 14px 16px; border-top: 1px solid var(--border-muted); }
+.rows li:first-child { border-top: 0; }
+.rows .step { display: inline-flex; justify-content: center; align-items: center; width: 24px; height: 24px;
+  border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  font-size: 12px; font-variant-numeric: tabular-nums; }
+.rows strong { display: block; font-weight: 600; font-size: 15px; }
+.rows p { margin: 2px 0 0; color: var(--fg-muted); }
+.rows code { font-size: 0.9em; color: var(--fg); }
+.rows.plain li { display: block; }
+.rows strong .topic-tag { margin-left: 6px; font-weight: 400; vertical-align: 1px; }
+.topic-tag { font-size: 12px; color: var(--fg-muted); border: 1px solid var(--border); border-radius: 999px;
+  padding: 0 8px; white-space: nowrap; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; list-style: none; margin: 0; padding: 0; }
+.tags li { font-size: 12px; font-weight: 500; line-height: 22px; padding: 0 10px;
+  border-radius: 999px; color: var(--accent); background: var(--accent-soft); }
+
+/* ---------- Hero ---------- */
+.hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr); gap: 48px;
+  align-items: center; padding: 64px 0 72px; }
+.hero h1 { font-size: 46px; line-height: 1.1; font-weight: 650; letter-spacing: -0.025em;
+  margin: 0 0 20px; text-wrap: balance; }
+.lead { font-size: 19px; line-height: 1.55; color: var(--fg-muted); max-width: 34em; margin-bottom: 28px; }
+.lead strong { color: var(--fg); font-weight: 600; }
+.install { display: flex; align-items: center; gap: 8px; max-width: 460px; margin-bottom: 20px;
+  padding: 6px 6px 6px 14px; border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg-muted); font-family: var(--mono); font-size: 15px; }
+.install code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; }
+.install code::before { content: "$ "; color: var(--fg-muted); }
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.note { font-size: 13px; color: var(--fg-muted); margin-top: 16px; }
+
+/* The prompt mock: after a context clear the agent reads its place from disk. */
+.prompt-mock .ask { padding: 14px 16px; border-bottom: 1px solid var(--border-muted); }
+.prompt-mock .who { display: block; font-size: 12px; color: var(--fg-muted); margin-bottom: 2px; }
+.prompt-mock .ask p { margin: 0; font-size: 15px; }
+.inject { margin: 0; padding: 14px 16px; list-style: none; font-family: var(--mono); font-size: 12.5px;
+  line-height: 1.75; background: var(--accent-soft); overflow-x: auto; }
+.inject li { white-space: pre-wrap; overflow-wrap: anywhere; }
+.inject .c { color: var(--fg-muted); }
+.inject .h { color: var(--fg); font-weight: 600; }
+.inject .gap { margin-top: 8px; }
+.prompt-mock .after { padding: 12px 16px; color: var(--fg-muted); font-size: 13px; }
+.prompt-mock .after code { color: var(--fg); }
+@media (prefers-reduced-motion: no-preference) {
+  /* "backwards" hides each line only while its animation waits to start, so a
+     browser that does not animate still shows the lines. --i is the line's place. */
+  .inject li { animation: show 0.35s ease-out backwards; animation-delay: calc(0.5s + var(--i, 0) * 0.09s); }
+  @keyframes show { from { opacity: 0; transform: translateY(3px); } }
+}
+
+/* ---------- Sections ---------- */
+section { padding: 56px 0; border-top: 1px solid var(--border-muted); }
+section h2 { font-size: 28px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; margin: 0 0 10px; }
+.section-sub { color: var(--fg-muted); font-size: 17px; max-width: 40em; margin-bottom: 28px; }
+.split { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 40px; align-items: start; }
+.points { display: grid; gap: 22px; }
+.points h3 { font-size: 17px; font-weight: 600; margin: 0 0 4px; }
+.points p { margin: 0; color: var(--fg-muted); }
+.points code, .section-sub code, .say code { font-size: 0.9em; padding: 1px 5px; border-radius: 4px;
+  background: var(--neutral-soft); color: var(--fg); }
+
+/* Page view: plan.md with an About sidebar, as the daemon shows a project. */
+.page-layout { display: grid; grid-template-columns: minmax(0, 1fr) 220px; gap: 24px; align-items: start; }
+.page-layout aside { font-size: 14px; }
+.page-layout aside h4 { font-size: 14px; font-weight: 600; margin: 0 0 10px; }
+.page-layout dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 0 0 20px;
+  padding-bottom: 16px; border-bottom: 1px solid var(--border-muted); }
+.page-layout dt { color: var(--fg-muted); }
+.page-layout dd { margin: 0; }
+.md .k { color: var(--accent); }
+.md .m { color: var(--fg-muted); }
+.md .h { font-weight: 600; }
+
+/* Get started */
+.say { margin: 20px 0 0; padding: 14px 18px; border-left: 3px solid var(--accent);
+  background: var(--bg-muted); border-radius: 0 var(--radius) var(--radius) 0; }
+.say p { margin: 0; overflow-wrap: anywhere; }
+.say .who { display: block; font-size: 13px; color: var(--fg-muted); margin-bottom: 4px; }
+.cmd .m { color: var(--fg-muted); }
+
+/* Footer */
+footer { border-top: 1px solid var(--border); background: var(--bg-header); font-size: 14px; color: var(--fg-muted); }
+footer .container { display: flex; flex-wrap: wrap; gap: 8px 24px; justify-content: space-between; padding-block: 24px; }
+footer nav { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+
+@media (max-width: 1011px) {
+  .hero { grid-template-columns: minmax(0, 1fr); gap: 36px; padding: 40px 0 48px; }
+  .split { grid-template-columns: minmax(0, 1fr); gap: 28px; }
+}
+@media (max-width: 767px) {
+  .hero h1 { font-size: 34px; }
+  .lead { font-size: 17px; }
+  section { padding: 40px 0; }
+  section h2 { font-size: 24px; }
+  .page-layout { grid-template-columns: minmax(0, 1fr); }
+  .header-links a.hide-narrow { display: none; }
+}
+</style>
+</head>
+<body>
+<header class="site-header">
+<div class="container">
+<a class="brand" href="#">
+<svg viewBox="0 0 30 22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="square">
+<path d="M3 4l7 7-7 7M12 4l7 7-7 7M24 3v16"/>
+</svg>
+specflo
+</a>
+<nav class="header-links" aria-label="Project links">
+<a class="hide-narrow" href="https://pypi.org/project/specflo/">PyPI</a>
+<a class="gh" href="https://github.com/TacoTakumi/specflo"><svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z"/></svg>GitHub</a>
+</nav>
+</div>
+<div class="container tabs-row">
+<nav class="tabs" aria-label="Sections">
+<a href="#top">Overview</a>
+<a href="#how">How it works</a>
+<a href="#files">Plain files</a>
+<a href="#start">Get started</a>
+<a href="https://github.com/TacoTakumi/specflo#readme">Docs</a>
+</nav>
+</div>
+</header>
+
+<main class="container" id="top">
+<div class="hero">
+<div>
+<h1>Your coding agent loses the plan when its context fills up.</h1>
+<p class="lead">specflo keeps the plan on disk. Each feature goes through <strong>brainstorm, spec, plan and execute</strong>, and every decision, requirement and task is a markdown file that the CLI checks. The agent works one small, checked task at a time, and a fresh session continues where the last one stopped.</p>
+<div class="install">
+<code id="install-cmd">pip install specflo</code>
+<button class="btn btn-small" type="button" data-copy="install-cmd">Copy</button>
+</div>
+<div class="actions">
+<a class="btn btn-accent" href="#start">Start your first project</a>
+<a class="btn" href="https://github.com/TacoTakumi/specflo">View on GitHub</a>
+</div>
+<p class="note">Free and open source (GPL-3.0). Python 3.12 or later. Works with Claude Code and pi. opencode and Hermes get the skills.</p>
+</div>
+
+<div class="box prompt-mock" aria-label="Example: after a context clear the agent reads its place from disk">
+<div class="box-head">Your agent knows where it stopped <small>Example</small></div>
+<div class="ask">
+<span class="who">You, in a fresh session</span>
+<p>Continue the specflo project.</p>
+</div>
+<ol class="inject">
+<li class="c" style="--i:0">$ specflo status</li>
+<li style="--i:1">Project: Payment retries (payment-retries)</li>
+<li style="--i:2">Dir:     docs/projects/payment-retries</li>
+<li style="--i:3">Phase:   execute</li>
+<li style="--i:4">Execution: linear</li>
+<li style="--i:5">Level: full</li>
+<li class="h" style="--i:6">Tasks:   2/4 done | next: T-03, T-04</li>
+<li style="--i:7">Next:    Work the next task: T-03, T-04 (`specflo task show`).</li>
+<li style="--i:8">Resume:  specflo checkpoint</li>
+<li class="c gap" style="--i:9">$ specflo task show</li>
+<li class="h" style="--i:10">T-03 - Send the order id as the idempotency key on every retry  [pending]</li>
+<li style="--i:11">  Acceptance: Two retries of one order send the same key.</li>
+<li style="--i:12">  Verify:     pytest tests/test_charge.py -k idempotency</li>
+<li style="--i:13">  Implements: REQ-03</li>
+</ol>
+<p class="after">The old conversation is gone, and the agent does not need it. It reads the phase, the next task and the check that proves the task from disk, and starts work.</p>
+</div>
+</div>
+
+<section id="how">
+<h2>How it works</h2>
+<p class="section-sub">Four phases, each with a document the CLI checks before the work moves on. Small changes take a shorter path: a quick project is one goal and one check, and a fast project is 3 to 7 tasks.</p>
+<div class="split">
+<div class="box">
+<div class="box-head">The pipeline</div>
+<ol class="rows">
+<li><span class="step">1</span><div><strong>Brainstorm</strong><p>The agent asks you one question at a time and records each answer as a decision (<code>D-NN</code>).</p></div></li>
+<li><span class="step">2</span><div><strong>Spec</strong><p>The decisions become testable requirements (<code>REQ-NN</code>), each traced to the decision behind it.</p></div></li>
+<li><span class="step">3</span><div><strong>Plan</strong><p>The requirements become dependency-ordered tasks (<code>T-NN</code>), each with an acceptance criterion and a verify step.</p></div></li>
+<li><span class="step">4</span><div><strong>Execute</strong><p>The agent works the tasks one at a time. The project completes only after a final review in a fresh context passes.</p></div></li>
+</ol>
+</div>
+<div class="points">
+<div><h3>State lives in files</h3><p>Phase, decisions and tasks are on disk, not in the model's context. <code>specflo checkpoint</code> prints the prompt that puts a fresh session back to work, so you can clear context at any point.</p></div>
+<div><h3>Gates stop the line early</h3><p><code>specflo advance</code> validates the current phase's document before it moves on. A hole in the spec stops the work before execute, not in the middle of it.</p></div>
+<div><h3>One task at a time</h3><p>The agent only has to reason about the next small, checked step. That makes real work practical with smaller local models such as Qwen3.6 27B.</p></div>
+<div><h3>Review rounds that track findings</h3><p>The reviewer records each finding as a blocker, should-fix or nit. Each blocker and should-fix item gets a fix task, and the next round checks that the fix holds.</p></div>
+</div>
+</div>
+</section>
+
+<section id="files">
+<h2>Every step is a markdown file</h2>
+<p class="section-sub">Projects live under <code>docs/projects/&lt;slug&gt;/</code> in your repo. You can read them, diff them and review them in a pull request. The agent writes them through the CLI, so the IDs stay stable and the format stays valid.</p>
+<div class="page-layout">
+<div class="box">
+<div class="box-head"><span class="file-head">docs/projects/payment-retries/plan.md</span></div>
+<pre class="md"><span class="m">---</span>
+<span class="k">project:</span> payment-retries
+<span class="k">phase:</span> plan
+<span class="k">status:</span> complete
+<span class="k">created:</span> 2026-10-11
+<span class="m">---</span>
+
+# Plan: Payment retries
+
+## Approach
+
+Schedule first, then the backoff and the limit, then the
+idempotency key on the charge call.
+
+## Tasks
+
+<span class="h">### T-02 &mdash; Back off 1 h, 6 h, 24 h and stop after the third retry</span>
+<span class="k">- Acceptance:</span> Three failed retries end with the order payment_failed and no fourth retry.
+<span class="k">- Verify:</span> pytest tests/test_retries.py -k backoff
+<span class="k">- Implements:</span> REQ-02
+<span class="k">- Depends on:</span> T-01
+<span class="k">- Progress:</span> done
+
+<span class="h">### T-03 &mdash; Send the order id as the idempotency key on every retry</span>
+<span class="k">- Acceptance:</span> Two retries of one order send the same key.
+<span class="k">- Verify:</span> pytest tests/test_charge.py -k idempotency
+<span class="k">- Implements:</span> REQ-03
+<span class="k">- Depends on:</span> T-01
+<span class="k">- Progress:</span> pending</pre>
+</div>
+<aside>
+<h4>About</h4>
+<dl>
+<dt>Format</dt><dd>Markdown + YAML</dd>
+<dt>Database</dt><dd>None</dd>
+<dt>Written by</dt><dd>The specflo CLI</dd>
+<dt>Resume</dt><dd>checkpoint.md</dd>
+</dl>
+<h4>Files</h4>
+<ul class="tags"><li>brainstorm.md</li><li>spec.md</li><li>plan.md</li><li>checkpoint.md</li></ul>
+</aside>
+</div>
+</section>
+
+<section id="start">
+<h2>Get started</h2>
+<p class="section-sub">Install the CLI, set up your repo, and start a project. Then start your agent: with the hook installed, it reads the new project and asks whether to continue.</p>
+<div class="split">
+<div>
+<div class="box">
+<div class="box-head">Terminal <button class="btn btn-small" type="button" data-copy="setup-cmds">Copy</button></div>
+<pre class="cmd" id="setup-cmds">pip install specflo
+specflo init
+specflo skills install
+specflo hook install
+specflo new "my first project"</pre>
+</div>
+<div class="say">
+<span class="who">Or let your agent do the setup. Point it at the repo and ask:</span>
+<p>Set up specflo from <a href="https://github.com/TacoTakumi/specflo">https://github.com/TacoTakumi/specflo</a> in this repo.</p>
+</div>
+</div>
+<div>
+<div class="points">
+<div><h3>Not on Claude Code?</h3><p>For pi, run <code>specflo extension install</code> in place of <code>specflo hook install</code>. opencode and Hermes get the skills, and any other harness can drive the plain CLI.</p></div>
+<div><h3>Small change?</h3><p>Use <code>specflo new "fix" --level quick</code> for one goal and one check, or <code>--level fast</code> for 3 to 7 tasks.</p></div>
+<div><h3>Something not working?</h3><p><code>specflo doctor</code> checks the setup and names the command that fixes each problem it finds.</p></div>
+</div>
+<div class="say">
+<span class="who">Then tell your agent:</span>
+<p>We use specflo here. Run <code>specflo guide</code> and add its note to my memory file.</p>
+</div>
+</div>
+</div>
+</section>
+
+<section id="agent-wiki">
+<div class="split">
+<div>
+<h2>Pairs with Agent Wiki</h2>
+<p class="section-sub">Agent Wiki is a markdown vault your coding agents search before they go to the web. specflo uses it as its research memory: research reads what the wiki already knows and saves what it finds back, so each project starts from what the last one learned.</p>
+<div class="actions">
+<a class="btn" href="https://tacotakumi.github.io/agent-wiki/">Visit the Agent Wiki site</a>
+<a class="btn" href="https://github.com/TacoTakumi/agent-wiki">Agent Wiki on GitHub</a>
+</div>
+</div>
+<div class="box">
+<div class="box-head">Where specflo uses the wiki</div>
+<ul class="rows plain">
+<li><div><strong>Brainstorm <span class="topic-tag">specflo-brainstorm</span></strong><p>Sends the facts a decision depends on to the research subagent before the decision is recorded.</p></div></li>
+<li><div><strong>Research <span class="topic-tag">specflo-research</span></strong><p>Starts from the wiki, checks it against the web for what is missing or out of date, and saves the findings back with their sources and dates.</p></div></li>
+<li><div><strong>No wiki?</strong><p>The wiki is optional. Without it, research uses the web only.</p></div></li>
+</ul>
+</div>
+</div>
+</section>
+</main>
+
+<footer>
+<div class="container">
+<span>specflo is free software under GPL-3.0-or-later.</span>
+<nav aria-label="Footer">
+<a href="https://github.com/TacoTakumi/specflo">GitHub</a>
+<a href="https://pypi.org/project/specflo/">PyPI</a>
+<a href="https://github.com/TacoTakumi/specflo#readme">Docs</a>
+<a href="https://github.com/TacoTakumi/specflo/blob/main/CHANGELOG.md">Changelog</a>
+<a href="https://tacotakumi.github.io/agent-wiki/">Agent Wiki</a>
+</nav>
+</div>
+</footer>
+
+<script>
+document.querySelectorAll("[data-copy]").forEach(function (btn) {
+  btn.addEventListener("click", function () {
+    var text = document.getElementById(btn.dataset.copy).textContent;
+    navigator.clipboard.writeText(text).then(function () {
+      btn.textContent = "Copied";
+      setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+    });
+  });
+});
+</script>
+</body>
+</html>
