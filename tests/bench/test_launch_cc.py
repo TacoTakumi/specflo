@@ -59,12 +59,12 @@ def launch(tmp_path: Path, stub_version) -> Iterator[launch_cc.CcLaunch]:
         claude_bin=fake_claude(tmp_path, "2.1.293"),
         base_env={
             "PATH": "/usr/bin:/bin",
-            "HOME": "/home/x",
+            "HOME": "/home/you",
             "ANTHROPIC_API_KEY": "sk-real",
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
             "CLAUDE_CODE_OAUTH_TOKEN": "real",
             "CLAUDECODE": "1",
-            "CLAUDE_CONFIG_DIR": "/home/x/.claude",
+            "CLAUDE_CONFIG_DIR": "/home/you/.claude",
         },
         args=["-p", "hello"],
     ) as launch:
@@ -170,7 +170,7 @@ def test_env_drops_the_users_account_and_config(launch):
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in env
     assert "CLAUDECODE" not in env
     assert env["ANTHROPIC_AUTH_TOKEN"] == launch_cc.DUMMY_TOKEN
-    assert env["HOME"] == "/home/x"
+    assert env["HOME"] == "/home/you"
 
 
 def test_argv_runs_the_real_binary_with_never_prompt_mode(launch, tmp_path: Path):

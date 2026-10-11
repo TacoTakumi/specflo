@@ -45,7 +45,7 @@ def launch(tmp_path: Path) -> launch_pi.PiLaunch:
         workdir=workdir,
         run_dir=tmp_path / "run",
         pi_bin=fake_pi(tmp_path, "1.0.4"),
-        base_env={"PATH": "/usr/bin:/bin", "HOME": "/home/x", "SPECFLO_POOL_DENY": "[]"},
+        base_env={"PATH": "/usr/bin:/bin", "HOME": "/home/you", "SPECFLO_POOL_DENY": "[]"},
         args=["--mode", "json", "hello"],
     )
 
@@ -147,7 +147,7 @@ def test_env_points_pi_at_the_run_copy_with_the_frozen_deny_list(launch):
     assert env["PI_OFFLINE"] == "1"
     assert env["PI_SKIP_VERSION_CHECK"] == "1"
     assert env["PI_TELEMETRY"] == "0"
-    assert env["HOME"] == "/home/x"
+    assert env["HOME"] == "/home/you"
     assert "PI_CODING_AGENT_SESSION_DIR" not in env
     assert env["SPECFLO_INPUT_LOG"] == str(launch.agent_dir.parent / "inputs.jsonl")
 

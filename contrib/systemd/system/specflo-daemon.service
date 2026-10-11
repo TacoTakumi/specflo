@@ -10,7 +10,7 @@
 # Restart: sudo systemctl restart specflo-daemon   (after a code change)
 #
 # Adjust before installing:
-# - Replace YOURUSER (User, Group, every path) with the account the daemon
+# - Replace "you" (User, Group, every path) with the account the daemon
 #   runs as, and 1000 with its uid. A system unit does not expand %h to that
 #   user's home, so the paths are written out.
 # - HOME must be that user's home: specflo reads ~/.specflo there, and uv,
@@ -22,7 +22,7 @@
 #   back to headless. Set agent_transport: rpc in the daemon root's
 #   .specflo/config.yaml if you want headless agents on purpose.
 # - XDG_RUNTIME_DIR exists only while the user has a session or lingers
-#   (loginctl enable-linger YOURUSER). Uncomment the line below if a tool the
+#   (loginctl enable-linger you). Uncomment the line below if a tool the
 #   agents run needs it.
 # - Keep --bind 127.0.0.1 unless a reverse proxy on another host must reach the
 #   daemon (see README, Reverse-proxy sign-in).
@@ -34,13 +34,13 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=YOURUSER
-Group=YOURUSER
-WorkingDirectory=/home/YOURUSER/specflo-daemon
-Environment=HOME=/home/YOURUSER
-Environment=PATH=/home/YOURUSER/.local/bin:/home/YOURUSER/bin:/home/YOURUSER/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin
+User=you
+Group=you
+WorkingDirectory=/home/you/specflo-daemon
+Environment=HOME=/home/you
+Environment=PATH=/home/you/.local/bin:/home/you/bin:/home/you/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin
 #Environment=XDG_RUNTIME_DIR=/run/user/1000
-ExecStart=/home/YOURUSER/.local/bin/specflo serve --root /home/YOURUSER/specflo-daemon --bind 127.0.0.1 --port 8741
+ExecStart=/home/you/.local/bin/specflo serve --root /home/you/specflo-daemon --bind 127.0.0.1 --port 8741
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60

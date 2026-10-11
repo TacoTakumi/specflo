@@ -757,11 +757,11 @@ def test_auto_settings_are_checked():
 def test_the_harness_env_puts_specflo_first_and_drops_the_bench_venv(tmp_path: Path):
     venv_bin = str(VENV / "bin")
     base = {"PATH": os.pathsep.join([venv_bin, "/usr/bin", "/bin"]), "VIRTUAL_ENV": str(VENV),
-            "HOME": "/home/x"}
+            "HOME": "/home/you"}
     env, report = lc.harness_env(base, tmp_path / "bin")
     assert env["PATH"].split(os.pathsep) == [str(tmp_path / "bin"), "/usr/bin", "/bin"]
     assert env["SPECFLO_BIN"] == str(tmp_path / "bin" / "specflo")
-    assert "VIRTUAL_ENV" not in env and env["HOME"] == "/home/x"
+    assert "VIRTUAL_ENV" not in env and env["HOME"] == "/home/you"
     assert report == {"path_first": str(tmp_path / "bin"), "path_dropped": [venv_bin],
                       "vars_dropped": ["VIRTUAL_ENV"]}
 
