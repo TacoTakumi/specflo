@@ -104,6 +104,16 @@ def test_a_duplicate_slug_is_refused(root):
         assert [p.slug for p in products.list()] == ["thing"]
 
 
+def test_the_slug_new_is_refused_given_or_derived(root):
+    with store_module.open_store(root) as store:
+        products = Products(store)
+        with pytest.raises(SpecfloError, match="'new' is the new product page's path"):
+            products.add("Thing", slug="new")
+        with pytest.raises(SpecfloError, match="'new' is the new product page's path"):
+            products.add("New")
+        assert products.list() == []
+
+
 def test_names_slugs_and_unknown_products_are_refused(root):
     with store_module.open_store(root) as store:
         products = Products(store)

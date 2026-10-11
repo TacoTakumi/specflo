@@ -33,6 +33,8 @@ from .store import Conflict, Product, Store, WorkItem
 PRODUCTS_PATH = "/api/products"
 
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+# The slug no product takes: the web UI's new product page has its path.
+RESERVED_SLUG = "new"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -53,18 +55,27 @@ def validate_piece_name(name: str) -> str:
 
 
 def product_slug(name: str, slug: str | None) -> str:
-    """The slug a product is filed under: ``slug`` as given, or derived from ``name``."""
+    """The slug a product is filed under: ``slug`` as given, or derived from ``name``.
+
+    The slug ``new`` is refused either way: the web UI's new product page sits
+    at that slug's path, so a product filed under it would have no page.
+    """
     if slug is not None:
         if not _SLUG.match(slug):
             raise SpecfloError(
                 f"Invalid product slug {slug!r}: use lowercase letters, digits and -,"
                 " e.g. my-thing."
             )
-        return slug
-    try:
-        return slugify(name)
-    except SpecfloError:
-        raise SpecfloError(f"Cannot derive a product slug from {name!r}; pass --slug.")
+    else:
+        try:
+            slug = slugify(name)
+        except SpecfloError:
+            raise SpecfloError(f"Cannot derive a product slug from {name!r}; pass --slug.")
+    if slug == RESERVED_SLUG:
+        raise SpecfloError(
+            f"The product slug {RESERVED_SLUG!r} is the new product page's path; take another."
+        )
+    return slug
 
 
 class Products:
