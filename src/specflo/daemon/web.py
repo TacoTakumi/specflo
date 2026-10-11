@@ -840,10 +840,16 @@ def _not_product_manager(identity: str) -> Response | None:
     )
 
 
-def _product_form(request: Request, identity: str, values: dict[str, str]) -> Response:
-    """The new product form, holding *values*."""
+def _product_form(
+    request: Request, identity: str, values: dict[str, str], refusal: tuple[str, str] | None = None
+) -> Response:
+    """The new product form, holding *values*. With a *refusal*, (field,
+    problem), it is a save that added nothing, and the problem stands beside
+    its field."""
     return render(
-        "product_form.html", identity=identity, values=values, session=session_secret(request)
+        "product_form.html", status_code=400 if refusal else 200, identity=identity,
+        values=values, field_errors=dict([refusal]) if refusal else {},
+        session=session_secret(request),
     )
 
 
@@ -862,7 +868,8 @@ async def add_product(request: Request, user: User = Depends(current_user)) -> R
     go to the product's page.
 
     An empty slug is derived from the name and an empty repo is none. The
-    audit holds what the API's add and vision routes would have written.
+    audit holds what the API's add and vision routes would have written. A
+    refused add writes nothing and shows the form again with what was typed.
     """
     identity = user.role
     fields = await form_fields(request)
@@ -873,9 +880,15 @@ async def add_product(request: Request, user: User = Depends(current_user)) -> R
     root = request.app.state.root
     with project_lock(root, None), open_store(root) as store:
         products = Products(store)
-        product = products.add(
-            values["name"], slug=values["slug"].strip() or None, repo=values["repo"]
-        )
+        try:
+            product = products.add(
+                values["name"], slug=values["slug"].strip() or None, repo=values["repo"]
+            )
+        except SpecfloError as exc:
+            # A blank name is the name's fault; every other refusal is the slug's,
+            # given or derived.
+            field = "name" if not values["name"].strip() else "slug"
+            return _product_form(request, identity, values, (field, str(exc)))
         audit(root, user.name, user.role, "product_add", None, product.slug)
         if values["vision"].strip():
             products.set_vision(product.slug, values["vision"])

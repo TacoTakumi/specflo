@@ -1,5 +1,10 @@
 {% extends "base.html" %}
 {% block title %}New product - specflo{% endblock %}
+{% macro problems(field) %}
+{% if field in field_errors %}
+<p class="error" data-field="{{ field }}">{{ field_errors[field] }}</p>
+{% endif %}
+{% endmacro %}
 {% block content %}
 <p class="crumbs"><a href="{{ home_path }}">Products</a></p>
 <h1>New product</h1>
@@ -8,9 +13,11 @@
   <label>Name
     <input type="text" name="name" value="{{ values.name }}" required>
   </label>
+  {{ problems("name") }}
   <label>Slug, the product's name in its address
     <input type="text" name="slug" value="{{ values.slug }}">
   </label>
+  {{ problems("slug") }}
   <p class="hint">Leave it empty to derive the slug from the name, e.g. My Thing -&gt; my-thing.</p>
   <label>Repo, where its code lives
     <input type="text" name="repo" value="{{ values.repo }}" size="60">

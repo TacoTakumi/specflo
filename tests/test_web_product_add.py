@@ -143,3 +143,63 @@ def test_a_save_without_a_vision_or_repo_writes_one_audit_line(developer, root):
     [product] = stored(root)
     assert (product.slug, product.repo, product.vision) == ("bare-one", None, "")
     assert audit_records(root) == [("developer", "developer", "product_add", "bare-one")]
+
+
+# --- the refusals ---------------------------------------------------------------
+
+
+def problem_beside(html, field):
+    """The refusal text shown beside *field*, or None."""
+    found = re.search(rf'<p class="error" data-field="{field}">([^<]*)</p>', html)
+    return unescape(found.group(1)) if found else None
+
+
+@pytest.mark.parametrize("posted, field, problem", [
+    ({"name": "  ", "slug": "", "repo": REPO, "vision": "Kept."}, "name", "A product needs a name."),
+    ({"name": "Thing", "slug": "Not A Slug", "repo": REPO, "vision": "Kept."}, "slug",
+     "Invalid product slug 'Not A Slug'"),
+    ({"name": "Other", "slug": "taken", "repo": REPO, "vision": "Kept."}, "slug",
+     "Product 'taken' already exists."),
+])
+def test_a_refused_save_shows_the_form_again_with_the_typed_values(developer, root, posted, field, problem):
+    with store_module.open_store(root) as store:
+        Products(store).add("Taken")
+    before = stored(root)
+
+    response = developer.post(web.NEW_PRODUCT_PATH, data={"session": session_of(developer), **posted})
+
+    assert response.status_code == 400
+    html = response.text
+    assert problem in problem_beside(html, field)
+    assert html.index(f'name="{field}"') < html.index(f'data-field="{field}"')
+    for name in ("name", "slug", "repo"):
+        assert f'name="{name}" value="{posted[name]}"' in unescape(html)
+    assert ">Kept.</textarea>" in html
+    assert stored(root) == before
+    assert audit_records(root) == []
+
+
+def test_a_requester_save_is_refused(requester, root):
+    response = requester.post(web.NEW_PRODUCT_PATH, data={
+        "session": session_of_page(requester), "name": "Thing", "slug": "", "repo": "", "vision": "",
+    })
+
+    assert response.status_code == 403
+    assert "the developer role" in unescape(response.text)
+    assert stored(root) == []
+
+
+def test_a_save_without_the_session_secret_is_refused(developer, root):
+    response = developer.post(web.NEW_PRODUCT_PATH, data={
+        "name": "Thing", "slug": "", "repo": "", "vision": "",
+    })
+
+    assert response.status_code == 403
+    assert "That form did not come from this session." in unescape(response.text)
+    assert stored(root) == []
+
+
+def session_of_page(client):
+    """The session secret of *client*, read from a page any role gets."""
+    html = client.get(web.HOME_PATH).text
+    return re.search(r'name="session" value="([^"]+)"', html).group(1)
