@@ -11,10 +11,11 @@ run record carries it. It holds no credential; the launcher refuses a dir that d
 
 Each run gets a copy in its own run directory, which becomes CLAUDE_CONFIG_DIR,
 so Claude Code's own writes (sessions, history, state) never reach the repo or
-`~/.claude`. Two things are added to the copy from this checkout before it is
-hashed, as the pi launcher adds its extensions: specflo's SessionStart hook
-(`specflo.hook.settings_snippet`, what `specflo hook install` writes) and the
-deny rules. The deny rules are read from the pi arm's `frozen.json`, so both
+`~/.claude`. Three things are added to the copy from this checkout before it
+is hashed, as the pi launcher adds its extensions: specflo's SessionStart hook
+(`specflo.hook.settings_snippet`, what `specflo hook install` writes), the
+bench's own hook (turn ends and prompts to `hooks.jsonl` in the run dir) and
+the deny rules. The deny rules are read from the pi arm's `frozen.json`, so both
 harnesses carry one list: each rule `r` becomes `Bash(r)` and `Bash(r *)`.
 Claude Code matches those per subcommand of a compound command, where deny.ts
 matches the words anywhere in the line; both block `git push`, `sudo` and every
@@ -46,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -66,6 +68,39 @@ SETTINGS_FILE = "settings.json"
 STATE_TEMPLATE = "claude.json"
 STATE_FILE = ".claude.json"
 CONFIG_DIR_NAME = "claude-config"
+
+# The bench's own hook: every turn end and every submitted prompt, appended as
+# one JSON line (the hook input plus `t`, its time) to the file HOOK_LOG_ENV
+# names. A pass in a pane ends on these, and a prompt that is not the pass's
+# payload marks operator input. The command names no run path, so the run
+# copy, and its hash, are the same for every run and both transports.
+HOOKS_FILE = "hooks.jsonl"
+HOOK_LOG_ENV = f"{ENV_PREFIX}HOOK_LOG"
+HOOK_EVENTS = ("Stop", "StopFailure", "UserPromptSubmit")
+# It must never print (a UserPromptSubmit hook's stdout reaches the model) or
+# exit non-zero (exit 2 blocks the prompt or the stop).
+_HOOK_CODE = (
+    "import json, os, sys, time\n"
+    "try:\n"
+    f"    path = os.environ.get({HOOK_LOG_ENV!r})\n"
+    "    if path:\n"
+    "        event = json.load(sys.stdin)\n"
+    "        event['t'] = time.time()\n"
+    "        with open(path, 'a', encoding='utf-8') as fh:\n"
+    "            fh.write(json.dumps(event) + '\\n')\n"
+    "except Exception:\n"
+    "    pass\n"
+)
+
+
+def hook_command() -> str:
+    """The bench hook's shell command."""
+    return f"python3 -I -c {shlex.quote(_HOOK_CODE)}"
+
+
+def bench_hooks() -> dict[str, list]:
+    """The bench hook for each of HOOK_EVENTS, in the settings file's shape."""
+    return {e: [{"hooks": [{"type": "command", "command": hook_command()}]}] for e in HOOK_EVENTS}
 
 # Files a config dir must never hold: credentials, and Claude Code's own state
 # file, which the launcher writes from the template.
@@ -252,7 +287,7 @@ def materialise(
         raise LaunchError(f"run copy {target} already exists")
     shutil.copytree(config_dir, target)
     (target / STATE_TEMPLATE).rename(target / STATE_FILE)
-    settings["hooks"] = settings_snippet()["hooks"]
+    settings["hooks"] = {**settings_snippet()["hooks"], **bench_hooks()}
     settings.setdefault("permissions", {})["deny"] = deny_rules(deny)
     (target / SETTINGS_FILE).write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
     return target
@@ -311,6 +346,7 @@ def build_launch(
     env.update(extra_env or {})
     env.update(_FIXED_ENV)
     env["CLAUDE_CONFIG_DIR"] = str(target)
+    env[HOOK_LOG_ENV] = str(Path(run_dir) / HOOKS_FILE)
     upstream = base_url or frozen.base_url
     shim = MessageShim(upstream) if arms.load_config().entries[entry]["engine"] == "llama.cpp" else None
     env["ANTHROPIC_BASE_URL"] = shim.url if shim else upstream

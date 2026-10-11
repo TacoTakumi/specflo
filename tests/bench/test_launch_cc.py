@@ -117,12 +117,65 @@ def test_config_dir_with_hooks_is_refused(tmp_path: Path):
 
 def test_run_copy_settings_carry_specflo_hook_deny_list_and_never_prompt_mode(launch):
     settings = json.loads((launch.config_dir / "settings.json").read_text())
-    assert settings["hooks"] == settings_snippet()["hooks"]
+    for event, groups in settings_snippet()["hooks"].items():
+        assert settings["hooks"][event] == groups
     assert settings["permissions"]["defaultMode"] == "dontAsk"
     deny = settings["permissions"]["deny"]
     for rule in ("Bash(git push *)", "Bash(sudo *)", "Bash(rm -rf *)", "Bash(rm -r *)"):
         assert rule in deny
     assert "Bash" in settings["permissions"]["allow"]
+
+
+def _bench_hook(settings: dict, event: str) -> str:
+    [group] = settings["hooks"][event]
+    [hook] = group["hooks"]
+    assert hook["type"] == "command"
+    return hook["command"]
+
+
+def test_run_copy_carries_the_bench_hook_for_turn_ends_and_prompts(launch):
+    settings = json.loads((launch.config_dir / "settings.json").read_text())
+    commands = {_bench_hook(settings, e) for e in launch_cc.HOOK_EVENTS}
+    assert set(launch_cc.HOOK_EVENTS) == {"Stop", "StopFailure", "UserPromptSubmit"}
+    assert commands == {launch_cc.hook_command()}
+
+
+def test_env_names_the_hook_log_in_the_run_dir(launch, tmp_path: Path):
+    assert launch.env[launch_cc.HOOK_LOG_ENV] == str(tmp_path / "run" / launch_cc.HOOKS_FILE)
+
+
+def test_hook_command_names_no_run_path():
+    command = launch_cc.hook_command()
+    assert "/run" not in command and launch_cc.HOOKS_FILE not in command
+
+
+def _run_hook(event: dict, env: dict) -> subprocess.CompletedProcess:
+    return subprocess.run(["bash", "-c", launch_cc.hook_command()], input=json.dumps(event),
+                          env=env, capture_output=True, text=True, timeout=30)
+
+
+def test_hook_appends_the_event_and_prints_nothing(tmp_path: Path):
+    log = tmp_path / "hooks.jsonl"
+    env = {"PATH": os.environ["PATH"], launch_cc.HOOK_LOG_ENV: str(log)}
+    prompt = {"hook_event_name": "UserPromptSubmit", "session_id": "s1", "prompt": "go on"}
+    stop = {"hook_event_name": "Stop", "session_id": "s1"}
+    for event in (prompt, stop):
+        proc = _run_hook(event, env)
+        assert (proc.returncode, proc.stdout) == (0, "")
+    lines = [json.loads(line) for line in log.read_text().splitlines()]
+    assert [(e["hook_event_name"], e["session_id"]) for e in lines] == [("UserPromptSubmit", "s1"), ("Stop", "s1")]
+    assert lines[0]["prompt"] == "go on"
+    assert all(isinstance(e["t"], float) for e in lines)
+
+
+def test_hook_never_fails_the_turn(tmp_path: Path):
+    """No log named, or unreadable input: exit 0 and no output, so no prompt or stop is ever blocked."""
+    base = {"PATH": os.environ["PATH"]}
+    assert _run_hook({"hook_event_name": "Stop"}, base).returncode == 0
+    bad = subprocess.run(["bash", "-c", launch_cc.hook_command()], input="not json",
+                         env={**base, launch_cc.HOOK_LOG_ENV: str(tmp_path / "x" / "h.jsonl")},
+                         capture_output=True, text=True, timeout=30)
+    assert (bad.returncode, bad.stdout) == (0, "")
 
 
 def test_run_copy_state_file_skips_onboarding_and_trusts_the_workdir(launch):
