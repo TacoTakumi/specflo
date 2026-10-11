@@ -4,7 +4,13 @@ An arm is a (llama-swap entry, harness) pair. The arms of one comparison may
 differ in exactly one variable: the entry (with its engine, engine build and
 GGUF) or the harness (with its version). Any other differing field - a
 setting, the specflo version, or a field of the variable not compared - is
-refused, as is a field that differs between runs of the same arm.
+refused.
+
+The runs of one arm whose recorded fields all match form a set. The set of an
+arm's newest run is its current set, and only current sets are compared. Each
+earlier set of an arm gets graphs of its own, named after the start of its
+first run, so a change of version or setting starts a new set and keeps the
+old one on the page.
 
 Invalid runs (`valid` false) and contaminated runs (`diagnostics.contaminated`
 truthy) are left out of every pass rate and graph; the disclosure counts them.
@@ -21,6 +27,7 @@ import math
 import re
 import textwrap
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -147,6 +154,49 @@ def _numeric_leaves(node: Any, prefix: str = "") -> dict[str, float]:
     return out
 
 
+def _started(rec: dict) -> datetime:
+    return datetime.fromisoformat(rec["started_at"])
+
+
+@dataclass
+class RunSet:
+    """Runs of one arm with the same recorded fields. `started` is its first run's start."""
+
+    key: tuple[str, str]
+    included: list[dict]
+    excluded: list[dict]
+    started: datetime
+
+
+def split_sets(
+    included: list[dict], excluded: list[dict], engines: dict[str, str] | None = None
+) -> tuple[list[RunSet], list[RunSet]]:
+    """Split the runs into (current sets, earlier sets), one current set per arm.
+
+    An arm's current set holds the runs whose fields match its newest included
+    run. An excluded run joins the set its fields match, else its arm's
+    current set. Earlier sets are in order of their first run's start.
+    """
+    sets: dict[tuple[tuple[str, str], str], RunSet] = {}
+    for rec in sorted(included, key=_started):
+        key = (rec["arm"]["entry"], rec["arm"]["harness"])
+        group = sets.setdefault(
+            (key, _same(arm_fields(rec, engines))), RunSet(key, [], [], _started(rec))
+        )
+        group.included.append(rec)
+    newest = {s.key: s for s in sorted(sets.values(), key=lambda s: _started(s.included[-1]))}
+    for rec in excluded:
+        key = (rec["arm"]["entry"], rec["arm"]["harness"])
+        group = sets.get((key, _same(arm_fields(rec, engines)))) or newest.get(key)
+        if group is not None:
+            group.excluded.append(rec)
+    current = list(newest.values())
+    earlier = sorted(
+        (s for s in sets.values() if newest[s.key] is not s), key=lambda s: s.started
+    )
+    return current, earlier
+
+
 def summarise_arms(
     records: list[dict], engines: dict[str, str] | None = None
 ) -> list[ArmSummary]:
@@ -206,12 +256,17 @@ def _fmt(value: Any) -> str:
     return str(value)
 
 
-def disclosure(level: str, variable: str | None, arms: list[ArmSummary], excluded: int) -> str:
-    """The disclosure text: every recorded arm field and each arm's run count."""
-    lines = [
-        f"level: {level}; compared variable: {variable or 'none'}; "
-        f"excluded runs: {excluded} (invalid or contaminated)"
-    ]
+def disclosure(
+    level: str, variable: str | None, arms: list[ArmSummary], excluded: int, run_set: str | None = None
+) -> str:
+    """The disclosure text: every recorded arm field and each arm's run count.
+
+    `run_set` says which set of runs this is, when an arm has more than one.
+    """
+    head = f"level: {level}; compared variable: {variable or 'none'}; "
+    if run_set:
+        head += f"set: {run_set}; "
+    lines = [head + f"excluded runs: {excluded} (invalid or contaminated)"]
     for arm in arms:
         fields = "; ".join(f"{k}={_fmt(v)}" for k, v in arm.fields.items())
         lines.append(f"{arm.entry} / {arm.harness}: {fields}; runs={arm.run_count}")
@@ -320,16 +375,27 @@ def generate(
         level_runs = [r for r in included if r["level"] == level]
         if not level_runs:
             continue
-        summary = summarise_arms(level_runs, engines)
+        level_excluded = [r for r in excluded if r["level"] == level]
+        current, earlier = split_sets(level_runs, level_excluded, engines)
+        in_current = {id(r) for s in current for r in s.included}
+        summary = summarise_arms([r for r in level_runs if id(r) in in_current], engines)
         variable = check_comparison(summary)
-        n_excluded = sum(1 for r in excluded if r["level"] == level)
-        plans.append((level, variable, summary, disclosure(level, variable, summary, n_excluded)))
+        # The excluded runs of an earlier set count there; every other one counts here.
+        n_excluded = len(level_excluded) - sum(len(s.excluded) for s in earlier)
+        run_set = f"current; earlier sets: {len(earlier)} (graphed apart)" if earlier else None
+        text = disclosure(level, variable, summary, n_excluded, run_set)
+        plans.append((level, variable, summary, text, _base_name(level, variable, summary)))
+        for old in earlier:
+            arm = summarise_arms(old.included, engines)
+            first = old.included[0]["started_at"]
+            text = disclosure(level, None, arm, len(old.excluded), f"earlier, first run {first}")
+            stamp = old.started.strftime("%Y%m%dT%H%M%S")
+            plans.append((level, None, arm, text, _slug(level, *old.key, "set", stamp)))
 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     written: list[tuple[Path, str]] = []
-    for level, variable, summary, text in plans:
-        base = _base_name(level, variable, summary)
+    for level, variable, summary, text, base in plans:
         labels = [_label(a, variable) for a in summary]
         compared = f"by {variable}" if variable else "single arm"
         graphs = [("pass-rate", "pass rate", [("pass rate", [a.scores for a in summary])])]

@@ -196,8 +196,12 @@ arms as a table, and explains the bench, how to read a graph, each level and
 each metric. The arms of a comparison may differ in one variable only: the
 entry (with its engine, build and GGUF) or the harness (with its version).
 Any other difference, such as a setting or the specflo version, is refused
-with exit 1 and nothing is written. Without matplotlib, the command fails and
-names the `bench` extra.
+with exit 1 and nothing is written. The runs of one arm with the same versions
+and settings are a set. Only the set of each arm's newest run goes into the
+comparison. Each earlier set gets its own graphs, named
+`<level>-<entry>-<harness>-set-<start of its first run>`, so a new harness
+version or specflo tree starts a new set and the page still shows the old
+ones. Without matplotlib, the command fails and names the `bench` extra.
 
 ## Where output goes
 

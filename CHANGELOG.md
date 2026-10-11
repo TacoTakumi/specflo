@@ -25,7 +25,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   levels and run indexes), `records`, `probe`, `grade` and `graph`. `graph`
   draws pass-rate and metrics graphs for comparisons that change one variable
   only (the entry or the harness), each with a full disclosure of versions
-  and settings, and refuses any other comparison. The operator's configs
+  and settings, and refuses any other comparison. The runs of an arm with the
+  same versions and settings are a set: the newest set is compared, and each
+  earlier set gets graphs of its own. The operator's configs
   (`arms.yaml`, `matrices.yaml`, `pi-models.json`), runs, state and results
   live in the bench home, `<daemon root>/bench`, found as `specflo serve`
   finds the root; `specflo bench init` writes the config templates there.

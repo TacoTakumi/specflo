@@ -296,6 +296,30 @@ def test_index_page_lists_graphs_of_earlier_runs(tmp_path):
     assert "No disclosure file beside these graphs." in page
 
 
+def test_an_arm_whose_runs_span_two_sets_graphs_each_set(tmp_path):
+    first, later = "2026-10-07T10:00:00+00:00", "2026-10-08T09:30:00+00:00"
+    recs = [
+        make_record(run_index=0, started_at=first),
+        make_record(run_index=1, started_at="2026-10-07T11:00:00+00:00"),
+        make_record(run_index=2, started_at=first, valid=False),
+        # pi was updated: the newest run starts a new set.
+        make_record(run_index=3, started_at=later, versions__harness="0.71.0"),
+    ]
+    written = dict(graphs.generate(recs, tmp_path, ENGINES))
+
+    current = written[tmp_path / f"quick-{ENTRY_A}-pi-pass-rate.png"]
+    assert "set: current; earlier sets: 1 (graphed apart); excluded runs: 0" in current
+    assert "versions.harness=0.71.0" in current and "runs=1" in current
+    earlier = written[tmp_path / f"quick-{ENTRY_A}-pi-set-20261007T100000-pass-rate.png"]
+    assert f"set: earlier, first run {first}; excluded runs: 1" in earlier
+    assert "versions.harness=0.70.0" in earlier and "runs=2" in earlier
+
+    body = index_page.render_body(tmp_path)
+    for base in (f"quick-{ENTRY_A}-pi", f"quick-{ENTRY_A}-pi-set-20261007T100000"):
+        assert f'<section class="comparison" id="{base}">' in body
+        assert f'src="{base}-pass-rate.png"' in body
+
+
 def test_graph_of_two_variable_arms_exits_nonzero(tmp_path, capsys):
     recs = [make_record(ENTRY_A, "pi"), make_record(ENTRY_B, "claude-code")]
     rec_dir = write_records(tmp_path / "records", recs)
