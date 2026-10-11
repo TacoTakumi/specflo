@@ -1,7 +1,7 @@
 """Structural facts about the web UI: what can mutate, how the chat routes run, and how the transcript renders.
 
 The templates are scanned as text, so a control added later shows up here
-before it ships: the mutating controls are exactly start project, send
+before it ships: the mutating controls are exactly add product, start project, send
 message, take gate, start agent and, on the pool pages, release lease and
 save and delete definition and team, each behind the session secret; the sign-in form is the front door, not a control on the workflow. The chat
 routes are async handlers and the stream's request timeout is lifted past
@@ -27,6 +27,7 @@ TEMPLATES = sorted(web.TEMPLATES_DIR.glob("*.html"))
 
 # The controls, by the URL helper each form posts to.
 CONTROLS = {
+    "add product": "new_product_path",
     "start project": "start_project_url(",
     "send message": "chat_url(",
     "take gate": "take_url(",

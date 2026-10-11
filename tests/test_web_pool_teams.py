@@ -740,6 +740,8 @@ BROWSER_POSTS = {
     # Every form of the user page posts to it, naming its op: create and
     # revoke a personal token, change the password.
     web.USER_PATH,
+    # The New product form: a developer adds a product.
+    web.NEW_PRODUCT_PATH,
     web.START_PROJECT_PATH,
     web.TAKE_PATH,
     web.CHAT_PATH,
