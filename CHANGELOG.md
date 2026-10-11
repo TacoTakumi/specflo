@@ -148,6 +148,11 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **`specflo review scope "<line>"` and `specflo review clean`.** Write the
   open round's Scope reviewed line and record a round with no findings, so a
   reviewer never edits the round file by hand. The reviewer brief names both.
+- **Favicon.** Every daemon web page and the bench index page show the
+  specflo mark in white on a rounded teal tile. The daemon serves
+  `favicon.svg`, `favicon.ico` (16, 32 and 48 px) and `apple-touch-icon.png`
+  (180 px) from `/assets`; the bench index carries the SVG inline. The source
+  SVGs of the mark and the tile are in `docs/brand/`.
 
 ### Changed
 - **Breaking: the daemon's `tokens.json` is cut.** On first start with a

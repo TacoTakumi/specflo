@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- The specflo favicon (option O2): the mark in white on a rounded teal tile. The mark is scaled to 0.92 around its centre, with stroke 2.8 so it holds at 16 px. src/specflo/daemon/assets/favicon.svg is a copy of this file. -->
+  <rect width="32" height="32" rx="7" fill="#0e7c7b"/>
+  <g transform="translate(16 16) scale(0.92) translate(-13.5 -11)">
+    <path d="M3 4l7 7-7 7M12 4l7 7-7 7M24 3v16" fill="none" stroke="#ffffff" stroke-width="2.8" stroke-linecap="square"/>
+  </g>
+</svg>

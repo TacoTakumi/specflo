@@ -23,6 +23,7 @@ inlining it.
 
 from __future__ import annotations
 
+import base64
 import re
 from html import escape
 from importlib.resources import files
@@ -92,6 +93,12 @@ def stylesheet() -> str:
     names = (*SHARED_STYLESHEETS, PAGE_STYLESHEET)
     sheets = "\n".join((ASSETS_DIR / name).read_text(encoding="utf-8") for name in names)
     return f"{sheets}\n{_STYLE}"
+
+
+def favicon() -> str:
+    """The daemon's SVG favicon as a data URI, so the page needs no file beside it."""
+    svg = (ASSETS_DIR / "favicon.svg").read_bytes()
+    return "data:image/svg+xml;base64," + base64.b64encode(svg).decode("ascii")
 
 
 def _header() -> str:
@@ -285,6 +292,7 @@ def render_index(out_dir: Path | str) -> str:
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(page_title(out_dir))}</title>
+<link rel="icon" href="{favicon()}">
 <style>{stylesheet()}</style>
 </head>
 <body>

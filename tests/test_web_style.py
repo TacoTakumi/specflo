@@ -47,6 +47,39 @@ def test_the_markdown_stylesheet_keeps_its_mit_notice():
     assert "Permission is hereby granted, free of charge" in notice
 
 
+FAVICONS = {
+    "favicon.svg": "image/svg+xml",
+    "favicon.ico": "image/vnd.microsoft.icon",
+    "apple-touch-icon.png": "image/png",
+}
+
+
+@pytest.mark.parametrize("name", FAVICONS)
+def test_each_favicon_is_served_without_a_session(client, name):
+    response = client.get(f"{web.ASSETS_PATH}/{name}")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith(FAVICONS[name])
+
+
+def test_the_favicon_files_hold_the_sizes_browsers_ask_for():
+    ico = (web.ASSETS_DIR / "favicon.ico").read_bytes()
+    count = int.from_bytes(ico[4:6], "little")
+    sizes = sorted(ico[6 + 16 * i] for i in range(count))
+    png = (web.ASSETS_DIR / "apple-touch-icon.png").read_bytes()
+
+    assert sizes == [16, 32, 48]
+    assert int.from_bytes(png[16:20], "big") == int.from_bytes(png[20:24], "big") == 180
+
+
+def test_every_page_links_the_favicons(client):
+    html = client.get(web.SIGNIN_PATH).text
+
+    assert f'<link rel="icon" href="{web.ASSETS_PATH}/favicon.svg" type="image/svg+xml">' in html
+    assert f'<link rel="icon" href="{web.ASSETS_PATH}/favicon.ico" sizes="16x16 32x32 48x48">' in html
+    assert f'<link rel="apple-touch-icon" href="{web.ASSETS_PATH}/apple-touch-icon.png">' in html
+
+
 # --- the frame every page shares -------------------------------------------------
 
 

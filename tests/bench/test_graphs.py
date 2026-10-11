@@ -1,5 +1,6 @@
 """Comparison check and graphs with disclosures, from synthetic run records."""
 
+import base64
 import copy
 import sys
 import html
@@ -267,8 +268,16 @@ def test_index_page_inlines_the_page_rules_and_links_nothing_so_it_opens_from_a_
     graphs.generate(harness_pair("quick"), tmp_path, ENGINES)
     page = index_page.render_index(tmp_path)
     assert (index_page.ASSETS_DIR / index_page.PAGE_STYLESHEET).read_text() in page
-    assert "<link" not in page
+    assert not re.search(r'<link(?! rel="icon" href="data:)', page)
     assert not re.search(r'(?:src|href)="/', page)
+
+
+def test_index_page_carries_the_svg_favicon_inline(tmp_path):
+    page = index_page.render_index(tmp_path)
+    svg = (index_page.ASSETS_DIR / "favicon.svg").read_text()
+
+    match = re.search(r'<link rel="icon" href="data:image/svg\+xml;base64,([A-Za-z0-9+/=]+)">', page)
+    assert match and base64.b64decode(match.group(1)).decode() == svg
 
 
 def test_index_page_leaves_out_linked_disclosures_and_graphs(tmp_path):
