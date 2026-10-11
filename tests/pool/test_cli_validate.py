@@ -19,6 +19,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from specflo import settings
 from specflo.cli import app
 from specflo.pool import cli_admin, config, teams
 
@@ -193,7 +194,10 @@ def test_validate_writes_nothing_under_the_root(tmp_path):
     assert not root.exists()
 
 
-def test_validate_needs_a_root():
+def test_validate_needs_a_root(tmp_path, monkeypatch):
+    # A saved daemon root in the operator's settings would answer for --root.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv(settings.DAEMON_ROOT_ENV, raising=False)
     result = runner.invoke(app, ["serve", "pool", "validate"])
 
     assert result.exit_code != 0

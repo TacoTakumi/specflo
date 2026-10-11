@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from specflo import config, daemon
+from specflo import config, daemon, settings
 from specflo.cli import app
 
 runner = CliRunner()
@@ -116,7 +116,10 @@ def test_serve_honours_bind_and_port(tmp_path, served):
     assert served["port"] == 9009
 
 
-def test_serve_requires_a_root(tmp_path):
+def test_serve_requires_a_root(tmp_path, monkeypatch):
+    # A saved daemon root in the operator's settings would answer for --root.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv(settings.DAEMON_ROOT_ENV, raising=False)
     result = runner.invoke(app, ["serve"])
 
     assert result.exit_code != 0

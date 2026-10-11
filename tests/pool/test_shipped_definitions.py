@@ -20,6 +20,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
+from specflo import settings
 from specflo.cli import app
 from specflo.pool import cli_admin, config, definitions
 
@@ -166,7 +167,10 @@ def test_init_writes_to_the_names_the_configuration_reads():
     assert cli_admin._DEFINITIONS_DIR == config.DEFINITIONS_DIR
 
 
-def test_init_needs_a_root():
+def test_init_needs_a_root(tmp_path, monkeypatch):
+    # A saved daemon root in the operator's settings would answer for --root.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.delenv(settings.DAEMON_ROOT_ENV, raising=False)
     result = runner.invoke(app, ["serve", "pool", "init"])
 
     assert result.exit_code != 0
