@@ -8,6 +8,42 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.19.0]
+
+### Added
+- **Web access for local pool members.** An agent definition takes two new
+  fields: `web: true` gives each local member leased under it a web proxy of
+  its lease's own, and `web_internal` lists the `host:port` pairs on a private
+  network it may reach there. The daemon serves the proxy on a unix socket
+  under its root, and a forwarder inside the sandbox on `127.0.0.1:3128` is
+  what the member's `HTTPS_PROXY` and `HTTP_PROXY` point at. The proxy
+  forwards CONNECT and plain HTTP to public hosts only: it resolves a name
+  once, refuses with 403 any request whose host resolves to a loopback,
+  private, link-local or other non-public address that `web_internal` does
+  not list, dials the address it checked, and fails closed. Each request is
+  logged to `webproxy/YYYY-MM-DD.jsonl` under the daemon root with the lease,
+  member, host, port, verdict and byte counts. The definition pages of the
+  web UI carry both fields. See DAEMON.md, Web access.
+- **The `rfc-researcher` agent definition**, the sixth shipped one: a local,
+  web-enabled role that reads an issue and a clone of its repo, reads the
+  Agent Wiki, searches the web with `tvly` and Reddit with `donsetch`, and
+  writes a report. `serve pool init` copies it with the other five.
+- **The issue gateway.** A daemon whose root holds a `gateway.yaml` watches
+  the listed repos on Gitea (as a bot account) and GitHub (as a GitHub App,
+  with narrowed installation tokens kept in memory). When the operator, known
+  by user id, puts the trigger label (`rfc` by default) on an issue, the
+  gateway leases a research agent from the named pool, runs it on the
+  cleaned issue text, a clone of the repo and an optional reader-only wiki
+  configuration, and posts the cleaned report as one bot comment that also
+  shows waiting, started and failure notes. Labelling the issue again runs it
+  again and edits the same comment. Credential files lie under the daemon
+  root with mode 0600, and no forge credential reaches the agent, a log, the
+  audit file or a comment. Each run leaves a `gateway_run` record in
+  `audit.jsonl`. GitHub polls use the issue events feed with ETags. See
+  DAEMON.md, The issue gateway, for the configuration, GitHub App setup, the
+  Gitea bot account, the awiki reader user and the accepted exfiltration
+  risk of an agent with web access.
+
 ## [0.18.0]
 
 ### Added

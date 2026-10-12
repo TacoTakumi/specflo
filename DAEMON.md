@@ -1,11 +1,12 @@
 # specflo: the daemon and the agent pool
 
 This document belongs to the [specflo README](https://github.com/TacoTakumi/specflo/blob/main/README.md). It describes
-the daemon that hosts projects (`specflo serve`) and the agent pool that the
-daemon can hold (`specflo lease`, `specflo console`).
+the daemon that hosts projects (`specflo serve`), the agent pool that the
+daemon can hold (`specflo lease`, `specflo console`) and the issue gateway
+that runs research agents from the pool on labelled forge issues.
 
-**Heavy work in progress.** Daemon hosting, the web UI and the agent pool, with
-its leases, teams and consoles, are under active development and change
+**Heavy work in progress.** Daemon hosting, the web UI, the agent pool, with
+its leases, teams and consoles, and the issue gateway are under active development and change
 constantly: commands, flags, the on-disk formats and the behaviour itself can
 all move between releases, with no migration path. Treat them as a preview to
 try, not a surface to build on.
@@ -65,10 +66,10 @@ The configuration is the directory `pool/` under the daemon root, which an admin
   - `accounts` - provider (OpenRouter) accounts: `name`, `cap` (the most leases that run through the account at once) and `key_env` (the name of the environment variable that holds its API key, never the key). There is no field for a management key, and the pool creates no keys.
   - `members` - the whole roster; nothing that is not declared can be leased. A member has `name`, `command` (the harness command that starts it, for example `pi --mode rpc --provider llama-swap --model <id>`), `backing` (`local` or `hosted`), `model` (a local member: one llama-swap model ID or one of its aliases) or `account` (a hosted member: a declared account), `labels`, `capacity` (how many leases it serves at once) and `egress` (`local` for a local member, `no-train` or `open` for a hosted one). `kind: console` declares a console slot instead (see **Consoles**): no `command`, capacity 1.
   - `pools` - the named pools a request asks for: `name`, `definition`, `members`, `size` (the most leases the pool grants at once), `idle_default`, `idle_max` and an optional `preempt_after`. The three times are a whole number and a unit, `s`, `m` or `h` (`10m`, `4h`).
-- `pool/definitions/<name>.md` - an agent definition: what a role is, not what runs it. The YAML front matter carries `role`, `tools`, `skills`, `deny` (commands the member must not run), `env` and `credentials` (the names of the environment variables it may be given: a `credentials` entry is a variable name, such as `GITHUB_TOKEN`, not a label for a secret), `needs` (the labels a member must have), `egress` (the most open class it accepts), `project_context` and `paths` (files and directories its members get back read-only inside the sandbox; see **Egress classes and closed accounts**); the body is the system prompt. Five ship with the package: `worker`, `critic`, `hermes-rebaser`, `model-update-checker` and `landscape-scanner`.
+- `pool/definitions/<name>.md` - an agent definition: what a role is, not what runs it. The YAML front matter carries `role`, `tools`, `skills`, `deny` (commands the member must not run), `env` and `credentials` (the names of the environment variables it may be given: a `credentials` entry is a variable name, such as `GITHUB_TOKEN`, not a label for a secret), `needs` (the labels a member must have), `egress` (the most open class it accepts), `project_context`, `paths` (files and directories its members get back read-only inside the sandbox; see **Egress classes and closed accounts**), `web` and `web_internal` (whether its members reach the web, and the inside hosts they may reach there; see **[Web access](#web-access)**); the body is the system prompt. Six ship with the package: `worker`, `critic`, `hermes-rebaser`, `model-update-checker`, `landscape-scanner` and `rfc-researcher`, the issue gateway's research agent (see **[The rfc-researcher definition](#the-rfc-researcher-definition)**).
 - `pool/teams/<name>.md` - a team: front matter `roles`, each a `name`, a `pool` and a `count`; the body is free notes. `pool init` makes no `teams` directory.
 
-`serve pool init` writes `pool.yaml` with every line commented out, so it declares nothing, and copies the five definitions; a file that exists is kept. `serve pool validate` checks the whole directory without a daemon and prints every fault in one run, each naming the file, the entry and the field; it exits 1 with any fault. Whether a member meets its pool's definition (every label it needs, a class no more open than it accepts) is settled there and never while a request waits. A `no-train` hosted member on an `anthropic/` model is refused, because pi does not send the provider routing flags for those models. A hosted member that declares a `model` must select it with `--model` in its `command`: its generated `models.json` pins no model, so without the flag it would run the provider's default. A `pool.yaml` or llama-swap file that is not a regular file, such as a named pipe, is refused before it is read.
+`serve pool init` writes `pool.yaml` with every line commented out, so it declares nothing, and copies the six definitions; a file that exists is kept. `serve pool validate` checks the whole directory without a daemon and prints every fault in one run, each naming the file, the entry and the field; it exits 1 with any fault. Whether a member meets its pool's definition (every label it needs, a class no more open than it accepts) is settled there and never while a request waits. A `no-train` hosted member on an `anthropic/` model is refused, because pi does not send the provider routing flags for those models. A hosted member that declares a `model` must select it with `--model` in its `command`: its generated `models.json` pins no model, so without the flag it would run the provider's default. A `pool.yaml` or llama-swap file that is not a regular file, such as a named pipe, is refused before it is read.
 
 The daemon reads the directory when it starts. A configuration with a fault disables only the pool: projects are served as before, every pool route answers 400 with the full list of faults, and the pool page shows them. `serve pool reload` asks a running daemon to read the directory again with no restart, leases kept; it reaches the daemon through a remote registered in the checkout with a developer's personal token. A reload with a fault changes nothing, and so does one that removes a member with a lease out or changes that member's kind. A reload that passes also brings to life a pool that was invalid at start.
 
@@ -104,7 +105,7 @@ When the user manager can be reached, each member runs in a systemd scope of its
 
 The sandbox keeps a member from reaching the operator's secrets and other members' state by ordinary means: reading a path, listing a directory, running a tool. It is not a jail against a determined process that runs as the operator's user. The Known limits below name what it leaves open.
 
-- `local`: the member has a network namespace of its own whose one interface is loopback. It reaches llama-swap through the daemon's bridge: a unix socket the daemon serves in its root (`llama-swap.sock`, mode 0600), bound into the sandbox, with a `socat` forwarder inside that listens on the port of the member's provider base URL before pi starts. The daemon's side answers chat completions, completions and the models listing and refuses the rest of llama-swap with 403, also to a member that stops the forwarder and speaks to the socket itself. A completion is forwarded only when it names a model that an active lease or a project agent holds, by its llama-swap ID or an alias, so a member cannot make llama-swap load a model the ledger did not admit and evict another member's; any other is refused with 403. A member can still name a model another lease holds, which loads nothing and shares that model's turns. `local` is the one class for which specflo claims that nothing the member reads or writes leaves the host.
+- `local`: the member has a network namespace of its own whose one interface is loopback. It reaches llama-swap through the daemon's bridge: a unix socket the daemon serves in its root (`llama-swap.sock`, mode 0600), bound into the sandbox, with a `socat` forwarder inside that listens on the port of the member's provider base URL before pi starts. The daemon's side answers chat completions, completions and the models listing and refuses the rest of llama-swap with 403, also to a member that stops the forwarder and speaks to the socket itself. A completion is forwarded only when it names a model that an active lease or a project agent holds, by its llama-swap ID or an alias, so a member cannot make llama-swap load a model the ledger did not admit and evict another member's; any other is refused with 403. A member can still name a model another lease holds, which loads nothing and shares that model's turns. `local` is the one class for which specflo claims that nothing the member reads or writes leaves the host, unless its definition gives it web access (see **[Web access](#web-access)**): a web member's prompts stay on the host, and its tools reach public hosts through a proxy.
 - `no-train` and `open`: the member shares the host's network, because its prompts go to its provider. Its own tools reach the internet as well: a bash command, a fetch or an install run by the member can send anything the member can read. The class says which provider may see the prompts; it says nothing about what the member's tools send.
 
 A local member's provider base URL must be plain HTTP on `127.0.0.1` or `localhost`. Its start is refused when it is not, when `socat` is not on the daemon's `PATH`, and when the daemon does not serve the bridge. The daemon serves the bridge while its root has a pool directory, from the moment it starts; a second daemon started on the same root does not start.
@@ -112,6 +113,37 @@ A local member's provider base URL must be plain HTTP on `127.0.0.1` or `localho
 While it serves, the daemon reads the key of every declared account (`GET /api/v1/key`, the one provider call it makes): once when it starts and every 15 minutes after that. The figures show on `/pool`. An account with no free-model requests left for the day is closed until the next midnight UTC. A read that fails shows on `/pool` as the read error and closes nothing.
 
 The provider can refuse a hosted member's call with a 402. When the key's credit limit or the account's credits are used up, the daemon reads the key again and closes the account until the key's limit resets, or until the next midnight UTC when the read says nothing of a reset. A closed account ends no lease, but its members take no new one: a request that only closed accounts could serve is refused at once, naming each account and its reopen time. When the 402 is the in-flight spending budget, the account stays open and the daemon sends the member the same prompt again. A 429 is left to pi, which retries it.
+
+### Web access
+
+Two fields of a definition give a local member a way to the web while its prompts stay on the host:
+
+- `web` - `true` or `false` (the default). With `true`, every local member leased under the definition reaches the web through a proxy of its lease's own.
+- `web_internal` - the hosts on a private network the proxy lets the member reach, each written `host:port`, such as `127.0.0.1:8731`, or `[v6 address]:port`. An entry without a port is refused by `pool validate`. The proxy lets an entry through on its port and no other, whether a request names the listed host or a name that resolves to a listed address.
+
+```yaml
+egress: local
+web: true
+web_internal: ["127.0.0.1:8731"]
+```
+
+The definition pages of the web UI carry both fields. The fields only change local members: a `no-train` or `open` member shares the host's network and reaches the web with or without them, and gets no proxy.
+
+### The web proxy and its log
+
+At the grant of a web lease, before its member starts, the daemon serves the lease's proxy on its event loop, on a unix socket `web/<lease>.sock` under the daemon root (mode 0600, in a directory of mode 0700). The socket is bound into the member's sandbox, and a second `socat` forwarder inside it, after the one to llama-swap, listens on `127.0.0.1:3128` (`3129` when the member's provider port is 3128). The member's environment points `HTTPS_PROXY`, `HTTP_PROXY`, `https_proxy` and `http_proxy` at that forwarder, and `NO_PROXY` and `no_proxy` name its provider's host, so its model traffic still goes to the bridge. These values stand over any the definition lists. When the lease ends the proxy is stopped and its socket removed first of all, before the member stops, so an ended lease reaches the web no more; that also closes every tunnel it has open, which has no idle timeout of its own. A socket found in `web/` when the daemon starts was left by a daemon that did not stop cleanly, and is removed.
+
+The proxy forwards two kinds of request: a `CONNECT`, the tunnel that carries HTTPS, and a plain HTTP request that names an absolute `http://` URI. It resolves the host a request names once, checks every address it gets, and refuses the request with 403, before it opens any connection, when one of them is not public: loopback, private (RFC 1918 and unique local), link-local, shared (`100.64.0.0/10`), multicast, unspecified or reserved, and an IPv6 address that carries such an IPv4 address (mapped, compatible, 6to4, Teredo or NAT64). A `web_internal` entry is the one way past that check. The proxy then connects to one of the addresses it checked, as a number that is not looked up again, so a name that resolves to a public address for the check and a private one for the connect does not get past it. It fails closed: a host it cannot resolve or reach gets a 502, and a request it cannot read for certain gets a 400, 431 or 501. It does not look inside a tunnel, and it forwards a plain HTTP request with `Connection: close` and without the proxy's own headers. The forwarder is the member's to stop or replace, and a member that speaks to the socket with a client of its own gets the same checks: the proxy is the boundary, not the forwarder.
+
+Each request is logged once it ends, as one JSON line in `webproxy/YYYY-MM-DD.jsonl` under the daemon root, one file per UTC day:
+
+- `time` - when the request ended, in UTC.
+- `lease` and `member` - the lease and the member the proxy serves.
+- `host` and `port` - what the request asked for; both are null for a request the proxy could not read.
+- `verdict` - `allowed`, `refused` (403) or `failed` (any other answer of the proxy's own: 400, 431, 501 or 502).
+- `bytes_up` and `bytes_down` - the bytes sent to the host and back to the member; 0 for a request that was not let through.
+
+A client that goes away before its request is whole leaves no line. A log that cannot be written is said in the daemon's log, and the proxy goes on. The log holds hosts and byte counts, never what was sent, and nothing removes old files.
 
 ### The ledger
 
@@ -173,6 +205,156 @@ For a hosted project, a task's `Needs` name that is one of the daemon's pools is
 - A hosted member shares the host's network namespace, and with it the abstract unix sockets of the operator's session. The X server listens on one (`@/tmp/.X11-unix/X0`), and one that accepts connections from the operator's user lets a hosted member read windows and the clipboard and send input to the desktop outside the sandbox. The session manager's ICE socket is reachable the same way. A local member has its own network namespace and reaches none of them. A hosted member in a network namespace of its own is future work.
 - A save from the management pages that passes validation is written even when the reload that follows refuses the swap because a member with a lease out was removed.
 - A lease granted to a requester that has gone away, as when the request is cancelled while the member starts, is ended before it is answered and its slots are free at once. Only a lease whose answer was sent and then lost, on a connection that broke as the answer went out, stays out until it expires from idleness.
+- The web proxy lets a web member reach any public host and does not look inside a tunnel. It keeps a member from the host's and the private network's services, and logs where the member went; it does not keep what the member read from going out. See **[Accepted risk: exfiltration over the web](#accepted-risk-exfiltration-over-the-web)**.
+
+## The issue gateway
+
+The issue gateway lets the operator ask for research on a forge issue by putting a label on it. When the operator labels an issue on a watched repo, the daemon leases a research agent from the pool, has it research the issue and posts its report on the issue as a bot. The forges are Gitea and GitHub. The gateway is the only part of specflo that talks to a forge, and the agent never holds a forge credential.
+
+The gateway runs as a task of the daemon, and only on a root that has a `gateway.yaml` when the daemon starts. It polls every forge once at the start and then once per `poll_every`. A poll that fails is logged, and the next poll is another try.
+
+### The gateway configuration
+
+`gateway.yaml` in the daemon root lists the forges to watch. Loading is strict, as the pool file's is: a key it does not know is refused, every fault names the entry and the field, and one fault anywhere keeps the whole gateway off. The daemon logs each fault and serves on without the gateway. The file is read when the daemon starts; `serve pool reload` does not read it, so restart the daemon after a change.
+
+- `poll_every` - how long the gateway waits between polls: a whole number and a unit, `s`, `m` or `h`. One minute unless written.
+- `forges` - a list of at least one forge. Each forge has:
+  - `name` - optional, its kind unless written; two forges of one kind need names of their own.
+  - `kind` - `gitea` or `github`.
+  - `url` - the forge's http or https base URL. For a Gitea forge, the URL of the Gitea itself, such as `https://git.example.com`. For a GitHub forge it can be left out, which is `https://api.github.com`; GitHub Enterprise takes its API URL, such as `https://ghe.example.com/api/v3`.
+  - `repos` - the repos to watch, each written `owner/name`.
+  - `operator_id` - the operator's numeric user id on that forge. Only a label that this user put on starts a run. Anyone with triage access can label an issue, so the rule is on the id, which does not change, and never on a name. Gitea shows it at `/api/v1/users/<name>` and GitHub at `https://api.github.com/users/<login>`, as `id`.
+  - `label` - the label that starts a run, `rfc` unless written. Make the label on each watched repo.
+  - `pool` - the pool to lease research agents from (see **[The rfc-researcher definition](#the-rfc-researcher-definition)**).
+  - `token_file` - for a Gitea forge, the file with the bot account's token (see **[The Gitea bot account](#the-gitea-bot-account)**).
+  - `app_id` and `key_file` - for a GitHub forge, the GitHub App's id and the file with its private key (see **[GitHub App setup](#github-app-setup)**).
+- `wiki` - optional: the operator's Agent Wiki the research agent may read. `url` is the vault's http or https URL, with no user or password in it, and `token_file` is the file with a reader token (see **[The awiki reader user](#the-awiki-reader-user)**). Without the section the agent gets no wiki.
+
+```yaml
+poll_every: 1m
+forges:
+  - name: home
+    kind: gitea
+    url: https://git.example.com
+    repos: [you/specflo, you/notes]
+    operator_id: 1
+    pool: research
+    token_file: gitea-bot.token
+  - kind: github
+    app_id: 123456
+    key_file: github-app.pem
+    repos: [you/specflo]
+    operator_id: 1234567
+    pool: research
+wiki:
+  url: http://127.0.0.1:8731
+  token_file: awiki-reader.token
+```
+
+A credential file is named by a path relative to the daemon root and lies under it: an absolute path or one with `..` is refused. It must be a regular file with mode exactly 0600, so a key saved with mode 0400 is refused too; run `chmod 600` on it. The mode is checked again each time the file is read. The configuration holds where each file is and never what is in it, and no fault, log line, audit record or comment names a secret. The Gitea token is read at each request, so a rotated token is used at the next call. The GitHub key is read once, when the gateway first asks GitHub, and the wiki token when the daemon starts; restart the daemon after rotating either.
+
+The gateway keeps its state in `gateway/state.json` under the daemon root: the time it first started, the newest label event it handled on each issue, each repo's poll cursor and the id of its comment on each issue. A label event older than the gateway's first start never starts a run, and no event starts two. A state file that cannot be read is kept aside as `state.json.bad`, and the gateway starts afresh with its first start now.
+
+### How a run goes
+
+A poll finds a trigger when the forge's trigger label was put on an issue by the operator, after the gateway's first start, the label is still there, and the gateway has not handled that event. Gitea is asked for the open issues with the label that changed since the repo's cursor, and each one's timeline. GitHub is asked for the repo's issue events feed with the ETag of its last answer, so a feed with no change costs one request that counts against no rate limit.
+
+Each trigger starts one run in a task of its own, so runs of different issues overlap and a poll never waits for a run. An issue has one run at a time: a label put on while a run of that issue is in progress is ignored, and is not acted on later.
+
+A run reads the issue and its comments and fills a scratch dir of its own in the system temp dir, named `specflo-run-<daemon pid>-...`, with:
+
+- `input.md` - the issue's title and body and the operator's own comments. Another user's comment never reaches the agent. HTML comments and zero-width and bidi characters are removed, since attacks on issue bots hide instructions there.
+- `repo` - a shallow clone of the issue's repo at its default branch. The clone is made with the forge's credential in git's environment only, never in the URL or on a command line; for GitHub that is a fresh installation token that may only read the repo's contents. The clone's remote and git configuration are checked to hold no credential afterwards.
+- `.agent-wiki/config.yaml` (mode 0600) - with a `wiki` section, the configuration that points the agent's `awiki` at the vault with the reader token. The member's environment names it in `AGENT_WIKI_CONFIG_DIR`.
+
+It then leases a member of the forge's pool with the scratch dir as the member's working directory, under the holder label `issue gateway <forge>:<owner/name>#<number>`, sends it one prompt, and waits up to 30 minutes for the agent to write `report.md` beside `input.md`. A report that is missing, empty, larger than 1 MiB or not a plain file fails the run. The lease ends and the scratch dir is removed however the run ends.
+
+The bot tells the issue how the run goes in one comment, edited at each step:
+
+- while the pool has no member free: `Waiting for a free agent. Research starts when one is free.` The run asks the pool again every 5 seconds, for up to a day.
+- once a member is leased: `Research started at <YYYY-MM-DD HH:MM> UTC.`
+- at the end: the cleaned report, or a short note that names the kind of ending and the time: research failed, did not finish in time, or no research agent became free. Each note ends `The cause is in the gateway's log. Label the issue again to retry.` None of the agent's output and no fault text is in it; why the run failed goes to the daemon's log.
+
+The report is cleaned before it is posted, since the agent read untrusted text: no @mention notifies anyone, no image or raw HTML renders (an image URL can carry data out to whoever serves it), only http and https links stay, and a report longer than 60000 characters is cut with a note. Fenced code blocks are left as they are.
+
+To run an issue again, the operator takes the label off and puts it on again. A later run edits the same comment; when that comment was deleted, the bot posts a new one and keeps its id. A forge call for the comment that fails is logged and the run goes on.
+
+Each run leaves one record in the daemon root's `audit.jsonl` when it ends, also when the daemon stops it: `operation` `gateway_run`, `user` and `role` `gateway`, `id` `<forge>:<owner/name>#<number>`, and the fields `forge`, `repo`, `issue`, `actor_id` (the user whose label started it), `start`, `end` and `outcome`: `success`, `failure`, `timeout`, `no free agent` or `cancelled`. The record holds no credential.
+
+### GitHub App setup
+
+The gateway acts on GitHub as a GitHub App of the operator's, so its comments come from the App's bot and no personal token is involved.
+
+1. Make the App under Settings, Developer settings, GitHub Apps, New GitHub App. It needs no webhook, since the gateway polls: clear Active under Webhook. Give it the repository permissions Issues: Read and write and Contents: Read-only, and nothing else (Metadata: Read-only comes with every App).
+2. Note the App ID on the App's page; it is `app_id` in `gateway.yaml`.
+3. Generate a private key on the App's page. Copy the `.pem` file into the daemon root, such as `~/specflo-daemon/github-app.pem`, run `chmod 600` on it and name it in `key_file`. A key with any other mode, 0400 included, is refused.
+4. Install the App on the account that owns the repos, with Only select repositories, and pick each repo listed under `repos`.
+
+The key signs a short-lived JWT, which finds the App's installation on a repo. Each installation token the gateway asks for is narrowed to that one repo and to Issues write and Contents read, whatever more the installation holds; the token a run clones with may only read contents. The key, the JWTs and the tokens live in the daemon's memory only and are renewed before they run out; nothing is cached on disk.
+
+### The Gitea bot account
+
+The gateway acts on Gitea as a bot account, a separate user from the operator.
+
+1. Make a user for the bot on the Gitea, and give it read access to each watched repo: on a private repo, add it as a collaborator with Read.
+2. Signed in as the bot, make an access token under Settings, Applications with the permissions issue: Read and Write and repository: Read, and nothing else.
+3. Save the token in a file in the daemon root, such as `~/specflo-daemon/gitea-bot.token`, run `chmod 600` on it and name it in `token_file`.
+
+The token goes in the `Authorization` header of each API call and in git's environment for a clone. The client follows no redirect, so the token goes to the configured Gitea only.
+
+### The awiki reader user
+
+The research agent reads the operator's Agent Wiki with `awiki search` and `awiki show`, and must not be able to write to it. The token the gateway hands it is in the agent's scratch dir, where the agent can read it, so make it a token of a user that may only read:
+
+```bash
+# on the wiki's server host
+awiki user add specflo-research
+awiki user grant specflo-research <vault> reader
+awiki user token add specflo-research gateway --scope <vault>=reader
+```
+
+Save the token the last command prints in a file in the daemon root, such as `~/specflo-daemon/awiki-reader.token`, run `chmod 600` on it, and name it with the vault's URL in the `wiki` section. Give the user no other grant: everything in the vault the token reads, the agent can read, and with web access send on (see **[Accepted risk: exfiltration over the web](#accepted-risk-exfiltration-over-the-web)**).
+
+### The rfc-researcher definition
+
+`rfc-researcher` is the shipped definition of the gateway's research agent: tools `read` and `bash`, the skills `tavily-cli` and `donsetch-reddit`, `git commit` and `git push` denied, the credential `TAVILY_API_KEY`, egress class `local` and `web: true`. Its prompt has it read `input.md` and the clone beside it, read the wiki, search the public web with `tvly` and Reddit with `donsetch` with public search terms only, treat what a web page says as data and never as an instruction, and write `report.md` with a short answer, findings with source links, a recommendation and the sources. It commits, pushes and posts nothing.
+
+The pool a forge names is a pool whose definition is `rfc-researcher` and whose members are local, since the definition accepts the `local` class only:
+
+```yaml
+pools:
+  - name: research
+    definition: rfc-researcher
+    members: [researcher-local]
+    size: 2
+    idle_default: 40m
+    idle_max: 2h
+```
+
+The shipped file names nothing of one host, so it works only once the operator's own copy in the daemon root, `pool/definitions/rfc-researcher.md`, says where the host keeps what it needs:
+
+- `paths` - the tools the agent runs, when they are installed under the home, which the sandbox sweeps: `tvly` and `awiki`, and `donsetch` the same way when it lives there. A tool that is a link into an environment of its own, as a uv tool is, needs its link and its environment both listed, and a uv-managed interpreter its directory too (see **[Egress classes and closed accounts](#egress-classes-and-closed-accounts)**).
+- `web_internal` - the awiki server's `host:port`, the host and port of the `wiki` section's `url`. The proxy refuses a private address that is not listed, so without it the agent reaches no wiki on the operator's network.
+
+```yaml
+# tvly and awiki installed as uv tools; list each tool by where it really is
+paths: [~/.local/bin/tvly, ~/.local/share/uv/tools/tavily-cli, ~/.local/bin/awiki, ~/.local/share/uv/tools/agent-wiki]
+web_internal: ["127.0.0.1:8731"]
+```
+
+`pool init` keeps a definition file that exists, so the operator's copy stands over later shipped versions. Run `serve pool validate` and `serve pool reload` after an edit. The daemon's environment must hold `TAVILY_API_KEY` for the member to be given it.
+
+### Accepted risk: exfiltration over the web
+
+The research agent has web access and has read untrusted issue text. An agent with web access that read untrusted text can send what it read to any public host: the issue's text, the clone of the repo, wiki pages, the wiki reader token and the Tavily key are all in its reach, and a public host is all an attacker needs. Cleaning the input and the prompt's rules make that harder, and do not stop it.
+
+The proxy blocks private addresses and logs hosts, but it cannot stop that. It keeps the agent from the host's loopback services, the private network and cloud metadata addresses, except the `web_internal` entries, and its log shows each host the agent reached and how many bytes went up. It lets through any public host and does not look inside a tunnel. This is a risk the gateway accepts. Keep it small: watch only repos whose contents you can accept leaking, give the wiki a reader user that sees only what may leak too, use a Tavily key that is cheap to rotate, and read the proxy log for hosts that do not belong.
+
+### Gateway limits
+
+- The gateway reads `gateway.yaml` and the wiki token at the daemon's start only.
+- The GitHub client keeps each repo's feed ETag in memory, so a restart reads each feed once in full. The repo issue events feed is taken to list the newest events first.
+- githubkit retries a GitHub call that is rate limited or fails on the server, which can hold a poll up to about a minute.
 
 ## Command reference
 
@@ -192,7 +374,7 @@ See **[Hosting projects on a daemon](#hosting-projects-on-a-daemon)** for the mo
 
 These verbs need a daemon. `serve pool init` and `serve pool validate` work on the files under the daemon root; the others run on the remote named by `--remote`, or on the only one registered, and are refused in a checkout with no remote. See **[The agent pool](#the-agent-pool)**.
 
-- `specflo serve [--root <dir>] pool init` - write a starting pool directory under the daemon root: `pool/pool.yaml`, every line a comment, and the five shipped agent definitions in `pool/definitions/`. A file that exists is kept.
+- `specflo serve [--root <dir>] pool init` - write a starting pool directory under the daemon root: `pool/pool.yaml`, every line a comment, and the six shipped agent definitions in `pool/definitions/`. A file that exists is kept.
 - `specflo serve [--root <dir>] pool validate` - check the whole pool directory without a daemon and print every fault in one run; exit 1 with any fault.
 - `specflo serve [--root <dir>] pool reload [--remote <name>]` - ask the running daemon, as the developer, to read its pool directory again. A directory with a fault changes nothing, and neither does a change that removes a member with a lease out.
 - `specflo lease request <pool> [--cwd <dir>] [--idle-limit <time>] [--label <text>] [--wait <seconds>] [--egress local|no-train|open] [--remote <name>] [--json]` - lease one member of a named pool; prints the lease id and the agent to drive with `specflo agent`, and keeps the lease token in `.specflo/leases/<agent>.token`. A full pool makes the request wait up to `--wait` seconds (600 by default; 0 refuses at once), with a notice on stderr.
