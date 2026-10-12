@@ -170,15 +170,22 @@ def test_git_runs_in_an_environment_where_it_can_ask_nobody():
     assert "http.extraHeader" not in scratch.git_environment(base).values()
 
 
-def test_a_clone_runs_git_in_that_environment(origin, tmp_path):
-    seen = tmp_path / "seen"
-    program = tmp_path / "git"
-    program.write_text(f"#!/bin/sh\nenv > {seen}\nexit 1\n", encoding="utf-8")
+def _fake_git(monkeypatch, directory, script):
+    """Put a git running *script* first on the PATH that the clone's environment comes from."""
+    directory.mkdir()
+    program = directory / "git"
+    program.write_text(script, encoding="utf-8")
     program.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{directory}{os.pathsep}{os.environ['PATH']}")
+
+
+def test_a_clone_runs_git_in_that_environment(origin, tmp_path, monkeypatch):
+    seen = tmp_path / "seen"
+    _fake_git(monkeypatch, tmp_path / "bin", f"#!/bin/sh\nenv > {seen}\nexit 1\n")
     clone = tmp_path / "clone"
 
     with pytest.raises(scratch.ScratchError):
-        asyncio.run(scratch.clone(origin.as_uri(), clone, git=str(program)))
+        asyncio.run(scratch.clone(origin.as_uri(), clone))
     lines = seen.read_text(encoding="utf-8").splitlines()
     assert "GIT_TERMINAL_PROMPT=0" in lines
     assert "SSH_ASKPASS_REQUIRE=never" in lines
@@ -330,12 +337,9 @@ def test_the_dir_is_removed_when_the_clone_fails(tmp_path):
 
 
 @pytest.fixture
-def stuck_git(tmp_path):
-    """A git that starts a child of its own and never finishes."""
-    program = tmp_path / "git"
-    program.write_text("#!/bin/sh\nsleep 60 &\nexec sleep 60\n", encoding="utf-8")
-    program.chmod(0o755)
-    return str(program)
+def stuck_git(tmp_path, monkeypatch):
+    """A git, first on the PATH, that starts a child of its own and never finishes."""
+    _fake_git(monkeypatch, tmp_path / "bin", "#!/bin/sh\nsleep 60 &\nexec sleep 60\n")
 
 
 def test_a_clone_that_does_not_finish_is_stopped_with_its_git(origin, stuck_git):
@@ -344,7 +348,7 @@ def test_a_clone_that_does_not_finish_is_stopped_with_its_git(origin, stuck_git)
     async def run():
         async with scratch.scratch_dir() as directory:
             made.append(directory)
-            await _prepare(directory, origin.as_uri(), git=stuck_git, timeout=0.5)
+            await _prepare(directory, origin.as_uri(), timeout=0.5)
 
     with pytest.raises(scratch.ScratchError, match="did not finish"):
         asyncio.run(run())
@@ -358,7 +362,7 @@ def test_a_cancelled_clone_is_stopped_with_its_git(origin, stuck_git):
         async def body():
             async with scratch.scratch_dir() as directory:
                 made.append(directory)
-                await _prepare(directory, origin.as_uri(), git=stuck_git)
+                await _prepare(directory, origin.as_uri())
 
         task = asyncio.create_task(body())
         await asyncio.sleep(0.5)

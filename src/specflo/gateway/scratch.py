@@ -114,7 +114,6 @@ async def prepare(
     username: str = TOKEN_USERNAME,
     depth: int | None = 1,
     timeout: float = CLONE_TIMEOUT,
-    git: str = "git",
 ) -> None:
     """Fill the scratch dir *directory* for a run.
 
@@ -128,7 +127,7 @@ async def prepare(
     write_wiki_config(directory, wiki_url, wiki_token)
     await clone(
         clone_url, directory / CLONE_DIR, token=token, username=username,
-        depth=depth, timeout=timeout, git=git,
+        depth=depth, timeout=timeout,
     )
 
 
@@ -156,7 +155,6 @@ async def clone(
     username: str = TOKEN_USERNAME,
     depth: int | None = 1,
     timeout: float = CLONE_TIMEOUT,
-    git: str = "git",
 ) -> None:
     """Clone *url* at its default branch into *destination*, which must not exist yet.
 
@@ -168,12 +166,12 @@ async def clone(
     parts = urlsplit(url)
     if parts.username is not None or parts.password is not None:
         raise ScratchError(f"the clone URL {shown} carries a credential; give it without one.")
-    argv = [git, "clone", "--quiet", "--no-tags"]
+    args = ["clone", "--quiet", "--no-tags"]
     if depth is not None:
-        argv += ["--depth", str(depth)]
-    argv += ["--", url, str(destination)]
+        args += ["--depth", str(depth)]
+    args += ["--", url, str(destination)]
     environment = git_environment(os.environ, token=token, username=username)
-    returncode, error = await _run(argv, environment, timeout, f"the clone of {shown}")
+    returncode, error = await _run(args, environment, timeout, f"the clone of {shown}")
     if returncode != 0:
         raise ScratchError(f"the clone of {shown} failed: {_complaint(error, token)}")
     _check_clean(destination, url, token)
@@ -210,16 +208,17 @@ def git_environment(
 
 
 async def _run(
-    argv: list[str], environment: dict[str, str], timeout: float, what: str
+    args: list[str], environment: dict[str, str], timeout: float, what: str
 ) -> tuple[int, bytes]:
-    """Run *argv* to its end, and its exit status and error output.
+    """Run git with *args* to its end, and its exit status and error output.
 
-    The process leads a group of its own, so the processes it starts can be
+    git is the one found on the PATH of *environment*. The process leads a group of its own, so the processes it starts can be
     stopped with it. When it outlives *timeout*, or the caller is cancelled,
     the group is killed and the process reaped before this returns.
     """
     process = await asyncio.create_subprocess_exec(
-        *argv,
+        "git",
+        *args,
         stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.DEVNULL,
         stderr=asyncio.subprocess.PIPE,
