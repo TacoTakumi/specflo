@@ -212,7 +212,7 @@ def test_validate_accepts_web_access_with_an_internal_host(root):
     checked = runner.invoke(cli, ["serve", "--root", str(root), "pool", "validate"])
 
     assert checked.exit_code == 0, checked.output
-    assert "6 definitions" in checked.output
+    assert "7 definitions" in checked.output
 
 
 @pytest.mark.parametrize(
@@ -305,10 +305,10 @@ def test_a_created_definition_is_a_file_the_validator_accepts(root):
     assert PORTER in config.definitions
     checked = runner.invoke(cli, ["serve", "--root", str(root), "pool", "validate"])
     assert checked.exit_code == 0, checked.output
-    assert "6 definitions" in checked.output
+    assert "7 definitions" in checked.output
     assert "porter" in client.get(LIST).text
     # the check's copy and the step the file was replaced in have left nothing
-    assert len(list(folder(root).iterdir())) == 6
+    assert len(list(folder(root).iterdir())) == 7
     assert not list(root.glob(pool_manage.CANDIDATE_PREFIX + "*"))
 
 
@@ -539,7 +539,7 @@ def test_deleting_a_definition_that_a_pool_binds_is_refused_naming_the_pool(pool
 def test_deleting_a_definition_no_pool_binds_removes_the_file_and_reloads(root):
     app = create_app(root)
     client = signed_in(app)
-    assert len(app.state.pool.config.definitions) == 5
+    assert len(app.state.pool.config.definitions) == 6
 
     response = post(client, delete_url("critic"))
 
@@ -547,7 +547,8 @@ def test_deleting_a_definition_no_pool_binds_removes_the_file_and_reloads(root):
     assert response.headers["location"] == LIST
     assert not (folder(root) / "critic.md").exists()
     assert sorted(d.name for d in app.state.pool.config.definitions) == [
-        "hermes-rebaser", "landscape-scanner", "model-update-checker", "worker",
+        "hermes-rebaser", "landscape-scanner", "model-update-checker", "rfc-researcher",
+        "worker",
     ]
     assert [(r["user"], r["operation"], r["id"]) for r in audit_records(root)] == [
         ("developer", "definition_delete", "critic"),
@@ -582,7 +583,7 @@ def test_a_reload_answers_at_once_with_the_fault_of_such_an_entry(root, kind):
 
     assert [fault.path for fault in faults] == [odd]
     assert "not a regular file" in str(faults[0])
-    assert app.state.pool is not None and len(app.state.pool.config.definitions) == 5
+    assert app.state.pool is not None and len(app.state.pool.config.definitions) == 6
 
 
 @pytest.mark.parametrize("kind", KINDS)

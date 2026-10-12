@@ -1,4 +1,4 @@
-"""The five shipped agent definitions, and ``specflo serve pool init`` that lays them down.
+"""The six shipped agent definitions, and ``specflo serve pool init`` that lays them down.
 
 A new daemon root has no pool directory. ``init`` writes one an admin can
 start from: a pool file that is all comments, so nothing is declared until the
@@ -8,8 +8,9 @@ admin has already edited is never written over.
 The definitions carry their limits in what they list, not in their prompts, so
 the checks here read the loaded front matter: the rebaser can write with git
 but is given nothing to push with, the model-update checker has no tool that
-changes anything, and the landscape scanner alone accepts a provider that may
-train on what it is sent.
+changes anything, the landscape scanner alone accepts a provider that may
+train on what it is sent, and the researcher reaches the web while its prompts
+stay on this host.
 """
 
 import re
@@ -28,7 +29,14 @@ runner = CliRunner()
 
 FIXTURES = Path(__file__).resolve().parent.parent / "fixtures" / "pool"
 
-SHIPPED = ("worker", "critic", "hermes-rebaser", "model-update-checker", "landscape-scanner")
+SHIPPED = (
+    "worker", "critic", "hermes-rebaser", "model-update-checker", "landscape-scanner",
+    "rfc-researcher",
+)
+
+# The pool file's example binds every shipped definition but the researcher,
+# which the issue gateway runs.
+IN_EXAMPLE = tuple(name for name in SHIPPED if name != "rfc-researcher")
 
 # pi's built-in tools that change something, and the ones that only read.
 STATE_CHANGING_TOOLS = {"bash", "powershell", "edit", "write"}
@@ -58,7 +66,7 @@ def _example(directory):
 # --- init ----------------------------------------------------------------
 
 
-def test_init_on_an_empty_root_writes_the_pool_file_and_the_five_definitions(tmp_path):
+def test_init_on_an_empty_root_writes_the_pool_file_and_the_six_definitions(tmp_path):
     root = tmp_path / "daemon"
 
     result = _init(root)
@@ -89,7 +97,7 @@ def test_the_written_pool_directory_is_valid_as_it_stands(tmp_path):
     result = _validate(root)
 
     assert result.exit_code == 0, result.output
-    assert "5 definitions" in result.output
+    assert "6 definitions" in result.output
 
 
 def test_init_is_idempotent_and_keeps_what_an_admin_edited(tmp_path):
@@ -147,7 +155,7 @@ def test_the_example_filled_from_the_fixture_passes_validate(tmp_path):
     result = _validate(root)
 
     assert result.exit_code == 0, result.output
-    assert "5 definitions" in result.output
+    assert "6 definitions" in result.output
     assert "5 pools" in result.output
 
 
@@ -158,7 +166,7 @@ def test_the_example_binds_every_shipped_definition_to_a_pool(tmp_path):
     data = _example(cli_admin.pool_dir(root))
 
     assert set(data) <= set(config.SECTIONS)
-    assert sorted(pool["definition"] for pool in data["pools"]) == sorted(SHIPPED)
+    assert sorted(pool["definition"] for pool in data["pools"]) == sorted(IN_EXAMPLE)
 
 
 def test_init_writes_to_the_names_the_configuration_reads():
@@ -187,7 +195,7 @@ def test_init_is_listed_under_the_pool_group():
 # --- the definitions themselves ------------------------------------------
 
 
-def test_exactly_the_five_definitions_ship():
+def test_exactly_the_six_definitions_ship():
     assert sorted(p.stem for p in cli_admin.SHIPPED_DIR.glob("*.md")) == sorted(SHIPPED)
 
 
@@ -255,3 +263,56 @@ def test_a_definition_that_carries_a_starting_key_is_refused(tmp_path, key):
         definitions.load_definition(path)
 
     assert refused.value.field == key
+
+
+# --- the researcher ------------------------------------------------------
+
+
+def test_the_rfc_researcher_reaches_the_web_while_its_prompts_stay_on_this_host():
+    researcher = _shipped("rfc-researcher")
+
+    assert researcher.egress == "local"
+    assert researcher.web is True
+
+
+def test_the_rfc_researcher_searches_with_its_key_and_commits_nothing():
+    researcher = _shipped("rfc-researcher")
+
+    assert researcher.tools == ("read", "bash")
+    assert set(researcher.skills) == {"tavily-cli", "donsetch-reddit"}
+    assert researcher.credentials == ("TAVILY_API_KEY",)
+    assert {"git commit", "git push"} <= set(researcher.deny)
+
+
+def test_the_rfc_researcher_names_nothing_of_one_host():
+    researcher = _shipped("rfc-researcher")
+
+    # Where the tools are installed and which internal host serves the wiki
+    # differ from host to host, so the operator's own copy adds them. A path
+    # that does not exist fails validation, and an internal address would
+    # open that address on a stranger's network.
+    assert researcher.paths == ()
+    assert researcher.web_internal == ()
+
+
+def test_the_rfc_researcher_reads_the_input_and_writes_the_four_report_parts():
+    prompt = _shipped("rfc-researcher").prompt.lower()
+
+    assert "input.md" in prompt
+    assert "report.md" in prompt
+    for part in ("short answer", "findings", "source link", "recommendation", "sources"):
+        assert part in prompt, part
+
+
+def test_the_rfc_researcher_passes_validate_on_any_host(tmp_path, monkeypatch):
+    # An empty home holds none of the tools a host may have installed.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    root = tmp_path / "daemon"
+    _init(root)
+
+    result = _validate(root)
+
+    assert result.exit_code == 0, result.output
+    loaded, errors = config.load_pool_config(cli_admin.pool_dir(root))
+    assert errors == []
+    assert "rfc-researcher" in {d.name for d in loaded.definitions}

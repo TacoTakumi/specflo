@@ -169,6 +169,7 @@ POOL_DEFINITION_FILES = [
     "hermes-rebaser.md",
     "model-update-checker.md",
     "landscape-scanner.md",
+    "rfc-researcher.md",
 ]
 
 
