@@ -853,13 +853,16 @@ def test_one_of_the_hosts_own_addresses_is_refused_and_logged_with_no_connection
             return await exchange(path, request)
 
     answer = asyncio.run(run())
+    # Python 3.12 calls a mapped address reserved, so the range check refuses
+    # it before the host is asked; later versions leave it to the host check
+    by_range = webproxy.refused_address(address)
     if form.startswith("socks"):
         assert answer == NO_AUTH + socks_reply(NOT_ALLOWED)
     else:
         assert status(answer) == webproxy.REFUSED
-        assert b"own" in answer
+        assert by_range or b"own" in answer
     assert dialer.calls == []
-    assert local.calls
+    assert by_range or local.calls
     assert logged_verdicts(root) == [(host, 443, "refused")]
 
 
