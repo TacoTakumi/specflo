@@ -274,11 +274,12 @@ def test_a_guard_for_named_modules_checks_those_alone(planted):
     assert "ERROR test_unguarded.py" not in result.stdout.str()
 
 
-def test_the_pool_guard_names_the_web_proxy_tests():
+def test_the_pool_guard_names_the_web_proxy_and_web_member_tests():
     from pool import conftest
 
     assert conftest.LEAK_GUARDED == {
         "test_webproxy.py", "test_webproxy_log.py", "test_webproxy_lease.py",
+        "test_web_member.py",
     }
 
 

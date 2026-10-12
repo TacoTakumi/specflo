@@ -160,9 +160,14 @@ def test_a_member_without_web_access_gets_no_socket_no_forwarder_and_no_variable
     web_socket = daemon / "web" / "lease-1.sock"
 
     with served(daemon / "bridge.sock"), proxy_served(web_socket):
-        rig.start(probed(rig, out, web_socket), bridge=daemon / "bridge.sock")
-        found = written(out)
-        assert forwarders_to(web_socket) == []
+        name = rig.start(probed(rig, out, web_socket), bridge=daemon / "bridge.sock")
+        try:
+            found = written(out)
+            assert forwarders_to(web_socket) == []
+        finally:
+            # Ended by its lease, as a pool ends it: the rig's kill would leave
+            # the host's socket behind.
+            runner.stop(name, "released", pool_token=POOL_TOKEN)
 
     assert found["env"] == {}
     assert found["bound"] is False

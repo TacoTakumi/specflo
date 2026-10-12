@@ -29,10 +29,14 @@ from specflo.pool.service import PoolService
 from .test_runner import ACCOUNTS, DEFINITION, POOL_TOKEN, Rig
 
 # The web proxy's tests serve a unix socket per web lease and start member
-# work, and each must be gone when its test ends: the leak guard checks these
+# work, and the web member's tests start a member with a web forwarder in its
+# sandbox; each must be gone when its test ends: the leak guard checks these
 # modules. The rest of the pool's tests clean up through their rig, and stay
 # out of it.
-LEAK_GUARDED = {"test_webproxy.py", "test_webproxy_log.py", "test_webproxy_lease.py"}
+LEAK_GUARDED = {
+    "test_webproxy.py", "test_webproxy_log.py", "test_webproxy_lease.py",
+    "test_web_member.py",
+}
 
 leak_guarded = leak_guard.autouse(only=LEAK_GUARDED)
 
