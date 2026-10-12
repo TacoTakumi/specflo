@@ -19,6 +19,7 @@ from pathlib import Path
 
 import pytest
 
+from specflo.daemon import gateway_pool
 from specflo.errors import SpecfloError
 from specflo.gateway import run, scratch
 from specflo.gateway.config import Forge
@@ -361,9 +362,9 @@ def _adapter(monkeypatch, client, service=None):
         connected.append((name, lease_token))
         return client
 
-    monkeypatch.setattr(run, "connect", connect)
+    monkeypatch.setattr(gateway_pool, "connect", connect)
     service = service or StubService()
-    return run.ServicePool(service), service, connected
+    return gateway_pool.ServicePool(service), service, connected
 
 
 def test_the_adapter_leases_through_the_service_and_ends_through_it(monkeypatch, tmp_path):

@@ -806,10 +806,11 @@ def test_a_daemon_without_a_gateway_has_no_service(tmp_path):
 
 def test_a_run_of_a_daemon_with_no_pool_in_force_fails_at_its_lease(tmp_path):
     from specflo.daemon.app import PoolInForce, create_app
+    from specflo.daemon.gateway_pool import ServicePool
 
     app = create_app(_configure_daemon(tmp_path))
     assert app.state.pool is None
-    pool = run.ServicePool(PoolInForce(app))
+    pool = ServicePool(PoolInForce(app))
 
     with pytest.raises(run.RunError, match="no agent pool"):
         asyncio.run(pool.lease("rfc-research", cwd=tmp_path, label="gateway", env={}))

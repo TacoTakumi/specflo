@@ -35,12 +35,12 @@ from .. import gateway
 from ..config import proxy_auth
 from ..errors import SpecfloError
 from ..gateway.config import GatewayConfigError, open_gateway, read_wiki
-from ..gateway.run import ServicePool
 from ..gateway.service import GatewayService
 from ..gateway.store import open_store
 from ..pool import accounts, bridge, events, service, watch, webproxy
 from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, auth, chat, pool_routes, prepare_root, web
+from .gateway_pool import ServicePool
 from .routes import router
 
 _log = logging.getLogger(__name__)
