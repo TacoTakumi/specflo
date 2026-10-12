@@ -80,7 +80,7 @@ from ..agent import lease
 from ..agent.client import HostUnreachableError, connect
 from ..agent.statefiles import AgentPaths, read_status
 from ..errors import SpecfloError
-from . import launch, piconfig, sandbox
+from . import launch, piconfig, sandbox, webproxy
 from .config import LOCAL, Account, Member
 from .definitions import AgentDefinition
 
@@ -192,8 +192,10 @@ def start(
     definition has web access. A local member gets it bound into its
     sandbox, a second forwarder to it on a loopback port of its own, and the
     proxy variables pointing at that port, with its provider's host kept off
-    the proxy. Like the bridge forwarder, it goes with the sandbox when the
-    lease ends. Any other member is not given it.
+    the proxy. It gets the lease's DNS socket beside it bound in as well
+    (``webproxy.dns_path``), with a forwarder to it on port 53 and a resolver
+    file naming that. Like the bridge forwarder, these go with the sandbox
+    when the lease ends. Any other member is not given them.
 
     *daemon_root* is the daemon's own directory, which the member's sandbox
     hides: it holds the pool's token and every client's.
@@ -230,10 +232,10 @@ def start(
             if bridge is not None and member.backing == LOCAL
             else None
         )
-        proxy, provider_host = (
+        proxy, provider_host, dns = (
             _web(web, config_dir, member)
             if web is not None and member.backing == LOCAL
-            else (None, None)
+            else (None, None, None)
         )
         spec = {
             "argv": launch.member_argv(
@@ -244,6 +246,7 @@ def start(
                 bridge=reach,
                 web=proxy,
                 daemon_root=daemon_root,
+                dns=dns,
             ),
             "env": launch.member_env(
                 definition, member, accounts, caller, config_dir=config_dir,
@@ -827,25 +830,29 @@ def _bridge(path: Path | str, config_dir: Path, member: Member) -> sandbox.Bridg
 
 def _web(
     path: Path | str, config_dir: Path, member: Member
-) -> tuple[sandbox.Bridge, str]:
+) -> tuple[sandbox.Bridge, str, str]:
     """How the local *member* reaches the web through its lease's proxy at
-    *path*, and the host of its provider, which stays off the proxy.
+    *path*, the host of its provider, which stays off the proxy, and the
+    socket of its lease's DNS forwarder beside the proxy's.
 
     A socket that is not served would be bound in all the same and every
     request through it refused, so the start is refused here instead.
     """
-    try:
-        served = stat.S_ISSOCK(os.stat(path).st_mode)
-    except OSError:
-        served = False
-    if not served:
-        raise launch.LaunchError(
-            f"member '{member.name}' has web access, and the web proxy of its lease at "
-            f"{path} is not served: the daemon serves it from the grant until the lease ends."
-        )
+    dns = webproxy.dns_path(path)
+    for socket_path, what in ((path, "the web proxy"), (dns, "the DNS forwarder")):
+        try:
+            served = stat.S_ISSOCK(os.stat(socket_path).st_mode)
+        except OSError:
+            served = False
+        if not served:
+            raise launch.LaunchError(
+                f"member '{member.name}' has web access, and {what} of its lease at "
+                f"{socket_path} is not served: the daemon serves it from the grant until the "
+                "lease ends."
+            )
     host, port = piconfig.local_provider(config_dir, member)
     reach = sandbox.Bridge(socket=str(path), port=sandbox.web_port(port), to=sandbox.WEB_PROXY)
-    return reach, host
+    return reach, host, str(dns)
 
 
 def _write_private(path: Path, text: str) -> None:

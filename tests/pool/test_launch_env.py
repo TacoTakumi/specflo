@@ -353,10 +353,16 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
         to=sandbox.WEB_PROXY,
     )
 
+    dns = str(tmp_path / "web" / "lease-1.dns")
+    tools = [shutil.which(name, path="/usr/bin:/bin") for name in ("socat", "unshare", "ip")]
+    if None in tools:
+        pytest.skip("unshare or ip is not on PATH, so no DNS forwarder can be built")
+
     def started(web):
         argv = launch.member_argv(
             DEFINITION, LOCAL_MEMBER, environ,
             cwd=work, state_dir=tmp_path, bridge=llama, web=web,
+            dns=None if web is None else dns,
         )
         env = member_env(
             DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER,
@@ -373,7 +379,12 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
     plain_argv, plain_env = started(None)
 
     assert (proxy.socket, proxy.socket) in binds(web_argv)
+    assert (dns, dns) in binds(web_argv)
+    resolv = (str(sandbox.resolver_file(tmp_path)), sandbox.resolver_target())
+    assert resolv in binds(web_argv)
+    # the DNS launcher first: the others listen in the network it makes
     assert web_argv[web_argv.index("--") + 1 :] == [
+        *sandbox.dns_argv(dns, *tools),
         *sandbox.forwarder_argv(llama, socat), *sandbox.forwarder_argv(proxy, socat), *pi,
     ]
     for name in PROXY_VARS:
@@ -385,10 +396,44 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
 
     assert (proxy.socket, proxy.socket) not in binds(plain_argv)
     assert proxy.socket not in plain_argv
+    assert dns not in plain_argv
+    assert resolv not in binds(plain_argv)
     assert plain_argv[plain_argv.index("--") + 1 :] == [
         *sandbox.forwarder_argv(llama, socat), *pi,
     ]
     assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS, *SOCKS_VARS) if name in plain_env] == []
+
+
+def test_a_dns_socket_without_a_web_proxy_is_refused(tmp_path):
+    # DNS is for a member that reaches the web through its proxy, and only it
+    work = tmp_path / "work"
+    work.mkdir()
+    llama = sandbox.Bridge(socket=str(tmp_path / "bridge.sock"), port=8080)
+    with pytest.raises(launch.LaunchError, match="DNS"):
+        launch.member_argv(
+            DEFINITION, LOCAL_MEMBER, {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            cwd=work, state_dir=tmp_path, bridge=llama, dns=str(tmp_path / "web" / "x.dns"),
+        )
+
+
+def test_a_web_member_with_no_unshare_on_the_path_is_refused_by_name(tmp_path):
+    socat = shutil.which("socat", path="/usr/bin:/bin")
+    if socat is None:
+        pytest.skip("socat is not on PATH, so no forwarder can be built")
+    # a PATH with socat alone on it
+    only = tmp_path / "bin"
+    only.mkdir()
+    (only / "socat").symlink_to(socat)
+    work = tmp_path / "work"
+    work.mkdir()
+    proxy = sandbox.Bridge(
+        socket=str(tmp_path / "web" / "lease-1.sock"), port=3128, to=sandbox.WEB_PROXY
+    )
+    with pytest.raises(launch.LaunchError, match="unshare"):
+        launch.member_argv(
+            DEFINITION, LOCAL_MEMBER, {"PATH": str(only), "HOME": str(tmp_path)},
+            cwd=work, state_dir=tmp_path, web=proxy, dns=str(tmp_path / "web" / "lease-1.dns"),
+        )
 
 
 def test_the_web_forwarder_s_port_is_never_the_provider_s():

@@ -311,6 +311,90 @@ def forwarder_argv(bridge: Bridge, socat: str) -> list[str]:
     ]
 
 
+# What a web member's DNS forwarder reaches, for the launcher's error output.
+DNS_FORWARDER = "the DNS forwarder of its lease"
+
+# What a web member's resolver file says, and the name it is made under in
+# the daemon's state. A stub resolver asks a nameserver on port 53 and the
+# file cannot name another port, so the forwarder listens there.
+_RESOLVER_TEXT = "nameserver 127.0.0.1\n"
+_RESOLVER_NAME = ".resolv.conf"
+
+
+def resolver_file(state_dir: Path | str) -> Path:
+    """The resolver file a web member's sandbox is given, made if need be,
+    beside the state the daemon keeps as ``empty_file`` is."""
+    made = Path(state_dir) / _RESOLVER_NAME
+    made.parent.mkdir(parents=True, exist_ok=True)
+    if not made.is_file() or made.read_text(encoding="utf-8") != _RESOLVER_TEXT:
+        made.write_text(_RESOLVER_TEXT, encoding="utf-8")
+    return made
+
+
+def resolver_target() -> str:
+    """Where a web member's resolver file is bound: where the host's resolver
+    file leads. It is often a link into ``/run``, which the sandbox mounts
+    fresh; a bind there is made in the fresh one, and the link leads to it."""
+    return os.path.realpath(RESOLVER)
+
+
+# The launcher a web member starts as first, in front of every other. A port
+# under 1024 is bound only with a capability over the network namespace, and
+# the sandbox's is owned by a user namespace above the member's, bwrap's own
+# for its fresh /dev, where no capability the member could be given counts.
+# So the launcher makes a user namespace whose root owns a network namespace
+# of its own, inside the sandbox's and as empty: loopback alone, brought up
+# here. That root starts the forwarder on 127.0.0.1 port 53, waits until it
+# listens, as the other launcher does, and runs the rest in a user namespace
+# below its own that maps the operator's uid and gid again: with no
+# capability anywhere, as the member ran before. Every other forwarder and pi
+# come up in the new network namespace. Each query is a connection of its
+# own to the lease's DNS socket, the end of it said after the one datagram;
+# the forwarder sends what comes back as the answer from port 53.
+_DNS_ENTER = """inner=$1 socket=$2 socat=$3 unshare=$4 ip=$5 looks=$6 look=$7 to=$8
+shift 8
+exec "$unshare" --user --map-root-user --net -- /bin/sh -c "$inner" dns \\
+    "$(id -u)" "$(id -g)" "$socket" "$socat" "$unshare" "$ip" "$looks" "$look" "$to" "$@"
+"""
+_DNS_FORWARDER = """uid=$1 gid=$2 socket=$3 socat=$4 unshare=$5 ip=$6 looks=$7 look=$8 to=$9
+shift 9
+if ! "$ip" link set lo up; then
+    echo "the loopback for $to did not come up" >&2
+    exit 1
+fi
+"$socat" -T 10 UDP4-RECVFROM:53,bind=127.0.0.1,fork "UNIX-CONNECT:$socket" &
+forwarder=$!
+until grep -q ": 0100007F:0035 00000000:0000 07" /proc/net/udp; do
+    if ! kill -0 "$forwarder" 2>/dev/null; then
+        echo "$to exited before it listened on 127.0.0.1:53" >&2
+        exit 1
+    fi
+    looks=$((looks - 1))
+    if [ "$looks" -le 0 ]; then
+        echo "$to did not listen on 127.0.0.1:53 in time" >&2
+        exit 1
+    fi
+    sleep "$look"
+done
+exec "$unshare" --user --map-user="$uid" --map-group="$gid" -- "$@"
+"""
+
+
+def dns_argv(socket: str, socat: str, unshare: str, ip: str) -> list[str]:
+    """The launcher that starts a web member's DNS forwarder to *socket* on
+    127.0.0.1 port 53 and then becomes the command after it; *socat*,
+    *unshare* and *ip* are the paths of the programs it runs.
+
+    It comes before every other launcher: the network namespace it makes is
+    the one they listen in and pi runs in.
+    """
+    looks = max(1, int(FORWARDER_WAIT / _FORWARDER_LOOK))
+    return [
+        "/bin/sh", "-c", _DNS_ENTER, "dns", _DNS_FORWARDER,
+        socket, socat, unshare, ip, str(looks), str(_FORWARDER_LOOK), DNS_FORWARDER,
+    ]
+
+
 @dataclass(frozen=True)
 class Limits:
     """What one member may use: memory, processor time and processes.
@@ -757,6 +841,7 @@ def base_argv(
     links: Iterable[tuple[str, str]] = (),
     limits: Limits | None = None,
     chdir: Path | str | None = None,
+    files: Iterable[tuple[str, str]] = (),
 ) -> list[str]:
     """The prefix every member's command runs behind, ending with the separator.
 
@@ -779,6 +864,10 @@ def base_argv(
     *empty* a hidden file is passed over and a hidden directory is not: a
     caller that hides nothing needs no file, and one that hides a file and
     gives no file to hide it with is asking for a boundary that is not there.
+
+    *files* are (source, path) pairs, each file bound read-only over *path*
+    right after the fresh mounts, so one may go in a fresh directory: a web
+    member's resolver file goes where the host's resolver file leads.
 
     *links* are (target, path) pairs, each a link made again at *path* after
     the read-only binds: a link on the way to a bound path that lies in a
@@ -832,6 +921,7 @@ def base_argv(
         "/proc",
         *[word for path in FRESH_DIRS for word in ("--tmpfs", path)],
         *resolver_argv(egress),
+        *[word for source, path in files for word in ("--ro-bind", str(source), path)],
         *(hidden_argv(over, empty) if empty is not None else []),
         *[word for path in readonly for word in ("--ro-bind", path, path)],
         *[word for target, path in links for word in ("--symlink", target, path)],

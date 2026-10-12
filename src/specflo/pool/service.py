@@ -125,13 +125,15 @@ place a request and to check expiry.
 
 A local member leased under a definition with web access reaches the web
 through a proxy of its lease's own (see ``webproxy``), served on a unix
-socket in the daemon root, ``web_socket_path``, on the daemon's event loop.
-The grant has it served before the member starts, so the socket is there for
-the member's sandbox to bind; ``end_lease`` has it stopped and the socket
-removed, first of all, so an ended lease reaches the web no more while its
-member takes its time to stop. A tunnel through the proxy has no idle
-timeout: the ending is what closes it. The service runs off the loop, and
-hands both to the loop through ``WebProxies``, which the daemon puts on the
+socket in the daemon root, ``web_socket_path``, on the daemon's event loop,
+and resolves names through a DNS forwarder of its lease's own beside it,
+``dns_socket_path``. The grant has both served before the member starts, so
+the sockets are there for the member's sandbox to bind; ``end_lease`` has
+them stopped and the sockets removed, first of all, so an ended lease
+reaches the web no more while its member takes its time to stop. A tunnel
+through the proxy has no idle timeout: the ending is what closes it. The
+service runs off the loop, and hands the start and the stop to the loop
+through ``WebProxies``, which the daemon puts on the
 service while it serves. A service without them grants no web lease: the
 member would start with no way to the web it was promised, and is refused.
 
@@ -165,6 +167,7 @@ from ..errors import SpecfloError
 from . import egress as egress_classes
 from . import (
     accounts, console, expiry, launch, ledger, piconfig, preempt, runner, sandbox, teamlease,
+    webproxy,
 )
 from .config import CONSOLE, LOCAL, Pool, PoolConfig
 from .teams import Team
@@ -271,11 +274,18 @@ def web_socket_path(root: Path | str, lease_id: str) -> Path:
     return Path(root) / WEB_DIRNAME / f"{lease_id}.sock"
 
 
+def dns_socket_path(root: Path | str, lease_id: str) -> Path:
+    """Where the DNS forwarder of the lease *lease_id* is served: beside its
+    web proxy, ``web/<lease id>.dns`` in the daemon root *root*."""
+    return webproxy.dns_path(web_socket_path(root, lease_id))
+
+
 class WebProxies(Protocol):
     """What serves the web proxies of a daemon's leases, on the daemon's loop
-    (see ``daemon.app.WebProxies``). ``open`` serves the proxy of a lease
-    and answers with its socket's path; ``close`` stops it and removes the
-    socket, does nothing for a lease with none, and raises nothing."""
+    (see ``daemon.app.WebProxies``). ``open`` serves the proxy of a lease,
+    and its DNS forwarder at ``dns_socket_path``, and answers with the
+    proxy socket's path; ``close`` stops both and removes the sockets, does
+    nothing for a lease with none, and raises nothing."""
 
     def open(self, lease_id: str, member: str, internal: Sequence[str]) -> Path: ...
 

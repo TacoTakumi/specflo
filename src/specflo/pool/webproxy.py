@@ -7,9 +7,15 @@ of three requests: a CONNECT, which asks for a tunnel to a host and port and
 carries HTTPS, a plain HTTP request that names its whole URI, and a SOCKS5
 CONNECT (RFC 1928, with no authentication), which asks for a tunnel too and
 is told from the other two by its first byte. A tool that resolves every
-name it is given itself takes a SOCKS5 proxy with remote lookups instead,
-which is how it gets anywhere from a sandbox that has no DNS. All three are
-forwarded to a public host, and nothing else is.
+name it is given itself takes a SOCKS5 proxy with remote lookups instead.
+All three are forwarded to a public host, and nothing else is.
+
+Some tools resolve a name themselves even then, before they hand it to the
+proxy, so the sandbox has DNS too: a second socket of the lease's own,
+``dns_path`` beside the proxy's, takes each query a forwarder inside brings
+it and answers it through the host's resolver (``DnsForwarder``). An answer
+is an address and no route to it: the connection still goes through the
+proxy, which resolves the name again and checks what it dials.
 
 The internet is not the only thing a proxy on this host can reach. The
 rig's own services listen on loopback, the operator's network sits behind
@@ -49,6 +55,7 @@ import os
 import re
 import socket
 import stat
+import struct
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -126,6 +133,35 @@ _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 # An address as the resolver and the dialer pass it: the text of an IP address.
 Resolver = Callable[[str, int], Awaitable[Iterable[str]]]
 Dialer = Callable[[str, int], Awaitable[tuple[asyncio.StreamReader, asyncio.StreamWriter]]]
+
+# What the DNS forwarder asks a query of: the query as it came, the answer as
+# it goes back.
+DnsUpstream = Callable[[bytes], Awaitable[bytes]]
+
+# What a lease's DNS socket ends in, beside its proxy socket.
+DNS_SUFFIX = ".dns"
+
+# Where the host names its resolver.
+RESOLVER = "/etc/resolv.conf"
+
+# How long the host's resolver may take to answer, in seconds. A stub
+# resolver waits five for an answer before it asks again, and SERVFAIL
+# within that is an answer it takes.
+_DNS_SECONDS = 4.0
+
+# A DNS message: its header, the longest one a datagram holds, the response
+# bit in its third byte, and the answer code for a server that failed.
+_DNS_HEADER = 12
+_DNS_MAX = 65535
+_QR = 0x80
+_SERVFAIL = 2
+
+# The record types a query is logged with by name; any other is logged as
+# TYPE and its number (RFC 3597).
+_DNS_TYPES = {
+    1: "A", 2: "NS", 5: "CNAME", 6: "SOA", 12: "PTR", 15: "MX", 16: "TXT", 28: "AAAA",
+    33: "SRV", 64: "SVCB", 65: "HTTPS", 255: "ANY",
+}
 
 
 async def resolve(host: str, port: int) -> list[str]:
@@ -275,35 +311,7 @@ class WebProxy:
         """
         if self._server is not None:
             raise SpecfloError(f"The web proxy at {self.path} is served already.")
-        if len(os.fsencode(self.path)) > _SOCKET_PATH_MAX:
-            raise SpecfloError(
-                f"The web proxy socket path {self.path} is too long for a unix socket, which "
-                f"takes {_SOCKET_PATH_MAX} bytes at most; serve it from a shorter path."
-            )
-        try:
-            found = os.lstat(self.path)
-        except FileNotFoundError:
-            pass
-        else:
-            if not stat.S_ISSOCK(found.st_mode):
-                raise SpecfloError(
-                    f"{self.path} is there and is not a socket; the web proxy is served on "
-                    "a socket at that path, so move what is there out of the way."
-                )
-        # bound, made owner-only, and only then listening: a socket that does
-        # not listen yet refuses every connection
-        server = await asyncio.start_unix_server(
-            self._serve, path=str(self.path), limit=_HEAD_MAX, start_serving=False,
-        )
-        try:
-            os.chmod(self.path, 0o600)
-            self._made = _identity(self.path)
-            await server.start_serving()
-        except BaseException:
-            server.close()
-            self._unlink()
-            raise
-        self._server = server
+        self._server, self._made = await _bound(self.path, self._serve, "web proxy")
 
     async def stop(self) -> None:
         """Stop serving, end every connection still open and remove the socket.
@@ -322,9 +330,7 @@ class WebProxy:
         self._unlink()
 
     def _unlink(self) -> None:
-        """Remove the socket, if what is at the path is still the one bound."""
-        if self._made is not None and _identity(self.path) == self._made:
-            self.path.unlink()
+        _unlink(self.path, self._made)
         self._made = None
 
     async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -384,9 +390,7 @@ class WebProxy:
         """
         if self._root is None or (request is None and verdict is None):
             return
-        now = datetime.datetime.now(datetime.timezone.utc)
-        line = {
-            "time": now.isoformat(timespec="seconds"),
+        _append(self._root, {
             "lease": self.lease,
             "member": self.member,
             "host": None if request is None else request.host,
@@ -394,14 +398,7 @@ class WebProxy:
             "verdict": verdict or "failed",
             "bytes_up": 0 if sent is None else sent.count,
             "bytes_down": 0 if received is None else received.count,
-        }
-        path = log_path(self._root, now.date())
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with open(path, "a", encoding="utf-8") as log_file:
-                log_file.write(json.dumps(line) + "\n")
-        except OSError as exc:
-            log.warning("the web proxy could not log a request to %s: %s", path, exc)
+        })
 
     async def _checked(self, host: str, port: int) -> list[str]:
         """The addresses *host* resolves to, each of them checked.
@@ -740,6 +737,304 @@ async def _relay(
         body.cancel()
         with contextlib.suppress(asyncio.CancelledError, _Closed, ConnectionError):
             await body
+
+
+def dns_path(proxy_path: Path | str) -> Path:
+    """Where the DNS forwarder of the lease whose proxy is served at
+    *proxy_path* is served: beside it, under the same name, ending ``.dns``.
+    The name is no longer than the proxy's, so a path that holds the one
+    holds the other."""
+    return Path(proxy_path).with_suffix(DNS_SUFFIX)
+
+
+def host_nameserver(text: str) -> str:
+    """The resolver the host's resolver configuration *text* names first.
+
+    With none named, the C library asks the local host, and so does this.
+    """
+    for line in text.splitlines():
+        words = line.split()
+        if len(words) >= 2 and words[0] == "nameserver" and _literal(words[1]) is not None:
+            return words[1]
+    return "127.0.0.1"
+
+
+class UdpUpstream:
+    """The resolver at *address* on *port*, asked over UDP from the loop.
+
+    A call sends one query and answers with the first datagram back that
+    carries its id and says it is a response; a datagram from anywhere else
+    is not let in, as the socket is connected to the resolver. Raises
+    ``TimeoutError`` when none comes within *timeout* seconds, and
+    ``OSError`` when the resolver cannot be reached.
+    """
+
+    def __init__(self, address: str, port: int = 53, *, timeout: float = _DNS_SECONDS) -> None:
+        self.address, self.port, self.timeout = address, port, timeout
+
+    async def __call__(self, query: bytes) -> bytes:
+        loop = asyncio.get_running_loop()
+        answered: asyncio.Future[bytes] = loop.create_future()
+        ident = query[:2]
+
+        class _Answers(asyncio.DatagramProtocol):
+            def datagram_received(self, data: bytes, addr) -> None:
+                if (len(data) >= _DNS_HEADER and data[:2] == ident and data[2] & _QR
+                        and not answered.done()):
+                    answered.set_result(data)
+
+            def error_received(self, exc: Exception) -> None:
+                if not answered.done():
+                    answered.set_exception(exc)
+
+        transport, _ = await loop.create_datagram_endpoint(
+            _Answers, remote_addr=(self.address, self.port),
+        )
+        try:
+            transport.sendto(query)
+            async with asyncio.timeout(self.timeout):
+                return await answered
+        finally:
+            transport.close()
+
+
+def host_upstream() -> UdpUpstream:
+    """The host's own resolver, as its resolver configuration names it."""
+    try:
+        text = Path(RESOLVER).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        text = ""
+    return UdpUpstream(host_nameserver(text))
+
+
+class DnsForwarder:
+    """The DNS a web member's sandbox resolves names through, served on a
+    unix socket at *path*, on the running loop.
+
+    The sandbox's forwarder takes each UDP query a tool sends to port 53
+    inside and makes one connection of it here: the query, then the end of
+    it. The query goes to *upstream*, the host's resolver unless given
+    (``host_upstream``), and its answer comes back unchanged. The query is
+    read only far enough to know it is one plain question and to log its
+    name and type; one the forwarder cannot read, or one the upstream does
+    not answer, is answered SERVFAIL, and what has no header to answer is
+    dropped. Given the daemon *root*, each query leaves one line in the
+    proxy's log, with the name as its host, no port, and the record type.
+
+    An answer gives the member an address and no way to it: a connection
+    still goes through the proxy, which resolves the name again and checks
+    what it dials. ``start`` and ``stop`` are as the proxy's.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        *,
+        upstream: DnsUpstream | None = None,
+        lease: str | None = None,
+        member: str | None = None,
+        root: Path | None = None,
+    ) -> None:
+        self.path = Path(path)
+        self._ask = upstream or host_upstream()
+        self._server: asyncio.base_events.Server | None = None
+        self._made: tuple[int, int] | None = None
+        self._open: set[asyncio.Task] = set()
+        self.lease, self.member = lease, member
+        self._root = None if root is None else Path(root)
+
+    async def __aenter__(self) -> Self:
+        await self.start()
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.stop()
+
+    async def start(self) -> None:
+        """Serve the forwarder on the socket at ``path``; raises as the proxy's ``start``."""
+        if self._server is not None:
+            raise SpecfloError(f"The DNS forwarder at {self.path} is served already.")
+        self._server, self._made = await _bound(self.path, self._serve, "DNS forwarder")
+
+    async def stop(self) -> None:
+        """Stop serving, end every query still open and remove the socket."""
+        server, self._server = self._server, None
+        if server is None:
+            return
+        server.close()
+        still_open = list(self._open)
+        for task in still_open:
+            task.cancel()
+        await asyncio.gather(*still_open, return_exceptions=True)
+        await server.wait_closed()
+        _unlink(self.path, self._made)
+        self._made = None
+
+    async def _serve(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        task = asyncio.current_task()
+        if task is not None:
+            self._open.add(task)
+        query = answer = b""
+        name = kind = None
+        verdict = None
+        try:
+            async with asyncio.timeout(_HEAD_SECONDS):
+                while len(query) <= _DNS_MAX:
+                    more = await reader.read(_DNS_MAX + 1 - len(query))
+                    if not more:
+                        break
+                    query += more
+            if len(query) < _DNS_HEADER or len(query) > _DNS_MAX:
+                # nothing to answer: no id to answer it under, or no datagram
+                return
+            try:
+                name, kind, end = _question(query)
+            except ValueError:
+                verdict, answer = "failed", _servfail(query, None)
+            else:
+                try:
+                    answer = await asyncio.wait_for(self._ask(query), _DNS_SECONDS)
+                    if len(answer) < _DNS_HEADER or answer[:2] != query[:2] or not answer[2] & _QR:
+                        raise ValueError("the upstream's answer is not to this query")
+                    verdict = "dns"
+                except Exception:
+                    log.debug("the DNS forwarder's upstream did not answer %s", name, exc_info=True)
+                    verdict, answer = "failed", _servfail(query, end)
+            writer.write(answer)
+            await writer.drain()
+        except (TimeoutError, ConnectionError):
+            pass
+        except Exception:
+            log.debug("a DNS query failed", exc_info=True)
+        finally:
+            writer.close()
+            if task is not None:
+                self._open.discard(task)
+            if self._root is not None and verdict is not None:
+                _append(self._root, {
+                    "lease": self.lease,
+                    "member": self.member,
+                    "host": name,
+                    "port": None,
+                    "type": kind,
+                    "verdict": verdict,
+                    "bytes_up": len(query),
+                    "bytes_down": len(answer),
+                })
+
+
+def _question(query: bytes) -> tuple[str, str, int]:
+    """The name and record type *query* asks for, and where its question ends.
+
+    The query must be a standard query that asks one question in class IN
+    and carries no answer of its own, and the name must be labels of
+    printable ASCII, written out with no pointer. Raises ``ValueError`` for
+    anything else.
+    """
+    questions, answers, authority = struct.unpack("!HHH", query[4:10])
+    if query[2] & _QR or (query[2] >> 3) & 0x0F != 0:
+        raise ValueError("not a standard query")
+    if questions != 1 or answers or authority:
+        raise ValueError("not one question alone")
+    labels: list[str] = []
+    at = _DNS_HEADER
+    while True:
+        if at >= len(query):
+            raise ValueError("the name runs past the query")
+        length = query[at]
+        if length == 0:
+            break
+        if length > 63:
+            raise ValueError("a label that is a pointer or too long")
+        label = query[at + 1 : at + 1 + length]
+        if len(label) != length or not all(0x21 <= byte < 0x7F for byte in label):
+            raise ValueError("a label that is not printable ASCII")
+        labels.append(label.decode("ascii").lower())
+        at += 1 + length
+    end = at + 5
+    if end > len(query):
+        raise ValueError("the question is cut short")
+    qtype, qclass = struct.unpack("!HH", query[at + 1 : end])
+    if qclass != 1:
+        raise ValueError("not in class IN")
+    name = ".".join(labels) or "."
+    if len(name) > 253:
+        raise ValueError("the name is too long")
+    return name, _DNS_TYPES.get(qtype, f"TYPE{qtype}"), end
+
+
+def _servfail(query: bytes, end: int | None) -> bytes:
+    """SERVFAIL in answer to *query*: its id, opcode and recursion flag, and
+    its question when it was read whole, up to *end*."""
+    # the query's opcode and recursion flag, kept; recursion available
+    flags = (_QR | (query[2] & 0x79)) << 8 | 0x80 | _SERVFAIL
+    if end is None:
+        return query[:2] + struct.pack("!H4H", flags, 0, 0, 0, 0)
+    return query[:2] + struct.pack("!H4H", flags, 1, 0, 0, 0) + query[_DNS_HEADER:end]
+
+
+async def _bound(path: Path, serve, what: str):
+    """A unix server of *serve* on *path*, listening, and the identity of its
+    socket; *what* names the server in the errors.
+
+    Raises ``SpecfloError`` for a path too long to bind a socket on or one
+    that holds something other than a socket, which is left as it is. A
+    socket found at the path is replaced.
+    """
+    if len(os.fsencode(path)) > _SOCKET_PATH_MAX:
+        raise SpecfloError(
+            f"The {what} socket path {path} is too long for a unix socket, which "
+            f"takes {_SOCKET_PATH_MAX} bytes at most; serve it from a shorter path."
+        )
+    try:
+        found = os.lstat(path)
+    except FileNotFoundError:
+        pass
+    else:
+        if not stat.S_ISSOCK(found.st_mode):
+            raise SpecfloError(
+                f"{path} is there and is not a socket; the {what} is served on "
+                "a socket at that path, so move what is there out of the way."
+            )
+    # bound, made owner-only, and only then listening: a socket that does
+    # not listen yet refuses every connection
+    server = await asyncio.start_unix_server(
+        serve, path=str(path), limit=_HEAD_MAX, start_serving=False,
+    )
+    made = None
+    try:
+        os.chmod(path, 0o600)
+        made = _identity(path)
+        await server.start_serving()
+    except BaseException:
+        server.close()
+        _unlink(path, made)
+        raise
+    return server, made
+
+
+def _unlink(path: Path, made: tuple[int, int] | None) -> None:
+    """Remove the socket at *path*, if what is there is still the one bound as *made*."""
+    if made is not None and _identity(path) == made:
+        path.unlink()
+
+
+def _append(root: Path, line: dict) -> None:
+    """Add *line*, stamped with the time, to the day's request log under the
+    daemon root *root*.
+
+    The line is one small append, made on the loop so it is written also
+    when a stop cancels the request; a log that cannot be written is said,
+    and the server goes on.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc)
+    path = log_path(root, now.date())
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "a", encoding="utf-8") as log_file:
+            log_file.write(json.dumps({"time": now.isoformat(timespec="seconds"), **line}) + "\n")
+    except OSError as exc:
+        log.warning("the web proxy could not log a request to %s: %s", path, exc)
 
 
 def _identity(path: Path) -> tuple[int, int] | None:

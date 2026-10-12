@@ -19,10 +19,13 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import datetime
 import ipaddress
+import json
 import os
 import shutil
 import stat
+import struct
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
@@ -767,6 +770,302 @@ def test_a_client_that_speaks_neither_socks5_nor_http_is_refused_at_once(path, r
     assert status(answer) == 400
     assert resolver.calls == []
     assert dialer.calls == []
+
+
+# -- DNS for the member's own lookups ---------------------------------------
+#
+# A tool that resolves every name itself, even through a SOCKS5 proxy, needs
+# a resolver inside the sandbox. The daemon serves one on a second unix
+# socket per lease: each connection carries one DNS query, which goes to the
+# host's resolver unchanged, and the answer comes back unchanged. The query is
+# read only far enough to log its name and type; one the forwarder cannot
+# read is answered SERVFAIL, or not at all when it has no header to answer.
+# The upstream here is a stub, so nothing leaves this machine.
+
+A, AAAA = 1, 28
+SERVFAIL = 2
+
+
+def dns_query(name: str, qtype: int = A, ident: int = 0x1234, flags: int = 0x0100,
+              counts: tuple[int, int, int, int] = (1, 0, 0, 0)) -> bytes:
+    """A DNS query for *name* and *qtype*, recursion desired, as a stub resolver sends it."""
+    labels = b"".join(bytes((len(part),)) + part.encode() for part in name.split(".") if part)
+    return (
+        struct.pack("!HH4H", ident, flags, *counts)
+        + labels + b"\x00" + struct.pack("!HH", qtype, 1)
+    )
+
+
+def dns_answer(query: bytes, address: str) -> bytes:
+    """The answer to the A *query*: *address*, for a minute."""
+    ident = query[:2]
+    return (
+        ident + struct.pack("!H4H", 0x8180, 1, 1, 0, 0) + query[12:]
+        + b"\xc0\x0c" + struct.pack("!HHIH", A, 1, 60, 4)
+        + ipaddress.IPv4Address(address).packed
+    )
+
+
+class StubUpstream:
+    """The host's resolver as a test gives it: names mapped to one address each.
+
+    Every query it is sent is recorded; *error* is raised instead of an answer.
+    """
+
+    def __init__(self, names: dict[str, str] | None = None, *, error: Exception | None = None,
+                 answer: bytes | None = None):
+        self.names = names or {}
+        self.error = error
+        self.answer = answer
+        self.queries: list[bytes] = []
+
+    async def __call__(self, query: bytes) -> bytes:
+        self.queries.append(query)
+        if self.error is not None:
+            raise self.error
+        if self.answer is not None:
+            return self.answer
+        name, qtype, end = question(query)
+        if qtype != A:
+            # no record of any other type: an answer with nothing in it
+            return query[:2] + struct.pack("!H4H", 0x8180, 1, 0, 0, 0) + query[12:end]
+        return dns_answer(query[:end], self.names.get(name, "0.0.0.0"))
+
+
+def question(query: bytes) -> tuple[str, int, int]:
+    """The name, in lower case, and the type a query asks for, and where
+    its question ends."""
+    labels, at = [], 12
+    while query[at]:
+        labels.append(query[at + 1 : at + 1 + query[at]].decode().lower())
+        at += 1 + query[at]
+    return ".".join(labels), struct.unpack("!H", query[at + 1 : at + 3])[0], at + 5
+
+
+def dns(path: Path, **kwargs) -> webproxy.DnsForwarder:
+    return webproxy.DnsForwarder(path, **kwargs)
+
+
+async def ask(path: Path, query: bytes) -> bytes:
+    """Send *query* to the DNS socket at *path* as the sandbox's forwarder
+    does, the end of it said, and read the answer to the end."""
+    reader, writer = await asyncio.open_unix_connection(str(path))
+    try:
+        writer.write(query)
+        await writer.drain()
+        writer.write_eof()
+        return await asyncio.wait_for(reader.read(), 10)
+    finally:
+        writer.close()
+
+
+def rcode(answer: bytes) -> int:
+    return answer[3] & 0x0F
+
+
+@pytest.fixture
+def dns_path(short_dir: Path) -> Path:
+    return short_dir / "web.dns"
+
+
+def test_the_dns_socket_is_served_beside_the_proxy_socket():
+    assert webproxy.dns_path(Path("/r/web/lease-1.sock")) == Path("/r/web/lease-1.dns")
+
+
+def test_a_query_goes_to_the_upstream_unchanged_and_its_answer_comes_back_unchanged(dns_path):
+    upstream = StubUpstream({"research.example": "203.0.113.7"})
+    query = dns_query("research.example")
+
+    async def run() -> bytes:
+        async with dns(dns_path, upstream=upstream):
+            return await ask(dns_path, query)
+
+    answer = asyncio.run(run())
+    assert upstream.queries == [query]
+    assert answer == dns_answer(query, "203.0.113.7")
+
+
+def test_each_query_leaves_one_line_naming_its_name_and_type(dns_path, short_dir):
+    root = short_dir / "daemon"
+    upstream = StubUpstream({"research.example": "203.0.113.7"})
+
+    async def run() -> None:
+        async with dns(dns_path, upstream=upstream, lease="lease-1", member="m", root=root):
+            await ask(dns_path, dns_query("Research.Example", A))
+            await ask(dns_path, dns_query("research.example", AAAA))
+
+    asyncio.run(run())
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    found = [json.loads(line) for line in webproxy.log_path(root, today).read_text().splitlines()]
+    assert [(line["host"], line["type"], line["port"], line["verdict"]) for line in found] == [
+        ("research.example", "A", None, "dns"), ("research.example", "AAAA", None, "dns"),
+    ]
+    assert {line["lease"] for line in found} == {"lease-1"}
+    assert {line["member"] for line in found} == {"m"}
+    assert found[0]["bytes_up"] == len(dns_query("Research.Example"))
+    assert found[0]["bytes_down"] > 0
+
+
+@pytest.mark.parametrize("query", [
+    dns_query("research.example", flags=0x8180),               # an answer, not a query
+    dns_query("research.example", flags=0x2900),               # an update, not a query
+    dns_query("research.example", counts=(2, 0, 0, 0)),        # two questions
+    dns_query("research.example", counts=(1, 1, 0, 0)),        # a query with an answer in it
+    dns_query("research.example")[:-3],                         # the question cut short
+    dns_query("research.example")[:12] + b"\xc0\x0c\x00\x01\x00\x01",  # a pointer for a name
+    dns_query("research.example")[:12] + b"\x05a\x00b\x00\x00\x00\x01\x00\x01",  # NUL in a label
+], ids=["answer", "update", "two questions", "with an answer", "cut short", "pointer", "nul"])
+def test_a_query_the_forwarder_cannot_read_is_answered_servfail_and_not_forwarded(dns_path, query):
+    upstream = StubUpstream()
+
+    async def run() -> bytes:
+        async with dns(dns_path, upstream=upstream):
+            return await ask(dns_path, query)
+
+    answer = asyncio.run(run())
+    assert upstream.queries == []
+    assert answer[:2] == query[:2]
+    assert answer[2] & 0x80  # a response
+    assert rcode(answer) == SERVFAIL
+
+
+@pytest.mark.parametrize("query", [b"", b"\x12\x34\x01", b"\x00" * 70000],
+                         ids=["nothing", "no header", "larger than a datagram"])
+def test_what_has_no_header_or_is_too_large_is_dropped_with_no_answer(dns_path, query):
+    upstream = StubUpstream()
+
+    async def run() -> bytes:
+        async with dns(dns_path, upstream=upstream):
+            reader, writer = await asyncio.open_unix_connection(str(dns_path))
+            try:
+                writer.write(query)
+                await writer.drain()
+                writer.write_eof()
+                return await asyncio.wait_for(reader.read(), 10)
+            except ConnectionError:
+                return b""
+            finally:
+                writer.close()
+
+    assert asyncio.run(run()) == b""
+    assert upstream.queries == []
+
+
+@pytest.mark.parametrize("upstream", [
+    StubUpstream(error=TimeoutError()),
+    StubUpstream(error=OSError("unreachable")),
+    StubUpstream(answer=b"\x00\x01"),
+    StubUpstream(answer=dns_answer(dns_query("x.example", ident=0x9999), "203.0.113.7")),
+], ids=["timeout", "unreachable", "short answer", "another query's answer"])
+def test_an_upstream_that_does_not_answer_this_query_is_answered_servfail(dns_path, upstream):
+    query = dns_query("research.example")
+
+    async def run() -> bytes:
+        async with dns(dns_path, upstream=upstream):
+            return await ask(dns_path, query)
+
+    answer = asyncio.run(run())
+    assert answer[:2] == query[:2]
+    assert rcode(answer) == SERVFAIL
+    # the question is echoed, so the stub resolver takes the answer as its own
+    assert answer[12:] == query[12:]
+    assert struct.unpack("!H", answer[4:6]) == (1,)
+
+
+def test_the_dns_socket_is_owner_only_while_served_and_gone_after(dns_path):
+    async def run() -> None:
+        served = dns(dns_path, upstream=StubUpstream())
+        assert served.path == dns_path
+        await served.start()
+        try:
+            mode = os.stat(dns_path).st_mode
+            assert stat.S_ISSOCK(mode)
+            assert stat.S_IMODE(mode) == 0o600
+        finally:
+            await served.stop()
+        assert not dns_path.exists()
+        await served.stop()  # a second stop is a no-op
+
+    asyncio.run(run())
+
+
+def test_what_is_not_a_socket_at_the_dns_path_is_refused_and_left(dns_path):
+    dns_path.write_text("the operator's\n", encoding="utf-8")
+
+    async def run() -> None:
+        async with dns(dns_path, upstream=StubUpstream()):
+            pass
+
+    with pytest.raises(SpecfloError, match="not a socket"):
+        asyncio.run(run())
+    assert dns_path.read_text(encoding="utf-8") == "the operator's\n"
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("# generated\nnameserver 127.0.0.53\noptions edns0 trust-ad\nsearch .\n", "127.0.0.53"),
+    ("search lan\nnameserver ::1\nnameserver 10.0.0.1\n", "::1"),
+    ("nameserver not-an-address\nnameserver 192.0.2.53\n", "192.0.2.53"),
+    ("options rotate\n", "127.0.0.1"),
+    ("", "127.0.0.1"),
+], ids=["resolved stub", "first of two", "skips what is no address", "none", "empty"])
+def test_the_host_resolver_is_the_first_nameserver_the_host_names(text, expected):
+    # with none named, the C library asks the local host, and so does the forwarder
+    assert webproxy.host_nameserver(text) == expected
+
+
+class UdpResolver(asyncio.DatagramProtocol):
+    """A resolver on a loopback UDP port: it answers each query first with
+    the answer to another query, then with its own."""
+
+    def __init__(self) -> None:
+        self.transport: asyncio.DatagramTransport | None = None
+        self.queries: list[bytes] = []
+
+    def connection_made(self, transport) -> None:
+        self.transport = transport
+
+    def datagram_received(self, data: bytes, addr) -> None:
+        self.queries.append(data)
+        other = bytes((data[0] ^ 0xFF,)) + data[1:]
+        self.transport.sendto(dns_answer(other, "198.51.100.1"), addr)
+        self.transport.sendto(dns_answer(data, "203.0.113.7"), addr)
+
+
+def test_the_udp_upstream_takes_the_answer_to_its_own_query_alone():
+    query = dns_query("research.example")
+
+    async def run() -> tuple[bytes, list[bytes]]:
+        loop = asyncio.get_running_loop()
+        transport, resolver = await loop.create_datagram_endpoint(
+            UdpResolver, local_addr=("127.0.0.1", 0),
+        )
+        try:
+            port = transport.get_extra_info("sockname")[1]
+            answer = await webproxy.UdpUpstream("127.0.0.1", port, timeout=5)(query)
+            return answer, resolver.queries
+        finally:
+            transport.close()
+
+    answer, queries = asyncio.run(run())
+    assert queries == [query]
+    assert answer == dns_answer(query, "203.0.113.7")
+
+
+def test_the_udp_upstream_gives_up_after_its_timeout():
+    async def run() -> None:
+        loop = asyncio.get_running_loop()
+        # a port that takes the query and never answers
+        transport, _ = await loop.create_datagram_endpoint(
+            asyncio.DatagramProtocol, local_addr=("127.0.0.1", 0),
+        )
+        try:
+            port = transport.get_extra_info("sockname")[1]
+            with pytest.raises(TimeoutError):
+                await webproxy.UdpUpstream("127.0.0.1", port, timeout=0.2)(dns_query("a.example"))
+        finally:
+            transport.close()
+
+    asyncio.run(run())
 
 
 # The calls that would block the daemon's event loop, by their dotted name

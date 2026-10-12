@@ -51,16 +51,45 @@ _log = logging.getLogger(__name__)
 _WEB_SECONDS = 30.0
 
 
+class _LeaseWeb:
+    """The web proxy of one lease and its DNS forwarder, started and stopped
+    as one: a lease has both or neither."""
+
+    def __init__(self, proxy: webproxy.WebProxy, dns: webproxy.DnsForwarder) -> None:
+        self.proxy, self.dns = proxy, dns
+
+    @property
+    def paths(self) -> tuple[Path, Path]:
+        return self.proxy.path, self.dns.path
+
+    async def start(self) -> None:
+        await self.proxy.start()
+        try:
+            await self.dns.start()
+        except BaseException:
+            await self.proxy.stop()
+            raise
+
+    async def stop(self) -> None:
+        stopped = await asyncio.gather(self.proxy.stop(), self.dns.stop(), return_exceptions=True)
+        for each in stopped:
+            if isinstance(each, BaseException):
+                raise each
+
+
 class WebProxies:
     """The web proxies of a daemon's leases, each served on the daemon's
-    event loop *loop* at ``service.web_socket_path(root, lease)``.
+    event loop *loop* at ``service.web_socket_path(root, lease)``, and the
+    DNS forwarder of each beside it at ``service.dns_socket_path(root,
+    lease)``.
 
     The pool service runs in a worker thread, off the loop: ``open`` and
     ``close`` hand a proxy's start and stop to the loop and wait for them,
     and are not called on the loop itself. ``aclose`` runs on the loop when
     the daemon stops: it stops every proxy still served, and no proxy is
-    served after it. *make* makes a lease's proxy; ``webproxy.WebProxy``
-    unless given.
+    served after it. *make* makes a lease's proxy, ``webproxy.WebProxy``
+    unless given, and *make_dns* its DNS forwarder, ``webproxy.DnsForwarder``
+    unless given; the two are started and stopped together.
     """
 
     def __init__(
@@ -69,11 +98,13 @@ class WebProxies:
         root: Path | str,
         *,
         make: Callable[..., webproxy.WebProxy] = webproxy.WebProxy,
+        make_dns: Callable[..., webproxy.DnsForwarder] = webproxy.DnsForwarder,
     ) -> None:
         self.loop = loop
         self.root = Path(root)
         self._make = make
-        self._served: dict[str, webproxy.WebProxy] = {}
+        self._make_dns = make_dns
+        self._served: dict[str, _LeaseWeb] = {}
         # Stops handed to the loop from the loop's own thread, which cannot
         # wait for them; the daemon's stop waits for them instead.
         self._stopping: set[asyncio.Future] = set()
@@ -84,10 +115,14 @@ class WebProxies:
         """Where the proxy of the lease *lease_id* is served."""
         return service.web_socket_path(self.root, lease_id)
 
+    def dns_path(self, lease_id: str) -> Path:
+        """Where the DNS forwarder of the lease *lease_id* is served."""
+        return service.dns_socket_path(self.root, lease_id)
+
     def sweep(self) -> None:
-        """Remove every socket in the directory: one found there when the
-        daemon starts was left by a daemon that did not stop cleanly, and no
-        one serves it."""
+        """Remove every socket in the directory, a proxy's or a DNS
+        forwarder's: one found there when the daemon starts was left by a
+        daemon that did not stop cleanly, and no one serves it."""
         directory = self.root / service.WEB_DIRNAME
         if not directory.is_dir():
             return
@@ -113,7 +148,10 @@ class WebProxies:
                 )
             if lease_id in self._served:
                 raise SpecfloError(f"the web proxy of lease {lease_id} is served already.")
-            proxy = self._make(path, internal, lease=lease_id, member=member, root=self.root)
+            told = dict(lease=lease_id, member=member, root=self.root)
+            proxy = _LeaseWeb(
+                self._make(path, internal, **told), self._make_dns(self.dns_path(lease_id), **told)
+            )
             self._served[lease_id] = proxy
         try:
             path.parent.mkdir(mode=0o700, exist_ok=True)
@@ -138,10 +176,11 @@ class WebProxies:
             )
         return path
 
-    def close(self, lease_id: str, proxy: webproxy.WebProxy | None = None) -> None:
-        """Stop the proxy of the lease *lease_id* and remove its socket; a
-        lease with none served is left as it is. A stop that fails is logged,
-        never raised: the lease has ended all the same."""
+    def close(self, lease_id: str, proxy: _LeaseWeb | None = None) -> None:
+        """Stop the proxy and DNS forwarder of the lease *lease_id* and
+        remove their sockets; a lease with none served is left as it is. A
+        stop that fails is logged, never raised: the lease has ended all the
+        same."""
         with self._lock:
             served = self._served.pop(lease_id, None)
         proxy = proxy or served
@@ -156,10 +195,11 @@ class WebProxies:
             asyncio.run_coroutine_threadsafe(proxy.stop(), self.loop).result(_WEB_SECONDS)
         except Exception as exc:
             _log.warning("the web proxy of lease %s did not stop: %s", lease_id, exc)
-            # a loop that is gone serves nothing, and its socket is left behind
-            with contextlib.suppress(OSError):
-                if stat.S_ISSOCK(proxy.path.lstat().st_mode):
-                    proxy.path.unlink()
+            # a loop that is gone serves nothing, and its sockets are left behind
+            for path in proxy.paths:
+                with contextlib.suppress(OSError):
+                    if stat.S_ISSOCK(path.lstat().st_mode):
+                        path.unlink()
 
     async def aclose(self) -> None:
         """Stop every proxy still served and remove its socket; no proxy is

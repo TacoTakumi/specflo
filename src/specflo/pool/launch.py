@@ -190,6 +190,7 @@ def member_argv(
     bridge: sandbox.Bridge | None = None,
     web: sandbox.Bridge | None = None,
     daemon_root: Path | str | None = None,
+    dns: Path | str | None = None,
 ) -> list[str]:
     """The whole of what *member* starts as: its sandbox, then its pi.
 
@@ -222,7 +223,13 @@ def member_argv(
     up the forwarder to it on a loopback port of its own. It is refused for
     any other member, as the bridge is.
 
-    The working directory, the generated directory and the two sockets are
+    Such a member is given *dns* too, the socket of its lease's DNS
+    forwarder: that socket bound in, a resolver file of its own over the
+    host's that names 127.0.0.1, and a launcher in front of every other that
+    brings up a forwarder to the socket on port 53 in a network namespace of
+    its own (``sandbox.dns_argv``). *dns* without *web* is refused.
+
+    The working directory, the generated directory and the sockets are
     taken at their real paths. The hidden paths are real paths, and a bind at
     a link's own path would bring a checkout back under a name none of them
     covers.
@@ -237,6 +244,8 @@ def member_argv(
         bridge = dataclasses.replace(bridge, socket=os.path.realpath(bridge.socket))
     if web is not None:
         web = dataclasses.replace(web, socket=os.path.realpath(web.socket))
+    if dns is not None:
+        dns = os.path.realpath(dns)
     hidden = [*_swept(environ, daemon_root), *checkout_secrets(cwd)]
     program = shlex.split(member.command)[0]
     writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]
@@ -279,6 +288,27 @@ def member_argv(
             )
         readonly.append(reach.socket)
         forwarder.extend(sandbox.forwarder_argv(reach, socat))
+    files: list[tuple[str, str]] = []
+    if dns is not None:
+        if web is None:
+            raise LaunchError(
+                f"member '{member.name}' was given a DNS socket and no web proxy: DNS is "
+                "for a member that reaches the web through its lease's proxy, and it alone."
+            )
+        tools = {
+            name: shutil.which(name, path=environ.get("PATH"))
+            for name in ("socat", "unshare", "ip")
+        }
+        missing = [name for name, found in tools.items() if found is None]
+        if missing:
+            raise LaunchError(
+                f"member '{member.name}' resolves names through a DNS forwarder inside its "
+                f"sandbox, which needs {', '.join(missing)}, and that is not on the daemon's PATH."
+            )
+        readonly.append(dns)
+        files.append((str(sandbox.resolver_file(state_dir)), sandbox.resolver_target()))
+        # first of all: the other forwarders listen in the network it makes
+        forwarder[:0] = sandbox.dns_argv(dns, *tools.values())
     # A member's process count is its scope's own when the user manager can
     # make one; the per-uid count prlimit sets counts the whole host.
     scope, limits = sandbox.member_limits(
@@ -293,6 +323,7 @@ def member_argv(
         links=links,
         limits=limits,
         chdir=cwd,
+        files=files,
     )
     return [*scope, *prefix, *forwarder, *pi_argv(definition, member)]
 
