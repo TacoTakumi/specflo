@@ -100,7 +100,9 @@ CANDIDATE_PREFIX = ".pool-candidate-"
 
 # The fields of the definition form that a fault is shown beside; a fault of
 # the file in anything else stands above the form with the other files' faults.
-FORM_FIELDS: tuple[str, ...] = ("name", "role", *LIST_FIELDS, "egress", "project_context", BODY)
+FORM_FIELDS: tuple[str, ...] = (
+    "name", "role", *LIST_FIELDS, "egress", "project_context", "web", "web_internal", BODY,
+)
 
 # The fields of a team file whose fault is shown beside the roles of the team
 # form; a fault of the file in anything else stands above the form.
@@ -276,12 +278,14 @@ def form_values(definition: AgentDefinition) -> dict[str, str]:
         **values, "name": definition.name, "role": definition.role,
         "egress": definition.egress, "prompt": definition.prompt,
         "project_context": "on" if definition.project_context else "",
+        "web": "on" if definition.web else "",
+        "web_internal": "\n".join(definition.web_internal),
     }
 
 
 def posted_values(fields: dict[str, str], name: str) -> dict[str, str]:
     """What a form posted for the definition *name*, with a browser's line ends made plain."""
-    keys = ("role", *LIST_FIELDS, "egress", "project_context", "prompt")
+    keys = ("role", *LIST_FIELDS, "egress", "project_context", "web", "web_internal", "prompt")
     values = {key: fields.get(key, "").replace("\r\n", "\n").replace("\r", "\n") for key in keys}
     return {**values, "name": name}
 
@@ -291,12 +295,12 @@ def posted_definition(values: dict[str, str]) -> AgentDefinition:
     is the validator's matter: an empty role or body is written as it is."""
     lists = {
         key: tuple(line.strip() for line in values[key].splitlines() if line.strip())
-        for key in LIST_FIELDS
+        for key in (*LIST_FIELDS, "web_internal")
     }
     return AgentDefinition(
         name=values["name"], role=" ".join(values["role"].split()),
         prompt=values["prompt"].strip(), egress=values["egress"],
-        project_context=bool(values["project_context"]), **lists,
+        project_context=bool(values["project_context"]), web=bool(values["web"]), **lists,
     )
 
 

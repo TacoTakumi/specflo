@@ -178,6 +178,59 @@ def test_values_that_yaml_would_read_otherwise_come_back_as_they_were():
 
     assert definitions.parse_definition(written, Path("porter.md")) == awkward
     assert "project_context" not in written
+    assert "web" not in written
+
+
+def test_web_access_and_its_internal_hosts_come_back_as_they_were():
+    researcher = replace(
+        PORTER, web=True, web_internal=("127.0.0.1:8731", "[fd00::5]:8080", "1:30"),
+    )
+
+    written = definitions.serialise_definition(researcher)
+
+    assert "web: true\n" in written
+    assert definitions.parse_definition(written, Path("porter.md")) == researcher
+
+
+# -- validate ----------------------------------------------------------------------
+
+
+RESEARCHER = """\
+---
+role: Looks things up on the web
+web: true
+web_internal: ["127.0.0.1:8731"]
+---
+
+You are the researcher.
+"""
+
+
+def test_validate_accepts_web_access_with_an_internal_host(root):
+    (folder(root) / "researcher.md").write_text(RESEARCHER, encoding="utf-8")
+
+    checked = runner.invoke(cli, ["serve", "--root", str(root), "pool", "validate"])
+
+    assert checked.exit_code == 0, checked.output
+    assert "6 definitions" in checked.output
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "field"),
+    [
+        ("web: true", "web: sometimes", "web"),
+        ('["127.0.0.1:8731"]', '["127.0.0.1"]', "web_internal"),
+    ],
+)
+def test_validate_refuses_a_bad_web_field_naming_the_field(root, old, new, field):
+    path = folder(root) / "researcher.md"
+    path.write_text(RESEARCHER.replace(old, new), encoding="utf-8")
+
+    checked = runner.invoke(cli, ["serve", "--root", str(root), "pool", "validate"])
+
+    assert checked.exit_code != 0
+    assert "researcher" in checked.output
+    assert f"{field}: " in checked.output
 
 
 # -- the list ----------------------------------------------------------------------
@@ -329,6 +382,37 @@ def test_a_save_writes_the_file_reloads_the_running_pool_and_is_audited(pool_rig
         ("developer", "definition_save", "rebaser"),
         ("developer", "pool_reload", None),
     ]
+
+
+def test_a_save_keeps_web_access_and_the_internal_hosts(root):
+    client = signed_in(create_app(root))
+    hosts = "127.0.0.1:8731\r\nwiki.lan:443\r\n"
+
+    response = post(client, edit_url("worker"), **FIELDS, web="on", web_internal=hosts)
+
+    assert response.status_code == 303, response.text
+    saved = definitions.load_definition(folder(root) / "worker.md")
+    assert saved == replace(
+        PORTER, name="worker", web=True, web_internal=("127.0.0.1:8731", "wiki.lan:443")
+    )
+    form = client.get(edit_url("worker")).text
+    assert re.search(r'<input type="checkbox" name="web" checked>', form)
+    assert re.search(r'<textarea name="web_internal"[^>]*>127\.0\.0\.1:8731\nwiki\.lan:443<', form)
+    # a save that leaves both out turns web access off again
+    assert post(client, edit_url("worker"), **FIELDS).status_code == 303
+    assert definitions.load_definition(folder(root) / "worker.md") == replace(PORTER, name="worker")
+
+
+def test_a_save_with_an_internal_host_without_a_port_is_refused_beside_the_field(root):
+    client = signed_in(create_app(root))
+    before = snapshot(root)
+
+    response = post(client, edit_url("worker"), **FIELDS, web="on", web_internal="wiki.lan\n")
+
+    assert response.status_code == 400
+    assert re.search(r'<p class="error" data-field="web_internal">[^<]*host:port', response.text)
+    assert "wiki.lan" in unescape(response.text)
+    assert snapshot(root) == before
 
 
 def test_the_name_a_form_posts_does_not_rename_a_definition(root):

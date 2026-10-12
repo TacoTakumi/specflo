@@ -101,6 +101,23 @@ def test_only_the_role_is_required_and_the_rest_default_to_the_safe_side(tmp_pat
     # unless the definition opts in to more.
     assert definition.egress == "no-train"
     assert definition.project_context is False
+    # A member reaches the web only when its definition asks for it.
+    assert definition.web is False
+    assert definition.web_internal == ()
+
+
+def test_web_access_and_the_internal_hosts_it_may_reach_load(tmp_path):
+    path = _write(
+        tmp_path,
+        "---\nrole: Researcher\nweb: true\n"
+        'web_internal: ["127.0.0.1:8731", "wiki.lan:443", "[fd00::5]:8080"]\n'
+        "---\nFind out.\n",
+    )
+
+    definition = definitions.load_definition(path)
+
+    assert definition.web is True
+    assert definition.web_internal == ("127.0.0.1:8731", "wiki.lan:443", "[fd00::5]:8080")
 
 
 def test_every_known_egress_class_is_accepted(tmp_path):
@@ -168,6 +185,41 @@ def test_a_project_context_flag_that_is_not_a_boolean_is_refused(tmp_path):
     path = _write(tmp_path, "---\nrole: Worker\nproject_context: maybe\n---\nDo the task.\n")
 
     assert _refused(path).field == "project_context"
+
+
+@pytest.mark.parametrize("value", ["maybe", "1", '"true"', "[true]"])
+def test_a_web_flag_that_is_not_a_boolean_is_refused_naming_the_field(tmp_path, value):
+    path = _write(tmp_path, f"---\nrole: Worker\nweb: {value}\n---\nDo the task.\n")
+
+    error = _refused(path)
+
+    assert error.field == "web"
+    assert str(path) in str(error)
+    assert "web: must be true or false" in str(error)
+
+
+@pytest.mark.parametrize(
+    "entry",
+    ["127.0.0.1", "wiki.lan", "wiki.lan:", ":8731", "wiki.lan:http", "wiki.lan:0",
+     "wiki.lan:65536", "fd00::5", "[fd00::5]", "wiki lan:80"],
+)
+def test_an_internal_host_without_a_valid_port_is_refused_naming_the_field(tmp_path, entry):
+    path = _write(
+        tmp_path, f'---\nrole: Worker\nweb: true\nweb_internal: ["{entry}"]\n---\nDo the task.\n'
+    )
+
+    error = _refused(path)
+
+    assert error.field == "web_internal"
+    assert str(path) in str(error)
+    assert repr(entry) in str(error)
+    assert "host:port" in str(error)
+
+
+def test_internal_hosts_given_as_a_single_string_are_refused(tmp_path):
+    path = _write(tmp_path, "---\nrole: Worker\nweb_internal: wiki.lan:443\n---\nDo the task.\n")
+
+    assert _refused(path).field == "web_internal"
 
 
 def test_a_file_without_front_matter_is_refused_naming_the_file(tmp_path):

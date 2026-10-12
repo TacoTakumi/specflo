@@ -4,8 +4,9 @@ A definition says what a role is, not what runs it. The YAML front matter
 names the role, the tools and skills it may use, the commands it must not
 run, the environment variables and credentials it may be given, the
 capability labels it needs from a member, the most open egress class it
-accepts, whether it wants the project's context files, and the paths bound
-back read-only into its members' sandboxes. The body is the system prompt.
+accepts, whether it wants the project's context files, the paths bound back
+read-only into its members' sandboxes, and whether it may reach the web and
+which internal hosts it may reach there. The body is the system prompt.
 
 Loading is strict: a definition is the only limit on what a member is handed,
 so a key this module does not know is refused rather than ignored, and every
@@ -36,7 +37,9 @@ LIST_FIELDS: tuple[str, ...] = (
 )
 
 # Every front-matter key a definition may carry, in the order they are written.
-FIELDS: tuple[str, ...] = ("role", *LIST_FIELDS, "egress", "project_context")
+FIELDS: tuple[str, ...] = (
+    "role", *LIST_FIELDS, "egress", "project_context", "web", "web_internal",
+)
 
 # The pseudo-fields an error names when the fault is not in one key.
 FRONT_MATTER = "front matter"
@@ -54,6 +57,11 @@ NOT_A_FILE = "not a regular file; put a markdown file there, or take the entry a
 # Front matter opens on the first line and closes on the next line that is
 # only "---"; a later "---" rule belongs to the prompt.
 _FRONT_MATTER = re.compile(r"\A---[ \t]*\n(.*?)^---[ \t]*$\n?(.*)\Z", re.DOTALL | re.MULTILINE)
+
+# An internal host the web proxy may reach: a name or an IPv4 address, or an
+# IPv6 address in brackets, then a port. The proxy matches the host and the
+# port together, so an entry without a port is no entry at all.
+_HOST_PORT = re.compile(r"\A(?:\[[0-9A-Fa-f:.]+\]|[^\s:\[\]]+):([0-9]{1,5})\Z")
 
 
 class DefinitionError(SpecfloError):
@@ -82,6 +90,10 @@ class AgentDefinition:
     paths: tuple[str, ...] = ()
     egress: str = DEFAULT_EGRESS
     project_context: bool = False
+    # Whether members reach the web, through the daemon's proxy, and the
+    # host:port pairs on a private network the proxy lets them reach there.
+    web: bool = False
+    web_internal: tuple[str, ...] = ()
     # Where each of paths led when the pool file was loaded: the links it went
     # through and its real path. A start refuses a path that leads elsewhere
     # now. None when the definition was not loaded as part of a pool.
@@ -100,8 +112,9 @@ def load_definition(path: Path) -> AgentDefinition:
 
     Raises ``DefinitionError`` for an entry that is not a regular file, which
     is not opened, and for a file that cannot be read, has no valid front
-    matter, carries an unknown key, a missing role, a wrongly typed value or
-    an unknown egress class, or has an empty body.
+    matter, carries an unknown key, a missing role, a wrongly typed value, an
+    unknown egress class or an internal host without a port, or has an empty
+    body.
     """
     if not_a_file(path):
         raise DefinitionError(path, "file", NOT_A_FILE)
@@ -151,6 +164,18 @@ def parse_definition(text: str, path: Path) -> AgentDefinition:
     if not isinstance(project_context, bool):
         raise DefinitionError(path, "project_context", "must be true or false.")
 
+    web = fields.get("web", False)
+    if not isinstance(web, bool):
+        raise DefinitionError(path, "web", "must be true or false.")
+
+    web_internal = _string_list(path, "web_internal", fields.get("web_internal"))
+    for entry in web_internal:
+        if not _is_host_port(entry):
+            raise DefinitionError(
+                path, "web_internal", f"{entry!r} is not host:port; give each host with "
+                "its port, such as '127.0.0.1:8731'."
+            )
+
     prompt = match.group(2).strip()
     if not prompt:
         raise DefinitionError(path, BODY, "empty; the body is the role's system prompt.")
@@ -161,6 +186,8 @@ def parse_definition(text: str, path: Path) -> AgentDefinition:
         prompt=prompt,
         egress=egress,
         project_context=project_context,
+        web=web,
+        web_internal=web_internal,
         **lists,
     )
 
@@ -174,18 +201,26 @@ def _string_list(path: Path, key: str, value: object) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _is_host_port(entry: str) -> bool:
+    """Whether *entry* is a host and a port from 1 to 65535."""
+    match = _HOST_PORT.match(entry)
+    return match is not None and 1 <= int(match.group(1)) <= 65535
+
+
 def serialise_definition(definition: AgentDefinition) -> str:
     """The markdown file of *definition*, as an admin writes one by hand.
 
     The keys stand in the order of ``FIELDS``, a list on one line in brackets.
-    A list with nothing in it is left out, and so is ``project_context`` unless
-    it is true; the egress class is always written, since it is what a reader
+    A list with nothing in it is left out, and so are ``project_context`` and
+    ``web`` unless they are true; the egress class is always written, since it is what a reader
     looks for first. What comes back from ``parse_definition`` is *definition*.
     """
     values = {"role": definition.role}
     values.update({key: list(getattr(definition, key)) for key in LIST_FIELDS})
     values["egress"] = definition.egress
     values["project_context"] = definition.project_context
+    values["web"] = definition.web
+    values["web_internal"] = list(definition.web_internal)
     lines = []
     for key in FIELDS:
         value = values[key]

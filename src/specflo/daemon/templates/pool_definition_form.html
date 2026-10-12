@@ -58,6 +58,18 @@
     {% endfor %}
   </fieldset>
   <fieldset>
+    <legend>What the role may reach on the web</legend>
+    <label>
+      <input type="checkbox" name="web"{% if values.web %} checked{% endif %}>
+      Let the role reach the web, through the daemon's proxy
+    </label>
+    {{ problems("web") }}
+    <label>Internal hosts the proxy lets it reach, one host:port to a line
+      <textarea name="web_internal" rows="4" cols="40">{{ values.web_internal }}</textarea>
+    </label>
+    {{ problems("web_internal") }}
+  </fieldset>
+  <fieldset>
     <legend>The system prompt, which is the body of the file</legend>
     <textarea name="prompt" rows="20" cols="90">{{ values.prompt }}</textarea>
     {{ problems(body_field) }}
