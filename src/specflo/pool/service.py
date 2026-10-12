@@ -511,8 +511,11 @@ class PoolService:
                         placed.agent, pool_token=self.pool_token, lease_token=token
                     )
                 else:
+                    web = None
                     if definition.web and placed.member.backing == LOCAL:
-                        self._serve_web(lease_id, placed.member.name, definition.web_internal)
+                        web = self._serve_web(
+                            lease_id, placed.member.name, definition.web_internal
+                        )
                     # The runner names the agent for the member it is handed, so a
                     # further lease on a member is handed over under its own name.
                     agent = runner.start(
@@ -520,7 +523,7 @@ class PoolService:
                         self.config.accounts, cwd=cwd, pool_token=self.pool_token,
                         lease_token=token, config_root=self.config_root,
                         models_file=self.config.models_file, environ=self.environ,
-                        bridge=self.bridge, daemon_root=self.daemon_root,
+                        bridge=self.bridge, web=web, daemon_root=self.daemon_root,
                     )
             except Exception as exc:
                 self.end_lease(lease_id, "released", cause=f"member did not start: {exc}")
@@ -658,16 +661,17 @@ class PoolService:
                 runner.stop(ledger.agent_of(ended), kind, **told)
         return Ended(lease_id=lease_id, state=kind, cause=cause, time=ending.time)
 
-    def _serve_web(self, lease_id: str, member: str, internal: Sequence[str]) -> None:
+    def _serve_web(self, lease_id: str, member: str, internal: Sequence[str]) -> Path:
         """Serve the web proxy of the lease *lease_id* on *member*, before the
-        member starts. Raises ``SpecfloError`` when the service has no web
-        proxies to serve it with."""
+        member starts; the path of its socket, which the member's sandbox
+        binds. Raises ``SpecfloError`` when the service has no web proxies to
+        serve it with."""
         if self.web is None:
             raise SpecfloError(
                 f"member '{member}' has web access, and no web proxy is served on this "
                 "daemon: the member would start without it, so it is not started."
             )
-        self.web.open(lease_id, member, internal)
+        return self.web.open(lease_id, member, internal)
 
     def _pool(self, name: str) -> Pool:
         for pool in self.config.pools:

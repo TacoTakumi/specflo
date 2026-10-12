@@ -169,6 +169,7 @@ def start(
     environ: Mapping[str, str] | None = None,
     timeout: float = START_TIMEOUT,
     bridge: Path | str | None = None,
+    web: Path | str | None = None,
     daemon_root: Path | str | None = None,
 ) -> str:
     """Start *member* for one lease in the role *definition* gives; the agent's name.
@@ -185,6 +186,13 @@ def start(
     into its sandbox and a forwarder on the port its models file names, up
     before pi runs; without one a local member has no way to its model at
     all. Any other member shares the host's network and is not given it.
+
+    *web* is the socket of the lease's web proxy, for a member whose
+    definition has web access. A local member gets it bound into its
+    sandbox, a second forwarder to it on a loopback port of its own, and the
+    proxy variables pointing at that port, with its provider's host kept off
+    the proxy. Like the bridge forwarder, it goes with the sandbox when the
+    lease ends. Any other member is not given it.
 
     *daemon_root* is the daemon's own directory, which the member's sandbox
     hides: it holds the pool's token and every client's.
@@ -217,6 +225,11 @@ def start(
             if bridge is not None and member.backing == LOCAL
             else None
         )
+        proxy, provider_host = (
+            _web(web, config_dir, member)
+            if web is not None and member.backing == LOCAL
+            else (None, None)
+        )
         spec = {
             "argv": launch.member_argv(
                 definition, member, caller,
@@ -224,10 +237,13 @@ def start(
                 state_dir=paths.root.parent,
                 config_dir=config_dir,
                 bridge=reach,
+                web=proxy,
                 daemon_root=daemon_root,
             ),
             "env": launch.member_env(
                 definition, member, accounts, caller, config_dir=config_dir,
+                proxy_port=None if proxy is None else proxy.port,
+                provider_host=provider_host,
             ),
         }
         paths.ensure()
@@ -802,6 +818,29 @@ def _bridge(path: Path | str, config_dir: Path, member: Member) -> sandbox.Bridg
             f"at {path}, which is not served: the daemon serves it while it has a pool."
         )
     return sandbox.Bridge(socket=str(path), port=piconfig.local_port(config_dir, member))
+
+
+def _web(
+    path: Path | str, config_dir: Path, member: Member
+) -> tuple[sandbox.Bridge, str]:
+    """How the local *member* reaches the web through its lease's proxy at
+    *path*, and the host of its provider, which stays off the proxy.
+
+    A socket that is not served would be bound in all the same and every
+    request through it refused, so the start is refused here instead.
+    """
+    try:
+        served = stat.S_ISSOCK(os.stat(path).st_mode)
+    except OSError:
+        served = False
+    if not served:
+        raise launch.LaunchError(
+            f"member '{member.name}' has web access, and the web proxy of its lease at "
+            f"{path} is not served: the daemon serves it from the grant until the lease ends."
+        )
+    host, port = piconfig.local_provider(config_dir, member)
+    reach = sandbox.Bridge(socket=str(path), port=sandbox.web_port(port), to=sandbox.WEB_PROXY)
+    return reach, host
 
 
 def _write_private(path: Path, text: str) -> None:

@@ -181,6 +181,13 @@ def local_port(config_dir: Path | str, member: Member) -> int:
     port, so a base URL that is not plain HTTP on this host's IPv4 loopback
     would reach nothing and is refused naming it.
     """
+    return local_provider(config_dir, member)[1]
+
+
+def local_provider(config_dir: Path | str, member: Member) -> tuple[str, int]:
+    """The host and loopback port of the local *member*'s provider base URL,
+    checked as ``local_port`` checks them. The host is what a web member's
+    no-proxy variables name, so its model traffic stays off the proxy."""
     path = Path(config_dir) / MODELS_FILE
     try:
         providers = json.loads(path.read_text(encoding="utf-8"))["providers"]
@@ -202,7 +209,7 @@ def local_port(config_dir: Path | str, member: Member) -> int:
             "plain HTTP on 127.0.0.1 or localhost: inside its sandbox the member reaches "
             "llama-swap on loopback alone."
         )
-    return port
+    return url.hostname, port
 
 
 def create(

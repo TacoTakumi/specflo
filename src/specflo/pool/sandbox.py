@@ -233,15 +233,33 @@ def resolver_argv(egress: str | None) -> list[str]:
 
 @dataclass(frozen=True)
 class Bridge:
-    """How a member with no network reaches its model from inside its sandbox.
+    """How a member with no network reaches a socket of the daemon's from
+    inside its sandbox: its model through the bridge, or the web through its
+    lease's proxy.
 
-    *socket* is the daemon's bridge socket, bound into the sandbox at its own
-    path; *port* is the loopback port the member's pi is configured to reach
-    its provider on, where the forwarder listens.
+    *socket* is the daemon's socket, bound into the sandbox at its own path;
+    *port* is the loopback port the forwarder to it listens on: for the
+    bridge, the one the member's pi is configured to reach its provider on.
+    *to* names what the socket reaches, for the launcher's error output.
     """
 
     socket: str
     port: int
+    to: str = "llama-swap"
+
+
+# What a web member's second forwarder reaches, and the loopback port it
+# listens on inside the sandbox. The port is the usual one of an HTTP proxy;
+# the member's namespace has nothing else on it but the forwarder to its
+# model, and ``web_port`` keeps the two apart.
+WEB_PROXY = "the web proxy"
+WEB_PORT = 3128
+
+
+def web_port(provider_port: int) -> int:
+    """The loopback port a web member's forwarder to its lease's proxy
+    listens on, beside the one to its model on *provider_port*."""
+    return WEB_PORT if provider_port != WEB_PORT else WEB_PORT + 1
 
 
 # How long the forwarder may take to listen, in seconds, and how often the
@@ -251,24 +269,25 @@ _FORWARDER_LOOK = 0.005
 
 # The launcher a member with a bridge starts as, inside its sandbox. It starts
 # the forwarder, waits until the forwarder's socket is listening and becomes
-# pi. The wait reads the process network table, which says a socket listens
+# pi, or the next launcher: a web member's second forwarder is one more such
+# launcher in front of pi, and its socat is a child of the same process. The wait reads the process network table, which says a socket listens
 # without connecting to it: a connection would go through to the bridge and
 # reach llama-swap for nothing. The forwarder is a child the launcher leaves
 # behind when it becomes pi, and it goes with the sandbox's process namespace
 # when pi goes.
-_FORWARDER = """port=$1 socket=$2 socat=$3 looks=$4 look=$5
-shift 5
+_FORWARDER = """port=$1 socket=$2 socat=$3 looks=$4 look=$5 to=$6
+shift 6
 "$socat" "TCP-LISTEN:$port,bind=127.0.0.1,fork,reuseaddr" "UNIX-CONNECT:$socket" &
 forwarder=$!
 listening=": 0100007F:$(printf %04X "$port") 00000000:0000 0A"
 until grep -q "$listening" /proc/net/tcp; do
     if ! kill -0 "$forwarder" 2>/dev/null; then
-        echo "the forwarder to llama-swap exited before it listened on 127.0.0.1:$port" >&2
+        echo "the forwarder to $to exited before it listened on 127.0.0.1:$port" >&2
         exit 1
     fi
     looks=$((looks - 1))
     if [ "$looks" -le 0 ]; then
-        echo "the forwarder to llama-swap did not listen on 127.0.0.1:$port in time" >&2
+        echo "the forwarder to $to did not listen on 127.0.0.1:$port in time" >&2
         exit 1
     fi
     sleep "$look"
@@ -288,7 +307,7 @@ def forwarder_argv(bridge: Bridge, socat: str) -> list[str]:
     looks = max(1, int(FORWARDER_WAIT / _FORWARDER_LOOK))
     return [
         "/bin/sh", "-c", _FORWARDER, "forwarder",
-        str(bridge.port), bridge.socket, socat, str(looks), str(_FORWARDER_LOOK),
+        str(bridge.port), bridge.socket, socat, str(looks), str(_FORWARDER_LOOK), bridge.to,
     ]
 
 

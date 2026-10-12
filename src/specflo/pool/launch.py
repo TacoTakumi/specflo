@@ -112,6 +112,14 @@ MEMBER_TMPDIR = "/tmp"
 GIT_CONFIG_GLOBAL_ENV = "GIT_CONFIG_GLOBAL"
 GITCONFIG_FILE = "gitconfig"
 
+# What points a web member's tools at the forwarder to its lease's proxy, and
+# what keeps its model traffic off it. Many tools read only the lowercase
+# forms and some only the uppercase ones, so both are set. They are the
+# pool's to say for a web member; a member without web access is given none
+# of them unless its definition lists one.
+PROXY_ENV: tuple[str, ...] = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+NO_PROXY_ENV: tuple[str, ...] = ("NO_PROXY", "no_proxy")
+
 # The variables the pool alone says, whatever a definition lists or a caller
 # exports. A member that could set one of these could give itself a name, a
 # deny list or a pi configuration of its own choosing.
@@ -159,6 +167,7 @@ def member_argv(
     config_dir: Path | str | None = None,
     limits: sandbox.Limits | None = None,
     bridge: sandbox.Bridge | None = None,
+    web: sandbox.Bridge | None = None,
     daemon_root: Path | str | None = None,
 ) -> list[str]:
     """The whole of what *member* starts as: its sandbox, then its pi.
@@ -187,7 +196,12 @@ def member_argv(
     the host's network has no use for it, and would have a second way to
     llama-swap.
 
-    The working directory, the generated directory and the bridge socket are
+    A local member with *web*, the reach of its lease's web proxy, gets that
+    socket bound in too, and a second launcher after the first that brings
+    up the forwarder to it on a loopback port of its own. It is refused for
+    any other member, as the bridge is.
+
+    The working directory, the generated directory and the two sockets are
     taken at their real paths. The hidden paths are real paths, and a bind at
     a link's own path would bring a checkout back under a name none of them
     covers.
@@ -200,6 +214,8 @@ def member_argv(
         config_dir = os.path.realpath(config_dir)
     if bridge is not None:
         bridge = dataclasses.replace(bridge, socket=os.path.realpath(bridge.socket))
+    if web is not None:
+        web = dataclasses.replace(web, socket=os.path.realpath(web.socket))
     hidden = [*_swept(environ, daemon_root), *checkout_secrets(cwd)]
     program = shlex.split(member.command)[0]
     writable = [str(cwd), *([str(config_dir)] if config_dir is not None else [])]
@@ -220,21 +236,28 @@ def member_argv(
     readonly.extend(listed)
     hidden.extend(listed_checkout_secrets(listed, environ))
     forwarder: list[str] = []
-    if bridge is not None:
-        if member.backing != LOCAL:
-            raise LaunchError(
-                f"member '{member.name}' is {member.backing}, and only a local member "
-                "reaches its model through the bridge."
-            )
+    if bridge is not None and member.backing != LOCAL:
+        raise LaunchError(
+            f"member '{member.name}' is {member.backing}, and only a local member "
+            "reaches its model through the bridge."
+        )
+    if web is not None and member.backing != LOCAL:
+        raise LaunchError(
+            f"member '{member.name}' is {member.backing}, and only a local member "
+            "reaches the web through a web proxy of its lease."
+        )
+    for reach in (bridge, web):
+        if reach is None:
+            continue
         socat = shutil.which("socat", path=environ.get("PATH"))
         if socat is None:
             raise LaunchError(
-                f"member '{member.name}' is local and reaches its model through a "
+                f"member '{member.name}' is local and reaches {reach.to} through a "
                 "forwarder inside its sandbox, and socat, which the forwarder is, is not "
                 "on the daemon's PATH."
             )
-        readonly.append(bridge.socket)
-        forwarder = sandbox.forwarder_argv(bridge, socat)
+        readonly.append(reach.socket)
+        forwarder.extend(sandbox.forwarder_argv(reach, socat))
     # A member's process count is its scope's own when the user manager can
     # make one; the per-uid count prlimit sets counts the whole host.
     scope, limits = sandbox.member_limits(
@@ -525,6 +548,8 @@ def member_env(
     environ: Mapping[str, str],
     *,
     config_dir: Path | None = None,
+    proxy_port: int | None = None,
+    provider_host: str | None = None,
 ) -> dict[str, str]:
     """The environment *member* starts with in the role *definition* gives.
 
@@ -537,10 +562,18 @@ def member_env(
     generated for the member, and nothing is written here; git is pointed at
     the configuration file in it when there is one.
 
+    A web member is handed *proxy_port*, the loopback port its forwarder to
+    its lease's web proxy listens on, and *provider_host*, the host of its
+    provider's base URL. The proxy variables point at the forwarder, and the
+    no-proxy variables name the provider's host, so the member's model
+    traffic still goes straight to the forwarder to llama-swap.
+
     Raises ``LaunchError`` for a hosted member whose account is not among
-    *accounts* or whose key variable is not set, and for any member handed no
+    *accounts* or whose key variable is not set, for any member handed no
     *config_dir*: every member has one, and a member without it would start
-    against a directory the sandbox hides.
+    against a directory the sandbox hides; and for a web member handed no
+    *provider_host*, whose model traffic would go to the proxy, which
+    refuses loopback.
     """
     accounts = tuple(accounts)
     key_vars = {account.key_env for account in accounts}
@@ -568,6 +601,17 @@ def member_env(
     gitconfig = Path(config_dir) / GITCONFIG_FILE
     if gitconfig.is_file():
         env[GIT_CONFIG_GLOBAL_ENV] = str(gitconfig)
+    if proxy_port is not None:
+        if not provider_host:
+            raise LaunchError(
+                f"member '{member.name}' reaches the web through a proxy and was given "
+                "no provider host to keep off it, so its model traffic would go to the "
+                "proxy, which refuses loopback."
+            )
+        for name in PROXY_ENV:
+            env[name] = f"http://127.0.0.1:{proxy_port}"
+        for name in NO_PROXY_ENV:
+            env[name] = provider_host
     return env
 
 

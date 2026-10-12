@@ -7,13 +7,14 @@ the hosted member's own account.
 """
 
 import os
+import shutil
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from specflo.errors import SpecfloError
-from specflo.pool import launch
+from specflo.pool import launch, sandbox
 from specflo.pool.config import Account, Member
 from specflo.pool.definitions import AgentDefinition
 
@@ -261,3 +262,119 @@ def test_neither_the_caller_nor_the_definition_sets_the_git_global_variable(tmp_
 
     assert given[launch.GIT_CONFIG_GLOBAL_ENV] == str(with_file / launch.GITCONFIG_FILE)
     assert launch.GIT_CONFIG_GLOBAL_ENV not in none
+
+
+# -- a member with web access ----------------------------------------------
+
+# The six names a web member's tools read for their proxy: many read only the
+# lowercase forms, some only the uppercase ones.
+PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+NO_PROXY_VARS = ("NO_PROXY", "no_proxy")
+
+
+def test_a_web_member_reaches_the_web_through_its_forwarder_and_its_model_directly():
+    env = member_env(
+        DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, proxy_port=3128, provider_host="127.0.0.1"
+    )
+
+    for name in PROXY_VARS:
+        assert env[name] == "http://127.0.0.1:3128"
+    for name in NO_PROXY_VARS:
+        assert env[name] == "127.0.0.1"
+
+
+def test_a_member_without_web_access_gets_no_proxy_variables():
+    env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS) if name in env] == []
+
+
+def test_a_web_member_s_proxy_is_the_pool_s_whatever_the_definition_lists():
+    definition = replace(DEFINITION, env=("HTTPS_PROXY", "no_proxy"))
+    caller = {**CALLER, "HTTPS_PROXY": "http://elsewhere:8888", "no_proxy": "*"}
+
+    env = member_env(
+        definition, LOCAL_MEMBER, ACCOUNTS, caller, proxy_port=3128, provider_host="localhost"
+    )
+
+    assert env["HTTPS_PROXY"] == "http://127.0.0.1:3128"
+    assert env["no_proxy"] == "localhost"
+
+
+def test_a_web_member_with_no_provider_host_is_refused():
+    # Without it the member's model traffic would go to the proxy, which
+    # refuses loopback: the member would start with no way to its model.
+    with pytest.raises(launch.LaunchError, match="local-1"):
+        member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, proxy_port=3128)
+
+
+def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_another_none(
+    tmp_path,
+):
+    """The two local members a pool starts, one under a definition with web
+    access and one under a definition without: what each starts as and with."""
+    socat = shutil.which("socat", path="/usr/bin:/bin")
+    if socat is None:
+        pytest.skip("socat is not on PATH, so no forwarder can be built")
+    work = tmp_path / "work"
+    work.mkdir()
+    environ = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)}
+    llama = sandbox.Bridge(socket=str(tmp_path / "bridge.sock"), port=8080)
+    proxy = sandbox.Bridge(
+        socket=str(tmp_path / "web" / "lease-1.sock"),
+        port=sandbox.web_port(llama.port),
+        to=sandbox.WEB_PROXY,
+    )
+
+    def started(web):
+        argv = launch.member_argv(
+            DEFINITION, LOCAL_MEMBER, environ,
+            cwd=work, state_dir=tmp_path, bridge=llama, web=web,
+        )
+        env = member_env(
+            DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER,
+            proxy_port=None if web is None else web.port,
+            provider_host=None if web is None else "127.0.0.1",
+        )
+        return argv, env
+
+    def binds(argv):
+        return [tuple(argv[i + 1 : i + 3]) for i, word in enumerate(argv) if word == "--ro-bind"]
+
+    pi = launch.pi_argv(DEFINITION, LOCAL_MEMBER)
+    web_argv, web_env = started(proxy)
+    plain_argv, plain_env = started(None)
+
+    assert (proxy.socket, proxy.socket) in binds(web_argv)
+    assert web_argv[web_argv.index("--") + 1 :] == [
+        *sandbox.forwarder_argv(llama, socat), *sandbox.forwarder_argv(proxy, socat), *pi,
+    ]
+    for name in PROXY_VARS:
+        assert web_env[name] == f"http://127.0.0.1:{proxy.port}"
+    for name in NO_PROXY_VARS:
+        assert web_env[name] == "127.0.0.1"
+
+    assert (proxy.socket, proxy.socket) not in binds(plain_argv)
+    assert proxy.socket not in plain_argv
+    assert plain_argv[plain_argv.index("--") + 1 :] == [
+        *sandbox.forwarder_argv(llama, socat), *pi,
+    ]
+    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS) if name in plain_env] == []
+
+
+def test_the_web_forwarder_s_port_is_never_the_provider_s():
+    assert sandbox.web_port(8080) != 8080
+    assert sandbox.web_port(sandbox.WEB_PORT) != sandbox.WEB_PORT
+
+
+def test_a_hosted_member_is_given_no_web_forwarder(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    proxy = sandbox.Bridge(
+        socket=str(tmp_path / "web" / "lease-1.sock"), port=3128, to=sandbox.WEB_PROXY
+    )
+    with pytest.raises(launch.LaunchError, match="hosted-1"):
+        launch.member_argv(
+            DEFINITION, HOSTED_MEMBER, {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
+            cwd=work, state_dir=tmp_path, web=proxy,
+        )
