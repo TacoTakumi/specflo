@@ -123,6 +123,18 @@ What may stand in a swap's way is for the caller to say, from the two
 configurations and the store; the service still reads the lease rows only to
 place a request and to check expiry.
 
+A local member leased under a definition with web access reaches the web
+through a proxy of its lease's own (see ``webproxy``), served on a unix
+socket in the daemon root, ``web_socket_path``, on the daemon's event loop.
+The grant has it served before the member starts, so the socket is there for
+the member's sandbox to bind; ``end_lease`` has it stopped and the socket
+removed, first of all, so an ended lease reaches the web no more while its
+member takes its time to stop. A tunnel through the proxy has no idle
+timeout: the ending is what closes it. The service runs off the loop, and
+hands both to the loop through ``WebProxies``, which the daemon puts on the
+service while it serves. A service without them grants no web lease: the
+member would start with no way to the web it was promised, and is refused.
+
 The service reaches the agent subsystem through the runner only. It keeps no
 clock and mints nothing by itself: the time, lease ids and lease tokens come
 from callables handed in, so a test drives it with a fake clock and counted
@@ -140,6 +152,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Protocol
 
 from ..daemon.poolstore import (
     TRANSITION_KINDS,
@@ -151,7 +164,7 @@ from ..daemon.poolstore import (
 from ..errors import SpecfloError
 from . import egress as egress_classes
 from . import accounts, console, expiry, ledger, piconfig, preempt, runner, sandbox, teamlease
-from .config import CONSOLE, Pool, PoolConfig
+from .config import CONSOLE, LOCAL, Pool, PoolConfig
 from .teams import Team
 
 _log = logging.getLogger(__name__)
@@ -165,6 +178,9 @@ ENDINGS: tuple[str, ...] = tuple(kind for kind in TRANSITION_KINDS if kind != "g
 # and endings before it, and each may take most of a minute to start or stop
 # a member.
 WAITING_GRACE = 120
+
+# The directory in the daemon root that each web lease's proxy socket is in.
+WEB_DIRNAME = "web"
 
 # The time now, timezone-aware. Passed in, so a test hands over a fake one.
 Clock = Callable[[], datetime]
@@ -245,6 +261,25 @@ def held_models(pool: PoolService | None) -> frozenset[str]:
     return frozenset() if pool is None else pool.held_models()
 
 
+def web_socket_path(root: Path | str, lease_id: str) -> Path:
+    """Where the web proxy of the lease *lease_id* is served: ``web/<lease
+    id>.sock`` in the daemon root *root*. A unix socket path holds 107 bytes
+    at most, so a lease id of the service's own, ``lease-`` and 16 hex
+    digits, leaves 75 for the root."""
+    return Path(root) / WEB_DIRNAME / f"{lease_id}.sock"
+
+
+class WebProxies(Protocol):
+    """What serves the web proxies of a daemon's leases, on the daemon's loop
+    (see ``daemon.app.WebProxies``). ``open`` serves the proxy of a lease
+    and answers with its socket's path; ``close`` stops it and removes the
+    socket, does nothing for a lease with none, and raises nothing."""
+
+    def open(self, lease_id: str, member: str, internal: Sequence[str]) -> Path: ...
+
+    def close(self, lease_id: str) -> None: ...
+
+
 def _mint_id() -> str:
     return f"lease-{secrets.token_hex(8)}"
 
@@ -278,6 +313,9 @@ class PoolService:
     bridge: Path | None = None
     # The daemon's own directory, hidden from every member it starts.
     daemon_root: Path | None = None
+    # The web proxies of the leases, served on the daemon's loop; without
+    # them no local member with web access is started.
+    web: WebProxies | None = None
     _turn: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     # True while the expiry check runs: the endings it makes do not check again.
     _checking: bool = field(default=False, init=False, repr=False)
@@ -473,6 +511,8 @@ class PoolService:
                         placed.agent, pool_token=self.pool_token, lease_token=token
                     )
                 else:
+                    if definition.web and placed.member.backing == LOCAL:
+                        self._serve_web(lease_id, placed.member.name, definition.web_internal)
                     # The runner names the agent for the member it is handed, so a
                     # further lease on a member is handed over under its own name.
                     agent = runner.start(
@@ -603,6 +643,10 @@ class PoolService:
             if store.record_transition(ending, expect="active") is None:
                 return _recorded_end(store, lease_id)
             ended = store.get_lease(lease_id)
+            if self.web is not None:
+                # First: the lease reaches the web no more, while its member
+                # may take some seconds to stop.
+                self.web.close(lease_id)
             # A console's process is never the pool's to stop; any other
             # member's host aborts a running turn itself before it stops pi.
             told = dict(
@@ -613,6 +657,17 @@ class PoolService:
             else:
                 runner.stop(ledger.agent_of(ended), kind, **told)
         return Ended(lease_id=lease_id, state=kind, cause=cause, time=ending.time)
+
+    def _serve_web(self, lease_id: str, member: str, internal: Sequence[str]) -> None:
+        """Serve the web proxy of the lease *lease_id* on *member*, before the
+        member starts. Raises ``SpecfloError`` when the service has no web
+        proxies to serve it with."""
+        if self.web is None:
+            raise SpecfloError(
+                f"member '{member}' has web access, and no web proxy is served on this "
+                "daemon: the member would start without it, so it is not started."
+            )
+        self.web.open(lease_id, member, internal)
 
     def _pool(self, name: str) -> Pool:
         for pool in self.config.pools:

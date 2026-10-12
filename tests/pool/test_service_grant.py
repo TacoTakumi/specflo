@@ -404,6 +404,40 @@ def test_of_two_callers_ending_one_lease_one_stops_the_member(pool_rig, monkeypa
     assert kinds == ["granted", stops[0]]
 
 
+class RecordedWeb:
+    """Web proxies that record what the service asks of them, and serve nothing."""
+
+    def __init__(self, order: list) -> None:
+        self.order = order
+
+    def open(self, lease_id, member, internal):
+        self.order.append(("open", lease_id))
+
+    def close(self, lease_id):
+        self.order.append(("close", lease_id))
+
+
+def test_an_ending_stops_the_web_proxy_before_the_member(pool_rig, monkeypatch):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    order = []
+    svc.web = RecordedWeb(order)
+    grant = svc.grant("rebasers", holder_label="a", cwd=pool_rig.work)
+    real_stop = service.runner.stop
+
+    def stop(name, cause, **kwargs):
+        order.append(("stop", name))
+        real_stop(name, cause, **kwargs)
+
+    monkeypatch.setattr(service.runner, "stop", stop)
+
+    svc.end_lease(grant.lease_id, "released")
+    svc.end_lease(grant.lease_id, "released")
+
+    # a definition with no web access opens none; an ending closes whatever
+    # its lease has, before its member stops, and only once
+    assert order == [("close", grant.lease_id), ("stop", grant.agent)]
+
+
 def test_a_lease_that_was_never_granted_cannot_be_ended(pool_rig):
     svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
 
