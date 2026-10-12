@@ -53,6 +53,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   Gitea bot account, the awiki reader user and the accepted exfiltration
   risk of an agent with web access.
 
+### Changed
+- **The sample systemd units** in `contrib/systemd/` put `/usr/sbin` on the
+  daemon's `PATH`, where `ip` is, so a web member can start. Each also has a
+  commented `EnvironmentFile` line, with an example, for a definition's
+  credentials such as `TAVILY_API_KEY`.
+
 ## [0.18.0]
 
 ### Added

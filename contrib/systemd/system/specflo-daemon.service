@@ -16,7 +16,14 @@
 # - HOME must be that user's home: specflo reads ~/.specflo there, and uv,
 #   herdr and pi keep their state under it.
 # - PATH must reach specflo, uv, herdr and pi. Replace the node directory
-#   with the one `dirname "$(command -v pi)"` prints for that user.
+#   with the one `dirname "$(command -v pi)"` prints for that user. A pool
+#   member with web access also needs socat, unshare and ip; ip is in
+#   /usr/sbin.
+# - A pool definition's credentials (for example TAVILY_API_KEY for the
+#   rfc-researcher) come from the daemon's environment. Keep them in a file
+#   only that user can read, one NAME=value per line with no "export", and
+#   uncomment the EnvironmentFile line below:
+#     (umask 077; printf 'TAVILY_API_KEY=%s\n' '<key>' > /home/you/specflo-daemon/daemon.env)
 # - The tui agent transport places each project agent in a herdr pane, so a
 #   herdr server must be running for that user. Without one, agent start falls
 #   back to headless. Set agent_transport: rpc in the daemon root's
@@ -38,7 +45,8 @@ User=you
 Group=you
 WorkingDirectory=/home/you/specflo-daemon
 Environment=HOME=/home/you
-Environment=PATH=/home/you/.local/bin:/home/you/bin:/home/you/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=/home/you/.local/bin:/home/you/bin:/home/you/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin
+#EnvironmentFile=/home/you/specflo-daemon/daemon.env
 #Environment=XDG_RUNTIME_DIR=/run/user/1000
 ExecStart=/home/you/.local/bin/specflo serve --root /home/you/specflo-daemon --bind 127.0.0.1 --port 8741
 Restart=on-failure

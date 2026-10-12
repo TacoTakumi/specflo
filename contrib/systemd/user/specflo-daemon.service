@@ -13,7 +13,13 @@
 #
 # Adjust before installing:
 # - PATH must reach specflo, uv, herdr and pi. Replace the node directory
-#   with the one `dirname "$(command -v pi)"` prints.
+#   with the one `dirname "$(command -v pi)"` prints. A pool member with web
+#   access also needs socat, unshare and ip; ip is in /usr/sbin.
+# - A pool definition's credentials (for example TAVILY_API_KEY for the
+#   rfc-researcher) come from the daemon's environment. Keep them in a file
+#   only you can read, one NAME=value per line with no "export", and
+#   uncomment the EnvironmentFile line below:
+#     (umask 077; printf 'TAVILY_API_KEY=%s\n' '<key>' > ~/specflo-daemon/daemon.env)
 # - The tui agent transport places each project agent in a herdr pane, so a
 #   herdr server must be running for your user. Without one, agent start falls
 #   back to headless. Set agent_transport: rpc in the daemon root's
@@ -29,7 +35,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h/specflo-daemon
-Environment=PATH=%h/.local/bin:%h/bin:%h/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin
+Environment=PATH=%h/.local/bin:%h/bin:%h/.nvm/versions/node/vNN.NN.N/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin
+#EnvironmentFile=%h/specflo-daemon/daemon.env
 ExecStart=%h/.local/bin/specflo serve --root %h/specflo-daemon --bind 127.0.0.1 --port 8741
 Restart=on-failure
 RestartSec=5
