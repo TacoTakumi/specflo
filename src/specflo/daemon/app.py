@@ -12,7 +12,8 @@ While a daemon with a pool serves, it reads llama-swap's event stream
 (:mod:`specflo.pool.events`), the event logs of its leased hosted members
 (:mod:`specflo.pool.watch`) and the keys of its declared accounts
 (:mod:`specflo.pool.accounts`), and serves the bridge its local members reach
-llama-swap through (:mod:`specflo.pool.bridge`).
+llama-swap through (:mod:`specflo.pool.bridge`). A daemon whose root has a
+gateway configuration also runs the issue gateway (:mod:`specflo.gateway`).
 """
 
 from __future__ import annotations
@@ -25,7 +26,9 @@ from pathlib import Path
 
 from fastapi import FastAPI
 
+from .. import gateway
 from ..config import proxy_auth
+from ..gateway.config import open_gateway
 from ..pool import accounts, bridge, events, service, watch
 from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, auth, chat, pool_routes, prepare_root, web
@@ -52,6 +55,12 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
     on each completion; with no pool in force it holds none. The socket is made before
     anything else runs, so a daemon that cannot have it - another daemon
     serves it - does not start.
+
+    A root whose gateway configuration stood at the start has the gateway
+    loop run as one more task, over the poll step on
+    ``app.state.gateway_poll``; the task is kept on ``app.state.gateway_task``.
+    A root without one, or with a faulty one, has no such task and asks no
+    forge.
     """
 
     def pool():
@@ -74,6 +83,10 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
             # made for the pool of this moment, and told where the one in force is
             reader.pool = pool
         tasks = [asyncio.create_task(reader.run()) for reader in readers]
+        if app.state.gateway is not None:
+            loop = gateway.Gateway(app.state.gateway, app.state.gateway_poll)
+            app.state.gateway_task = asyncio.create_task(loop.run(), name="gateway")
+            tasks.append(app.state.gateway_task)
         try:
             yield
         finally:
@@ -116,6 +129,12 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     # A directory with faults gives no pool either, and the faults are kept:
     # the projects are served, and the pool routes answer with the faults.
     app.state.pool, app.state.pool_errors = pool_routes.open_pool(root)
+    # The issue gateway the root's gateway.yaml configures; None without one.
+    # A file with faults gives none either, and the faults are logged and
+    # kept: the daemon serves without the gateway.
+    app.state.gateway, app.state.gateway_errors = open_gateway(root)
+    app.state.gateway_poll = gateway.poll_nothing
+    app.state.gateway_task = None
 
     @app.get(HEALTH_PATH)
     def health() -> dict:
