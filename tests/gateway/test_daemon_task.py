@@ -9,6 +9,7 @@ and the daemon serves all the same.
 """
 
 import asyncio
+import dataclasses
 import logging
 import os
 import threading
@@ -20,7 +21,9 @@ from waits import scaled, settle
 
 from specflo import daemon
 from specflo.daemon.app import create_app
-from specflo.gateway import Gateway, config
+from specflo.gateway import Gateway, config, gitea, service
+
+from .stub_forge import StubGitea
 
 TOKEN = "fake-gitea-token-51be"
 
@@ -179,6 +182,16 @@ def test_cancelling_the_loop_while_it_polls_ends_it_at_once():
 def test_the_daemon_own_poll_step_keeps_the_task_running(root):
     _configure(root)
     app = create_app(root)
+    # The daemon's own poll step, the service's, with its Gitea client on a
+    # stub forge so that no request leaves the process.
+    stub = StubGitea(token=TOKEN)
+    stub.repos.add("me/thing")
+    gateway_service = app.state.gateway_service
+    assert app.state.gateway_poll == gateway_service.poll
+    gateway_service.kinds[config.GITEA] = dataclasses.replace(
+        service.GITEA_KIND,
+        client=lambda forge: gitea.GiteaClient(forge, transport=stub.transport()),
+    )
 
     with TestClient(app):
         task = app.state.gateway_task
@@ -187,3 +200,5 @@ def test_the_daemon_own_poll_step_keeps_the_task_running(root):
         assert not task.done()
 
     assert task.cancelled()
+    assert stub.requests, "the daemon's poll step asked the stub forge nothing"
+    assert all(seen.path.startswith("/api/v1/repos/me/thing/") for seen in stub.requests)

@@ -1,10 +1,11 @@
-"""What the gateway remembers across restarts: its first start, the events it handled and its cursors.
+"""What the gateway remembers across restarts: its first start, the events it handled, its cursors and its comments.
 
 The gateway acts on no label event older than its first start, and on no
 event twice. Both hold across a restart because this store keeps them in the
 daemon root, in ``gateway/state.json``: the time the gateway first started,
-the newest label event it handled on each issue, and each repo's poll cursor,
-the time a poll asks for changes since.
+the newest label event it handled on each issue, each repo's poll cursor,
+the time a poll asks for changes since, and the id of the bot's comment on
+each issue it ran on, which a later run of that issue edits.
 
 Only the label that is on an issue now can start a run (see
 :mod:`specflo.gateway.poll`), so the store keeps one event per issue: an
@@ -70,12 +71,14 @@ def open_store(root: Path, now: datetime | None = None) -> GatewayStore:
 @dataclass
 class GatewayStore:
     """The store at *path*. ``handled`` maps an issue's key to the time of
-    the newest event handled on it, ``cursors`` a repo's key to its cursor."""
+    the newest event handled on it, ``cursors`` a repo's key to its cursor,
+    ``comments`` an issue's key to the id of the bot's comment on it."""
 
     path: Path
     first_start: datetime
     handled: dict[str, datetime] = field(default_factory=dict)
     cursors: dict[str, datetime] = field(default_factory=dict)
+    comments: dict[str, int] = field(default_factory=dict)
 
     def is_handled(self, trigger: Trigger) -> bool:
         """Whether *trigger*'s issue has a handled event as new as *trigger*'s, or newer."""
@@ -103,12 +106,25 @@ class GatewayStore:
         self.cursors[key] = _aware(when)
         self.save()
 
+    def comment_id(self, forge: str, repo: str, number: int) -> int | None:
+        """The id of the bot's comment on issue *number*, or None before its first run."""
+        return self.comments.get(_issue_key(forge, repo, number))
+
+    def set_comment(self, forge: str, repo: str, number: int, comment_id: int) -> None:
+        """Record *comment_id* as the bot's comment on the issue, in the file before this returns."""
+        key = _issue_key(forge, repo, number)
+        if self.comments.get(key) == comment_id:
+            return
+        self.comments[key] = int(comment_id)
+        self.save()
+
     def save(self) -> None:
         """Replace the file with what the store holds now."""
         data = {
             "first_start": _format(self.first_start),
             "handled": {key: _format(at) for key, at in sorted(self.handled.items())},
             "cursors": {key: _format(at) for key, at in sorted(self.cursors.items())},
+            "comments": dict(sorted(self.comments.items())),
         }
         _write_atomic(self.path, json.dumps(data, indent=2) + "\n")
 
@@ -126,6 +142,7 @@ def _load(path: Path) -> GatewayStore | None:
             _parse(data["first_start"]),
             {str(key): _parse(at) for key, at in data.get("handled", {}).items()},
             {str(key): _parse(at) for key, at in data.get("cursors", {}).items()},
+            {str(key): _comment_id(value) for key, value in data.get("comments", {}).items()},
         )
     except (ValueError, TypeError, KeyError, AttributeError):
         bad = path.with_name(path.name + BAD_SUFFIX)
@@ -161,6 +178,12 @@ def _repo_key(forge: str, repo: str) -> str:
 def _aware(value: datetime) -> datetime:
     if value.tzinfo is None or value.utcoffset() is None:
         raise ValueError("a time the gateway stores must carry its zone.")
+    return value
+
+
+def _comment_id(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError("a stored comment id must be a number.")
     return value
 
 

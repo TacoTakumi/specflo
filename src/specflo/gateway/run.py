@@ -17,6 +17,13 @@ ended all the same and the run's own outcome is what the caller acts on. A
 run cancelled while its lease is being granted ends the lease as soon as the
 grant comes back, so no member is left to a run that is gone.
 
+A pool with no member free refuses the lease with :class:`NoFreeAgent`. A run
+given a time to ``wait`` asks again every ``retry_every`` seconds until it is
+granted or the time is up, and calls ``on_waiting`` once, at the first
+refusal, so the caller can tell the issue that the run waits. ``on_granted``
+is called once the lease is granted, before the prompt. A run given no time
+to wait fails at the first refusal.
+
 What the member is handed is the scratch dir, its environment and the
 prompt, and none of them holds a forge credential: the forge's clone has been
 made already, with the credential in git's environment only. The environment
@@ -40,13 +47,14 @@ import asyncio
 import logging
 import os
 import stat
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from ..agent.client import HostUnreachableError, connect
 from ..errors import SpecfloError
+from ..pool.service import NoFreeMember
 from . import scratch
 from .config import Forge
 
@@ -68,6 +76,9 @@ FAILED = "the research run failed"
 TIMED_OUT = "the research agent did not finish in time"
 CANCELLED = "the research run was cancelled"
 
+#: Seconds between two asks for a lease while the pool has no member free.
+LEASE_RETRY = 5.0
+
 #: Seconds the adapter waits for the agent host's answer to one request.
 _REQUEST_TIMEOUT = 10.0
 
@@ -79,6 +90,14 @@ _endings: set[asyncio.Task] = set()
 
 class RunError(SpecfloError):
     """A research run that gave no report. The message names no credential."""
+
+
+class RunTimeout(RunError):
+    """A research run whose agent did not finish within the run's limit."""
+
+
+class NoFreeAgent(RunError):
+    """A pool with no member free for the lease now; a later ask may be granted."""
 
 
 @dataclass(frozen=True)
@@ -98,7 +117,8 @@ class AgentPool(Protocol):
     ) -> Leased:
         """Lease a member of *pool* whose agent works in *cwd* with *env* set.
 
-        Raises :class:`RunError` when the pool grants none.
+        Raises :class:`NoFreeAgent` when no member is free now, and
+        :class:`RunError` when the pool grants none for another reason.
         """
 
     async def prompt(self, leased: Leased, text: str, *, timeout: float) -> None:
@@ -133,25 +153,37 @@ async def research(
     *,
     limit: float = RUN_LIMIT,
     label: str = HOLDER_LABEL,
+    wait: float = 0.0,
+    retry_every: float = LEASE_RETRY,
+    on_waiting: Callable[[], Awaitable[None]] | None = None,
+    on_granted: Callable[[], Awaitable[None]] | None = None,
 ) -> str:
     """Run the research agent in the scratch dir *directory*; the text of its report.
 
     The agent is leased from *forge*'s pool under the holder label *label*
-    and given *limit* seconds for its one prompt. Raises :class:`RunError`
-    for a run that gave no report.
+    and given *limit* seconds for its one prompt. While the pool has no
+    member free the lease is asked again for up to *wait* seconds, with
+    *on_waiting* called at the first refusal; *on_granted* is called once the
+    lease is granted. Raises :class:`RunError` for a run that gave no report,
+    :class:`RunTimeout` when its agent did not finish in time.
     """
     directory = Path(directory)
     env = scratch.wiki_environment(directory)
-    leased = await _lease(pool, forge.pool, directory, label, env)
+    leased = await _lease_waiting(
+        pool, forge.pool, directory, label, env,
+        wait=wait, retry_every=retry_every, on_waiting=on_waiting,
+    )
     cause = FAILED
     try:
+        if on_granted is not None:
+            await on_granted()
         try:
             await asyncio.wait_for(
                 pool.prompt(leased, research_prompt(directory, env), timeout=limit), limit
             )
         except TimeoutError:
             cause = TIMED_OUT
-            raise RunError(f"the research agent did not finish in {limit:g} seconds.") from None
+            raise RunTimeout(f"the research agent did not finish in {limit:g} seconds.") from None
         except asyncio.CancelledError:
             cause = CANCELLED
             raise
@@ -187,6 +219,34 @@ def read_report(directory: Path) -> str:
     if not text.strip():
         raise RunError(f"the agent's {REPORT_FILE} is empty.")
     return text
+
+
+async def _lease_waiting(
+    pool: AgentPool,
+    name: str,
+    directory: Path,
+    label: str,
+    env: Mapping[str, str],
+    *,
+    wait: float,
+    retry_every: float,
+    on_waiting: Callable[[], Awaitable[None]] | None,
+) -> Leased:
+    """The lease of a member of the pool *name*, asked again while no member
+    is free, for up to *wait* seconds."""
+    loop = asyncio.get_running_loop()
+    until = loop.time() + wait
+    told = False
+    while True:
+        try:
+            return await _lease(pool, name, directory, label, env)
+        except NoFreeAgent:
+            if loop.time() >= until:
+                raise
+        if not told and on_waiting is not None:
+            told = True
+            await on_waiting()
+        await asyncio.sleep(max(min(retry_every, until - loop.time()), 0))
 
 
 async def _lease(
@@ -257,6 +317,8 @@ class ServicePool:
             grant = await asyncio.to_thread(
                 self.service.grant, pool, holder_label=label, cwd=cwd
             )
+        except NoFreeMember as exc:
+            raise NoFreeAgent(f"the pool '{pool}' gave no research agent: {exc}") from exc
         except SpecfloError as exc:
             raise RunError(f"the pool '{pool}' gave no research agent: {exc}") from exc
         return Leased(lease_id=grant.lease_id, agent=grant.agent, token=grant.token)

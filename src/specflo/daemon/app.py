@@ -35,6 +35,9 @@ from .. import gateway
 from ..config import proxy_auth
 from ..errors import SpecfloError
 from ..gateway.config import open_gateway
+from ..gateway.run import ServicePool
+from ..gateway.service import GatewayService
+from ..gateway.store import open_store
 from ..pool import accounts, bridge, events, service, watch, webproxy
 from ..pool.cli_admin import pool_dir
 from . import HEALTH_PATH, auth, chat, pool_routes, prepare_root, web
@@ -175,6 +178,27 @@ class WebProxies:
             return False
 
 
+class PoolInForce:
+    """The pool service in force on *app* at each call, for the gateway's
+    runs: a reload can put another in force. With none in force a grant is
+    refused."""
+
+    def __init__(self, app: FastAPI) -> None:
+        self.app = app
+
+    def grant(self, *args, **kwargs):
+        return self._service().grant(*args, **kwargs)
+
+    def end_lease(self, *args, **kwargs):
+        return self._service().end_lease(*args, **kwargs)
+
+    def _service(self):
+        found = self.app.state.pool
+        if found is None:
+            raise SpecfloError("the daemon has no agent pool in force.")
+        return found
+
+
 @contextlib.asynccontextmanager
 async def _serving(app: FastAPI) -> AsyncIterator[None]:
     """What runs while the daemon serves, and no longer.
@@ -205,8 +229,9 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
     A root whose gateway configuration stood at the start has the gateway
     loop run as one more task, over the poll step on
     ``app.state.gateway_poll``; the task is kept on ``app.state.gateway_task``.
-    A root without one, or with a faulty one, has no such task and asks no
-    forge.
+    When the daemon stops, the gateway service on ``app.state.gateway_service``
+    cancels its runs and waits for each to end. A root without one, or with a
+    faulty one, has no such task and asks no forge.
     """
 
     def pool():
@@ -247,6 +272,8 @@ async def _serving(app: FastAPI) -> AsyncIterator[None]:
             for task in tasks:
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
+            if app.state.gateway_service is not None:
+                await app.state.gateway_service.aclose()
 
 
 def create_app(root: Path, *, url: str | None = None) -> FastAPI:
@@ -285,7 +312,15 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     # A file with faults gives none either, and the faults are logged and
     # kept: the daemon serves without the gateway.
     app.state.gateway, app.state.gateway_errors = open_gateway(root)
+    # The service that runs research for the gateway's triggers, and its
+    # poll step the gateway loop calls. Its runs lease from the pool in force.
+    app.state.gateway_service = None
     app.state.gateway_poll = gateway.poll_nothing
+    if app.state.gateway is not None:
+        app.state.gateway_service = GatewayService(
+            open_store(root), ServicePool(PoolInForce(app))
+        )
+        app.state.gateway_poll = app.state.gateway_service.poll
     app.state.gateway_task = None
     # The web proxies of the pool's web leases, made when the daemon serves.
     app.state.web = None
