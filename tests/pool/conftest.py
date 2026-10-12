@@ -19,6 +19,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+import leak_guard
 from specflo.agent.statefiles import AgentPaths, read_status
 from specflo.daemon.poolstore import PoolStore, open_pool_store
 from specflo.pool import accounts, bridge
@@ -26,6 +27,14 @@ from specflo.pool.config import Member, Pool, PoolConfig
 from specflo.pool.service import PoolService
 
 from .test_runner import ACCOUNTS, DEFINITION, POOL_TOKEN, Rig
+
+# The web proxy's tests serve a unix socket per web lease and start member
+# work, and each must be gone when its test ends: the leak guard checks these
+# modules. The rest of the pool's tests clean up through their rig, and stay
+# out of it.
+LEAK_GUARDED = {"test_webproxy.py", "test_webproxy_log.py", "test_webproxy_lease.py"}
+
+leak_guarded = leak_guard.autouse(only=LEAK_GUARDED)
 
 START = datetime(2026, 3, 1, 12, 0, 0, tzinfo=timezone.utc)
 
