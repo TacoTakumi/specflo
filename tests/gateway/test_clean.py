@@ -149,3 +149,29 @@ def test_report_stray_html_start_is_escaped():
     assert not re.search(r"<script", text)
     # The fence is code once the stray tag start can no longer open HTML.
     assert "&lt;script" in text
+
+
+def test_report_mention_right_after_a_link_is_broken():
+    text = clean.clean_report(
+        "[docs](https://example.com/)@alice and "
+        "[more](https://docs.example.com/a_(b))@bob, plain https://x.example/@writer"
+    )
+    # The link ends at its closing parenthesis, so what follows is prose.
+    assert "[docs](https://example.com/)@​alice" in text
+    assert "[more](https://docs.example.com/a_(b))@​bob" in text
+    # An @ in a URL is still part of the link.
+    assert "https://x.example/@writer" in text
+
+
+def test_report_mention_after_an_underscore_is_broken():
+    # Each underscore here is emphasis, which leaves the @ at the start of
+    # the rendered text, where it notifies.
+    for report in ("_@alice_", "__@alice__", "_note_@alice"):
+        text = clean.clean_report(report)
+        assert "@alice" not in text, report
+        assert "@​alice" in text, report
+
+
+def test_report_at_inside_a_word_or_url_is_left_alone():
+    report = "Mail a_b@c.d or see https://example.com/a_@b now."
+    assert clean.clean_report(report) == report

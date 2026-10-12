@@ -70,13 +70,16 @@ _LINK = re.compile(
 )
 _REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]*)>?.*(?:\n|\Z)", re.MULTILINE)
 
-# A mention is an @ not after an ASCII word character, then a name. A URL is
-# matched first and left whole: an @ in a link is not a mention, and a
-# character put into it would break the link. A URL counts only where a
-# renderer would see one start.
+# A mention is an @ not after an ASCII letter or digit, then a name. An @
+# after an underscore counts too, since the underscore may be emphasis that
+# leaves the @ at the start of the rendered text. A URL is matched first and
+# left whole: an @ in a link is not a mention, and a character put into it
+# would break the link. A URL counts only where a renderer would see one
+# start, and it holds only balanced parentheses, so one that is a link's
+# destination ends at the link's closing parenthesis.
 _MENTION_OR_URL = re.compile(
-    r"(?P<url>(?<![^\s*_~(<])https?://[^\s<>]*)"
-    r"|(?<![A-Za-z0-9_])@(?=[A-Za-z0-9])",
+    r"(?P<url>(?<![^\s*_~(<])https?://(?:[^\s<>()]|\([^\s<>()]*\))*)"
+    r"|(?<![A-Za-z0-9])@(?=[A-Za-z0-9])",
     re.IGNORECASE,
 )
 
