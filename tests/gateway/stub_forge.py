@@ -9,7 +9,8 @@ refuses a request without the token it was made with, as the forge would.
 A test seeds a stub through the methods :class:`StubForge` declares, which
 say what happened on the forge (an issue was opened, labelled, commented on)
 and not how one forge's API spells it, so a test of the comment flow can run
-against each kind of stub. :class:`StubGitea` answers Gitea's v1 API.
+against each kind of stub. :class:`StubGitea` answers Gitea's v1 API and
+:class:`StubGitHub` GitHub's REST API as a GitHub App's installation sees it.
 
 The stub pages its lists ``max_items`` at a time, fewer than a real forge
 does, so a client that reads only the first page is caught.
@@ -17,12 +18,17 @@ does, so a client that reads only the first page is caught.
 
 from __future__ import annotations
 
+import functools
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import httpx
+import jwt
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 #: When a stub's clock starts.
 EPOCH = datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
@@ -377,3 +383,281 @@ def _json(status: int, data: object, headers: dict[str, str] | None = None) -> h
 
 def _error(status: int, message: str) -> httpx.Response:
     return _json(status, {"message": message, "url": "https://gitea.example/api/swagger"})
+
+
+#: The id of the GitHub App a :class:`StubGitHub` knows, and of its installation.
+APP_ID = 99
+INSTALLATION_ID = 4711
+
+_GH_INSTALLATION = re.compile(r"/repos/(?P<repo>[^/]+/[^/]+)/installation")
+_GH_ACCESS_TOKENS = re.compile(r"/app/installations/(?P<id>\d+)/access_tokens")
+_GH_REPO_EVENTS = re.compile(r"/repos/(?P<repo>[^/]+/[^/]+)/issues/events")
+_GH_ISSUE_EVENTS = re.compile(r"/repos/(?P<repo>[^/]+/[^/]+)/issues/(?P<number>\d+)/events")
+
+
+@functools.cache
+def app_key() -> tuple[str, rsa.RSAPublicKey]:
+    """A throwaway RSA key for a GitHub App: the private half in PEM, and the public half."""
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode("ascii")
+    return pem, key.public_key()
+
+
+@dataclass(frozen=True)
+class Answer:
+    """A list answer a :class:`StubGitHub` gave: the path, the status and the ETag."""
+
+    path: str
+    status: int
+    etag: str
+
+
+@dataclass
+class StubGitHub(StubForge):
+    """A stub of GitHub's REST API at ``https://api.github.com``, for the App :data:`APP_ID`.
+
+    The App's JWT, checked against :func:`app_key`, finds the installation on
+    a repo and asks for installation tokens; each token request's body is
+    kept in ``token_bodies``, and the token handed out is ``token``. With that
+    token the gateway reads the issues of a repo by label and time, an issue,
+    its comments and its events, the repo's issue events feed, and one
+    comment to read, create or edit. Lists are paged with a ``Link`` header,
+    the repo's events feed newest first, and each list answer carries an
+    ``ETag``: a request whose ``If-None-Match`` names the answer's ETag gets
+    304 and no body, as GitHub answers. ``answers`` keeps each list answer.
+    """
+
+    base_url: str = "https://api.github.com"
+    web_url: str = "https://github.com"
+    token_bodies: list[dict] = field(default_factory=list)
+    answers: list[Answer] = field(default_factory=list)
+
+    def handle(self, request: httpx.Request) -> httpx.Response:
+        seen = self.record(request)
+        path = seen.path
+        authorization = seen.headers.get("authorization", "")
+        app_routes = (
+            ("GET", _GH_INSTALLATION, self._installation),
+            ("POST", _GH_ACCESS_TOKENS, self._access_token),
+        )
+        for method, pattern, answer in app_routes:
+            match = pattern.fullmatch(path)
+            if match is not None and method == seen.method:
+                if not self._app_signed(authorization):
+                    return _gh_error(401, "Bad credentials")
+                return answer(seen, **match.groupdict())
+        if authorization != f"token {self.token}":
+            return _gh_error(401, "Bad credentials")
+        routes = (
+            ("GET", _GH_REPO_EVENTS, self._repo_events),
+            ("GET", _ISSUES, self._list_issues),
+            ("GET", _ISSUE, self._get_issue),
+            ("GET", _ISSUE_COMMENTS, self._list_comments),
+            ("POST", _ISSUE_COMMENTS, self._create_comment),
+            ("GET", _GH_ISSUE_EVENTS, self._issue_events),
+            ("GET", _COMMENT, self._get_comment),
+            ("PATCH", _COMMENT, self._edit_comment),
+        )
+        for method, pattern, answer in routes:
+            match = pattern.fullmatch(path)
+            if match is None or method != seen.method:
+                continue
+            if match["repo"] not in self.repos:
+                return _gh_error(404, "Not Found")
+            return answer(seen, **match.groupdict())
+        return _gh_error(404, "Not Found")
+
+    def _app_signed(self, authorization: str) -> bool:
+        scheme, _, token = authorization.partition(" ")
+        if scheme != "Bearer":
+            return False
+        try:
+            claims = jwt.decode(token, app_key()[1], algorithms=["RS256"])
+        except jwt.PyJWTError:
+            return False
+        return claims.get("iss") == str(APP_ID)
+
+    # App routes.
+
+    def _installation(self, seen: Seen, repo: str) -> httpx.Response:
+        if repo not in self.repos:
+            return _gh_error(404, "Not Found")
+        return _json(200, {"id": INSTALLATION_ID, "app_id": APP_ID})
+
+    def _access_token(self, seen: Seen, id: str) -> httpx.Response:
+        if int(id) != INSTALLATION_ID:
+            return _gh_error(404, "Not Found")
+        self.token_bodies.append(seen.body if isinstance(seen.body, dict) else {})
+        # githubkit keeps the token until this time, so it is the real time
+        # and not the stub's clock.
+        expires = datetime.now(UTC) + timedelta(hours=1)
+        return _json(201, {"token": self.token, "expires_at": _time(expires)})
+
+    # Repo routes.
+
+    def _repo_events(self, seen: Seen, repo: str) -> httpx.Response:
+        events = sorted(
+            (event for event in self.label_events if event.repo == repo),
+            key=lambda event: event.id, reverse=True,
+        )
+        return self._page(seen, [self._event_json(event, with_issue=True) for event in events])
+
+    def _list_issues(self, seen: Seen, repo: str) -> httpx.Response:
+        params = seen.params
+        wanted = [name for name in params.get("labels", "").split(",") if name]
+        since = _parse_time(params["since"]) if "since" in params else None
+        state = params.get("state", "open")
+        # GitHub lists pull requests among the issues, sorted by creation time.
+        found = [
+            issue for issue in self.issues.values()
+            if issue.repo == repo
+            and all(name in issue.labels for name in wanted)
+            and (since is None or issue.updated_at >= since)
+            and (state == "all" or issue.state == state)
+        ]
+        found.sort(key=lambda issue: (issue.created_at, issue.number), reverse=True)
+        return self._page(seen, [self._issue_json(issue) for issue in found])
+
+    def _get_issue(self, seen: Seen, repo: str, number: str) -> httpx.Response:
+        issue = self.issues.get((repo, int(number)))
+        if issue is None:
+            return _gh_error(404, "Not Found")
+        return _json(200, self._issue_json(issue))
+
+    def _list_comments(self, seen: Seen, repo: str, number: str) -> httpx.Response:
+        if (repo, int(number)) not in self.issues:
+            return _gh_error(404, "Not Found")
+        found = sorted(
+            (c for c in self.comments.values() if (c.repo, c.number) == (repo, int(number))),
+            key=lambda c: c.id,
+        )
+        return self._page(seen, [self._comment_json(c) for c in found])
+
+    def _create_comment(self, seen: Seen, repo: str, number: str) -> httpx.Response:
+        if (repo, int(number)) not in self.issues:
+            return _gh_error(404, "Not Found")
+        if not isinstance(seen.body, dict) or not isinstance(seen.body.get("body"), str):
+            return _gh_error(422, "Validation Failed")
+        comment_id = self.add_comment(repo, int(number), self.bot_id, seen.body["body"])
+        return _json(201, self._comment_json(self.comments[comment_id]))
+
+    def _issue_events(self, seen: Seen, repo: str, number: str) -> httpx.Response:
+        if (repo, int(number)) not in self.issues:
+            return _gh_error(404, "Not Found")
+        events = sorted(
+            (e for e in self.label_events if (e.repo, e.number) == (repo, int(number))),
+            key=lambda event: event.id,
+        )
+        return self._page(seen, [self._event_json(event) for event in events])
+
+    def _get_comment(self, seen: Seen, repo: str, id: str) -> httpx.Response:
+        comment = self.comments.get(int(id))
+        if comment is None or comment.repo != repo:
+            return _gh_error(404, "Not Found")
+        return _json(200, self._comment_json(comment))
+
+    def _edit_comment(self, seen: Seen, repo: str, id: str) -> httpx.Response:
+        comment = self.comments.get(int(id))
+        if comment is None or comment.repo != repo:
+            return _gh_error(404, "Not Found")
+        if comment.author_id != self.bot_id:
+            return _gh_error(403, "Must have admin rights to Repository.")
+        if not isinstance(seen.body, dict) or not isinstance(seen.body.get("body"), str):
+            return _gh_error(422, "Validation Failed")
+        comment.body = seen.body["body"]
+        comment.updated_at = self.now
+        return _json(200, self._comment_json(comment))
+
+    # Shapes, as GitHub writes them.
+
+    def _page(self, seen: Seen, items: list) -> httpx.Response:
+        page = max(int(seen.params.get("page", 1)), 1)
+        limit = min(int(seen.params.get("per_page", self.max_items)), self.max_items)
+        start = (page - 1) * limit
+        body = items[start:start + limit]
+        digest = hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+        etag = f'W/"{digest[:32]}"'
+        headers = {"ETag": etag}
+        if start + limit < len(items):
+            query = {**seen.params, "page": str(page + 1)}
+            url = httpx.URL(self.base_url + seen.path, params=query)
+            headers["Link"] = f'<{url}>; rel="next"'
+        status = 304 if seen.headers.get("if-none-match") == etag else 200
+        self.answers.append(Answer(seen.path, status, etag))
+        if status == 304:
+            return httpx.Response(304, headers=headers)
+        return _json(200, body, headers)
+
+    def _issue_url(self, repo: str, number: int) -> str:
+        return f"{self.web_url}/{repo}/issues/{number}"
+
+    def _issue_json(self, issue: _Issue) -> dict:
+        api = f"{self.base_url}/repos/{issue.repo}/issues/{issue.number}"
+        data = {
+            "id": 10000 + issue.number,
+            "node_id": f"I_{issue.number}",
+            "url": api,
+            "html_url": self._issue_url(issue.repo, issue.number),
+            "number": issue.number,
+            "state": issue.state,
+            "title": issue.title,
+            "body": issue.body,
+            "user": _user(issue.author_id),
+            "labels": [
+                {"id": 300 + position, "name": name, "color": "e11d21"}
+                for position, name in enumerate(issue.labels)
+            ],
+            "comments": sum(
+                1 for c in self.comments.values()
+                if (c.repo, c.number) == (issue.repo, issue.number)
+            ),
+            "created_at": _time(issue.created_at),
+            "updated_at": _time(issue.updated_at),
+            "closed_at": None,
+        }
+        if issue.pull:
+            pulls = f"{self.base_url}/repos/{issue.repo}/pulls/{issue.number}"
+            data["pull_request"] = {"url": pulls}
+        return data
+
+    def _comment_json(self, comment: _Comment) -> dict:
+        issue_url = self._issue_url(comment.repo, comment.number)
+        return {
+            "id": comment.id,
+            "node_id": f"IC_{comment.id}",
+            "url": f"{self.base_url}/repos/{comment.repo}/issues/comments/{comment.id}",
+            "html_url": f"{issue_url}#issuecomment-{comment.id}",
+            "issue_url": f"{self.base_url}/repos/{comment.repo}/issues/{comment.number}",
+            "user": _user(comment.author_id),
+            "body": comment.body,
+            "created_at": _time(comment.created_at),
+            "updated_at": _time(comment.updated_at),
+        }
+
+    def _event_json(self, event: _LabelEvent, with_issue: bool = False) -> dict:
+        data = {
+            "id": event.id,
+            "node_id": f"LE_{event.id}",
+            "url": f"{self.base_url}/repos/{event.repo}/issues/events/{event.id}",
+            "actor": _user(event.actor_id),
+            "event": "labeled" if event.added else "unlabeled",
+            "commit_id": None,
+            "commit_url": None,
+            "created_at": _time(event.at),
+            "label": {"name": event.label, "color": "e11d21"},
+        }
+        if with_issue:
+            data["issue"] = self._issue_json(self.issues[(event.repo, event.number)])
+        return data
+
+
+def _gh_error(status: int, message: str) -> httpx.Response:
+    return _json(status, {
+        "message": message,
+        "documentation_url": "https://docs.github.com/rest",
+        "status": str(status),
+    })

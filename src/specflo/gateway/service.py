@@ -61,10 +61,11 @@ from ..errors import SpecfloError
 from ..pool.waiting import WAIT_MAX
 from . import run, scratch
 from .clean import build_input, clean_report
-from .config import GITEA, Forge, GatewayConfig, read_credential
+from .config import GITEA, GITHUB, Forge, GatewayConfig, read_credential
 from .forge import ForgeClient, ForgeError
 from .gitea import GiteaClient
-from .poll import Trigger, poll_gitea
+from .github import GitHubClient
+from .poll import Trigger, poll_gitea, poll_github
 from .store import GatewayStore
 
 __all__ = [
@@ -137,8 +138,15 @@ async def _gitea_token(forge: Forge, client: ForgeClient, repo: str) -> str | No
 
 GITEA_KIND = ForgeKind(client=GiteaClient, poll=poll_gitea, clone_token=_gitea_token)
 
+async def _github_token(forge: Forge, client: ForgeClient, repo: str) -> str | None:
+    # A fresh installation token of the App that may only read the repo.
+    return await client.clone_token(repo)
+
+
+GITHUB_KIND = ForgeKind(client=GitHubClient, poll=poll_github, clone_token=_github_token)
+
 #: The forge kinds the service knows, by the configuration's name for each.
-KINDS: dict[str, ForgeKind] = {GITEA: GITEA_KIND}
+KINDS: dict[str, ForgeKind] = {GITEA: GITEA_KIND, GITHUB: GITHUB_KIND}
 
 #: How a clone is made: :func:`scratch.clone`'s signature.
 Clone = Callable[..., Awaitable[None]]

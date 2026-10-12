@@ -23,9 +23,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from specflo.gateway import config, gitea, run, scratch, service, store
+from specflo.gateway import config, gitea, github, run, scratch, service, store
 
-from .stub_forge import StubForge, StubGitea
+from .stub_forge import APP_ID, StubForge, StubGitea, StubGitHub, app_key
 
 TOKEN = "fake-forge-token-c0ffee"
 REPO = "me/thing"
@@ -66,8 +66,25 @@ def _gitea(tmp_path: Path) -> Setup:
     return Setup(stub, forge, kind, clone_token=TOKEN)
 
 
+def _github(tmp_path: Path) -> Setup:
+    stub = StubGitHub(token=TOKEN)
+    key_file = tmp_path / "github-app.pem"
+    key_file.write_text(app_key()[0], encoding="ascii")
+    os.chmod(key_file, 0o600)
+    forge = config.Forge(
+        name="hub", kind=config.GITHUB, url=stub.base_url, repos=(REPO,),
+        operator_id=OPERATOR, pool="rfc-research", app_id=APP_ID, key_file=key_file,
+    )
+    kind = dataclasses.replace(
+        service.KINDS[config.GITHUB],
+        client=lambda forge: github.GitHubClient(forge, transport=stub.transport()),
+    )
+    # The stub hands out the one installation token, the clone's among them.
+    return Setup(stub, forge, kind, clone_token=TOKEN)
+
+
 #: Each kind of stub forge the comment flow is checked against.
-STUBS: dict[str, Callable[[Path], Setup]] = {"gitea": _gitea}
+STUBS: dict[str, Callable[[Path], Setup]] = {"gitea": _gitea, "github": _github}
 
 
 @pytest.fixture(params=sorted(STUBS))

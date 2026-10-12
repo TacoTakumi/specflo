@@ -1,4 +1,4 @@
-"""Finding the label events that start a run: the trigger rule and the Gitea poll.
+"""Finding the label events that start a run: the trigger rule, and the Gitea and GitHub polls.
 
 A run starts when the operator puts the trigger label on an issue. A label is
 not authorization by itself, since anyone with triage access can label, so
@@ -22,7 +22,15 @@ inclusive, so the newest issue comes back at the next poll as well; the
 store makes sure its event is not handled twice. A repo the forge refuses
 is logged and skipped, and its cursor stays, so the next poll asks again.
 
-The poll finds triggers and changes nothing on the forge. Marking a trigger
+GitHub has no list of labelled issues by change time, so :func:`poll_github`
+reads each watched repo's issue events feed instead, back to the repo's
+cursor (the gateway's first start before the first event was seen), groups
+its label events by issue and applies the same rule to each issue. The
+cursor moves to the newest event of the feed. The client asks the feed with
+the ETag of its last answer, and a 304 (nothing changed) ends the poll of
+that repo with no other request.
+
+A poll finds triggers and changes nothing on the forge. Marking a trigger
 handled, with :meth:`specflo.gateway.store.GatewayStore.mark_handled`, is
 up to whoever acts on it.
 """
@@ -33,10 +41,14 @@ import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from .config import Forge
 from .forge import ForgeClient, ForgeError, LabelEvent
 from .store import GatewayStore
+
+if TYPE_CHECKING:
+    from .github import GitHubClient
 
 _log = logging.getLogger(__name__)
 
@@ -95,4 +107,32 @@ async def _poll_repo(
             found.append(trigger)
     if issues:
         store.set_since(forge.name, repo, max(issue.updated_at for issue in issues))
+    return found
+
+
+async def poll_github(forge: Forge, client: GitHubClient, store: GatewayStore) -> list[Trigger]:
+    """One poll of every repo of the GitHub forge *forge* through *client*: the triggers found."""
+    found: list[Trigger] = []
+    for repo in forge.repos:
+        try:
+            found += await _poll_github_repo(forge, client, store, repo)
+        except ForgeError as exc:
+            _log.warning("gateway poll of %s on forge '%s' failed: %s", repo, forge.name, exc)
+    return found
+
+
+async def _poll_github_repo(
+    forge: Forge, client: GitHubClient, store: GatewayStore, repo: str
+) -> list[Trigger]:
+    since = store.since(forge.name, repo) or store.first_start
+    feed = await client.repo_label_events(repo, since)
+    if feed is None:
+        return []
+    found: list[Trigger] = []
+    for number, events in sorted(feed.events.items()):
+        trigger = trigger_for(forge, repo, number, events, store)
+        if trigger is not None:
+            found.append(trigger)
+    if feed.newest is not None and feed.newest > since:
+        store.set_since(forge.name, repo, feed.newest)
     return found
