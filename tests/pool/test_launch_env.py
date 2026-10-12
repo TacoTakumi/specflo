@@ -270,6 +270,8 @@ def test_neither_the_caller_nor_the_definition_sets_the_git_global_variable(tmp_
 # lowercase forms, some only the uppercase ones.
 PROXY_VARS = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
 NO_PROXY_VARS = ("NO_PROXY", "no_proxy")
+# What a tool that takes a SOCKS5 proxy only reads, pointed at the same port.
+SOCKS_VARS = ("DONSEEK_PROXIES",)
 
 
 def test_a_web_member_reaches_the_web_through_its_forwarder_and_its_model_directly():
@@ -286,7 +288,32 @@ def test_a_web_member_reaches_the_web_through_its_forwarder_and_its_model_direct
 def test_a_member_without_web_access_gets_no_proxy_variables():
     env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
 
-    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS) if name in env] == []
+    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS, *SOCKS_VARS) if name in env] == []
+
+
+def test_a_web_member_s_socks_tools_reach_the_same_forwarder_with_names_resolved_there():
+    # donsetch reads its proxy from this variable alone and resolves every
+    # name itself unless the proxy is SOCKS5 with remote lookups, and the
+    # sandbox has no DNS: socks5h has the proxy resolve the name.
+    env = member_env(
+        DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, proxy_port=3128, provider_host="127.0.0.1"
+    )
+
+    assert launch.SOCKS_PROXY_ENV == SOCKS_VARS
+    for name in SOCKS_VARS:
+        assert env[name] == "socks5h://127.0.0.1:3128"
+
+
+def test_a_web_member_s_socks_proxy_is_the_pool_s_whatever_the_caller_exports():
+    definition = replace(DEFINITION, env=SOCKS_VARS)
+    caller = {**CALLER, **{name: "socks5h://elsewhere:1080" for name in SOCKS_VARS}}
+
+    env = member_env(
+        definition, LOCAL_MEMBER, ACCOUNTS, caller, proxy_port=3128, provider_host="127.0.0.1"
+    )
+
+    for name in SOCKS_VARS:
+        assert env[name] == "socks5h://127.0.0.1:3128"
 
 
 def test_a_web_member_s_proxy_is_the_pool_s_whatever_the_definition_lists():
@@ -353,13 +380,15 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
         assert web_env[name] == f"http://127.0.0.1:{proxy.port}"
     for name in NO_PROXY_VARS:
         assert web_env[name] == "127.0.0.1"
+    for name in SOCKS_VARS:
+        assert web_env[name] == f"socks5h://127.0.0.1:{proxy.port}"
 
     assert (proxy.socket, proxy.socket) not in binds(plain_argv)
     assert proxy.socket not in plain_argv
     assert plain_argv[plain_argv.index("--") + 1 :] == [
         *sandbox.forwarder_argv(llama, socat), *pi,
     ]
-    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS) if name in plain_env] == []
+    assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS, *SOCKS_VARS) if name in plain_env] == []
 
 
 def test_the_web_forwarder_s_port_is_never_the_provider_s():
@@ -413,13 +442,15 @@ def test_a_lease_s_variables_leave_a_web_member_s_proxy_as_the_pool_says():
         assert env[name] == "http://127.0.0.1:3128"
     for name in NO_PROXY_VARS:
         assert env[name] == "127.0.0.1"
+    for name in SOCKS_VARS:
+        assert env[name] == "socks5h://127.0.0.1:3128"
 
 
 RESERVED = [
     # what pi and the sandbox need to start, and the rest of the baseline
     *launch.BASELINE_ENV,
     # the web member's proxy, which is the pool's to say
-    *PROXY_VARS, *NO_PROXY_VARS,
+    *PROXY_VARS, *NO_PROXY_VARS, *SOCKS_VARS,
     # what the pool says about the member itself
     launch.DENY_ENV, launch.AGENT_DIR_ENV, launch.SERVE_ENV, launch.AGENT_NAME_ENV,
     launch.AGENT_MANAGED_ENV, launch.TMPDIR_ENV, launch.GIT_CONFIG_GLOBAL_ENV,

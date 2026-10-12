@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import ipaddress
 import os
 import shutil
 import stat
@@ -542,6 +543,230 @@ def test_a_path_too_long_for_a_unix_socket_is_refused_by_name(short_dir):
 
     with pytest.raises(SpecfloError, match="too long"):
         asyncio.run(run())
+
+
+# -- SOCKS5 on the same socket ----------------------------------------------
+#
+# Some tools take only a SOCKS5 proxy, and resolve every name themselves
+# unless it is one: donsetch is such a tool, and a member's sandbox has no
+# DNS. The proxy tells a SOCKS5 client from an HTTP one by its first byte and
+# holds it to the same check: the name is resolved once, by the proxy, and the
+# address it checked is the one dialled.
+
+PUBLIC_V6 = "2606:2800:220:1:248:1893:25c8:1946"
+
+# A SOCKS5 greeting that offers no authentication, and the method the proxy
+# picks in answer to it.
+GREETING = b"\x05\x01\x00"
+NO_AUTH = b"\x05\x00"
+
+# The reply codes of RFC 1928 the tests look for.
+SUCCEEDED, GENERAL_FAILURE, NOT_ALLOWED = 0x00, 0x01, 0x02
+HOST_UNREACHABLE, CONNECTION_REFUSED = 0x04, 0x05
+COMMAND_NOT_SUPPORTED, ADDRESS_NOT_SUPPORTED = 0x07, 0x08
+
+
+def socks_address(host: str) -> bytes:
+    """*host* as a SOCKS5 address: its type byte and the address."""
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        name = host.encode("ascii")
+        return bytes((0x03, len(name))) + name
+    return (b"\x01" if ip.version == 4 else b"\x04") + ip.packed
+
+
+def socks_connect(host: str, port: int, command: int = 0x01, version: int = 0x05) -> bytes:
+    """The request a SOCKS5 client sends for *command* to *host* on *port*."""
+    return bytes((version, command, 0x00)) + socks_address(host) + port.to_bytes(2, "big")
+
+
+def socks_reply(code: int) -> bytes:
+    """The whole of a SOCKS5 reply with *code*, bound to no address."""
+    return bytes((0x05, code, 0x00, 0x01)) + bytes(6)
+
+
+async def socks_open(path: Path, host: str, port: int):
+    """A SOCKS5 CONNECT to *host* on *port* through the proxy at *path*,
+    with the method and the reply it was answered with read."""
+    reader, writer = await asyncio.open_unix_connection(str(path))
+    writer.write(GREETING)
+    await writer.drain()
+    method = await asyncio.wait_for(reader.readexactly(2), 10)
+    writer.write(socks_connect(host, port))
+    await writer.drain()
+    reply = await asyncio.wait_for(reader.readexactly(10), 10)
+    return method, reply, reader, writer
+
+
+def socks_through(path: Path, resolver: StubResolver, host: str, port: int = 443, internal=()):
+    """Open a SOCKS5 tunnel to *host*, send a GET through it, and return the
+    reply, the answer, the upstream's heads and the addresses dialled."""
+
+    async def run():
+        async with Upstream() as upstream:
+            dialer = StubDialer(upstream.address)
+            async with proxy(path, internal, resolver=resolver, dialer=dialer):
+                method, reply, reader, writer = await socks_open(path, host, port)
+                try:
+                    writer.write(b"GET /through HTTP/1.1\r\nHost: tunnel\r\n\r\n")
+                    await writer.drain()
+                    answer = await asyncio.wait_for(reader.read(), 10)
+                finally:
+                    writer.close()
+            assert method == NO_AUTH
+            return reply, answer, upstream.heads, dialer.calls
+
+    return asyncio.run(run())
+
+
+def test_a_socks_connect_to_a_public_name_is_tunnelled_to_the_address_it_resolved_to(path):
+    resolver = StubResolver({PUBLIC_NAME: [PUBLIC]})
+
+    reply, answer, heads, dialled = socks_through(path, resolver, PUBLIC_NAME)
+
+    assert reply == socks_reply(SUCCEEDED)
+    assert status(answer) == 200
+    assert heads[0].startswith("GET /through HTTP/1.1\r\n")
+    assert resolver.calls == [(PUBLIC_NAME, 443)]
+    assert dialled == [(PUBLIC, 443)]
+
+
+@pytest.mark.parametrize("address", [PUBLIC, PUBLIC_V6], ids=["ipv4", "ipv6"])
+def test_a_socks_connect_to_a_public_address_is_dialled_with_no_lookup(path, address):
+    resolver = StubResolver()
+
+    reply, answer, _, dialled = socks_through(path, resolver, address, 8443)
+
+    assert reply == socks_reply(SUCCEEDED)
+    assert status(answer) == 200
+    assert resolver.calls == []
+    assert dialled == [(address, 8443)]
+
+
+def socks_answer(path: Path, request: bytes, **stubs) -> bytes:
+    """Send *request* to a proxy at *path* served with *stubs*, and read all it answers."""
+
+    async def run() -> bytes:
+        async with proxy(path, **stubs):
+            return await exchange(path, request)
+
+    return asyncio.run(run())
+
+
+@pytest.mark.parametrize("address", REFUSED_ADDRESSES.values(), ids=REFUSED_ADDRESSES.keys())
+@pytest.mark.parametrize("form", ["socks literal", "socks name"])
+def test_a_socks_connect_to_a_host_that_is_not_public_is_refused_with_no_connection(
+    path, address, form,
+):
+    resolver = StubResolver({"named.example": [address]})
+    dialer = StubDialer()
+    host = address if form == "socks literal" else "named.example"
+
+    answer = socks_answer(
+        path, GREETING + socks_connect(host, 443), resolver=resolver, dialer=dialer,
+    )
+
+    assert answer == NO_AUTH + socks_reply(NOT_ALLOWED)
+    assert dialer.calls == []
+    if form == "socks literal":
+        assert resolver.calls == []
+
+
+def test_a_socks_name_that_resolves_to_a_private_address_is_refused(path):
+    resolver = StubResolver({"news.example": ["10.0.0.5"]})
+    dialer = StubDialer()
+
+    answer = socks_answer(
+        path, GREETING + socks_connect("news.example", 443), resolver=resolver, dialer=dialer,
+    )
+
+    assert answer == NO_AUTH + socks_reply(NOT_ALLOWED)
+    assert resolver.calls == [("news.example", 443)]
+    assert dialer.calls == []
+
+
+def test_a_socks_connect_to_a_listed_internal_host_is_allowed_on_its_port_only(path):
+    resolver = StubResolver({"intranet.lan": ["127.0.0.1"]})
+
+    async def run() -> tuple[bytes, bytes, list]:
+        async with Upstream() as upstream:
+            dialer = StubDialer(upstream.address)
+            async with proxy(path, ["intranet.lan:8731"], resolver=resolver, dialer=dialer):
+                _, listed, _, writer = await socks_open(path, "intranet.lan", 8731)
+                writer.close()
+                other = await exchange(path, GREETING + socks_connect("intranet.lan", 8732))
+            return listed, other, dialer.calls
+
+    listed, other, dialled = asyncio.run(run())
+    assert listed == socks_reply(SUCCEEDED)
+    assert other == NO_AUTH + socks_reply(NOT_ALLOWED)
+    assert dialled == [("127.0.0.1", 8731)]
+
+
+@pytest.mark.parametrize("resolver, code", [
+    (StubResolver(error=OSError("no such name")), HOST_UNREACHABLE),
+    (StubResolver({}), HOST_UNREACHABLE),
+    (StubResolver({PUBLIC_NAME: [PUBLIC]}), CONNECTION_REFUSED),
+], ids=["lookup fails", "no address", "upstream refuses"])
+def test_a_socks_connect_that_cannot_reach_its_host_is_answered_unreachable(path, resolver, code):
+    answer = socks_answer(
+        path, GREETING + socks_connect(PUBLIC_NAME, 443), resolver=resolver, dialer=StubDialer(),
+    )
+
+    assert answer == NO_AUTH + socks_reply(code)
+
+
+@pytest.mark.parametrize("request_bytes, expected", [
+    # only username and password offered: no method is acceptable
+    (b"\x05\x01\x02" + socks_connect(PUBLIC_NAME, 443), b"\x05\xff"),
+    # no method offered at all
+    (b"\x05\x00", b"\x05\xff"),
+    # BIND and UDP ASSOCIATE
+    (GREETING + socks_connect(PUBLIC_NAME, 443, command=0x02),
+     NO_AUTH + socks_reply(COMMAND_NOT_SUPPORTED)),
+    (GREETING + socks_connect(PUBLIC_NAME, 443, command=0x03),
+     NO_AUTH + socks_reply(COMMAND_NOT_SUPPORTED)),
+    # a request of another version than the greeting's
+    (GREETING + socks_connect(PUBLIC_NAME, 443, version=0x04), NO_AUTH + socks_reply(GENERAL_FAILURE)),
+    # an address type RFC 1928 does not define
+    (GREETING + b"\x05\x01\x00\x09" + bytes(6), NO_AUTH + socks_reply(ADDRESS_NOT_SUPPORTED)),
+    # port zero, an empty name, and a name with a port in it
+    (GREETING + socks_connect(PUBLIC_NAME, 0), NO_AUTH + socks_reply(GENERAL_FAILURE)),
+    (GREETING + b"\x05\x01\x00\x03\x00\x01\xbb", NO_AUTH + socks_reply(GENERAL_FAILURE)),
+    (GREETING + socks_connect("public.example:80", 443), NO_AUTH + socks_reply(GENERAL_FAILURE)),
+    (GREETING + b"\x05\x01\x00\x03\x04a b\x00\x01\xbb", NO_AUTH + socks_reply(GENERAL_FAILURE)),
+], ids=[
+    "password only", "no method", "bind", "udp associate", "request version 4",
+    "unknown address type", "port zero", "empty name", "name with a port", "name with a space",
+])
+def test_a_socks_request_the_proxy_does_not_serve_fails_closed(path, request_bytes, expected):
+    resolver = StubResolver({PUBLIC_NAME: [PUBLIC]})
+    dialer = StubDialer()
+
+    answer = socks_answer(path, request_bytes, resolver=resolver, dialer=dialer)
+
+    assert answer == expected
+    assert resolver.calls == []
+    assert dialer.calls == []
+
+
+@pytest.mark.parametrize("request_bytes", [
+    # SOCKS4: CONNECT to 93.184.215.14:443 for user "u"
+    b"\x04\x01\x01\xbb" + bytes((93, 184, 215, 14)) + b"u\x00",
+    # SOCKS4a: the name follows the user
+    b"\x04\x01\x01\xbb\x00\x00\x00\x01u\x00public.example\x00",
+    b"\x00\x01\x02\x03",
+], ids=["socks4", "socks4a", "binary"])
+def test_a_client_that_speaks_neither_socks5_nor_http_is_refused_at_once(path, request_bytes):
+    resolver = StubResolver({PUBLIC_NAME: [PUBLIC]})
+    dialer = StubDialer()
+
+    answer = socks_answer(path, request_bytes, resolver=resolver, dialer=dialer)
+
+    assert status(answer) == 400
+    assert resolver.calls == []
+    assert dialer.calls == []
 
 
 # The calls that would block the daemon's event loop, by their dotted name

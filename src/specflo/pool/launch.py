@@ -123,6 +123,13 @@ GITCONFIG_FILE = "gitconfig"
 PROXY_ENV: tuple[str, ...] = ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
 NO_PROXY_ENV: tuple[str, ...] = ("NO_PROXY", "no_proxy")
 
+# What points a web member's tools that take a SOCKS5 proxy alone at the same
+# forwarder, which speaks SOCKS5 too. Such a tool resolves every name itself
+# unless its proxy does the lookups, and the sandbox has no DNS, so the URL
+# is socks5h: the proxy resolves the name. donsetch reads this variable, a
+# comma-separated list of proxy URLs, and ignores the ones above.
+SOCKS_PROXY_ENV: tuple[str, ...] = ("DONSEEK_PROXIES",)
+
 # The variables the pool alone says, whatever a definition lists or a caller
 # exports. A member that could set one of these could give itself a name, a
 # deny list or a pi configuration of its own choosing.
@@ -138,7 +145,7 @@ _POOL_SAYS: tuple[str, ...] = (
 # prefix finds the user manager through, and what the dynamic loader reads
 # when the sandbox's own start is run.
 _LEASE_MAY_NOT_SET: frozenset[str] = frozenset((
-    *BASELINE_ENV, *PROXY_ENV, *NO_PROXY_ENV, *_POOL_SAYS,
+    *BASELINE_ENV, *PROXY_ENV, *NO_PROXY_ENV, *SOCKS_PROXY_ENV, *_POOL_SAYS,
     sandbox.RUNTIME_DIR_VAR, "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
 ))
 
@@ -579,7 +586,8 @@ def member_env(
 
     A web member is handed *proxy_port*, the loopback port its forwarder to
     its lease's web proxy listens on, and *provider_host*, the host of its
-    provider's base URL. The proxy variables point at the forwarder, and the
+    provider's base URL. The proxy variables point at the forwarder, the
+    SOCKS5 ones at the same port with the lookups left to the proxy, and the
     no-proxy variables name the provider's host, so the member's model
     traffic still goes straight to the forwarder to llama-swap.
 
@@ -636,6 +644,8 @@ def member_env(
             )
         for name in PROXY_ENV:
             env[name] = f"http://127.0.0.1:{proxy_port}"
+        for name in SOCKS_PROXY_ENV:
+            env[name] = f"socks5h://127.0.0.1:{proxy_port}"
         for name in NO_PROXY_ENV:
             env[name] = provider_host
     return env

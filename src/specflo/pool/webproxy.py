@@ -3,8 +3,12 @@
 A member with web access has no route off this host of its own. Its sandbox
 holds a forwarder to a unix socket the daemon serves, and the member's tools
 find that forwarder as their HTTPS proxy. What arrives on the socket is one
-of two requests: a CONNECT, which asks for a tunnel to a host and port and
-carries HTTPS, and a plain HTTP request that names its whole URI. Both are
+of three requests: a CONNECT, which asks for a tunnel to a host and port and
+carries HTTPS, a plain HTTP request that names its whole URI, and a SOCKS5
+CONNECT (RFC 1928, with no authentication), which asks for a tunnel too and
+is told from the other two by its first byte. A tool that resolves every
+name it is given itself takes a SOCKS5 proxy with remote lookups instead,
+which is how it gets anywhere from a sandbox that has no DNS. All three are
 forwarded to a public host, and nothing else is.
 
 The internet is not the only thing a proxy on this host can reach. The
@@ -95,6 +99,25 @@ _HOP_BY_HOP: frozenset[str] = frozenset({
 # A method and a header name are tokens (RFC 9110).
 _TOKEN = re.compile(r"\A[!#$%&'*+\-.^_`|~0-9A-Za-z]+\Z")
 
+# What RFC 1928 has a SOCKS5 client and the proxy say to each other: the
+# version byte that starts each message, the one method the proxy accepts (no
+# authentication) and the answer when that is not offered, the one command it
+# serves (CONNECT), and the three address types.
+_SOCKS5 = 0x05
+_NO_AUTH = 0x00
+_NO_ACCEPTABLE = 0xFF
+_SOCKS_CONNECT = 0x01
+_IPV4, _DOMAIN, _IPV6 = 0x01, 0x03, 0x04
+
+# The reply codes the proxy answers a SOCKS5 request with.
+_SUCCEEDED = 0x00
+_GENERAL_FAILURE = 0x01
+_NOT_ALLOWED = 0x02
+_HOST_UNREACHABLE = 0x04
+_CONNECTION_REFUSED = 0x05
+_COMMAND_NOT_SUPPORTED = 0x07
+_ADDRESS_NOT_SUPPORTED = 0x08
+
 # The prefix by which an IPv6 address carries an IPv4 one through a NAT64
 # gateway. The standard library calls the whole prefix global; what decides
 # is the IPv4 address inside it.
@@ -172,12 +195,19 @@ def _not_public(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 class _Answer(Exception):
-    """The request is answered by the proxy itself, with *status*, and goes no further."""
+    """The request is answered by the proxy itself, with *status*, and goes no further.
 
-    def __init__(self, status: int, message: str) -> None:
+    A SOCKS5 client is answered with *reply* instead, the reply code that
+    says the same, which follows from the status unless it is given.
+    """
+
+    def __init__(self, status: int, message: str, reply: int | None = None) -> None:
         super().__init__(message)
         self.status = status
         self.message = message
+        if reply is None:
+            reply = {REFUSED: _NOT_ALLOWED, 502: _HOST_UNREACHABLE}.get(status, _GENERAL_FAILURE)
+        self.reply = reply
 
 
 @dataclass(frozen=True)
@@ -305,18 +335,26 @@ class WebProxy:
         request: _Request | None = None
         verdict: str | None = None
         sent = received = None
+        socks = False
         try:
             try:
-                request = await asyncio.wait_for(_read(reader), _HEAD_SECONDS)
+                async with asyncio.timeout(_HEAD_SECONDS):
+                    first = await _exactly(reader, 1)
+                    socks = first[0] == _SOCKS5
+                    request = await (_read_socks(reader, writer) if socks else _read(reader, first))
                 addresses = await self._checked(request.host, request.port)
                 from_upstream, upstream = await self._connect(request, addresses)
             except _Answer as answer:
                 verdict = "refused" if answer.status == REFUSED else "failed"
-                await _answer(writer, answer)
+                await (_socks_answer if socks else _answer)(writer, answer)
                 return
             verdict = "allowed"
             sent, received = _Counted(upstream), _Counted(writer)
-            if request.method == "CONNECT":
+            if socks:
+                writer.write(_socks_reply(_SUCCEEDED))
+                await writer.drain()
+                await _tunnel(reader, received, from_upstream, sent)
+            elif request.method == "CONNECT":
                 writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
                 await writer.drain()
                 await _tunnel(reader, received, from_upstream, sent)
@@ -398,12 +436,18 @@ class WebProxy:
 
     async def _connect(self, request: _Request, addresses: list[str]):
         """A connection to the first of *addresses* that answers on the request's port."""
+        reply = _CONNECTION_REFUSED
         for address in addresses:
             try:
                 return await asyncio.wait_for(self._dial(address, request.port), _CONNECT_SECONDS)
-            except (OSError, TimeoutError):
+            except ConnectionRefusedError:
                 continue
-        raise _Answer(502, f"{_authority(request.host, request.port)} could not be reached.")
+            except (OSError, TimeoutError):
+                reply = _HOST_UNREACHABLE
+                continue
+        raise _Answer(
+            502, f"{_authority(request.host, request.port)} could not be reached.", reply,
+        )
 
 
 class _Closed(Exception):
@@ -425,14 +469,27 @@ class _Counted:
         return getattr(self._writer, name)
 
 
-async def _read(reader: asyncio.StreamReader) -> _Request:
-    """The request the client sends, read up to its body.
+async def _exactly(reader: asyncio.StreamReader, count: int) -> bytes:
+    """The next *count* bytes the client sends; raises ``_Closed`` when it goes away first."""
+    try:
+        return await reader.readexactly(count)
+    except asyncio.IncompleteReadError:
+        raise _Closed from None
+
+
+async def _read(reader: asyncio.StreamReader, first: bytes = b"") -> _Request:
+    """The request the client sends, read up to its body, *first* being the
+    byte of it already read.
 
     Raises ``_Answer`` for one the proxy does not forward, and ``_Closed``
     when the client goes away first.
     """
+    if first and not _TOKEN.match(first.decode("latin-1")):
+        # a request line starts with its method, so this is no HTTP request,
+        # and neither SOCKS4 nor anything else is waited on for a head
+        raise _Answer(400, "The proxy speaks HTTP/1.x and SOCKS5, and this is neither.")
     try:
-        raw = await reader.readuntil(b"\r\n\r\n")
+        raw = first + await reader.readuntil(b"\r\n\r\n")
     except asyncio.LimitOverrunError:
         raise _Answer(431, "The request's head is larger than the proxy reads.") from None
     except asyncio.IncompleteReadError:
@@ -487,6 +544,59 @@ async def _read(reader: asyncio.StreamReader) -> _Request:
         + "Connection: close\r\n\r\n"
     )
     return _Request(method, host, port, head.encode("latin-1"), length)
+
+
+async def _read_socks(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> _Request:
+    """The CONNECT a SOCKS5 client asks for, read after the version byte
+    that told it from an HTTP one (RFC 1928).
+
+    The proxy takes no authentication and serves CONNECT alone, to an IPv4
+    or IPv6 address or a name, which it resolves itself. Raises ``_Answer``
+    for anything else, and ``_Closed`` when the client goes away first.
+    """
+    (count,) = await _exactly(reader, 1)
+    methods = await _exactly(reader, count)
+    if _NO_AUTH not in methods:
+        raise _Answer(400, "The proxy takes no authentication.", _NO_ACCEPTABLE)
+    writer.write(bytes((_SOCKS5, _NO_AUTH)))
+    await writer.drain()
+
+    version, command, reserved, kind = await _exactly(reader, 4)
+    if version != _SOCKS5 or reserved != 0:
+        raise _Answer(400, "The request is not a SOCKS5 request.")
+    if command != _SOCKS_CONNECT:
+        raise _Answer(501, "The proxy serves CONNECT alone.", _COMMAND_NOT_SUPPORTED)
+    if kind == _IPV4:
+        host = str(ipaddress.IPv4Address(await _exactly(reader, 4)))
+    elif kind == _IPV6:
+        host = str(ipaddress.IPv6Address(await _exactly(reader, 16)))
+    elif kind == _DOMAIN:
+        (length,) = await _exactly(reader, 1)
+        host = _socks_name(await _exactly(reader, length))
+    else:
+        raise _Answer(400, "The request's address type is not one SOCKS5 has.", _ADDRESS_NOT_SUPPORTED)
+    port = int.from_bytes(await _exactly(reader, 2), "big")
+    if not port:
+        raise _Answer(400, "The request asks for port 0.")
+    return _Request("CONNECT", host, port)
+
+
+def _socks_name(raw: bytes) -> str:
+    """The host a SOCKS5 request names, as ``_host`` gives it.
+
+    Raises ``_Answer`` for one that is not a host name or an address.
+    """
+    bad = _Answer(400, "The request's host is not a host name.")
+    try:
+        name = raw.decode("ascii")
+    except UnicodeDecodeError:
+        raise bad from None
+    if not name.isprintable() or " " in name or (":" in name and _literal(name) is None):
+        raise bad
+    host = _host(name)
+    if not host:
+        raise bad
+    return host
 
 
 def _host_port(authority: str, default: int | None = None) -> tuple[str, int]:
@@ -562,6 +672,22 @@ async def _answer(writer: asyncio.StreamWriter, answer: _Answer) -> None:
         f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
     )
     writer.write(head.encode("ascii") + body)
+    with contextlib.suppress(ConnectionError):
+        await writer.drain()
+
+
+def _socks_reply(code: int) -> bytes:
+    """A SOCKS5 reply with *code*. It names no bound address: what the proxy
+    dialled from is not the member's to know, and a client does not need it."""
+    return bytes((_SOCKS5, code, 0x00, _IPV4)) + bytes(6)
+
+
+async def _socks_answer(writer: asyncio.StreamWriter, answer: _Answer) -> None:
+    """Answer a SOCKS5 client with the reply *answer* carries, and nothing else."""
+    if answer.reply == _NO_ACCEPTABLE:
+        writer.write(bytes((_SOCKS5, _NO_ACCEPTABLE)))
+    else:
+        writer.write(_socks_reply(answer.reply))
     with contextlib.suppress(ConnectionError):
         await writer.drain()
 
