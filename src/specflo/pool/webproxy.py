@@ -23,10 +23,14 @@ private addresses, a cloud host answers for its credentials on a link-local
 one, and a name anyone may register can resolve to any of these. So the
 proxy resolves the host a request names, checks every address it gets
 against the ranges that are not public, and refuses the request with 403,
-before any connection is opened, when one of them is. A definition may list
-host:port pairs the member is meant to reach inside (``web_internal``);
-those are let through on their port and no other, whether a request names
-the listed host or a name that resolves to a listed address.
+before any connection is opened, when one of them is. A host with a public
+address serves its own services there too, on every port bound to all of its
+addresses, so an address that is one of the host's own is refused the same
+way; the host is asked at each request, as its addresses can change. A
+definition may list host:port pairs the member is meant to reach inside
+(``web_internal``); those are let through on their port and no other,
+whether a request names the listed host or a name that resolves to a
+listed address.
 
 The check holds only for the address that is dialled, so the proxy resolves
 a name once and dials one of the addresses it checked, as a numeric host
@@ -48,6 +52,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime
+import errno
 import ipaddress
 import json
 import logging
@@ -134,6 +139,13 @@ _NAT64 = ipaddress.IPv6Network("64:ff9b::/96")
 Resolver = Callable[[str, int], Awaitable[Iterable[str]]]
 Dialer = Callable[[str, int], Awaitable[tuple[asyncio.StreamReader, asyncio.StreamWriter]]]
 
+# Whether the text of an IP address is one of this host's own.
+LocalCheck = Callable[[str], Awaitable[bool]]
+
+# What a bind to an address fails with when the address is not the host's:
+# no interface holds it, or the host has no address of its family at all.
+_NOT_LOCAL = frozenset({errno.EADDRNOTAVAIL, errno.EAFNOSUPPORT})
+
 # What the DNS forwarder asks a query of: the query as it came, the answer as
 # it goes back.
 DnsUpstream = Callable[[bytes], Awaitable[bytes]]
@@ -182,6 +194,35 @@ async def dial(address: str, port: int) -> tuple[asyncio.StreamReader, asyncio.S
     is the address that was checked.
     """
     return await asyncio.open_connection(address, port, flags=socket.AI_NUMERICHOST, limit=_CHUNK)
+
+
+async def is_local_address(address: str) -> bool:
+    """Whether the IP address *address* is one of this host's own, assigned
+    to one of its interfaces.
+
+    The host is asked by binding a UDP socket to the address, which the
+    kernel lets only an address of the host's own do. The bind is one
+    syscall on a non-blocking socket, and a numeric address is not looked
+    up, so the loop is not held. Raises ``ValueError`` for text that is not
+    an address and ``OSError`` for a bind that fails for another reason.
+
+    A host that lets a socket bind any address (``ip_nonlocal_bind``, or
+    ``IP_FREEBIND``, which this socket does not set) answers that every
+    address is its own, and the proxy then refuses every host it is not
+    told is internal: it fails closed.
+    """
+    ip = ipaddress.ip_address(address)
+    family = socket.AF_INET6 if ip.version == 6 else socket.AF_INET
+    try:
+        transport, _ = await asyncio.get_running_loop().create_datagram_endpoint(
+            asyncio.DatagramProtocol, local_addr=(str(ip), 0), family=family,
+        )
+    except OSError as exc:
+        if exc.errno in _NOT_LOCAL:
+            return False
+        raise
+    transport.close()
+    return True
 
 
 def log_path(root: Path, day: datetime.date) -> Path:
@@ -263,9 +304,11 @@ class WebProxy:
     """The web proxy served on a unix socket at *path*, on the running loop.
 
     *internal* is the definition's ``web_internal``: the host:port pairs the
-    proxy lets through although they are not public. *resolver* and *dialer*
-    are how it looks a name up and connects to an address; ``resolve`` and
-    ``dial`` unless given. Given the daemon *root*, the proxy logs each
+    proxy lets through although they are not public or are the host's own.
+    *resolver* and *dialer* are how it looks a name up and connects to an
+    address, and *local_check* how it asks whether an address is one of the
+    host's own; ``resolve``, ``dial`` and ``is_local_address`` unless given.
+    Given the daemon *root*, the proxy logs each
     request, once it ends, as one line of the day's ``log_path`` that names
     the *lease* and *member* it serves.
 
@@ -281,6 +324,7 @@ class WebProxy:
         *,
         resolver: Resolver | None = None,
         dialer: Dialer | None = None,
+        local_check: LocalCheck | None = None,
         lease: str | None = None,
         member: str | None = None,
         root: Path | None = None,
@@ -289,6 +333,7 @@ class WebProxy:
         self.internal = frozenset(_internal(entry) for entry in internal)
         self._resolve = resolver or resolve
         self._dial = dialer or dial
+        self._is_local = local_check or is_local_address
         self._server: asyncio.base_events.Server | None = None
         self._made: tuple[int, int] | None = None
         self._open: set[asyncio.Task] = set()
@@ -403,9 +448,9 @@ class WebProxy:
     async def _checked(self, host: str, port: int) -> list[str]:
         """The addresses *host* resolves to, each of them checked.
 
-        Raises ``_Answer`` with 403 when one of them is not public and
-        host:port is not internal, and with 502 when the name gives no
-        address.
+        Raises ``_Answer`` with 403 when one of them is not public or is one
+        of the host's own and host:port is not internal, and with 502 when
+        the name gives no address.
         """
         literal = _literal(host)
         if literal is not None:
@@ -423,13 +468,32 @@ class WebProxy:
             return addresses
         for address in addresses:
             # an address listed with this port is as listed as a name is
-            if refused_address(address) and (address, port) not in self.internal:
-                raise _Answer(REFUSED, (
-                    f"{_authority(host, port)} resolves to {address}, which is not a public "
-                    "address; a member reaches an inside host only when its definition "
-                    "lists that host and port under web_internal."
-                ))
+            if (address, port) in self.internal:
+                continue
+            if refused_address(address):
+                what = "not a public address"
+            elif await self._local(address):
+                what = "one of this host's own addresses"
+            else:
+                continue
+            raise _Answer(REFUSED, (
+                f"{_authority(host, port)} resolves to {address}, which is {what}; a member "
+                "reaches an inside host only when its definition lists that host and port "
+                "under web_internal."
+            ))
         return addresses
+
+    async def _local(self, address: str) -> bool:
+        """Whether *address*, or an IPv4 address it carries, is one of the
+        host's own. A check that fails says it is."""
+        try:
+            for each in _forms(ipaddress.ip_address(address)):
+                if await self._is_local(str(each)):
+                    return True
+        except Exception:
+            log.debug("web proxy could not tell whether %s is local", address, exc_info=True)
+            return True
+        return False
 
     async def _connect(self, request: _Request, addresses: list[str]):
         """A connection to the first of *addresses* that answers on the request's port."""

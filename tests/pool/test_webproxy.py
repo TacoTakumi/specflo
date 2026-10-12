@@ -772,6 +772,202 @@ def test_a_client_that_speaks_neither_socks5_nor_http_is_refused_at_once(path, r
     assert dialer.calls == []
 
 
+# -- The host's own addresses -----------------------------------------------
+#
+# A host with a public IPv4 address or an IPv6 global address serves its own
+# services there as well as on loopback: whatever listens on 0.0.0.0 or ::,
+# llama-swap and the daemon among them. Such an address passes the range
+# check, so the proxy asks at each request whether an address is one of the
+# host's own and refuses it when it is. The check here is a stub that says
+# which addresses the test makes the host's own.
+
+HOST_V4 = "93.184.216.34"
+HOST_V6 = "2a01:4f8:c0c:1::5"
+HOST_NAME = "self.example"
+
+
+class StubLocal:
+    """The host's own addresses as a test gives them; every check is recorded."""
+
+    def __init__(self, addresses: Iterable[str] = (), *, error: Exception | None = None):
+        self.addresses = set(addresses)
+        self.error = error
+        self.calls: list[str] = []
+
+    async def __call__(self, address: str) -> bool:
+        self.calls.append(address)
+        if self.error is not None:
+            raise self.error
+        return address in self.addresses
+
+
+def logged_verdicts(root: Path) -> list[tuple[str, int, str]]:
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    lines = webproxy.log_path(root, today).read_text(encoding="utf-8").splitlines()
+    return [(line["host"], line["port"], line["verdict"]) for line in map(json.loads, lines)]
+
+
+def own_request(form: str, address: str, port: int = 443) -> tuple[bytes, str]:
+    """The request of *form* to *address*, or to a name that resolves to it,
+    and the host the proxy reads in it."""
+    literal = f"[{address}]" if ":" in address else address
+    host = webproxy._host(address)
+    return {
+        "connect literal": (f"CONNECT {literal}:{port} HTTP/1.1\r\n\r\n".encode(), host),
+        "connect name": (f"CONNECT {HOST_NAME}:{port} HTTP/1.1\r\n\r\n".encode(), HOST_NAME),
+        "absolute uri literal": (
+            f"GET http://{literal}:{port}/ HTTP/1.1\r\nHost: {literal}\r\n\r\n".encode(), host,
+        ),
+        "absolute uri name": (
+            f"GET http://{HOST_NAME}:{port}/ HTTP/1.1\r\nHost: {HOST_NAME}\r\n\r\n".encode(),
+            HOST_NAME,
+        ),
+        "socks literal": (GREETING + socks_connect(address, port), host),
+        "socks name": (GREETING + socks_connect(HOST_NAME, port), HOST_NAME),
+    }[form]
+
+
+OWN_FORMS = [
+    "connect literal", "connect name", "absolute uri literal", "absolute uri name",
+    "socks literal", "socks name",
+]
+
+
+@pytest.mark.parametrize("address", [
+    HOST_V4, HOST_V6, f"::ffff:{HOST_V4}",
+], ids=["public ipv4", "ipv6 global", "ipv4-mapped public ipv4"])
+@pytest.mark.parametrize("form", OWN_FORMS)
+def test_one_of_the_hosts_own_addresses_is_refused_and_logged_with_no_connection(
+    path, address, form,
+):
+    # the stub holds the IPv4 address alone, so the mapped form is refused for
+    # the address it carries
+    local = StubLocal({HOST_V4, HOST_V6})
+    resolver = StubResolver({HOST_NAME: [address]})
+    dialer = StubDialer()
+    root = path.parent / "daemon"
+    request, host = own_request(form, address)
+
+    async def run() -> bytes:
+        async with proxy(path, resolver=resolver, dialer=dialer, local_check=local, root=root):
+            return await exchange(path, request)
+
+    answer = asyncio.run(run())
+    if form.startswith("socks"):
+        assert answer == NO_AUTH + socks_reply(NOT_ALLOWED)
+    else:
+        assert status(answer) == webproxy.REFUSED
+        assert b"own" in answer
+    assert dialer.calls == []
+    assert local.calls
+    assert logged_verdicts(root) == [(host, 443, "refused")]
+
+
+@pytest.mark.parametrize("form", OWN_FORMS)
+@pytest.mark.parametrize("address", [HOST_V4, HOST_V6], ids=["public ipv4", "ipv6 global"])
+def test_a_listed_internal_host_and_port_on_one_of_the_hosts_own_addresses_is_allowed(
+    path, address, form,
+):
+    local = StubLocal({HOST_V4, HOST_V6})
+    resolver = StubResolver({HOST_NAME: [address]})
+    literal = f"[{address}]" if ":" in address else address
+    root = path.parent / "daemon"
+    request, host = own_request(form, address, 8731)
+    other, _ = own_request(form, address, 8732)
+
+    async def run() -> tuple[bytes, bytes, list]:
+        async with Upstream() as upstream:
+            dialer = StubDialer(upstream.address)
+            async with proxy(
+                path, [f"{literal}:8731"], resolver=resolver, dialer=dialer,
+                local_check=local, root=root,
+            ):
+                if form.startswith("socks"):
+                    _, listed, _, writer = await socks_open(
+                        path, HOST_NAME if form.endswith("name") else address, 8731,
+                    )
+                    writer.close()
+                else:
+                    listed = await answer_head(path, request)
+                refused = await exchange(path, other)
+            return listed, refused, dialer.calls
+
+    listed, refused, dialled = asyncio.run(run())
+    if form.startswith("socks"):
+        assert listed == socks_reply(SUCCEEDED)
+        assert refused == NO_AUTH + socks_reply(NOT_ALLOWED)
+    else:
+        assert status(listed) == 200
+        assert status(refused) == webproxy.REFUSED
+    assert dialled == [(address, 8731)]
+    assert (host, 8732, "refused") in logged_verdicts(root)
+
+
+def test_the_hosts_own_addresses_are_checked_at_each_request(path):
+    # an address the host takes on after the proxy started is refused from then on
+    local = StubLocal()
+    resolver = StubResolver({HOST_NAME: [HOST_V4]})
+
+    async def run() -> tuple[bytes, bytes]:
+        async with Upstream() as upstream:
+            async with proxy(
+                path, resolver=resolver, dialer=StubDialer(upstream.address), local_check=local,
+            ):
+                before = await answer_head(path, b"CONNECT self.example:443 HTTP/1.1\r\n\r\n")
+                local.addresses.add(HOST_V4)
+                after = await exchange(path, b"CONNECT self.example:443 HTTP/1.1\r\n\r\n")
+            return before, after
+
+    before, after = asyncio.run(run())
+    assert status(before) == 200
+    assert status(after) == webproxy.REFUSED
+    assert local.calls == [HOST_V4, HOST_V4]
+
+
+@pytest.mark.parametrize("form", ["connect literal", "socks name"])
+def test_a_check_of_the_hosts_own_addresses_that_fails_refuses(path, form):
+    local = StubLocal(error=OSError("no answer"))
+    resolver = StubResolver({HOST_NAME: [HOST_V4]})
+    dialer = StubDialer()
+    root = path.parent / "daemon"
+    request, host = own_request(form, HOST_V4)
+
+    async def run() -> bytes:
+        async with proxy(path, resolver=resolver, dialer=dialer, local_check=local, root=root):
+            return await exchange(path, request)
+
+    answer = asyncio.run(run())
+    if form.startswith("socks"):
+        assert answer == NO_AUTH + socks_reply(NOT_ALLOWED)
+    else:
+        assert status(answer) == webproxy.REFUSED
+    assert dialer.calls == []
+    assert logged_verdicts(root) == [(host, 443, "refused")]
+
+
+def test_an_address_that_is_not_public_is_refused_before_the_host_is_asked(path):
+    local = StubLocal()
+
+    async def run() -> bytes:
+        async with proxy(path, resolver=StubResolver(), dialer=StubDialer(), local_check=local):
+            return await exchange(path, b"CONNECT 10.0.0.5:443 HTTP/1.1\r\n\r\n")
+
+    assert status(asyncio.run(run())) == webproxy.REFUSED
+    assert local.calls == []
+
+
+def test_the_default_check_knows_loopback_as_the_hosts_own_and_a_far_address_as_not():
+    async def run() -> tuple[bool, bool]:
+        return await webproxy.is_local_address("127.0.0.1"), await webproxy.is_local_address(PUBLIC)
+
+    assert asyncio.run(run()) == (True, False)
+
+
+def test_the_default_check_raises_for_text_that_is_not_an_address():
+    with pytest.raises(ValueError):
+        asyncio.run(webproxy.is_local_address("not an address"))
+
+
 # -- DNS for the member's own lookups ---------------------------------------
 #
 # A tool that resolves every name itself, even through a SOCKS5 proxy, needs
