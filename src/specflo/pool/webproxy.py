@@ -37,7 +37,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime
 import ipaddress
+import json
 import logging
 import os
 import re
@@ -53,6 +55,10 @@ from urllib.parse import urlsplit
 from ..errors import SpecfloError
 
 log = logging.getLogger(__name__)
+
+# The directory under the daemon root that holds the request log, one
+# JSON-lines file per day (UTC) named for it.
+LOG_DIRNAME = "webproxy"
 
 # What a request to a host that is not public is answered with. The host may
 # well be there; the member may not have it.
@@ -117,6 +123,11 @@ async def dial(address: str, port: int) -> tuple[asyncio.StreamReader, asyncio.S
     is the address that was checked.
     """
     return await asyncio.open_connection(address, port, flags=socket.AI_NUMERICHOST, limit=_CHUNK)
+
+
+def log_path(root: Path, day: datetime.date) -> Path:
+    """The request log the daemon root *root* keeps for *day*."""
+    return Path(root) / LOG_DIRNAME / f"{day.isoformat()}.jsonl"
 
 
 def refused_address(address: str) -> bool:
@@ -188,7 +199,9 @@ class WebProxy:
     *internal* is the definition's ``web_internal``: the host:port pairs the
     proxy lets through although they are not public. *resolver* and *dialer*
     are how it looks a name up and connects to an address; ``resolve`` and
-    ``dial`` unless given.
+    ``dial`` unless given. Given the daemon *root*, the proxy logs each
+    request, once it ends, as one line of the day's ``log_path`` that names
+    the *lease* and *member* it serves.
 
     ``start`` binds the socket, owner-only before it listens, and ``stop``
     ends every connection still open and removes it. The proxy is also an
@@ -202,6 +215,9 @@ class WebProxy:
         *,
         resolver: Resolver | None = None,
         dialer: Dialer | None = None,
+        lease: str | None = None,
+        member: str | None = None,
+        root: Path | None = None,
     ) -> None:
         self.path = Path(path)
         self.internal = frozenset(_internal(entry) for entry in internal)
@@ -210,6 +226,8 @@ class WebProxy:
         self._server: asyncio.base_events.Server | None = None
         self._made: tuple[int, int] | None = None
         self._open: set[asyncio.Task] = set()
+        self.lease, self.member = lease, member
+        self._root = None if root is None else Path(root)
 
     async def __aenter__(self) -> Self:
         await self.start()
@@ -284,21 +302,27 @@ class WebProxy:
         if task is not None:
             self._open.add(task)
         upstream: asyncio.StreamWriter | None = None
+        request: _Request | None = None
+        verdict: str | None = None
+        sent = received = None
         try:
             try:
                 request = await asyncio.wait_for(_read(reader), _HEAD_SECONDS)
                 addresses = await self._checked(request.host, request.port)
                 from_upstream, upstream = await self._connect(request, addresses)
             except _Answer as answer:
+                verdict = "refused" if answer.status == REFUSED else "failed"
                 await _answer(writer, answer)
                 return
+            verdict = "allowed"
+            sent, received = _Counted(upstream), _Counted(writer)
             if request.method == "CONNECT":
                 writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
                 await writer.drain()
-                await _tunnel(reader, writer, from_upstream, upstream)
+                await _tunnel(reader, received, from_upstream, sent)
             else:
-                upstream.write(request.head)
-                await _relay(reader, writer, from_upstream, upstream, request.length)
+                sent.write(request.head)
+                await _relay(reader, received, from_upstream, sent, request.length)
         except (_Closed, TimeoutError, ConnectionError):
             pass
         except Exception:
@@ -310,6 +334,36 @@ class WebProxy:
                     each.close()
             if task is not None:
                 self._open.discard(task)
+            self._record(request, verdict, sent, received)
+
+    def _record(self, request: _Request | None, verdict: str | None, sent, received) -> None:
+        """Log one request that ended, when the proxy is given a daemon root.
+
+        A client that went away before its request was whole sent none, and
+        leaves no line. The line is one small append, made on the loop so it
+        is written also when ``stop`` cancels the request; a log that cannot
+        be written is said, and the proxy goes on.
+        """
+        if self._root is None or (request is None and verdict is None):
+            return
+        now = datetime.datetime.now(datetime.timezone.utc)
+        line = {
+            "time": now.isoformat(timespec="seconds"),
+            "lease": self.lease,
+            "member": self.member,
+            "host": None if request is None else request.host,
+            "port": None if request is None else request.port,
+            "verdict": verdict or "failed",
+            "bytes_up": 0 if sent is None else sent.count,
+            "bytes_down": 0 if received is None else received.count,
+        }
+        path = log_path(self._root, now.date())
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "a", encoding="utf-8") as log_file:
+                log_file.write(json.dumps(line) + "\n")
+        except OSError as exc:
+            log.warning("the web proxy could not log a request to %s: %s", path, exc)
 
     async def _checked(self, host: str, port: int) -> list[str]:
         """The addresses *host* resolves to, each of them checked.
@@ -354,6 +408,21 @@ class WebProxy:
 
 class _Closed(Exception):
     """The client went away before its request was whole."""
+
+
+class _Counted:
+    """A stream writer that counts the bytes written to it."""
+
+    def __init__(self, writer: asyncio.StreamWriter) -> None:
+        self._writer = writer
+        self.count = 0
+
+    def write(self, data: bytes) -> None:
+        self.count += len(data)
+        self._writer.write(data)
+
+    def __getattr__(self, name: str):
+        return getattr(self._writer, name)
 
 
 async def _read(reader: asyncio.StreamReader) -> _Request:
