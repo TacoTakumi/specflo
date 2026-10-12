@@ -55,6 +55,8 @@ serve = [
     # The web UI's templates; a daemon serves pages, so it rides with serve.
     "jinja2>=3.1",
     "sse-starlette>=3.4",
+    # The gateway's GitHub client; auth-app signs the App's JWTs.
+    "githubkit[auth-app]>=0.16.1",
 ]
 # The model bench's graphs.
 bench = [
