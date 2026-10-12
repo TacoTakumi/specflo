@@ -34,6 +34,14 @@ goes on using it after the poll that started it. :meth:`~GatewayService.aclose`
 cancels every run, waits for each to end and closes the clients; the daemon
 calls it when it stops.
 
+Each run, once it ends, leaves one record in the daemon's audit log
+(:func:`specflo.daemon.routes.audit`, the ``audit.jsonl`` of the daemon root
+the store lies in): the forge, repo, issue number, the id of the user whose
+label started it, its start and end times, and its outcome, one of
+:data:`OUTCOMES`. Like the log and the comment, the record holds no
+credential: the run never reads one but to hand it to its forge client or
+its clone.
+
 The wiki's URL and reader token come from the gateway configuration's wiki
 section, read by the daemon: a service made without them writes no wiki
 configuration.
@@ -48,6 +56,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..daemon.routes import audit
 from ..errors import SpecfloError
 from ..pool.waiting import WAIT_MAX
 from . import run, scratch
@@ -59,7 +68,8 @@ from .poll import Trigger, poll_gitea
 from .store import GatewayStore
 
 __all__ = [
-    "GITEA_KIND", "KINDS", "LEASE_WAIT", "WAITING_NOTE", "ForgeKind", "GatewayService",
+    "CANCELLED", "FAILURE", "GITEA_KIND", "KINDS", "LEASE_WAIT", "NO_FREE_AGENT", "OUTCOMES",
+    "RUN_OPERATION", "SUCCESS", "TIMEOUT", "WAITING_NOTE", "ForgeKind", "GatewayService",
     "clean_report", "failure_note", "started_note",
 ]
 
@@ -69,6 +79,19 @@ LEASE_WAIT = WAIT_MAX
 
 #: What the bot comment says while the run waits for a free agent.
 WAITING_NOTE = "Waiting for a free agent. Research starts when one is free."
+
+#: The operation a run's record in the audit log is of, and the user and
+#: role it is recorded under: the gateway acts for no daemon user.
+RUN_OPERATION = "gateway_run"
+RUN_AUDITOR = "gateway"
+
+#: How a run ended, as its audit record names it.
+SUCCESS = "success"
+FAILURE = "failure"
+TIMEOUT = "timeout"
+NO_FREE_AGENT = "no free agent"
+CANCELLED = "cancelled"
+OUTCOMES = (SUCCESS, FAILURE, TIMEOUT, NO_FREE_AGENT, CANCELLED)
 
 _log = logging.getLogger(__name__)
 
@@ -223,7 +246,7 @@ class GatewayService:
         if self._closed:
             return
         task = asyncio.create_task(
-            self._run(forge, kind, client, trigger), name=f"gateway run {key}"
+            self._recorded(forge, kind, client, trigger), name=f"gateway run {key}"
         )
         self._runs[key] = task
 
@@ -233,9 +256,33 @@ class GatewayService:
 
         task.add_done_callback(done)
 
-    async def _run(
+    async def _recorded(
         self, forge: Forge, kind: ForgeKind, client: ForgeClient, trigger: Trigger
     ) -> None:
+        """The run of *trigger*, recorded in the audit log once it ends, also when cancelled."""
+        start, outcome = self.clock(), CANCELLED
+        try:
+            outcome = await self._run(forge, kind, client, trigger)
+        finally:
+            self._record(trigger, start, outcome)
+
+    def _record(self, trigger: Trigger, start: datetime, outcome: str) -> None:
+        # The store lies in the daemon root's gateway dir, and the audit log
+        # in the root itself.
+        root = self.store.path.parent.parent
+        try:
+            audit(
+                root, RUN_AUDITOR, RUN_AUDITOR, RUN_OPERATION, None, _where(trigger),
+                forge=trigger.forge, repo=trigger.repo, issue=trigger.number,
+                actor_id=trigger.actor_id, start=_iso(start), end=_iso(self.clock()),
+                outcome=outcome,
+            )
+        except OSError:
+            _log.exception("gateway: the run of %s could not be audited", _where(trigger))
+
+    async def _run(
+        self, forge: Forge, kind: ForgeKind, client: ForgeClient, trigger: Trigger
+    ) -> str:
         comment = _BotComment(self.store, client, trigger)
         try:
             report = await self._research(forge, kind, client, trigger, comment)
@@ -244,12 +291,13 @@ class GatewayService:
         except SpecfloError as exc:
             _log.warning("gateway: research on %s failed: %s", _where(trigger), exc)
             await comment.say(failure_note(self.clock(), exc))
-            return
+            return _outcome(exc)
         except Exception as exc:  # noqa: BLE001 - the issue is told all the same
             _log.exception("gateway: research on %s failed", _where(trigger))
             await comment.say(failure_note(self.clock(), exc))
-            return
+            return FAILURE
         await comment.say(clean_report(report))
+        return SUCCESS
 
     async def _research(
         self,
@@ -324,6 +372,19 @@ class _BotComment:
 
 def _where(trigger: Trigger) -> str:
     return f"{trigger.forge}:{trigger.repo}#{trigger.number}"
+
+
+def _outcome(fault: Exception) -> str:
+    """The outcome a run that ended with *fault* is recorded with."""
+    if isinstance(fault, run.RunTimeout):
+        return TIMEOUT
+    if isinstance(fault, run.NoFreeAgent):
+        return NO_FREE_AGENT
+    return FAILURE
+
+
+def _iso(when: datetime) -> str:
+    return when.astimezone(UTC).isoformat(timespec="seconds")
 
 
 def _utc(when: datetime) -> str:

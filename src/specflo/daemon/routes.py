@@ -147,9 +147,13 @@ def project_lock(root: Path, slug: str | None) -> threading.RLock:
 
 
 def audit(
-    root: Path, user: str, role: str, operation: str, project: str | None, minted
+    root: Path, user: str, role: str, operation: str, project: str | None, minted, **details
 ) -> None:
-    """Append one record for a mutation that succeeded, by ``user`` acting under ``role``."""
+    """Append one record for a mutation that succeeded, by ``user`` acting under ``role``.
+
+    *details* are fields of the operation's own, written after the common
+    ones: a gateway run names its forge, issue, times and outcome so.
+    """
     record = {
         "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "user": user,
@@ -157,6 +161,7 @@ def audit(
         "project": project,
         "operation": operation,
         "id": minted,
+        **details,
     }
     with open(root / AUDIT_FILENAME, "a", encoding="utf-8") as log:
         log.write(json.dumps(record) + "\n")
