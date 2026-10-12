@@ -34,11 +34,8 @@ The pool is reached through :class:`AgentPool`, so a test hands in a stub.
 :class:`ServicePool` is the daemon's: it calls the pool service in this
 process and talks to the leased agent's host over its socket, each in a
 worker thread, since both block and the gateway runs on the daemon's event
-loop. The pool service takes no environment for one lease: what a member
-starts with is the definition's allow list read from the daemon's own
-environment. So the adapter cannot hand the wiki variable to the member, and
-the prompt names it, with its value, for the agent to set on each ``awiki``
-command.
+loop. The adapter hands the run's environment to the grant, which sets it in
+the member's environment on top of the definition's allow list.
 """
 
 from __future__ import annotations
@@ -129,20 +126,13 @@ class AgentPool(Protocol):
         """End *leased* for *cause*."""
 
 
-def research_prompt(directory: Path, env: Mapping[str, str]) -> str:
-    """The one prompt of a run in the scratch dir *directory*, with *env* named."""
+def research_prompt(directory: Path) -> str:
+    """The one prompt of a run in the scratch dir *directory*."""
     directory = Path(directory)
     lines = [
         f"Research the issue in {directory / scratch.INPUT_FILE}, as your instructions say,",
         f"and write your report to {directory / REPORT_FILE}.",
     ]
-    if env:
-        lines += [
-            "",
-            "Run every awiki command with these variables set in front of it, for example",
-            "`VAR=value awiki search ...`:",
-            *(f"- {name}={value}" for name, value in env.items()),
-        ]
     return "\n".join(lines) + "\n"
 
 
@@ -179,7 +169,7 @@ async def research(
             await on_granted()
         try:
             await asyncio.wait_for(
-                pool.prompt(leased, research_prompt(directory, env), timeout=limit), limit
+                pool.prompt(leased, research_prompt(directory), timeout=limit), limit
             )
         except TimeoutError:
             cause = TIMED_OUT
@@ -310,12 +300,9 @@ class ServicePool:
     async def lease(
         self, pool: str, *, cwd: Path, label: str, env: Mapping[str, str]
     ) -> Leased:
-        # The service starts a member with the definition's allow list read
-        # from the daemon's environment and takes none for one lease, so
-        # *env* is not handed over here: the run's prompt names it.
         try:
             grant = await asyncio.to_thread(
-                self.service.grant, pool, holder_label=label, cwd=cwd
+                self.service.grant, pool, holder_label=label, cwd=cwd, env=dict(env)
             )
         except NoFreeMember as exc:
             raise NoFreeAgent(f"the pool '{pool}' gave no research agent: {exc}") from exc

@@ -171,6 +171,7 @@ def start(
     bridge: Path | str | None = None,
     web: Path | str | None = None,
     daemon_root: Path | str | None = None,
+    lease_env: Mapping[str, str] | None = None,
 ) -> str:
     """Start *member* for one lease in the role *definition* gives; the agent's name.
 
@@ -196,6 +197,10 @@ def start(
 
     *daemon_root* is the daemon's own directory, which the member's sandbox
     hides: it holds the pool's token and every client's.
+
+    *lease_env* holds the variables this lease hands its member, set on top
+    of the scoped environment; the launch builder refuses one the pool or
+    the sandbox sets or relies on.
 
     Raises ``LaunchError`` for a member that cannot be launched as configured,
     and ``RunnerError`` for one already running, one whose host does not come
@@ -243,7 +248,7 @@ def start(
             "env": launch.member_env(
                 definition, member, accounts, caller, config_dir=config_dir,
                 proxy_port=None if proxy is None else proxy.port,
-                provider_host=provider_host,
+                provider_host=provider_host, lease_env=lease_env,
             ),
         }
         paths.ensure()

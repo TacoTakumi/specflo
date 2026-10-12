@@ -125,13 +125,18 @@ def test_the_default_limit_is_thirty_minutes():
     assert run.RUN_LIMIT == 30 * 60
 
 
-def test_the_prompt_tells_the_agent_where_its_wiki_configuration_lies(tmp_path):
+def test_the_wiki_configuration_reaches_the_agent_through_its_environment_not_the_prompt(
+    tmp_path,
+):
     pool = StubPool()
     directory, _ = _run(pool, _forge(tmp_path))
 
+    wiki = scratch.wiki_environment(directory)
+    assert pool.leases[0]["env"] == wiki
     text = pool.prompts[0]["text"]
-    for name, value in scratch.wiki_environment(directory).items():
-        assert f"{name}={value}" in text
+    assert text == run.research_prompt(directory)
+    for name in wiki:
+        assert name not in text
 
 
 @pytest.mark.parametrize("kind", ["gitea", "github"])
@@ -307,8 +312,8 @@ class StubService:
         self.grants = []
         self.endings = []
 
-    def grant(self, pool_name, *, holder_label, cwd):
-        self.grants.append((pool_name, holder_label, Path(cwd)))
+    def grant(self, pool_name, *, holder_label, cwd, env=None):
+        self.grants.append((pool_name, holder_label, Path(cwd), env))
         if self.refuse is not None:
             raise self.refuse
         return StubGrant("lease-9", "research-9", "token-9")
@@ -365,14 +370,16 @@ def test_the_adapter_leases_through_the_service_and_ends_through_it(monkeypatch,
     pool, service, _ = _adapter(monkeypatch, StubClient([]))
 
     async def main():
-        leased = await pool.lease("research", cwd=tmp_path, label="gateway", env={})
+        leased = await pool.lease("research", cwd=tmp_path, label="gateway", env=wiki)
         await pool.end(leased, "finished")
         return leased
 
+    wiki = scratch.wiki_environment(tmp_path)
     leased = asyncio.run(main())
     assert (leased.lease_id, leased.agent, leased.token) == ("lease-9", "research-9", "token-9")
     assert "token-9" not in repr(leased)
-    assert service.grants == [("research", "gateway", tmp_path)]
+    # The run's environment is handed to the member through the grant.
+    assert service.grants == [("research", "gateway", tmp_path, wiki)]
     assert service.endings == [("lease-9", "released", "finished")]
 
 

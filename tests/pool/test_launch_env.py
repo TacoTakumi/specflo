@@ -378,3 +378,83 @@ def test_a_hosted_member_is_given_no_web_forwarder(tmp_path):
             DEFINITION, HOSTED_MEMBER, {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path)},
             cwd=work, state_dir=tmp_path, web=proxy,
         )
+
+
+# -- variables one lease hands its member -----------------------------------
+
+# What a caller in the daemon's own process hands one lease: the gateway
+# points the member's awiki at the run's scratch dir this way.
+WIKI = {"AGENT_WIKI_CONFIG_DIR": "/scratch/run-1/.agent-wiki"}
+
+
+def test_a_lease_s_variables_are_set_on_top_of_what_the_member_gets_anyway():
+    plain = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    env = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, lease_env=WIKI)
+
+    assert env == {**plain, **WIKI}
+
+
+@pytest.mark.parametrize("given", [None, {}])
+def test_a_lease_with_no_variables_gives_the_same_environment_as_before(given):
+    plain = member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER)
+
+    assert member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, lease_env=given) == plain
+
+
+def test_a_lease_s_variables_leave_a_web_member_s_proxy_as_the_pool_says():
+    env = member_env(
+        DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, proxy_port=3128,
+        provider_host="127.0.0.1", lease_env=WIKI,
+    )
+
+    assert env["AGENT_WIKI_CONFIG_DIR"] == WIKI["AGENT_WIKI_CONFIG_DIR"]
+    for name in PROXY_VARS:
+        assert env[name] == "http://127.0.0.1:3128"
+    for name in NO_PROXY_VARS:
+        assert env[name] == "127.0.0.1"
+
+
+RESERVED = [
+    # what pi and the sandbox need to start, and the rest of the baseline
+    *launch.BASELINE_ENV,
+    # the web member's proxy, which is the pool's to say
+    *PROXY_VARS, *NO_PROXY_VARS,
+    # what the pool says about the member itself
+    launch.DENY_ENV, launch.AGENT_DIR_ENV, launch.SERVE_ENV, launch.AGENT_NAME_ENV,
+    launch.AGENT_MANAGED_ENV, launch.TMPDIR_ENV, launch.GIT_CONFIG_GLOBAL_ENV,
+    # what the sandbox's start reads on its way in
+    sandbox.RUNTIME_DIR_VAR, "LD_PRELOAD", "LD_LIBRARY_PATH",
+    # an account's key reaches that account's own members alone
+    "TEAM_A_KEY", "TEAM_B_KEY",
+]
+
+
+@pytest.mark.parametrize("name", RESERVED)
+def test_a_lease_may_not_set_a_variable_the_pool_or_the_sandbox_relies_on(name):
+    with pytest.raises(launch.LaunchError, match=name) as refused:
+        member_env(
+            DEFINITION, HOSTED_MEMBER, ACCOUNTS, CALLER,
+            lease_env={**WIKI, name: "value-from-the-lease"},
+        )
+
+    assert isinstance(refused.value, SpecfloError)
+    assert "value-from-the-lease" not in str(refused.value)
+
+
+@pytest.mark.parametrize("given", [
+    {"": "x"},
+    {"A=B": "x"},
+    {"A\0B": "x"},
+    {"WIKI_DIR": "with\0nul"},
+])
+def test_a_lease_variable_that_is_no_variable_is_refused(given):
+    with pytest.raises(launch.LaunchError):
+        member_env(DEFINITION, LOCAL_MEMBER, ACCOUNTS, CALLER, lease_env=given)
+
+
+def test_a_lease_s_variables_are_checked_before_anything_is_built():
+    # The pool checks them before it writes a lease, with the accounts it knows.
+    launch.check_lease_env(WIKI, ACCOUNTS)
+    with pytest.raises(launch.LaunchError, match="TEAM_A_KEY"):
+        launch.check_lease_env({"TEAM_A_KEY": "x"}, ACCOUNTS)

@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from specflo.agent import lease as agent_lease
@@ -30,11 +31,14 @@ from specflo.agent.cli import agent_app
 from specflo.agent.client import AgentClient, connect
 from specflo.agent.statefiles import AgentPaths
 from specflo.daemon import STATE_STORE_FILENAME
+from specflo.daemon.app import create_app
 from specflo.errors import SpecfloError
 from specflo.pool import launch, service
 from specflo.pool.service import Ended, Grant
+from specflo.service.pool_remote import LEASES_PATH
 from waits import scaled, settle, wait_until
 
+from .test_lease_request import pool_daemon  # noqa: F401 - a fixture
 from .test_reload import STATUS_PATH, Served, write_workers
 from .test_reload import console as roster_console
 from .test_reload import member as roster_member
@@ -248,6 +252,70 @@ def test_a_member_whose_host_came_up_and_did_not_take_the_lease_is_stopped(
     assert svc.grant("rebasers", holder_label="b", cwd=pool_rig.work).agent == "local-1"
     # a record written after the last one was forgotten is a process that ran
     assert pool_rig.recorded()["pid"]
+
+
+# -- variables one lease hands its member -----------------------------------
+
+# What the gateway hands a research run's member: where its awiki finds the
+# run's wiki configuration.
+WIKI_VAR = "AGENT_WIKI_CONFIG_DIR"
+
+
+def test_a_grant_hands_its_member_the_variables_it_is_given_on_top_of_its_own(pool_rig):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+    wiki = str(pool_rig.work / ".agent-wiki")
+
+    given = svc.grant(
+        "rebasers", holder_label="a", cwd=pool_rig.work, env={WIKI_VAR: wiki}
+    )
+    with_env = pool_rig.recorded()["env"]
+    svc.end_lease(given.lease_id, "released")
+    pool_rig.forget_records()
+    plain = svc.grant("rebasers", holder_label="b", cwd=pool_rig.work)
+    without = pool_rig.recorded()["env"]
+    svc.end_lease(plain.lease_id, "released")
+
+    assert with_env[WIKI_VAR] == wiki
+    assert WIKI_VAR not in without
+    # Each lease has a pi directory generated for it, and nothing else differs.
+    per_lease = (WIKI_VAR, launch.AGENT_DIR_ENV, launch.GIT_CONFIG_GLOBAL_ENV)
+    assert {k: v for k, v in with_env.items() if k not in per_lease} == {
+        k: v for k, v in without.items() if k not in per_lease
+    }
+
+
+@pytest.mark.parametrize("name", ["PATH", "HTTPS_PROXY", launch.AGENT_NAME_ENV, "TEAM_A_KEY"])
+def test_a_grant_whose_variables_the_pool_says_is_refused_before_a_lease_is_written(
+    pool_rig, name
+):
+    svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
+
+    with pytest.raises(SpecfloError, match=name) as refused:
+        svc.grant(
+            "rebasers", holder_label="a", cwd=pool_rig.work,
+            env={WIKI_VAR: "/scratch/.agent-wiki", name: "set-by-the-caller"},
+        )
+
+    assert "set-by-the-caller" not in str(refused.value)
+    assert pool_rig.pane_names() == []
+    with pool_rig.store() as store:
+        assert store.list_leases() == []
+
+
+def test_the_lease_route_takes_no_variables_for_the_member(pool_daemon, pool_rig):  # noqa: F811
+    # Only a caller in the daemon's own process hands a member variables: a
+    # client of the daemon sets nothing in a member's environment.
+    client = TestClient(create_app(pool_daemon["root"]))
+    client.headers["Authorization"] = f"Bearer {pool_daemon['token']}"
+    body = {"pool": "rebasers", "cwd": str(pool_rig.work), "env": {WIKI_VAR: "/elsewhere"}}
+
+    response = client.post(LEASES_PATH, json=body)
+
+    assert response.status_code in (400, 422), response.text
+    assert "env" in response.text
+    assert pool_rig.pane_names() == []
+    with pool_rig.store() as store:
+        assert store.list_leases() == []
 
 
 # -- one lease after another on one member ----------------------------------

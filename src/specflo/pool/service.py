@@ -163,7 +163,9 @@ from ..daemon.poolstore import (
 )
 from ..errors import SpecfloError
 from . import egress as egress_classes
-from . import accounts, console, expiry, ledger, piconfig, preempt, runner, sandbox, teamlease
+from . import (
+    accounts, console, expiry, launch, ledger, piconfig, preempt, runner, sandbox, teamlease,
+)
 from .config import CONSOLE, LOCAL, Pool, PoolConfig
 from .teams import Team
 
@@ -446,6 +448,7 @@ class PoolService:
         pinned: str | None = None,
         project: str | None = None,
         team_lease_id: str | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> Grant:
         """Lease a free member of the pool *pool_name* to *holder_label*.
 
@@ -464,7 +467,13 @@ class PoolService:
         no room takes the idle leases that stand in its way, when there are
         such, and is granted in the same call.
 
-        Raises ``UnknownPool``, ``IdleLimitError`` for a limit above the
+        *env* holds variables the member is started with on top of its own,
+        for a caller in the daemon's own process; no route of the daemon
+        takes any. A console is not started, so it takes none.
+
+        Raises ``launch.LaunchError`` for a variable no lease may set, before
+        anything is written, and for *env* handed to a console,
+        ``UnknownPool``, ``IdleLimitError`` for a limit above the
         pool's maximum, ``egress.UnknownClass``, ``EgressRefused`` for a pool
         with no member under the ceiling, ``ClosedAccount`` for one whose
         members under it all run through closed accounts, ``NoFreeMember``
@@ -477,6 +486,8 @@ class PoolService:
             # Read inside the turn, as all that follows is: a swap of the
             # configuration comes before this grant or after it.
             pool = self._pool(pool_name)
+            if env:
+                launch.check_lease_env(env, self.config.accounts)
             idle_limit = _idle_limit(pool, idle_limit)
             definition = next(d for d in self.config.definitions if d.name == pool.definition)
             # Placed before the queue is looked at: a request refused for
@@ -505,6 +516,11 @@ class PoolService:
             ))
             try:
                 if placed.member.kind == CONSOLE:
+                    if env:
+                        raise launch.LaunchError(
+                            f"member '{placed.member.name}' is a console, whose process "
+                            "its developer started: a lease sets no variable in it."
+                        )
                     # A console's process is its developer's: the lease is
                     # bound on the attached host and nothing is started.
                     agent = runner.bind_console(
@@ -524,6 +540,7 @@ class PoolService:
                         lease_token=token, config_root=self.config_root,
                         models_file=self.config.models_file, environ=self.environ,
                         bridge=self.bridge, web=web, daemon_root=self.daemon_root,
+                        lease_env=env,
                     )
             except Exception as exc:
                 self.end_lease(lease_id, "released", cause=f"member did not start: {exc}")

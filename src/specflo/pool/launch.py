@@ -14,7 +14,10 @@ instead (see ``piconfig``), where pi discovers it by name.
 What a member is given is the only hard limit on it, so its environment is
 built from nothing: the baseline below, the variables and credentials its
 definition lists, and the API key of its own account for a hosted member.
-Nothing else in the caller's environment reaches it.
+Nothing else in the caller's environment reaches it. A lease may add
+variables of its own on top, handed in by a caller in the daemon's process
+and never by a client of the daemon, but none the pool or the sandbox sets or
+relies on.
 
 A definition's command deny list is the one part that does not travel as a
 flag. Every member loads the pool's deny-list extension with ``-e``, and the
@@ -127,6 +130,17 @@ _POOL_SAYS: tuple[str, ...] = (
     DENY_ENV, AGENT_DIR_ENV, SERVE_ENV, AGENT_NAME_ENV, AGENT_MANAGED_ENV, TMPDIR_ENV,
     GIT_CONFIG_GLOBAL_ENV,
 )
+
+
+# What no caller may set in one lease's variables, on top of an account's key
+# variable: the baseline pi and the sandbox start with, the proxy a web member
+# is pointed at, what the pool says about the member, the variable the scope
+# prefix finds the user manager through, and what the dynamic loader reads
+# when the sandbox's own start is run.
+_LEASE_MAY_NOT_SET: frozenset[str] = frozenset((
+    *BASELINE_ENV, *PROXY_ENV, *NO_PROXY_ENV, *_POOL_SAYS,
+    sandbox.RUNTIME_DIR_VAR, "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
+))
 
 
 class LaunchError(SpecfloError):
@@ -550,6 +564,7 @@ def member_env(
     config_dir: Path | None = None,
     proxy_port: int | None = None,
     provider_host: str | None = None,
+    lease_env: Mapping[str, str] | None = None,
 ) -> dict[str, str]:
     """The environment *member* starts with in the role *definition* gives.
 
@@ -568,7 +583,13 @@ def member_env(
     no-proxy variables name the provider's host, so the member's model
     traffic still goes straight to the forwarder to llama-swap.
 
-    Raises ``LaunchError`` for a hosted member whose account is not among
+    *lease_env* holds the variables one lease hands its member, set on top
+    of what the definition lets through; only a caller in the daemon's own
+    process hands any. None of them may be one the pool or the sandbox sets
+    or relies on, which ``check_lease_env`` says.
+
+    Raises ``LaunchError`` for a lease variable ``check_lease_env`` refuses,
+    for a hosted member whose account is not among
     *accounts* or whose key variable is not set, for any member handed no
     *config_dir*: every member has one, and a member without it would start
     against a directory the sandbox hides; and for a web member handed no
@@ -576,6 +597,8 @@ def member_env(
     refuses loopback.
     """
     accounts = tuple(accounts)
+    lease_env = dict(lease_env or {})
+    check_lease_env(lease_env, accounts)
     key_vars = {account.key_env for account in accounts}
     allowed = [
         name
@@ -585,6 +608,9 @@ def member_env(
     if member.account is not None:
         allowed.append(_key_var(member, accounts, environ))
     env = {name: environ[name] for name in allowed if name in environ}
+    # Before what the pool says: none of its names is a lease's to set, and
+    # what follows would stand over one all the same.
+    env.update(lease_env)
     if definition.deny:
         env[DENY_ENV] = json.dumps(list(definition.deny))
     if config_dir is None:
@@ -613,6 +639,35 @@ def member_env(
         for name in NO_PROXY_ENV:
             env[name] = provider_host
     return env
+
+
+def check_lease_env(lease_env: Mapping[str, str], accounts: Iterable[Account]) -> None:
+    """Refuse the variables of one lease that no caller may hand a member.
+
+    A name that is no variable's name, or a value with a NUL in it, is
+    refused, and so is a name the pool or the sandbox sets or relies on, or
+    an account's key variable: an account's key reaches its own members
+    alone, through the pool. Raises ``LaunchError``, naming the variable and
+    never its value.
+    """
+    key_vars = {account.key_env for account in accounts}
+    for name, value in lease_env.items():
+        if not isinstance(name, str) or not name or "=" in name or "\0" in name:
+            raise LaunchError(
+                f"a lease cannot set the variable {name!r}: it is no variable's name."
+            )
+        if not isinstance(value, str) or "\0" in value:
+            raise LaunchError(f"a lease cannot set the variable {name}: its value is no text.")
+        if name in _LEASE_MAY_NOT_SET:
+            raise LaunchError(
+                f"a lease cannot set the variable {name}: the pool or the sandbox sets or "
+                "relies on it."
+            )
+        if name in key_vars:
+            raise LaunchError(
+                f"a lease cannot set the variable {name}: it holds an account's key, which "
+                "the pool hands that account's own members alone."
+            )
 
 
 def member_account(member: Member, accounts: Iterable[Account]) -> Account:
