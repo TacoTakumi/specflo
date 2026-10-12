@@ -22,8 +22,17 @@ latter. Release tags are of the form `vX.Y.Z`.
   private, link-local or other non-public address that `web_internal` does
   not list, dials the address it checked, and fails closed. Each request is
   logged to `webproxy/YYYY-MM-DD.jsonl` under the daemon root with the lease,
-  member, host, port, verdict and byte counts. The definition pages of the
-  web UI carry both fields. See DAEMON.md, Web access.
+  member, host, port, verdict and byte counts. The same socket also speaks
+  SOCKS5 (CONNECT, no authentication), told apart by the first byte, under
+  the same checks and log, and `DONSEEK_PROXIES` points donsetch at it as
+  `socks5h://127.0.0.1:<port>`. A web member resolves names through the
+  daemon: a DNS forwarder of the lease's own on `web/<lease>.dns` takes its
+  UDP queries from `127.0.0.1:53` inside the sandbox, asks the host's
+  resolver, and logs each query with verdict `dns` and its record type; its
+  connections still go only through the proxy. A web member's start needs
+  `unshare` and `ip` on the daemon's `PATH` as well as `socat`. The
+  definition pages of the web UI carry both fields. See DAEMON.md, Web
+  access.
 - **The `rfc-researcher` agent definition**, the sixth shipped one: a local,
   web-enabled role that reads an issue and a clone of its repo, reads the
   Agent Wiki, searches the web with `tvly` and Reddit with `donsetch`, and
