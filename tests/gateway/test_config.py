@@ -265,3 +265,101 @@ def test_read_credential_gives_the_secret_and_checks_the_mode_again(root):
         config.read_credential(path)
     assert "0600" in str(raised.value)
     assert TOKEN not in str(raised.value)
+
+
+WIKI_TOKEN = "fake-wiki-reader-91be"
+
+
+def _wiki(**fields):
+    wiki = {"url": "https://wiki.example", "token_file": "wiki.token"}
+    wiki.update(fields)
+    return {key: value for key, value in wiki.items() if value is not None}
+
+
+def test_a_configuration_without_a_wiki_section_has_no_wiki(root):
+    _secret(root, "gitea.token", TOKEN)
+    _write(root, {"forges": [_gitea()]})
+
+    found, errors = _load(root)
+
+    assert errors == []
+    assert found.wiki is None
+
+
+def test_the_wiki_section_names_the_vault_url_and_the_reader_token_file(root):
+    _secret(root, "gitea.token", TOKEN)
+    token = _secret(root, "wiki.token", WIKI_TOKEN)
+    _write(root, {"forges": [_gitea()], "wiki": _wiki(url="https://wiki.example/")})
+
+    found, errors = _load(root)
+
+    assert errors == []
+    assert found.wiki == config.Wiki(url="https://wiki.example", token_file=token)
+    assert WIKI_TOKEN not in repr(found)
+
+
+@pytest.mark.parametrize(
+    "wiki, field",
+    [
+        ("https://wiki.example", "wiki"),
+        (_wiki(url=None), "url"),
+        (_wiki(url="ftp://wiki.example"), "url"),
+        (_wiki(url="https://"), "url"),
+        (_wiki(url="https://reader:hunter2@wiki.example"), "url"),
+        (_wiki(token_file=None), "token_file"),
+        (_wiki(token_file="/etc/passwd"), "token_file"),
+        (_wiki(token_file="../outside.token"), "token_file"),
+        (_wiki(token_file="missing.token"), "token_file"),
+        (_wiki(colour="blue"), "colour"),
+    ],
+)
+def test_each_fault_in_the_wiki_section_names_its_field_and_leaves_no_configuration(
+    root, wiki, field
+):
+    _secret(root, "gitea.token", TOKEN)
+    _secret(root, "wiki.token", WIKI_TOKEN)
+    _write(root, {"forges": [_gitea()], "wiki": wiki})
+
+    found, errors = _load(root)
+
+    assert found is None
+    assert _fields(errors) == [field]
+    message = str(errors[0])
+    assert (f": wiki: {field}: " if field != "wiki" else ": file: wiki: ") in message
+    assert WIKI_TOKEN not in message and "hunter2" not in message
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o400])
+def test_a_wiki_token_file_with_another_mode_than_0600_is_refused(root, mode):
+    _secret(root, "gitea.token", TOKEN)
+    _secret(root, "wiki.token", WIKI_TOKEN, mode=mode)
+    _write(root, {"forges": [_gitea()], "wiki": _wiki()})
+
+    found, errors = _load(root)
+
+    assert found is None
+    assert _fields(errors) == ["token_file"]
+    assert "0600" in str(errors[0]) and WIKI_TOKEN not in str(errors[0])
+
+
+def test_read_wiki_gives_the_url_and_the_token_and_checks_the_mode_again(root):
+    _secret(root, "gitea.token", TOKEN)
+    token = _secret(root, "wiki.token", WIKI_TOKEN + "\n")
+    _write(root, {"forges": [_gitea()], "wiki": _wiki()})
+    found, _ = _load(root)
+
+    assert config.read_wiki(found) == ("https://wiki.example", WIKI_TOKEN)
+
+    os.chmod(token, 0o644)
+    with pytest.raises(config.GatewayConfigError) as raised:
+        config.read_wiki(found)
+    assert raised.value.entry == "wiki" and raised.value.field == "token_file"
+    assert "0600" in str(raised.value) and WIKI_TOKEN not in str(raised.value)
+
+
+def test_read_wiki_of_a_configuration_without_a_wiki_gives_none(root):
+    _secret(root, "gitea.token", TOKEN)
+    _write(root, {"forges": [_gitea()]})
+    found, _ = _load(root)
+
+    assert config.read_wiki(found) == (None, None)

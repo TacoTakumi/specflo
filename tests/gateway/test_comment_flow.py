@@ -21,6 +21,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 import pytest
+import yaml
 
 from specflo.gateway import config, gitea, run, scratch, service, store
 
@@ -616,25 +617,135 @@ async def _note(into, what):
     into.append(what)
 
 
-def _configure_daemon(tmp_path):
-    """A daemon root whose gateway configuration stands, for a forge of the test's own."""
+def _configure_daemon(tmp_path, *, url="https://gitea.example", wiki=False):
+    """A daemon root whose gateway configuration stands, for a forge of the test's own.
+
+    With *wiki*, the configuration names :data:`WIKI_URL` and a reader token
+    file that holds :data:`WIKI_TOKEN`.
+    """
     from specflo import daemon
 
     daemon_root = daemon.prepare_root(tmp_path / "daemon")
     token = daemon_root / "gitea.token"
     token.write_text(TOKEN, encoding="utf-8")
     os.chmod(token, 0o600)
-    (daemon_root / config.CONFIG_FILE).write_text(
+    text = (
         "forges:\n"
         "  - kind: gitea\n"
-        "    url: https://gitea.example\n"
+        f"    url: {url}\n"
         "    repos: [me/thing]\n"
         "    operator_id: 7\n"
         "    pool: rfc-research\n"
-        "    token_file: gitea.token\n",
-        encoding="utf-8",
+        "    token_file: gitea.token\n"
     )
+    if wiki:
+        reader = daemon_root / "wiki.token"
+        reader.write_text(WIKI_TOKEN + "\n", encoding="utf-8")
+        os.chmod(reader, 0o600)
+        text += f"wiki:\n  url: {WIKI_URL}\n  token_file: wiki.token\n"
+    (daemon_root / config.CONFIG_FILE).write_text(text, encoding="utf-8")
     return daemon_root
+
+
+WIKI_URL = "https://wiki.example"
+WIKI_TOKEN = "fake-wiki-reader-5e7a"
+
+
+class WikiAtLease(StubPool):
+    """A stub pool that reads the scratch dir's wiki configuration as a member is leased."""
+
+    def __init__(self, agent=None):
+        super().__init__(agent)
+        self.wiki = []
+
+    async def lease(self, pool, *, cwd, label, env):
+        path = Path(cwd) / scratch.WIKI_CONFIG
+        self.wiki.append(path.read_text(encoding="utf-8") if path.exists() else None)
+        return await super().lease(pool, cwd=cwd, label=label, env=env)
+
+
+def _run_through_the_daemon(tmp_path, *, wiki):
+    """Label an issue on a stub Gitea and run it through the service the
+    daemon builds from its root: the stub pool, and what the daemon logged."""
+    from specflo.daemon.app import create_app
+
+    setup = _gitea(tmp_path)
+    stub = setup.stub
+    daemon_root = _configure_daemon(tmp_path, url=stub.base_url, wiki=wiki)
+    # The gateway's first start at the stub's time, so the label below is new.
+    store.open_store(daemon_root, now=stub.now)
+    stub.add_issue(REPO, 1, title="Can it fly?")
+    _label(setup)
+    pool = WikiAtLease()
+
+    async def main(gateway):
+        try:
+            await gateway.poll(app.state.gateway)
+            await gateway.join()
+        finally:
+            await gateway.aclose()
+
+    app = create_app(daemon_root)
+    gateway = app.state.gateway_service
+    gateway.pool = pool
+    gateway.kinds = {config.GITEA: setup.kind}
+    gateway.clone = Clones()
+    gateway.lease_retry = 0.01
+    asyncio.run(main(gateway))
+    return app, pool, stub
+
+
+def test_the_daemon_hands_the_configured_wiki_to_the_runs_scratch_dir(tmp_path, caplog):
+    caplog.set_level("DEBUG")
+
+    app, pool, stub = _run_through_the_daemon(tmp_path, wiki=True)
+
+    assert app.state.gateway_service.wiki_url == WIKI_URL
+    assert app.state.gateway_service.wiki_token == WIKI_TOKEN
+    (seen,) = pool.wiki
+    vault = next(iter(yaml.safe_load(seen)["vaults"].values()))
+    assert vault == {"url": WIKI_URL, "token": WIKI_TOKEN}
+    assert not pool.leases[0]["cwd"].exists()
+    # The reader token is in no log record, no comment and nothing sent to the forge.
+    assert all(WIKI_TOKEN not in record.getMessage() for record in caplog.records)
+    assert all(WIKI_TOKEN not in comment.body for comment in stub.comments.values())
+    assert all(WIKI_TOKEN not in repr(seen) for seen in stub.requests)
+    assert WIKI_TOKEN not in repr(app.state.gateway)
+
+
+def test_a_daemon_without_a_wiki_section_writes_no_wiki_configuration(tmp_path):
+    app, pool, _ = _run_through_the_daemon(tmp_path, wiki=False)
+
+    assert app.state.gateway_service.wiki_url is None
+    assert app.state.gateway_service.wiki_token is None
+    assert pool.wiki == [None]
+    assert len(pool.leases) == 1
+
+
+def test_a_daemon_whose_wiki_token_cannot_be_read_starts_no_gateway(
+    tmp_path, monkeypatch, caplog
+):
+    from specflo.daemon.app import create_app
+
+    daemon_root = _configure_daemon(tmp_path, wiki=True)
+    real_read = config.read_credential
+
+    def opened_up(path):
+        # The token file's mode changed after the configuration was loaded.
+        if Path(path).name == "wiki.token":
+            os.chmod(path, 0o644)
+        return real_read(path)
+
+    monkeypatch.setattr(config, "read_credential", opened_up)
+
+    app = create_app(daemon_root)
+
+    assert app.state.gateway is None and app.state.gateway_service is None
+    (error,) = app.state.gateway_errors
+    assert (error.entry, error.field) == ("wiki", "token_file")
+    assert WIKI_TOKEN not in str(error)
+    assert any("token_file" in record.getMessage() for record in caplog.records)
+    assert all(WIKI_TOKEN not in record.getMessage() for record in caplog.records)
 
 
 def test_a_daemon_with_a_gateway_polls_through_the_service_and_closes_it_when_it_stops(

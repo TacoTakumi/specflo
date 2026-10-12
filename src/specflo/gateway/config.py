@@ -9,9 +9,12 @@ on that forge, the only one whose label starts a run; the trigger label,
 of its credential files. A Gitea forge has the bot's token in ``token_file``;
 a GitHub forge has its App's ``app_id`` and the App's private key in
 ``key_file``. ``poll_every`` beside the forges is how long the gateway waits
-between polls, a minute unless written.
+between polls, a minute unless written. An optional ``wiki`` section names
+the operator's wiki the research agent may read: the vault's http or https
+``url``, with no user or password in it, and the ``token_file`` with a reader
+token for it. Without the section the agent gets no wiki.
 
-A credential file is named by a path relative to the daemon root and lies
+A credential file, a forge's or the wiki's, is named by a path relative to the daemon root and lies
 under it, a regular file with mode 0600. The configuration holds where each
 file is and never what is in it: :func:`read_credential` reads a secret when a
 forge client needs it, and checks the mode again. No fault names a secret.
@@ -56,7 +59,7 @@ DEFAULT_POLL_EVERY = 60
 #: The one mode a credential file may have: read and write for its owner only.
 CREDENTIAL_MODE = 0o600
 
-SECTIONS: tuple[str, ...] = ("poll_every", "forges")
+SECTIONS: tuple[str, ...] = ("poll_every", "forges", "wiki")
 COMMON_FIELDS: tuple[str, ...] = (
     "name", "kind", "url", "repos", "operator_id", "label", "pool",
 )
@@ -65,6 +68,11 @@ KIND_FIELDS: dict[str, tuple[str, ...]] = {
     GITEA: ("token_file",),
     GITHUB: ("app_id", "key_file"),
 }
+#: The fields of the wiki section, both required.
+WIKI_FIELDS: tuple[str, ...] = ("url", "token_file")
+
+#: The entry a fault in the wiki section names.
+WIKI = "wiki"
 
 # The entry a fault names when it is not in one forge.
 FILE = "file"
@@ -105,12 +113,23 @@ class Forge:
 
 
 @dataclass(frozen=True)
+class Wiki:
+    """The operator's wiki the research agent may read: the vault's URL and the
+    absolute path of the reader token's file, never the token."""
+
+    url: str
+    token_file: Path
+
+
+@dataclass(frozen=True)
 class GatewayConfig:
-    """What ``gateway.yaml`` declares. ``poll_every`` is in seconds."""
+    """What ``gateway.yaml`` declares. ``poll_every`` is in seconds; ``wiki``
+    is None without a wiki section."""
 
     path: Path | None
     forges: tuple[Forge, ...]
     poll_every: int = DEFAULT_POLL_EVERY
+    wiki: Wiki | None = None
 
 
 def config_file(root: Path) -> Path:
@@ -163,6 +182,7 @@ def load_gateway_config(root: Path) -> tuple[GatewayConfig | None, list[GatewayC
                 path, FILE, str(key), "unknown key; expected one of " + ", ".join(SECTIONS) + "."
             ))
     poll_every = _poll_every(path, data.get("poll_every"), errors)
+    wiki = _wiki(path, root, data.get(WIKI), errors)
 
     entries = data.get("forges")
     if not isinstance(entries, list) or not entries:
@@ -188,7 +208,7 @@ def load_gateway_config(root: Path) -> tuple[GatewayConfig | None, list[GatewayC
             ))
     if errors:
         return None, errors
-    return GatewayConfig(path, tuple(forges), poll_every), []
+    return GatewayConfig(path, tuple(forges), poll_every, wiki), []
 
 
 def read_credential(path: Path) -> str:
@@ -201,6 +221,22 @@ def read_credential(path: Path) -> str:
     if problem is not None:
         raise SpecfloError(f"{path}: {problem}")
     return Path(path).read_text(encoding="utf-8").strip()
+
+
+def read_wiki(found: GatewayConfig) -> tuple[str | None, str | None]:
+    """The wiki's URL and reader token in *found*, or two Nones without a wiki.
+
+    The token is read with :func:`read_credential`, so a file opened up
+    since the configuration was loaded is a fault on the wiki's
+    ``token_file``, which names the file and never the token.
+    """
+    if found.wiki is None:
+        return None, None
+    try:
+        token = read_credential(found.wiki.token_file)
+    except SpecfloError as exc:
+        raise GatewayConfigError(found.path, WIKI, "token_file", str(exc)) from None
+    return found.wiki.url, token
 
 
 def _credential_problem(path: Path) -> str | None:
@@ -217,6 +253,55 @@ def _credential_problem(path: Path) -> str | None:
     if mode != CREDENTIAL_MODE:
         return f"must have mode 0600, not {mode:04o}; run chmod 600 on it."
     return None
+
+
+def _credential_file(root: Path, value: object, what: str) -> tuple[Path | None, str | None]:
+    """The credential file *value* names in the daemon root *root*, or the
+    fault in it; *what* says what the file holds."""
+    if not isinstance(value, str) or not value.strip():
+        return None, f"required; the name of the file in the daemon root with {what}."
+    name = Path(value.strip())
+    if name.is_absolute() or ".." in name.parts:
+        return None, f"{value!r} must be a file name under the daemon root."
+    location = root / name
+    problem = _credential_problem(location)
+    if problem is not None:
+        return None, f"{location}: {problem}"
+    return location, None
+
+
+def _wiki(
+    path: Path, root: Path, value: object, errors: list[GatewayConfigError]
+) -> Wiki | None:
+    """The wiki section *value*, or None when there is none or it has faults."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        problem = "must be a mapping of " + ", ".join(WIKI_FIELDS) + "."
+        errors.append(GatewayConfigError(path, FILE, WIKI, problem))
+        return None
+    before = len(errors)
+    for key in value:
+        if key not in WIKI_FIELDS:
+            errors.append(GatewayConfigError(
+                path, WIKI, str(key), "unknown field; expected one of " + ", ".join(WIKI_FIELDS) + "."
+            ))
+    url = value.get("url")
+    parts = urlsplit(url.strip()) if isinstance(url, str) else None
+    if (
+        parts is None or parts.scheme not in ("http", "https") or not parts.hostname
+        or parts.username is not None or parts.password is not None
+    ):
+        errors.append(GatewayConfigError(
+            path, WIKI, "url",
+            "must be the wiki vault's http or https URL, with no user or password in it.",
+        ))
+    token_file, problem = _credential_file(root, value.get("token_file"), "the wiki's reader token")
+    if problem is not None:
+        errors.append(GatewayConfigError(path, WIKI, "token_file", problem))
+    if len(errors) > before:
+        return None
+    return Wiki(url=url.strip().rstrip("/"), token_file=token_file)
 
 
 def _poll_every(path: Path, value: object, errors: list[GatewayConfigError]) -> int:
@@ -320,17 +405,7 @@ class _Forge:
         return value.strip()
 
     def _credential(self, field: str, what: str) -> Path | None:
-        value = self.fields.get(field)
-        if not isinstance(value, str) or not value.strip():
-            self.fault(field, f"required; the name of the file in the daemon root with {what}.")
-            return None
-        name = Path(value.strip())
-        if name.is_absolute() or ".." in name.parts:
-            self.fault(field, f"{value!r} must be a file name under the daemon root.")
-            return None
-        location = self.root / name
-        problem = _credential_problem(location)
+        location, problem = _credential_file(self.root, self.fields.get(field), what)
         if problem is not None:
-            self.fault(field, f"{location}: {problem}")
-            return None
+            self.fault(field, problem)
         return location

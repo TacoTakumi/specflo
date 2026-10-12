@@ -34,9 +34,9 @@ goes on using it after the poll that started it. :meth:`~GatewayService.aclose`
 cancels every run, waits for each to end and closes the clients; the daemon
 calls it when it stops.
 
-The wiki's URL and reader token are the service's to hand out and have no
-place in the gateway configuration yet: a service made without them writes
-no wiki configuration.
+The wiki's URL and reader token come from the gateway configuration's wiki
+section, read by the daemon: a service made without them writes no wiki
+configuration.
 """
 
 from __future__ import annotations

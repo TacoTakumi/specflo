@@ -34,7 +34,7 @@ from fastapi import FastAPI
 from .. import gateway
 from ..config import proxy_auth
 from ..errors import SpecfloError
-from ..gateway.config import open_gateway
+from ..gateway.config import GatewayConfigError, open_gateway, read_wiki
 from ..gateway.run import ServicePool
 from ..gateway.service import GatewayService
 from ..gateway.store import open_store
@@ -312,13 +312,24 @@ def create_app(root: Path, *, url: str | None = None) -> FastAPI:
     # A file with faults gives none either, and the faults are logged and
     # kept: the daemon serves without the gateway.
     app.state.gateway, app.state.gateway_errors = open_gateway(root)
+    # The wiki the research agent may read, its reader token read here once.
+    # A token file that cannot be read keeps the gateway off, as a fault in
+    # the file does.
+    wiki_url = wiki_token = None
+    if app.state.gateway is not None:
+        try:
+            wiki_url, wiki_token = read_wiki(app.state.gateway)
+        except GatewayConfigError as error:
+            _log.warning("gateway configuration: %s", error)
+            app.state.gateway, app.state.gateway_errors = None, (error,)
     # The service that runs research for the gateway's triggers, and its
     # poll step the gateway loop calls. Its runs lease from the pool in force.
     app.state.gateway_service = None
     app.state.gateway_poll = gateway.poll_nothing
     if app.state.gateway is not None:
         app.state.gateway_service = GatewayService(
-            open_store(root), ServicePool(PoolInForce(app))
+            open_store(root), ServicePool(PoolInForce(app)),
+            wiki_url=wiki_url, wiki_token=wiki_token,
         )
         app.state.gateway_poll = app.state.gateway_service.poll
     app.state.gateway_task = None
