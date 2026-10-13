@@ -125,10 +125,12 @@ def clean_report(report: str) -> str:
     what looks like code may render as prose, and the report must be safe
     in both readings. The pass runs again while it changes the text, since
     what a removal joins may be markup again (a link reduced to its text
-    can form a tag), at most ``_PASSES`` times; a report still changing
-    then has every "<" and "[" made a character reference instead, which
-    no renderer reads as a tag, an image or a link (a backslash escape
-    could, after a backslash the report already holds).
+    can form a tag), at most ``_PASSES`` times. A report still changing
+    then has every "&", "<" and "[" made a character reference instead,
+    the "&" first, so that what the last pass joined holds nothing a
+    renderer reads as a tag, an image, a link or a reference it decodes (a
+    backslash escape could be one, after a backslash the report already
+    holds).
 
     The mentions are broken last, so that a mention a removal joins is
     broken too. The cut comes after that and only takes characters away at
@@ -142,7 +144,7 @@ def clean_report(report: str) -> str:
             break
         report = cleaned
     else:
-        report = report.replace("<", "&lt;").replace("[", "&#91;")
+        report = report.replace("&", "&amp;").replace("<", "&lt;").replace("[", "&#91;")
     cleaned = _break_mentions(report)
     if len(cleaned) > REPORT_LIMIT:
         cleaned = cleaned[: REPORT_LIMIT - len(CUT_NOTE)] + CUT_NOTE

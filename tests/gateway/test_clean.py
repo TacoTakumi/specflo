@@ -368,6 +368,7 @@ def test_report_cleaning_a_cleaned_report_changes_nothing():
         "<[img src=https://evil.example/p.png](javascript:y)>\n",
         "[[a](javascript:x)](javascript:y) and <!-- c --> &#64;bob @\u200bal",
         "Ping &#6<!-- x -->4;octocat now.",
+        "&#6" + "[" * clean._PASSES + "](javascript:y)" * clean._PASSES + "4;octocat",
         "- a\n\n  ```\n  x\n<div>\nx&nbsp@octocat\n</div>\n  ```\n",
         "<script\n```\n<img src=https://evil.example/a>\n```\n",
     ):
@@ -392,3 +393,21 @@ def test_report_at_reference_a_removal_joins_is_broken():
         assert not _LIVE_MENTION.search(text), report
         assert not clean._AT_REFERENCE.search(text), report
         assert "@\u200boctocat" in text, report
+
+
+def test_report_at_reference_joined_by_the_last_pass_is_not_decodable():
+    # A split reference that the last pass joins is seen by no further
+    # pass; the escape after it covers the "&" too, so the renderer shows
+    # the reference as written. One level shallower the last pass decodes
+    # it, one level deeper the escape runs before it joins.
+    for ref in ("&#64;", "&#x40;", "&commat;"):
+        head, tail = ref[:-2], ref[-2:]
+        for depth in (clean._PASSES - 1, clean._PASSES, clean._PASSES + 1):
+            split = head + "[" * depth + "](javascript:y)" * depth + tail
+            for report in (
+                f"Ping {split}octocat now.",
+                f"- a\n\n  ```\n  x\n{split}octocat\n  ```\n",
+            ):
+                text = clean.clean_report(report)
+                assert not _LIVE_MENTION.search(text), (ref, depth, report)
+                assert not clean._AT_REFERENCE.search(text), (ref, depth, report)
