@@ -70,6 +70,10 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/specflo"]
 
+# The website and its deploy workflow are not package source.
+[tool.hatch.build.targets.sdist]
+exclude = ["site", ".github"]
+
 # Ship the repo-root skills/ as agentsquire Root B package data. One line copies
 # the whole tree into the wheel at specflo/_repo_skills/<name>/ (NOT
 # specflo/skills, which would duplicate Root A and raise DuplicateSkillError).

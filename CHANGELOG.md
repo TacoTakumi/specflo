@@ -59,6 +59,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   commented `EnvironmentFile` line, with an example, for a definition's
   credentials such as `TAVILY_API_KEY`.
 
+## [0.18.1]
+
+### Changed
+- The source distribution no longer includes the website (`site/`) or the
+  GitHub workflows (`.github/`).
+
 ## [0.18.0]
 
 ### Added
