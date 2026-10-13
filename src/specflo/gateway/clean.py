@@ -85,8 +85,12 @@ _REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]*)>?.*(?:\n|\Z)", re.
 # hard line breaks (a backslash, or two or more spaces, then the line end,
 # then what a continuation line may start with: spaces, tabs and blockquote
 # markers), since that stripper drops a hard break and joins the two lines,
-# while a soft line break stays a newline there.
-_HARD_BREAKS = r"(?:(?:\\|[ \t]{2,})\n[ \t>]*)*"
+# while a soft line break stays a newline there. The quantifiers are
+# possessive, so that the spaces that end one line and the spaces that start
+# the next are never split another way on a failed match (that backtracking
+# grows exponentially with the lines); nothing is lost, since a continuation
+# line of whitespace only is blank and ends the paragraph.
+_HARD_BREAKS = r"(?:(?:\\|[ \t]{2,}+)\n[ \t>]*+)*+"
 _MENTION = re.compile(r"@(?=" + _HARD_BREAKS + r"[A-Za-z0-9&])")
 
 

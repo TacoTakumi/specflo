@@ -16,6 +16,7 @@ issue as plain values.
 from __future__ import annotations
 
 import re
+import time
 
 from specflo.gateway import clean
 
@@ -259,7 +260,7 @@ def test_report_mention_already_broken_is_broken_once():
 # across hard line breaks, which Gitea's markdown stripper drops. What
 # comes before the @ does not matter: a forge's autolinker can end an
 # email or a URL right before it.
-_LIVE_MENTION = re.compile(r"@(?:(?:\\|[ \t]{2,})\n[ \t>]*)*[A-Za-z0-9&]")
+_LIVE_MENTION = re.compile(r"@(?:(?:\\|[ \t]{2,}+)\n[ \t>]*+)*+[A-Za-z0-9&]")
 
 
 def test_report_reference_for_the_first_letter_of_a_name_is_broken():
@@ -460,3 +461,14 @@ def test_report_at_before_a_hard_line_break_is_broken():
     # A soft break, and a break at the end of a paragraph, are no join.
     for report in ("Hi @\noctocat now.", "Hi @\\\n\noctocat now."):
         assert clean.clean_report(report) == report, report
+
+
+def test_report_cleaning_a_run_of_blank_lines_after_an_at_is_quick():
+    # The hard-break lookahead may not backtrack between the spaces that
+    # end one line and the spaces that start the next: the cleaning runs
+    # on the daemon's event loop, and a short report must not stall it.
+    report = "Report: @" + "    \n" * 18 + "! end"
+    start = time.perf_counter()
+    text = clean.clean_report(report)
+    assert time.perf_counter() - start < 2.0
+    assert text == report
