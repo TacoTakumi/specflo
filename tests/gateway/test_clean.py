@@ -137,18 +137,21 @@ def test_report_reference_links_and_autolinks():
     assert "![" not in text
 
 
-def test_report_leaves_fenced_code_alone():
+def test_report_fenced_code_is_cleaned_like_prose():
+    # A renderer may not see the fence as code (a list item closes it, a
+    # stray tag start before it opens HTML), so code is cleaned like the
+    # rest: tags, images and non-http links in it go too.
     code = '```html\n<div class="x">List<String> [a](b)</div>\n```\n'
     text = clean.clean_report("Before\n" + code + "After <b>bold</b>\n")
-    assert code in text
+    assert "```html\nList a\n```\n" in text
     assert "<b>" not in text
 
 
 def test_report_stray_html_start_is_escaped():
     text = clean.clean_report("<script\n```\n<img src=https://evil.example/a>\n```\n")
-    assert not re.search(r"<script", text)
-    # The fence is code once the stray tag start can no longer open HTML.
     assert "&lt;script" in text
+    assert "<script" not in text
+    assert "evil.example" not in text
 
 
 def test_report_mention_right_after_a_link_is_broken():
@@ -300,3 +303,72 @@ def test_report_cut_inside_a_link_leaves_no_live_mention():
         assert len(text) <= clean.REPORT_LIMIT, offset
         assert text.endswith(clean.CUT_NOTE), offset
         assert not _LIVE_MENTION.search(text), offset
+
+
+# Raw HTML in a cleaned report: a "<" that can start a tag, an end tag, a
+# comment, a declaration or a processing instruction.
+_RAW_HTML_START = re.compile(r"<[A-Za-z/!?]")
+
+
+def test_report_html_block_in_a_fence_a_list_item_closes_is_removed():
+    # The renderer closes the fence with the list item, so the div is an
+    # HTML block whose text the browser decodes: a character reference
+    # without a semicolon becomes a space or an @ there, and notifies.
+    for name in ("x&nbsp@octocat", "&#64octocat"):
+        report = f"- a\n\n  ```\n  x\n<div>\n{name}\n</div>\n  ```\n"
+        text = clean.clean_report(report)
+        assert not _RAW_HTML_START.search(text), name
+        # As plain text, the renderer shows the reference as written.
+        assert name in text, name
+
+
+def test_report_image_in_a_code_fence_is_removed():
+    # Whether the fence renders as code is not sure, so an image in it goes.
+    for report in (
+        "```\n<img src=https://evil.example/a>\n```\n",
+        "```\n![x](https://evil.example/b)\n```\n",
+        "- a\n\n  ```\n  x\n<img src=https://evil.example/c>\n  ```\n",
+    ):
+        text = clean.clean_report(report)
+        assert "evil.example" not in text, report
+        assert "![" not in text, report
+
+
+def test_report_link_text_cannot_form_a_tag():
+    # A link that goes is reduced to its text, and what that text joins is
+    # cleaned again: an img tag, or a div at the start of a line, which
+    # opens an HTML block with no closing bracket at all.
+    text = clean.clean_report("<[img src=https://evil.example/p.png](javascript:y)>\n")
+    assert "evil.example" not in text
+    assert not _RAW_HTML_START.search(text)
+    text = clean.clean_report("<[div](javascript:x)\nx&nbsp@octocat\n")
+    assert text == "&lt;div\nx&nbsp@octocat\n"
+
+
+def test_report_link_nested_in_a_link_is_reduced_to_its_text():
+    # The inner link goes first and leaves the outer one, which goes next;
+    # a definition formed the same way goes too.
+    assert clean.clean_report("[[a](javascript:x)](javascript:y)") == "a"
+    assert clean.clean_report("[[x](javascript:a)]: javascript:b\n") == ""
+
+
+def test_report_too_deep_a_nesting_is_escaped():
+    # Past the pass bound the report is escaped instead: no "<" and no "["
+    # remain, so nothing in it is a tag, an image or a link.
+    depth = clean._PASSES + 4
+    text = clean.clean_report("a < b " + "[" * depth + "a" + "](javascript:x)" * depth)
+    assert "<" not in text
+    assert "[" not in text
+    assert "a &lt; b &#91;" in text
+
+
+def test_report_cleaning_a_cleaned_report_changes_nothing():
+    for report in (
+        _report(),
+        "<[img src=https://evil.example/p.png](javascript:y)>\n",
+        "[[a](javascript:x)](javascript:y) and <!-- c --> &#64;bob @\u200bal",
+        "- a\n\n  ```\n  x\n<div>\nx&nbsp@octocat\n</div>\n  ```\n",
+        "<script\n```\n<img src=https://evil.example/a>\n```\n",
+    ):
+        once = clean.clean_report(report)
+        assert clean.clean_report(once) == once, report

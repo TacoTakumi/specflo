@@ -12,10 +12,12 @@ no image or raw HTML may render (an image URL can carry data out to whoever
 serves it), only http and https links stay, and the whole fits in one
 comment. Every @ before a name is broken wherever it is, in code, URLs and
 link destinations too, since what looks like code or a link may not render
-as one; a link whose URL holds an @ gets the zero-width space as well.
-Fenced code blocks are otherwise left as they are; everything outside them
-is cleaned, and where the cleaning is not sure what a renderer would make of
-something it escapes it.
+as one; a link whose URL holds an @ gets the zero-width space as well. For
+the same reason fenced code is cleaned like the rest: a fence in a list item
+ends with the item, so its lines may render as prose, and raw HTML there
+lets the browser decode what the cleaning did not see. The cost is that
+tags, images and non-http links in a report's code blocks go too. Where the
+cleaning is not sure what a renderer would make of something it escapes it.
 
 Everything here is a pure function of strings: it reads no configuration and
 talks to no forge.
@@ -33,6 +35,12 @@ REPORT_LIMIT = 60000
 #: What a report that was too long ends with.
 CUT_NOTE = f"\n\n_The report was cut at {REPORT_LIMIT} characters._"
 
+#: The most passes of the markup cleaning that may change a report. A pass
+#: is needed again only when what a removal joined is markup (a link reduced
+#: to its text can form a tag), which a real report does once if at all;
+#: a report still changing after this many is escaped instead.
+_PASSES = 8
+
 # Zero-width characters (U+200B to U+200D, U+2060, U+FEFF) and bidi controls
 # (U+202A to U+202E, U+2066 to U+2069).
 _HIDDEN = re.compile("[\u200b-\u200d\u2060\ufeff\u202a-\u202e\u2066-\u2069]")
@@ -46,17 +54,6 @@ _AT_REFERENCE = re.compile(r"&#0*64;|&#[xX]0*40;|&commat;")
 # An HTML comment, or one that is never closed: that hides the rest of the
 # text from the reader, so it goes too.
 _HTML_COMMENT = re.compile(r"<!--.*?(?:-->|\Z)", re.DOTALL)
-
-# A fenced code block, opening and closing fence of the same character, the
-# closing one at least as long. A backtick fence's info string holds no
-# backtick. A fence that is never closed is not matched, so what follows it
-# is cleaned like any other text.
-_FENCE = re.compile(
-    r"^ {0,3}(?P<f>`{3,}(?=[^`\n]*$)|~{3,})[^\n]*\n"
-    r".*?"
-    r"^ {0,3}(?P=f)[`~]*[ \t]*(?:\n|\Z)",
-    re.DOTALL | re.MULTILINE,
-)
 
 _AUTOLINK = re.compile(r"<([A-Za-z][A-Za-z0-9+.-]*:[^<>\s]*)>")
 _TAG = re.compile(r"<[A-Za-z/!?][^<>]*>")
@@ -123,28 +120,42 @@ def clean_report(report: str) -> str:
     it does. The references to an @ are then made plain @s, so that they
     are broken with the rest.
 
-    The mentions are broken last, in code too: a fence in a list item ends
-    with the item, so what the pattern takes for code may render as prose.
-    The cut comes after that and only takes characters away, so it cannot
-    make a mention: at worst it leaves an @ before the cut note's newline.
+    The markup is then cleaned, code fences included: a fence in a list item
+    ends with the item, and a stray tag start before a fence opens HTML, so
+    what looks like code may render as prose, and the report must be safe
+    in both readings. The pass runs again while it changes the text, since
+    what a removal joins may be markup again (a link reduced to its text
+    can form a tag), at most ``_PASSES`` times; a report still changing
+    then has every "<" and "[" made a character reference instead, which
+    no renderer reads as a tag, an image or a link (a backslash escape
+    could, after a backslash the report already holds).
+
+    The mentions are broken last, so that a mention a removal joins is
+    broken too. The cut comes after that and only takes characters away at
+    the end, so it cannot make a mention: at worst it leaves an @ before
+    the cut note's newline.
     """
     report = _HIDDEN.sub("", report).replace("\r\n", "\n").replace("\r", "\n")
     report = _AT_REFERENCE.sub("@", report)
-    pieces = []
-    at = 0
-    for fence in _FENCE.finditer(report):
-        pieces.append(_clean_prose(report[at:fence.start()]))
-        pieces.append(fence.group())
-        at = fence.end()
-    pieces.append(_clean_prose(report[at:]))
-    cleaned = _break_mentions("".join(pieces))
+    for _ in range(_PASSES):
+        cleaned = _clean_markup(report)
+        if cleaned == report:
+            break
+        report = cleaned
+    else:
+        report = report.replace("<", "&lt;").replace("[", "&#91;")
+    cleaned = _break_mentions(report)
     if len(cleaned) > REPORT_LIMIT:
         cleaned = cleaned[: REPORT_LIMIT - len(CUT_NOTE)] + CUT_NOTE
     return cleaned
 
 
-def _clean_prose(text: str) -> str:
-    """Text outside code fences without images, HTML or non-http links."""
+def _clean_markup(text: str) -> str:
+    """One pass of *text* without images, HTML or non-http links.
+
+    What a removal joins is not looked at again here; the caller runs the
+    pass until it changes nothing.
+    """
     text = _HTML_COMMENT.sub("", text)
     text = _AUTOLINK.sub(lambda m: m.group(1) if _is_http(m.group(1)) else "", text)
     text = _TAG.sub("", text)
