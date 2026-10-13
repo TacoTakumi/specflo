@@ -10,10 +10,12 @@ The report the agent writes is posted as the bot, and the agent has read that
 untrusted text, so the report is cleaned too. No @mention may notify anyone,
 no image or raw HTML may render (an image URL can carry data out to whoever
 serves it), only http and https links stay, and the whole fits in one
-comment. Every @ before a name is broken wherever it is, in code, URLs and
-link destinations too, since what looks like code or a link may not render
-as one; a link whose URL holds an @ gets the zero-width space as well. For
-the same reason fenced code is cleaned like the rest: a fence in a list item
+comment. Every @ before a name is broken wherever it is, in code, URLs,
+link destinations and emails too: what looks like code or a link may not
+render as one, and a forge's autolinker can end an email or a URL right
+before an @ and read what follows afresh. So a link whose URL holds an @
+gets the zero-width space as well, and so does every email. For the same
+reason fenced code is cleaned like the rest: a fence in a list item
 ends with the item, so its lines may render as prose, and raw HTML there
 lets the browser decode what the cleaning did not see. The cost is that
 tags, images and non-http links in a report's code blocks go too. Where the
@@ -74,11 +76,13 @@ _LINK = re.compile(
 )
 _REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]*)>?.*(?:\n|\Z)", re.MULTILINE)
 
-# A mention is an @ not after an ASCII letter or digit, then a name. An @
-# after an underscore counts too, since the underscore may be emphasis that
-# leaves the @ at the start of the rendered text. So does an @ before an &,
-# since the renderer may decode a character reference there to a letter.
-_MENTION = re.compile(r"(?<![A-Za-z0-9])@(?=[A-Za-z0-9&])")
+# A mention is an @ before a name: a letter, a digit, or an & that may be a
+# character reference the renderer decodes to a letter. Nothing before the
+# @ exempts it: a forge's autolinker can end an email or a URL right before
+# it (a@b.cd@octocat, www.example.com@octocat), and the text after an
+# autolink is a new line to Gitea's mention finder. The cost is a zero-width
+# space in every email of a report.
+_MENTION = re.compile(r"@(?=[A-Za-z0-9&])")
 
 
 def strip_hidden(text: str) -> str:

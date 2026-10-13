@@ -290,7 +290,7 @@ The bot tells the issue how the run goes in one comment, edited at each step:
 - once a member is leased: `Research started at <YYYY-MM-DD HH:MM> UTC.`
 - at the end: the cleaned report, or a short note that names the kind of ending and the time: research failed, did not finish in time, or no research agent became free. Each note ends `The cause is in the gateway's log. Label the issue again to retry.` None of the agent's output and no fault text is in it; why the run failed goes to the daemon's log.
 
-The report is cleaned before it is posted, since the agent read untrusted text: no @mention notifies anyone, no image or raw HTML renders (an image URL can carry data out to whoever serves it), only http and https links stay, and a report longer than 60000 characters is cut with a note. Fenced code blocks are cleaned like the rest, since a renderer may not see them as code: a tag, an image or a non-http link in one goes too.
+The report is cleaned before it is posted, since the agent read untrusted text: no @mention notifies anyone (every @ before a name gets a zero-width space, in an email address too), no image or raw HTML renders (an image URL can carry data out to whoever serves it), only http and https links stay, and a report longer than 60000 characters is cut with a note. Fenced code blocks are cleaned like the rest, since a renderer may not see them as code: a tag, an image or a non-http link in one goes too.
 
 To run an issue again, the operator takes the label off and puts it on again. A later run edits the same comment; when that comment was deleted, the bot posts a new one and keeps its id. A forge call for the comment that fails is logged and the run goes on.
 

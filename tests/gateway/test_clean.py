@@ -91,10 +91,11 @@ def _report() -> str:
 
 def test_report_mentions_notify_no_one():
     text = clean.clean_report(_report())
-    assert not re.search(r"(?<![A-Za-z0-9_])@[A-Za-z0-9]", text)
-    # The name is still there for the reader; an email is not a mention.
+    assert not re.search(r"@[A-Za-z0-9]", text)
+    # The name is still there for the reader, and so is the email, broken
+    # like a mention: an autolinker may end right before an @.
     assert "alice" in text
-    assert "bob@example.com" in text
+    assert "bob@\u200bexample.com" in text
 
 
 def test_report_has_no_image_and_no_html():
@@ -174,9 +175,12 @@ def test_report_mention_after_an_underscore_is_broken():
         assert "@\u200balice" in text, report
 
 
-def test_report_at_inside_a_word_is_left_alone():
-    report = "Mail a@b.c or a_b@c.d now."
-    assert clean.clean_report(report) == report
+def test_report_at_in_an_email_is_broken():
+    # A forge's autolinker can end an email right before a second @, and
+    # the text after an autolink starts afresh, so nothing before an @
+    # exempts it; the cost is the zero-width space in every email.
+    text = clean.clean_report("Mail a@b.c or a_b@c.d now.")
+    assert text == "Mail a@\u200bb.c or a_b@\u200bc.d now."
 
 
 def test_report_at_after_an_underscore_in_a_url_is_broken():
@@ -250,10 +254,11 @@ def test_report_mention_already_broken_is_broken_once():
     assert text == "Hi @\u200boctocat and @\u200bbob."
 
 
-# A live mention in a cleaned report: an @ not after an ASCII letter or
-# digit, before a name or before a character reference that may render as
-# the name's first letter.
-_LIVE_MENTION = re.compile(r"(?<![A-Za-z0-9])@[A-Za-z0-9&]")
+# A live mention in a cleaned report: an @ before a name or before a
+# character reference that may render as the name's first letter. What
+# comes before the @ does not matter: a forge's autolinker can end an
+# email or a URL right before it.
+_LIVE_MENTION = re.compile(r"@[A-Za-z0-9&]")
 
 
 def test_report_reference_for_the_first_letter_of_a_name_is_broken():
@@ -318,8 +323,9 @@ def test_report_html_block_in_a_fence_a_list_item_closes_is_removed():
         report = f"- a\n\n  ```\n  x\n<div>\n{name}\n</div>\n  ```\n"
         text = clean.clean_report(report)
         assert not _RAW_HTML_START.search(text), name
+        assert not _LIVE_MENTION.search(text), name
         # As plain text, the renderer shows the reference as written.
-        assert name in text, name
+        assert name.replace("@", "@\u200b") in text, name
 
 
 def test_report_image_in_a_code_fence_is_removed():
@@ -342,7 +348,7 @@ def test_report_link_text_cannot_form_a_tag():
     assert "evil.example" not in text
     assert not _RAW_HTML_START.search(text)
     text = clean.clean_report("<[div](javascript:x)\nx&nbsp@octocat\n")
-    assert text == "&lt;div\nx&nbsp@octocat\n"
+    assert text == "&lt;div\nx&nbsp@\u200boctocat\n"
 
 
 def test_report_link_nested_in_a_link_is_reduced_to_its_text():
@@ -411,3 +417,20 @@ def test_report_at_reference_joined_by_the_last_pass_is_not_decodable():
                 text = clean.clean_report(report)
                 assert not _LIVE_MENTION.search(text), (ref, depth, report)
                 assert not clean._AT_REFERENCE.search(text), (ref, depth, report)
+
+
+def test_report_at_after_an_email_or_a_www_url_is_broken():
+    # Gitea's autolinker ends an email at a second @ and a www URL at its
+    # host, and the text after an autolink starts a new line for its
+    # mention finder, so an @ after a letter notifies there.
+    for report in (
+        "Contact a@b.cd@octocat now.",
+        "bob@example.com@octocat",
+        "bob@example.com@octocat.",
+        "bob@example.com@org/team",
+        "- a\n\n  ```\n  x\nbob@example.com@octocat\n  ```\n",
+        "See www.example.com@octocat now.",
+    ):
+        text = clean.clean_report(report)
+        assert not _LIVE_MENTION.search(text), report
+        assert "@\u200boctocat" in text or "@\u200borg/team" in text, report
