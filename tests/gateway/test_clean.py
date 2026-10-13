@@ -255,10 +255,11 @@ def test_report_mention_already_broken_is_broken_once():
 
 
 # A live mention in a cleaned report: an @ before a name or before a
-# character reference that may render as the name's first letter. What
+# character reference that may render as the name's first letter, also
+# across hard line breaks, which Gitea's markdown stripper drops. What
 # comes before the @ does not matter: a forge's autolinker can end an
 # email or a URL right before it.
-_LIVE_MENTION = re.compile(r"@[A-Za-z0-9&]")
+_LIVE_MENTION = re.compile(r"@(?:(?:\\|[ \t]{2,})\n[ \t>]*)*[A-Za-z0-9&]")
 
 
 def test_report_reference_for_the_first_letter_of_a_name_is_broken():
@@ -434,3 +435,28 @@ def test_report_at_after_an_email_or_a_www_url_is_broken():
         text = clean.clean_report(report)
         assert not _LIVE_MENTION.search(text), report
         assert "@\u200boctocat" in text or "@\u200borg/team" in text, report
+
+
+def test_report_at_before_a_hard_line_break_is_broken():
+    # Gitea's markdown stripper, which its mention finder reads, drops a
+    # hard line break and joins the text on both sides, so the name on the
+    # next line follows the @ there; a soft break stays a newline.
+    for report in (
+        "Hi @\\\noctocat now.",
+        "Hi @  \noctocat now.",
+        "@\\\noctocat",
+        "Hi @\\\noctocat.",
+        "Hi @\\\norg/team now.",
+        "(@\\\noctocat)",
+        "- a @\\\n  octocat",
+        "> @\\\n> octocat",
+        "Hi @\\\n\\\noctocat now.",
+        "Hi @\\\r\noctocat now.",
+        "- a\n\n  ```\n  x\n@\\\noctocat\n  ```\n",
+    ):
+        text = clean.clean_report(report)
+        assert not _LIVE_MENTION.search(text), report
+        assert "@\u200b" in text, report
+    # A soft break, and a break at the end of a paragraph, are no join.
+    for report in ("Hi @\noctocat now.", "Hi @\\\n\noctocat now."):
+        assert clean.clean_report(report) == report, report

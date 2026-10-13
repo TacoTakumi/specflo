@@ -81,8 +81,13 @@ _REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]*)>?.*(?:\n|\Z)", re.
 # @ exempts it: a forge's autolinker can end an email or a URL right before
 # it (a@b.cd@octocat, www.example.com@octocat), and the text after an
 # autolink is a new line to Gitea's mention finder. The cost is a zero-width
-# space in every email of a report.
-_MENTION = re.compile(r"@(?=[A-Za-z0-9&])")
+# space in every email of a report. The name may also follow the @ across
+# hard line breaks (a backslash, or two or more spaces, then the line end,
+# then what a continuation line may start with: spaces, tabs and blockquote
+# markers), since that stripper drops a hard break and joins the two lines,
+# while a soft line break stays a newline there.
+_HARD_BREAKS = r"(?:(?:\\|[ \t]{2,})\n[ \t>]*)*"
+_MENTION = re.compile(r"@(?=" + _HARD_BREAKS + r"[A-Za-z0-9&])")
 
 
 def strip_hidden(text: str) -> str:
