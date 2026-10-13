@@ -159,7 +159,6 @@ def test_report_mention_right_after_a_link_is_broken():
     # The link ends at its closing parenthesis, so what follows is prose.
     assert "[docs](https://example.com/)@\u200balice" in text
     assert "[more](https://docs.example.com/a_(b))@\u200bbob" in text
-    # A plain URL is not a link destination, so its @ is broken too.
     assert "https://x.example/@\u200bwriter" in text
 
 
@@ -210,14 +209,16 @@ def test_report_mention_in_code_is_broken():
         assert "@\u200boctocat" in text, report
 
 
-def test_report_at_in_a_link_destination_is_left_whole():
-    report = "Read [post](https://medium.com/@writer/post) now."
-    assert clean.clean_report(report) == report
+def test_report_at_in_a_link_destination_is_broken():
+    # Whether the renderer sees a link is not sure, so the @ in its
+    # destination is broken too, at the cost of a zero-width space in the URL.
+    text = clean.clean_report("Read [post](https://medium.com/@writer/post) now.")
+    assert text == "Read [post](https://medium.com/@\u200bwriter/post) now."
 
 
-def test_report_link_title_and_text_are_not_destinations():
+def test_report_link_text_title_and_destination_are_broken():
     text = clean.clean_report('[@alice](https://x.example/@writer "by @bob")')
-    assert text == '[@\u200balice](https://x.example/@writer "by @\u200bbob")'
+    assert text == '[@\u200balice](https://x.example/@\u200bwriter "by @\u200bbob")'
 
 
 def test_report_link_the_renderer_may_not_see_is_broken():
@@ -234,9 +235,6 @@ def test_report_link_the_renderer_may_not_see_is_broken():
 
 
 def test_report_reference_definitions_and_autolinks_are_broken():
-    # A definition line cannot interrupt a paragraph, which the cleaning does
-    # not check, and an autolink is left as a plain URL, so neither is sure
-    # to render as a link and the @ in both is broken.
     text = clean.clean_report(
         "[a][1] and <https://x.example/@bob>.\n\n[1]: https://x.example/@alice\n"
     )
@@ -247,3 +245,58 @@ def test_report_reference_definitions_and_autolinks_are_broken():
 def test_report_mention_already_broken_is_broken_once():
     text = clean.clean_report("Hi @\u200boctocat and &#64;\u200bbob.")
     assert text == "Hi @\u200boctocat and @\u200bbob."
+
+
+# A live mention in a cleaned report: an @ not after an ASCII letter or
+# digit, before a name or before a character reference that may render as
+# the name's first letter.
+_LIVE_MENTION = re.compile(r"(?<![A-Za-z0-9])@[A-Za-z0-9&]")
+
+
+def test_report_reference_for_the_first_letter_of_a_name_is_broken():
+    # The renderer decodes the reference after the @ to a letter, so the @
+    # starts a name and notifies.
+    for report in (
+        "Ping @&#111;ctocat now.",
+        "Ping @&#x6f;ctocat now.",
+        "Ping &#64;&#111;ctocat now.",
+        "- a\n\n  ```\n  x\n@&#111;ctocat\n  ```\n",
+    ):
+        text = clean.clean_report(report)
+        assert not _LIVE_MENTION.search(text), report
+        assert "@\u200b&#111;ctocat" in text or "@\u200b&#x6f;ctocat" in text, report
+
+
+def test_report_lone_carriage_return_in_a_link_is_broken():
+    # The renderer ends a line at a lone carriage return, so two of them end
+    # the paragraph and leave the URL as plain text.
+    for report in (
+        "[a\r\rb](https://@octocat)",
+        '[a](https://x.example/@octocat "t\r\rt")',
+        "[a\r\n\r\nb](https://@octocat)",
+    ):
+        text = clean.clean_report(report)
+        assert "\r" not in text, repr(report)
+        assert not _LIVE_MENTION.search(text), repr(report)
+
+
+def test_report_reference_link_that_takes_the_brackets_first_is_broken():
+    # [foo][bar] is a reference link, so the parentheses after it are plain
+    # text and the URL in them is not a link destination.
+    text = clean.clean_report("[foo][bar](https://@octocat)\n\n[bar]: https://e.com\n")
+    assert not _LIVE_MENTION.search(text)
+    assert "https://@\u200boctocat" in text
+
+
+def test_report_cut_inside_a_link_leaves_no_live_mention():
+    # Cut inside its destination, a link is no longer one and its URL is
+    # plain text, wherever the cut falls around the @.
+    link = "[post](https://medium.com/@writer/post)"
+    keep = clean.REPORT_LIMIT - len(clean.CUT_NOTE)
+    at = link.index("@")
+    for offset in range(at - 1, at + 5):
+        report = "x" * (keep - offset) + link + " more" * 100
+        text = clean.clean_report(report)
+        assert len(text) <= clean.REPORT_LIMIT, offset
+        assert text.endswith(clean.CUT_NOTE), offset
+        assert not _LIVE_MENTION.search(text), offset

@@ -10,9 +10,9 @@ The report the agent writes is posted as the bot, and the agent has read that
 untrusted text, so the report is cleaned too. No @mention may notify anyone,
 no image or raw HTML may render (an image URL can carry data out to whoever
 serves it), only http and https links stay, and the whole fits in one
-comment. Every @ before a name is broken wherever it is, in code and plain
-URLs too, since what looks like code or a link may not render as one; only
-an @ in a link's destination is left whole, so the link keeps working.
+comment. Every @ before a name is broken wherever it is, in code, URLs and
+link destinations too, since what looks like code or a link may not render
+as one; a link whose URL holds an @ gets the zero-width space as well.
 Fenced code blocks are otherwise left as they are; everything outside them
 is cleaned, and where the cleaning is not sure what a renderer would make of
 something it escapes it.
@@ -78,19 +78,9 @@ _REFERENCE = re.compile(r"^ {0,3}\[[^\]]+\]:[ \t]*<?([^\s>]*)>?.*(?:\n|\Z)", re.
 
 # A mention is an @ not after an ASCII letter or digit, then a name. An @
 # after an underscore counts too, since the underscore may be emphasis that
-# leaves the @ at the start of the rendered text.
-_MENTION = re.compile(r"(?<![A-Za-z0-9])@(?=[A-Za-z0-9])")
-
-# An inline link a renderer is sure to see as one, for the destination whose
-# @ is left whole. It is narrower than _LINK: not after a backslash, all on
-# one line, its text not a footnote's, and with no backtick, pipe, backslash
-# or angle bracket that a code span, a table cell, an escape or HTML could
-# use to take it apart and leave the URL as plain text.
-_SURE_LINK = re.compile(
-    r"(?<!\\)\[(?!\^)[^\[\]\n`|\\<>]*\]\([ \t]*"
-    r"(?:<(?P<angled>[^<>\n`|\\]*)>|(?P<bare>(?:[^\s()`|\\<>]|\([^\s()`|\\<>]*\))+))"
-    r"(?:[ \t]+(?:\"[^\"\n`|\\]*\"|'[^'\n`|\\]*'|\([^()\n`|\\]*\)))?[ \t]*\)"
-)
+# leaves the @ at the start of the rendered text. So does an @ before an &,
+# since the renderer may decode a character reference there to a letter.
+_MENTION = re.compile(r"(?<![A-Za-z0-9])@(?=[A-Za-z0-9&])")
 
 
 def strip_hidden(text: str) -> str:
@@ -128,27 +118,33 @@ def clean_report(report: str) -> str:
 
     The hidden characters go first, a zero-width space after an @ among
     them, so that a mention already broken ends with one such space, not
-    two. The references to an @ are then made plain @s, so that they are
-    broken with the rest.
+    two. Every carriage return then becomes a newline, since the renderer
+    ends a line at a lone one too, so that the patterns here see the lines
+    it does. The references to an @ are then made plain @s, so that they
+    are broken with the rest.
+
+    The mentions are broken last, in code too: a fence in a list item ends
+    with the item, so what the pattern takes for code may render as prose.
+    The cut comes after that and only takes characters away, so it cannot
+    make a mention: at worst it leaves an @ before the cut note's newline.
     """
-    report = _AT_REFERENCE.sub("@", _HIDDEN.sub("", report))
+    report = _HIDDEN.sub("", report).replace("\r\n", "\n").replace("\r", "\n")
+    report = _AT_REFERENCE.sub("@", report)
     pieces = []
     at = 0
     for fence in _FENCE.finditer(report):
         pieces.append(_clean_prose(report[at:fence.start()]))
-        # A fence in a list item ends with the item, so what the pattern
-        # takes for code may render as prose.
-        pieces.append(_break_mentions(fence.group()))
+        pieces.append(fence.group())
         at = fence.end()
     pieces.append(_clean_prose(report[at:]))
-    cleaned = "".join(pieces)
+    cleaned = _break_mentions("".join(pieces))
     if len(cleaned) > REPORT_LIMIT:
         cleaned = cleaned[: REPORT_LIMIT - len(CUT_NOTE)] + CUT_NOTE
     return cleaned
 
 
 def _clean_prose(text: str) -> str:
-    """Text outside code fences without images, HTML, non-http links or live mentions."""
+    """Text outside code fences without images, HTML or non-http links."""
     text = _HTML_COMMENT.sub("", text)
     text = _AUTOLINK.sub(lambda m: m.group(1) if _is_http(m.group(1)) else "", text)
     text = _TAG.sub("", text)
@@ -157,18 +153,7 @@ def _clean_prose(text: str) -> str:
     # An image form the pattern above missed can no longer be one.
     text = text.replace("![", "!\\[")
     text = _LINK.sub(_keep_http_link, text)
-    text = _REFERENCE.sub(lambda m: m.group() if _is_http(m.group(1)) else "", text)
-    # A character put into a link's destination would break the link, and
-    # an @ there is not shown, so it notifies no one.
-    pieces = []
-    at = 0
-    for link in _SURE_LINK.finditer(text):
-        start, end = link.span("angled" if link.group("angled") is not None else "bare")
-        pieces.append(_break_mentions(text[at:start]))
-        pieces.append(text[start:end])
-        at = end
-    pieces.append(_break_mentions(text[at:]))
-    return "".join(pieces)
+    return _REFERENCE.sub(lambda m: m.group() if _is_http(m.group(1)) else "", text)
 
 
 def _break_mentions(text: str) -> str:
