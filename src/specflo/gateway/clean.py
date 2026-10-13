@@ -36,9 +36,10 @@ REPORT_LIMIT = 60000
 CUT_NOTE = f"\n\n_The report was cut at {REPORT_LIMIT} characters._"
 
 #: The most passes of the markup cleaning that may change a report. A pass
-#: is needed again only when what a removal joined is markup (a link reduced
-#: to its text can form a tag), which a real report does once if at all;
-#: a report still changing after this many is escaped instead.
+#: is needed again only when what a removal joined is markup or a character
+#: reference (a link reduced to its text can form a tag), which a real
+#: report does once if at all; a report still changing after this many is
+#: escaped instead.
 _PASSES = 8
 
 # Zero-width characters (U+200B to U+200D, U+2060, U+FEFF) and bidi controls
@@ -117,8 +118,7 @@ def clean_report(report: str) -> str:
     them, so that a mention already broken ends with one such space, not
     two. Every carriage return then becomes a newline, since the renderer
     ends a line at a lone one too, so that the patterns here see the lines
-    it does. The references to an @ are then made plain @s, so that they
-    are broken with the rest.
+    it does.
 
     The markup is then cleaned, code fences included: a fence in a list item
     ends with the item, and a stray tag start before a fence opens HTML, so
@@ -136,7 +136,6 @@ def clean_report(report: str) -> str:
     the cut note's newline.
     """
     report = _HIDDEN.sub("", report).replace("\r\n", "\n").replace("\r", "\n")
-    report = _AT_REFERENCE.sub("@", report)
     for _ in range(_PASSES):
         cleaned = _clean_markup(report)
         if cleaned == report:
@@ -153,9 +152,12 @@ def clean_report(report: str) -> str:
 def _clean_markup(text: str) -> str:
     """One pass of *text* without images, HTML or non-http links.
 
-    What a removal joins is not looked at again here; the caller runs the
-    pass until it changes nothing.
+    The references to an @ are made plain @s first, so that one a removal
+    joins out of its pieces is decoded by the next pass and broken with the
+    rest. What a removal joins is not looked at again here; the caller runs
+    the pass until it changes nothing.
     """
+    text = _AT_REFERENCE.sub("@", text)
     text = _HTML_COMMENT.sub("", text)
     text = _AUTOLINK.sub(lambda m: m.group(1) if _is_http(m.group(1)) else "", text)
     text = _TAG.sub("", text)

@@ -367,8 +367,28 @@ def test_report_cleaning_a_cleaned_report_changes_nothing():
         _report(),
         "<[img src=https://evil.example/p.png](javascript:y)>\n",
         "[[a](javascript:x)](javascript:y) and <!-- c --> &#64;bob @\u200bal",
+        "Ping &#6<!-- x -->4;octocat now.",
         "- a\n\n  ```\n  x\n<div>\nx&nbsp@octocat\n</div>\n  ```\n",
         "<script\n```\n<img src=https://evil.example/a>\n```\n",
     ):
         once = clean.clean_report(report)
         assert clean.clean_report(once) == once, report
+
+
+def test_report_at_reference_a_removal_joins_is_broken():
+    # Each piece of markup here goes, and what its removal joins is a
+    # character reference for an @, which the renderer decodes and the
+    # mention filter then reads; the next cleaning pass sees it.
+    for report in (
+        "Ping &#6<!-- x -->4;octocat now.",
+        "&#x4<b>0;octocat",
+        "&#6<mailto:a@b.c>4;octocat",
+        "&comm![i](https://e.example/x)at;octocat",
+        "&#6[](javascript:y)4;octocat",
+        "&#[6](javascript:y)4;octocat",
+        "- a\n\n  ```\n  x\nPing &#6<!-- x -->4;octocat now.\n  ```\n",
+    ):
+        text = clean.clean_report(report)
+        assert not _LIVE_MENTION.search(text), report
+        assert not clean._AT_REFERENCE.search(text), report
+        assert "@\u200boctocat" in text, report
