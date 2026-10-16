@@ -296,8 +296,10 @@ def set_user(
 
     The description may run over several lines; it replaces the Usual user
     section's body. When there was a description before, a ``user`` log entry
-    keeps its words on one line, so nothing is lost. Refuses an empty text and
-    one holding a markdown heading line, which would start a new section.
+    keeps its words on one line, so nothing is lost. Refuses an empty text,
+    one holding a markdown heading line, which would start a new section, and
+    one holding a code fence line: the description is prose, and an unclosed
+    fence would hide every section after it from the fence-aware parser.
     """
     if text is None or not text.strip():
         raise SpecfloError("The usual user's description needs a non-empty text.")
@@ -307,6 +309,13 @@ def set_user(
             "The usual user's description cannot hold a line that starts with '#':"
             " it would start a new section of the document."
         )
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            raise SpecfloError(
+                "The usual user's description cannot hold a line that starts with"
+                f" '```' or '~~~' (line {number}: {line.strip()}): the description"
+                " is prose, and a code fence would hide the sections after it."
+            )
     text = "\n".join(lines)
     today = today or datetime.date.today().isoformat()
     with locked(lock_path_for(root, slug, LOCK_NAME)):

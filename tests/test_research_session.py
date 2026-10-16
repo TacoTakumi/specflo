@@ -7,6 +7,7 @@ checkout byte-identical, and the only writer of ``research.md`` is the CLI.
 """
 
 import datetime
+import json
 
 import pytest
 from typer.testing import CliRunner
@@ -143,6 +144,84 @@ def test_user_set_refuses_both_or_neither_option_and_an_unreadable_file(tmp_path
         shown = _refused(args)
         assert "Traceback" not in shown, args
         assert _tree(root) == before, args
+
+
+FENCED_USER = "Ana.\n```\nmore\n"
+
+
+def _works_like_a_fresh_project(missing=3):
+    """The commands an unclosed fence used to break still answer as on a new project.
+
+    A fence line left in the Usual user section made the fence-aware parser
+    swallow the Decisions and Log headers after it, so every reader failed and
+    `decision add` died with a traceback. ``missing`` is how many of the three
+    recorded items validate still asks for.
+    """
+    _ok(["research", "recap"])
+    info = json.loads(runner.invoke(app, ["validate", "research", "--json"]).output)
+    assert info["ready"] is False and len(info["issues"]) == missing
+    _ok([*DESTINATION_SET, "build", "--reason", "x"])
+    _ok(["decision", "add", "--text", "t", "--rationale", "r"])
+
+
+def test_user_set_from_a_file_refuses_a_line_that_opens_a_code_fence(tmp_path, monkeypatch):
+    root = _research_project(tmp_path, monkeypatch)
+    before = _tree(root)
+    description = tmp_path / "u.txt"
+    description.write_text(FENCED_USER)
+
+    shown = _refused([*USER_SET, "--file", str(description)])
+
+    assert "Traceback" not in shown
+    assert "```" in shown and "line 2" in shown and "prose" in shown
+    assert _tree(root) == before
+    _works_like_a_fresh_project()
+
+
+def test_user_set_from_text_refuses_a_line_that_opens_a_code_fence(tmp_path, monkeypatch):
+    root = _research_project(tmp_path, monkeypatch)
+    before = _tree(root)
+
+    shown = _refused([*USER_SET, "--text", FENCED_USER])
+
+    assert "Traceback" not in shown
+    assert "```" in shown and "line 2" in shown
+    assert _tree(root) == before
+    _works_like_a_fresh_project()
+
+
+def test_user_set_refuses_a_tilde_fence_line_too(tmp_path, monkeypatch):
+    root = _research_project(tmp_path, monkeypatch)
+    before = _tree(root)
+
+    shown = _refused([*USER_SET, "--text", "Ana.\n  ~~~python\nmore"])
+
+    assert "Traceback" not in shown
+    assert "~~~" in shown and "line 2" in shown
+    assert _tree(root) == before
+    _works_like_a_fresh_project()
+
+
+def test_user_set_refuses_a_balanced_fence_because_the_description_is_prose(tmp_path, monkeypatch):
+    root = _research_project(tmp_path, monkeypatch)
+    before = _tree(root)
+
+    shown = _refused([*USER_SET, "--text", "Ana.\n```\ncode\n```\nmore"])
+
+    assert "Traceback" not in shown
+    assert "prose" in shown and "line 2" in shown
+    assert _tree(root) == before
+    _works_like_a_fresh_project()
+
+
+def test_user_set_keeps_three_backticks_inside_a_line_since_no_fence_opens(tmp_path, monkeypatch):
+    root = _research_project(tmp_path, monkeypatch)
+    inline = "Ana.\nshe says ``` is code\nand ~~~ is not a fence here"
+
+    _ok([*USER_SET, "--text", inline])
+
+    assert _parsed(root).usual_user == inline
+    _works_like_a_fresh_project(missing=2)
 
 
 # --- destination set ----------------------------------------------------------
