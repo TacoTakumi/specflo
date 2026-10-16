@@ -55,6 +55,15 @@ DEFAULT_CONTEXT_THRESHOLD_PERCENT = 25
 # Review rounds one level may take before `review start` hands the choice to
 # the user: one more round, or a waive.
 DEFAULT_REVIEW_MAX_ROUNDS = 2
+# The largest file `research ingest` takes, in MB. The original is stored byte
+# for byte with its text beside it and the whole file is read into memory to
+# hash and convert it, so one cap bounds all three; a bigger file is refused
+# before it is read.
+DEFAULT_RESEARCH_SOURCE_LIMIT_MB = 50
+# Seconds a `research ingest` conversion (a PDF or DOCX through its library)
+# may take. The converter runs in a child process that is stopped at this
+# point, so a runaway conversion cannot hang the command.
+DEFAULT_RESEARCH_CONVERT_TIMEOUT = 120
 # The usable percent range. 100 is allowed (arm only at a full window, in effect
 # disabling the trigger); 0 and below would arm every turn from the start.
 CONTEXT_THRESHOLD_RANGE = (1, 100)
@@ -241,6 +250,20 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
         int,
         DEFAULT_REVIEW_MAX_ROUNDS,
         "Review rounds a level may take before `review start` asks for --over-budget or a waive.",
+        WholeNumber(1),
+    ),
+    ConfigField(
+        "research_source_limit_mb",
+        int,
+        DEFAULT_RESEARCH_SOURCE_LIMIT_MB,
+        "Largest file `research ingest` takes, in MB; a bigger one is refused unread.",
+        WholeNumber(1),
+    ),
+    ConfigField(
+        "research_convert_timeout",
+        int,
+        DEFAULT_RESEARCH_CONVERT_TIMEOUT,
+        "Seconds a `research ingest` conversion may take before it is stopped and refused.",
         WholeNumber(1),
     ),
 )

@@ -3007,6 +3007,8 @@ def test_config_list_shows_every_key_and_marks_the_unset_ones(cwd):
         "agent_transport: tui (default)",
         "test_command: (default)",
         "review_max_rounds: 2 (default)",
+        "research_source_limit_mb: 50 (default)",
+        "research_convert_timeout: 120 (default)",
     ]
 
 

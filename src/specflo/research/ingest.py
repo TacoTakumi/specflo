@@ -12,24 +12,31 @@ fields its format adds. A markdown or plain-text file's text is its content
 decoded as UTF-8. A PDF or Word document goes through :mod:`.convert`, whose
 libraries come from the ``docs`` extra and are imported only when such a file
 is converted; a PDF adds its page count.
+
+Two config keys bound an ingest. ``research_source_limit_mb`` caps the file:
+one over it is refused from its size on disk, before it is read, whatever
+its suffix (the cap is one rule for every format, since every format is read
+whole, hashed and stored byte for byte). ``research_convert_timeout`` caps the
+conversion: a converter runs through :func:`.convert.run_with_timeout`, in a
+child process stopped when the time is up, unless it is marked ``inline``;
+the UTF-8 decoder is, since a decode cannot hang and is not worth a process.
 """
 
 from __future__ import annotations
 
 import datetime
 import hashlib
-from collections.abc import Callable
 from pathlib import Path
 
 from ..config import SpecfloConfig
 from ..errors import SpecfloError
 from . import sources
-from .convert import convert_docx, convert_pdf
+from .convert import Converter, convert_docx, convert_pdf, run_with_timeout
 from .ledger import Entry, source_dir
 
-# A converter takes the file's path (for its name in messages) and its bytes;
-# it returns the text to store and the extra fields of its format, in order.
-Converter = Callable[[Path, bytes], tuple[str, list[tuple[str, str]]]]
+# The config key the size refusal names, as the registry spells it.
+SIZE_LIMIT_KEY = "research_source_limit_mb"
+MB = 1024 * 1024
 
 
 def _decode_utf8(path: Path, data: bytes) -> tuple[str, list[tuple[str, str]]]:
@@ -41,6 +48,13 @@ def _decode_utf8(path: Path, data: bytes) -> tuple[str, list[tuple[str, str]]]:
             f"Cannot ingest {path.name}: it is not valid UTF-8 (at byte {exc.start})."
             " A markdown or text file is stored as UTF-8; convert it first."
         ) from exc
+
+
+# A converter marked ``inline`` runs in this process, timeout or not; every
+# other one (a library call that may never return) runs under the runner. The
+# decoder is the only one marked: it cannot hang, so a child process for it
+# would cost a fork per markdown or text file for nothing.
+_decode_utf8.inline = True
 
 
 # Lowercase suffix -> (Format value, converter); the Format values are those
@@ -71,11 +85,33 @@ def format_of(path: Path) -> str:
     return CONVERTERS[_suffix(Path(path))][0]
 
 
-def convert(path: Path, data: bytes) -> tuple[str, list[tuple[str, str]]]:
-    """The text of ``data`` and the fields its format adds, by the suffix of ``path``."""
+def convert(
+    path: Path, data: bytes, timeout: int | None = None
+) -> tuple[str, list[tuple[str, str]]]:
+    """The text of ``data`` and the fields its format adds, by the suffix of ``path``.
+
+    With ``timeout`` (seconds) the converter runs in a child process that is
+    stopped at that point; without one it runs in this process, unbounded. A
+    converter marked ``inline`` runs in this process either way.
+    """
     path = Path(path)
     _, converter = CONVERTERS[_suffix(path)]
-    return converter(path, data)
+    if timeout is None or getattr(converter, "inline", False):
+        return converter(path, data)
+    return run_with_timeout(converter, path, data, timeout)
+
+
+def _check_size(path: Path, limit_mb: int) -> None:
+    """Refuse ``path`` from its size on disk when it is over ``limit_mb`` MB."""
+    try:
+        size = path.stat().st_size
+    except OSError as exc:
+        raise SpecfloError(f"Cannot read {path}: {exc}.") from exc
+    if size > limit_mb * MB:
+        raise SpecfloError(
+            f"Cannot ingest {path.name}: it is {size / MB:.1f} MB, over the {limit_mb} MB limit."
+            f" Raise the limit with `specflo config set {SIZE_LIMIT_KEY} <mb>` or split the file."
+        )
 
 
 def ingest_file(
@@ -83,11 +119,12 @@ def ingest_file(
 ) -> Entry:
     """Store ``path`` as a document source of project ``slug`` and return its entry.
 
-    Refused, with nothing written: a missing file or a directory, bytes a
-    source already holds (the message names it), a suffix no converter takes,
-    a name the source directory cannot hold, a text file that is not UTF-8, a
-    PDF or DOCX without the docs extra installed and a file its converter
-    cannot read.
+    Refused, with nothing written: a missing file or a directory, a file over
+    the size limit (from its size on disk, before it is read), bytes a source
+    already holds (the message names it), a suffix no converter takes, a name
+    the source directory cannot hold, a text file that is not UTF-8, a PDF or
+    DOCX without the docs extra installed, a file its converter cannot read, a
+    scanned PDF and a conversion that runs past the timeout.
     Then the ledger mints the ID, the source directory is made for it, the
     original and the text are written there and the entry records both paths.
     """
@@ -96,6 +133,7 @@ def ingest_file(
         if path.exists():
             raise SpecfloError(f"Cannot ingest {path}: it is not a file.")
         raise SpecfloError(f"No file at {path}.")
+    _check_size(path, cfg.research_source_limit_mb)
     try:
         data = path.read_bytes()
     except OSError as exc:
@@ -109,7 +147,7 @@ def ingest_file(
         )
     fmt = format_of(path)
     name = sources.storage_name(path.name)
-    text, extra = convert(path, data)
+    text, extra = convert(path, data, timeout=cfg.research_convert_timeout)
     today = today or datetime.date.today().isoformat()
 
     entry = sources.add_source(
