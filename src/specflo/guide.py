@@ -225,6 +225,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show one follow-up from any project: Do, From, Status, Closed and Closed by."},
     {"name": "followup close", "group": "any", "args": "<FU-NN> --note <text> [--by <ref>]",
      "summary": "Close an open follow-up in any project, with a note and what did the work."},
+    {"name": "research ingest", "group": "research", "args": "<file>",
+     "summary": "Keep a .md or .txt file as a document source (S-NN): the byte-identical "
+                "original, its text, name, sha256 and date; the same bytes again are refused."},
     {"name": "research user set", "group": "research", "args": "--text <text> | --file <path>",
      "summary": "Record who usually sits at the keyboard, in their own words; a later call "
                 "replaces it and the log keeps the old text."},

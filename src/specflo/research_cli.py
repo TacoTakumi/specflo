@@ -17,6 +17,8 @@ from . import config
 from . import guide as guide_module
 from .errors import SpecfloError
 from .research import document, findings, ledger, questions
+from .research import ingest as ingest_module
+from .research import sources
 
 research_app = typer.Typer(
     help="Work a research project: its usual user, destination and sessions."
@@ -62,6 +64,30 @@ def research_project() -> tuple[Path, config.SpecfloConfig, str]:
             " `specflo new <name> --level research`."
         )
     return root, cfg, slug
+
+
+@research_app.command("ingest", epilog="Example: specflo research ingest notes/lease-act.md")
+def ingest(
+    file: Path = typer.Argument(
+        ..., metavar="<file>", help="A .md or .txt file to keep as a document source."
+    ),
+) -> None:
+    """Keep a file as a document source (S-NN).
+
+    The original is stored byte for byte under research/sources/S-NN/ with its
+    text beside it, and the sources ledger records the file's name, format,
+    sha256 and date. A file whose bytes a source already holds is refused,
+    naming that source, and nothing is written.
+    """
+    root, cfg, slug = research_project()
+    try:
+        entry = ingest_module.ingest_file(root, cfg, slug, file)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(
+        f"Ingested {entry.title} as {entry.id}: {slug}/{entry.get(sources.ORIGINAL_FIELD)}"
+        f" (original), {slug}/{entry.get(sources.TEXT_FIELD)} (text)."
+    )
 
 
 @user_app.command(
