@@ -52,12 +52,89 @@ latter. Release tags are of the form `vX.Y.Z`.
   DAEMON.md, The issue gateway, for the configuration, GitHub App setup, the
   Gitea bot account, the awiki reader user and the accepted exfiltration
   risk of an agent with web access.
+- **Research projects: the research level.** `specflo new <name> --level
+  research` starts a long-running, multi-session study of an idea or a
+  product, made before anything is built or instead of it. The project has
+  one terminal phase, `research`, and starts with a `research.md` (sections
+  Destination, Usual user, Decisions and Log) and four empty ledgers under
+  `research/`: sources (`S-NN`), questions (`Q-NN`), findings (`RF-NN`) and
+  glossary terms. Every file stays inside the project folder and only the CLI
+  writes them. The level is local only: `--remote` and `specflo promote`
+  refuse it, and `specflo auto` refuses it as attended work. `specflo level
+  fast|full` moves it into a brainstorm at that level, scaffolding the
+  brainstorm and keeping every research file; quick is refused, and no
+  project moves to research. `specflo decision add` writes a research
+  project's decisions into `research.md`, with one numbering sequence across
+  both documents after a move up. `specflo doc show research` prints the
+  document, `specflo validate research` names what still blocks completion,
+  and `specflo advance` completes the project once a destination with its
+  reason, the usual user and one closed session are recorded. `specflo
+  guide` lists the level with the four signs that call for it: no build
+  intended yet, documents to bring in, a domain expert at the keyboard, much
+  unknown ground.
+- **The `specflo research` command group.** `research ingest <file>` keeps a
+  `.md`, `.txt`, `.pdf` or `.docx` file as a document source: the
+  byte-identical original and its text under `research/sources/S-NN/`, with
+  name, sha256, date and, for a PDF, its page count; the same bytes again are
+  refused naming the source that holds them, and so is a scanned PDF with no
+  text layer. `research source add` records an interview, web or repo source
+  with its text as given, and the first source of a project with no egress
+  pin prints one suggestion to run `specflo egress`. `research user set` and
+  `research destination set` record who usually sits at the keyboard and
+  where the research is headed (build, inform, learn or unknown) with its
+  reason; the log keeps every replaced value. `research question add` and
+  `research question resolve` keep the open questions, each marked for the
+  user or a developer, with options, a default and a why; a developer
+  question needs a default. `research ask-dev` prints the open developer
+  questions as email text and sends nothing. `research finding add` records
+  a fact or an inference with its status and checked citations (`S-NN`, or
+  `S-NN:pN` on a PDF within its page count); a fact needs one. `research term
+  set` keeps the glossary in the user's own words with the words to avoid.
+  `research list` shows a ledger, `research lint` checks each finding's
+  numbers, dates and quoted strings against the text of its cited sources
+  (exit 1 on a miss, gating nothing), `research session close` writes the
+  dated session entry with its summary and next steps, and `research recap`
+  prints what the next session needs: destination, usual user, last
+  session, open questions by who answers them, counts and the
+  outgoing-search rule. `research spinoff <name> --level quick|fast|full
+  --use <ID>,...` creates a seeded build project with a `handoff.md` holding
+  each named source, question or finding in full; when the research later
+  supersedes an entry a handoff rests on, the recap lists the spin-off and
+  `specflo status` in the spin-off prints one line. Entries are never
+  deleted: `--supersedes` replaces one and the old entry stays, marked.
+- **The `specflo[docs]` extra and two config keys.** PDF and DOCX ingest
+  need the optional `docs` extra (pypdfium2, mammoth, markdownify), imported
+  only when such a file is converted; without it a `.pdf` or `.docx` is
+  refused naming the extra and every other command runs as before.
+  `research_source_limit_mb` (default 50) caps the file an ingest takes,
+  refused unread when over it, and `research_convert_timeout` (default 120)
+  caps the seconds a conversion may run in its child process before it is
+  stopped and refused; both are set with `specflo config set`.
+- **The `specflo-research-project` skill**, the eleventh bundled one,
+  installed by `specflo skills install` and listed by `skills status`. It
+  drives a session: opens with `specflo research recap`, records the usual
+  user and the destination on the first session, asks one question at a time
+  (no suggested answer on a knowledge question, a recommendation on a
+  choice), records each entry with the CLI as it lands, keeps developer
+  questions broad and few, keeps the user's material out of outgoing
+  searches, checks the grounding with `research lint`, and ends with
+  `specflo research session close`.
 
 ### Changed
 - **The sample systemd units** in `contrib/systemd/` put `/usr/sbin` on the
   daemon's `PATH`, where `ip` is, so a web member can start. Each also has a
   commented `EnvironmentFile` line, with an example, for a definition's
   credentials such as `TAVILY_API_KEY`.
+- **`specflo list` shows the level beside the phase**, as `(phase, level)`,
+  and carries both in `--json`; the project index gains a Level column, so a
+  quick fix, a research project and a full build read apart.
+- **`specflo guide` lists the research level** in its Levels block, with the
+  signs that call for it and the rule that it moves up with `specflo level
+  fast|full`, and carries the Research command group.
+- **The checkpoint of a research project** lists `research.md` first and
+  tells the next agent to start with `specflo research recap` and the
+  `specflo-research-project` skill; its subtitle names the level, as a harden
+  project's does.
 
 ## [0.18.1]
 

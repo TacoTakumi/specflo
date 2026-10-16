@@ -56,6 +56,10 @@ pipx install specflo
 pip install specflo
 ```
 
+To bring PDF and Word documents into a [research project](#research-projects),
+add the optional `docs` extra: `uv tool install 'specflo[docs]'` (or
+`pip install 'specflo[docs]'`). Markdown and plain-text files need nothing more.
+
 Then set up the repo you want to work in:
 
 ```bash
@@ -87,13 +91,17 @@ specflo new "my first project"
 # Or, for smaller work, a quick (one check) or fast (3 to 7 tasks) project
 # specflo new "my first project" --level quick
 # specflo new "my first project" --level fast
+
+# Or, to research an idea over several sessions before anything is built
+# specflo new "my first project" --level research
 ```
 
 Then start your agent. With the hook or the pi extension installed, it reads the
 new project and asks whether to continue. In another harness, say "Continue the
 specflo project." The specflo-brainstorm skill takes over and hands off through
-spec and plan to task-by-task execution. [Levels](#levels) describes quick and
-fast, and the [command reference](#command-reference) lists every step.
+spec and plan to task-by-task execution. [Levels](#levels) describes quick,
+fast, harden and research, and the [command reference](#command-reference)
+lists every step.
 
 ## Using specflo with your agent
 
@@ -218,8 +226,9 @@ fresh session back to work.
 
 ## Levels
 
-Not every change needs the whole pipeline. A project has one of three levels,
-chosen with `specflo new <name> --level quick|fast|full`:
+Not every change needs the whole pipeline. A project has one of five levels,
+chosen with `specflo new <name> --level quick|fast|full|harden|research`. Three
+of them build, with growing ceremony:
 
 - **quick** - one goal and one check. The project has one phase, `execute`, and
   one document, `brief.md`, with the sections Goal, Done when, Proof and
@@ -234,6 +243,10 @@ chosen with `specflo new <name> --level quick|fast|full`:
   project stays at fast. Execute finishes as at full level, after a passing review round.
 - **full** - the default: every phase, with an approval at each.
 
+The other two stand beside the pipeline: **harden** makes code that already
+exists sound, and **research** builds knowledge over sessions, not code. Each
+has its own subsection below.
+
 `specflo doc show brief` prints one page at either light level: the brief file
 at quick, and at fast the goal, decisions, checks and tasks drawn from the three
 documents. Nothing is stored for the fast view.
@@ -243,7 +256,11 @@ the brainstorm with every document and every done task kept. From quick, the
 brief seeds the three documents: the goal and the deferred items go into the
 brainstorm, the check becomes `REQ-01`, and `T-01` implements it (done when the
 brief has proof). From fast, the command lists the decisions to review with the
-user, since the agent made them without an interview.
+user, since the agent made them without an interview. From research, the move
+scaffolds the brainstorm the project had none of and keeps the research
+document and ledgers where they are, to ground that brainstorm in; research
+moves up to fast or full only, never to quick, and no project moves to
+research, which only `specflo new` starts a project at.
 
 A cap never stops a `specflo auto` run and never moves the project up. A quick
 brief with two checks is told to keep one and defer the rest. A fast project
@@ -267,6 +284,37 @@ task the project takes), and the next harden round checks the fixes. There is no
 cap and no round budget. The project completes when the brief validates, a
 harden round has closed `hardened`, no round is open, every fix task is done
 and no item is left open. The `specflo-harden` skill drives it.
+
+### The research level
+
+`specflo new <name> --level research` starts a research project: a
+long-running, multi-session study of an idea, a market or a product, made
+before anything is built, or instead of it. It has one phase, `research`, and
+nothing is built from it: no brainstorm, spec, plan or review round. The agent
+proposes it, like any level, from the request, and the signs that call for it
+are these four: no build is intended yet, there are documents to bring in, a
+domain expert rather than a developer sits at the keyboard, and much of the
+ground is unknown. The `specflo-research-project` skill drives it;
+[Research projects](#research-projects) describes the sessions and lists the
+commands.
+
+The project keeps a `research.md` with the sections Destination, Usual user,
+Decisions and Log, and four ledgers under `research/`: sources (`S-NN`),
+questions (`Q-NN`), findings (`RF-NN`) and glossary terms. Every file stays
+inside the project folder, and only the CLI writes them. A research project is
+local only: `--remote` and `specflo promote` refuse it, and `specflo auto`
+refuses it as attended work, since a research session is a conversation.
+`specflo decision add` records a decision in `research.md`; `specflo doc show
+research` prints the document; `specflo status`, `specflo list` and the project
+index show the level.
+
+There are three ways on. `specflo level fast|full` turns the project into a
+brainstorm at that level, with the research kept beside it; quick is refused.
+`specflo research spinoff` starts a separate build project seeded with named
+entries while the research goes on. And `specflo advance` completes the
+project once a destination with its reason, the usual user and one closed
+session are recorded; `specflo validate research` names whatever is still
+missing.
 
 ### The ladder run
 
@@ -315,6 +363,71 @@ one below it, so a good full branch does not show that full alone would beat
 quick alone. `ladder.md` does not record the model or the harness, so note
 them yourself.
 
+## Research projects
+
+A research project ([the research level](#the-research-level)) is worked in
+sessions, each a conversation with the user, who is often a domain expert
+rather than a developer. The `specflo research` commands keep the document,
+the four ledgers, the log and the grounding check; the
+`specflo-research-project` skill carries the conversation. The loop of a
+session:
+
+1. **Open with `specflo research recap`.** It prints where the research is
+   headed and why, who the usual user is, what the last session did and left
+   for the next one, the open questions by who answers them, the ledger
+   counts, any spin-off that rests on a replaced entry, and the rule for an
+   outgoing web search. The checkpoint of a research project lists
+   `research.md` first and tells the next agent to start here.
+2. **Record each source, finding, question, term and decision as it lands**,
+   with the commands below, so a session that stops early loses nothing. On
+   the first session the usual user and the destination are recorded too.
+3. **Close with `specflo research session close`**, with a summary and the
+   next steps, so the next recap starts the next session.
+
+The rules the commands hold to:
+
+- Entries are never deleted. A wrong or overtaken entry is replaced with
+  `--supersedes`; the old one stays in its ledger, marked, and the recap names
+  any spin-off that rested on it.
+- A fact needs a citation. A citation is a source, `S-NN`, or a page of one,
+  `S-NN:pN`; a page is accepted only on a PDF and only within its page count.
+  An inference may stand on none.
+- `research ingest` takes `.md` and `.txt`, and with the `docs` extra `.pdf`
+  and `.docx`. The original is stored byte for byte under
+  `research/sources/S-NN/` with its text beside it. The same bytes again are
+  refused naming the source that holds them; so is a scanned PDF with no text
+  layer, a file over `research_source_limit_mb` (default 50) and a conversion
+  past `research_convert_timeout` (default 120 seconds); both limits are set
+  with `specflo config set`.
+- The first source of a project that pins no egress class prints one
+  suggestion to run `specflo egress`. Whatever the class, the skill keeps
+  names, private figures and source text out of outgoing web searches.
+- `research lint` is a report, not a gate: no command depends on it passing.
+- No research command needs or writes to a wiki; the research lives in the
+  project folder.
+
+The commands, all on the active project:
+
+- `specflo research ingest <file>` - keep a `.md`, `.txt`, `.pdf` or `.docx` file as a document source (`S-NN`): the byte-identical original, its text, name, sha256 and date. PDF and DOCX need the `specflo[docs]` extra; a PDF records its page count.
+- `specflo research source add --kind interview|web|repo --title <text> (--file <path> | --stdin) [--url <url>]` - record an interview, web or repo source (`S-NN`) with its text stored as given; web and repo need `--url`.
+- `specflo research user set --text <text> | --file <path>` - record who usually sits at the keyboard, in their own words; a later call replaces it and the log keeps the old text.
+- `specflo research destination set build|inform|learn|unknown --reason <text>` - record where the research is headed and why; the log keeps the old value, the new one and the reason.
+- `specflo research question add --text <text> --by user|developer [--option <text>]... [--default <text>] [--why <text>] [--supersedes Q-NN]` - record an open question (`Q-NN`): who answers it, its options, default and why. A developer question needs a default, so the work goes on when no answer comes.
+- `specflo research question resolve <Q-NN> --resolution <text> [--by <name>]` - resolve an open question: record the resolution and who gave it (the usual user by default).
+- `specflo research ask-dev` - print the open developer questions as email text (a subject line and a plain body) for the user to send; it writes nothing and sends nothing.
+- `specflo research finding add --text <text> --kind fact|inference --status supported|contradicted|unsure [--cites S-NN[:pN]]... [--supersedes RF-NN]` - record a finding (`RF-NN`) with checked citations: a fact needs one, and a page only on a PDF and within its page count.
+- `specflo research term set --term <term> --definition <text> [--avoid <word>]...` - set a glossary term in the user's own words, with the words to avoid; setting it again replaces the definition in place and the log keeps the old one.
+- `specflo research list sources|questions|findings|terms [--open] [--json]` - list a ledger's entries with their IDs and fields; `--open` keeps the open questions, `--json` gives every entry with its status.
+- `specflo research lint` - check each finding's numbers, dates and quoted strings against the text of the sources it cites (within the cited page of a PDF); one line per missing figure, exit 1 with any. It writes nothing and gates nothing.
+- `specflo research session close --summary <text> --next <text> [--present <who>]` - end a session: one dated log entry with the summary, the next steps and who was present (the usual user by default).
+- `specflo research recap [--json]` - print the session recap described above; writes nothing.
+- `specflo research spinoff <name> --level quick|fast|full --use <ID>[,<ID>]...` - spin a seeded build project off the research: create it as `new` would, with a `handoff.md` holding each named source, question or finding in full. The research project stays as it is and its log names the spin-off. When the research later supersedes an entry the handoff rests on, the recap lists the spin-off and `specflo status` in the spin-off prints one line saying so.
+
+Decisions go through the usual `specflo decision add`, which writes them into
+`research.md`; `specflo doc show research` prints the document, and
+`specflo validate research` and `specflo advance` complete the project (see
+[the research level](#the-research-level)).
+
 ## Command reference
 
 ### Global option: run in another directory
@@ -342,12 +455,12 @@ See **[The config file](#the-config-file)** for the file itself.
 
 ### Projects
 
-- `specflo new <name> [--execution linear|fan-out] [--level quick|fast|full|harden]` - create a project and make it active. `--execution` records the execution mode in `project.md` (default `linear`; see "Execution modes and fan-out" below). `--level` records how much ceremony the project gets (default `full`; see [Levels](#levels)); a quick project starts at `execute` with a `brief.md`, and a harden project at `execute` with a `brief.md` and an empty `plan.md`. Quick and fast are refused with `--remote`.
-- `specflo level fast|full` - move the active project up a level, back to the brainstorm phase, keeping every document. Refuses the same or a lower level, and any move of a harden project.
+- `specflo new <name> [--execution linear|fan-out] [--level quick|fast|full|harden|research]` - create a project and make it active. `--execution` records the execution mode in `project.md` (default `linear`; see "Execution modes and fan-out" below). `--level` records how much ceremony the project gets (default `full`; see [Levels](#levels)); a quick project starts at `execute` with a `brief.md`, a harden project at `execute` with a `brief.md` and an empty `plan.md`, and a research project at `research`, its one phase, with a `research.md` and four empty ledgers under `research/`. Quick, fast and research are refused with `--remote`.
+- `specflo level fast|full` - move the active project up a level, back to the brainstorm phase, keeping every document. Refuses the same or a lower level, research as a target, and any move of a harden project. From research the brainstorm is scaffolded and the research document and ledgers stay as they are; quick is refused there, naming fast and full.
 - `specflo execution linear|fan-out [--json]` - switch the active project's execution mode, in either direction, at any phase. Reports `unchanged` when the mode already matches; `--json` emits `{execution, changed}`.
-- `specflo list [--json]` - list all projects, marking the active one and its phase.
+- `specflo list [--json]` - list all projects, marking the active one, each with its phase and level as `(phase, level)`, so a quick fix, a research project and a full build read apart; `--json` carries both fields. The project index (`specflo index`) has a Level column too.
 - `specflo switch <name>` - make another project active (by slug or name).
-- `specflo status [--json]` - show the active project, its phase, and what's next.
+- `specflo status [--json]` - show the active project, its phase, its level and what's next. In a project spun off a research project, one more line says when the research has since replaced an entry its `handoff.md` rests on.
 - `specflo shelve [<name>] [--reason ...]` - set a project aside: status `shelved`, phase untouched.
 - `specflo resume [<name>]` - pick a shelved project back up at the phase where it was paused.
 - `specflo leave [--json]` - clear the active-project pointer without changing any project. Nothing is written to the project; re-enter it later with `specflo switch <name>` (or `specflo resume <name>` if shelved). Idempotent: with no active project it prints `No active project.` and exits 0.
@@ -355,7 +468,7 @@ See **[The config file](#the-config-file)** for the file itself.
 ### Phase artifacts
 
 - `specflo brainstorm start [--json]` - create (or locate) the active project's `brainstorm.md`.
-- `specflo decision add --text ... [--rationale ...] [--supersedes D-NN]` - append a decision (`D-NN`) to the brainstorm. `--text` and `--rationale` are one line each: a value carrying a line break is refused. Text an active decision already holds is refused, ignoring case and extra whitespace, unless `--supersedes` names that decision; the message tells a looping model to stop and check what is recorded.
+- `specflo decision add --text ... [--rationale ...] [--supersedes D-NN]` - append a decision (`D-NN`) to the brainstorm, or to `research.md` in a research project; after a move up the one numbering sequence runs on across both documents. `--text` and `--rationale` are one line each: a value carrying a line break is refused. Text an active decision already holds is refused, ignoring case and extra whitespace, unless `--supersedes` names that decision; the message tells a looping model to stop and check what is recorded.
 - `specflo spec start [--json]` - create (or locate) the active project's `spec.md`.
 - `specflo requirement add --text ... --acceptance ... [--from D-NN] [--supersedes REQ-NN]` - append a requirement (`REQ-NN`) to the spec. `--text` and `--acceptance` are one line each: a value carrying a line break is refused. Text an active requirement already holds is refused in the same way as for `decision add`.
 - `specflo plan start [--json]` - create (or locate) the active project's `plan.md`.
@@ -363,9 +476,9 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo pool add <name> --size N [--json]` / `pool list [--json]` - declare a pool of `N` slots (`N >= 1`) in the CLI-owned `## Pools` section of `plan.md`, updating the size in place on a repeated add; `pool list` shows every declared pool plus every pool an active task needs. A pool nobody declared has one slot. `user` is a reserved pool name meaning the task runs in the main session with the user; it needs no declaration.
 - `specflo plan graph [--json]` - render the plan's execution graph from its real data: waves by longest dependency path (wave 0 has no dependencies), one line per active task (id, title, progress, files, needs) and a mermaid `graph LR` block with one node per task, a subgraph per milestone and one edge per `Depends on` entry. `--json` emits `{waves, tasks, edges}`. Read-only: `plan.md` is byte-identical afterwards.
 - `specflo milestone add --text ... --exit ... [--exit ...]` - append a milestone (`M-NN`) with its Exit checklist to the plan; `milestone list` and `milestone show` report rollup and the current milestone. `--text` and each `--exit` item are one line: a value carrying a line break is refused.
-- `specflo doc show brainstorm|spec|plan|brief|checkpoint|project|followup|review-<N>` - print one artifact of the active project verbatim; `review-<N>` is a review round by its number. Agents read artifacts through this verb rather than opening files, so the same command serves a project in the checkout and one held by a daemon. An unknown name is refused with the valid names listed. `brief` is the quick or harden project's brief, or at fast level a one-page view of the three documents; it is refused at full level.
+- `specflo doc show brainstorm|spec|plan|brief|research|checkpoint|project|followup|review-<N>` - print one artifact of the active project verbatim; `review-<N>` is a review round by its number. Agents read artifacts through this verb rather than opening files, so the same command serves a project in the checkout and one held by a daemon. An unknown name is refused with the valid names listed. `brief` is the quick or harden project's brief, or at fast level a one-page view of the three documents; it is refused at full level. `research` is the research project's document.
 - `specflo section set brainstorm|spec|plan|brief <section> --file <path>|--stdin` - replace one prose section's body (named with or without its `##`), keeping the header, every other section and every managed entry byte-identical and bumping `updated`. The managed sections (Decisions, Requirements, Tasks, Milestones, Pools) are refused with the verb that owns them.
-- `specflo validate brainstorm|spec|plan|brief [--json]` - lint the phase's artifact and report readiness. `brief` checks a quick project's goal, its single check and its proof, or a harden project's Scope, Focus and Stop when. The plan lint checks bidirectional REQ<->task coverage (a fix task needs no requirement, and a harden plan may be empty), that every task has acceptance + verification, and that dependencies resolve and are acyclic.
+- `specflo validate brainstorm|spec|plan|brief|research [--json]` - lint the phase's artifact and report readiness. `brief` checks a quick project's goal, its single check and its proof, or a harden project's Scope, Focus and Stop when. `research` names what still blocks a research project's completion (a destination with its reason, the usual user, one closed session), each with the command that records it. The plan lint checks bidirectional REQ<->task coverage (a fix task needs no requirement, and a harden plan may be empty), that every task has acceptance + verification, and that dependencies resolve and are acyclic.
 
 ### Working the plan
 
@@ -387,7 +500,7 @@ See **[The config file](#the-config-file)** for the file itself.
 - `specflo review done [--verdict ...] [--reason ...] [--file <path>] [--json]` - close the open round with the verdict its findings give, and print the count per severity and, when there are any, of regressions (`regressions` in `--json`). Any blocker or should-fix finding, or an earlier item checked open, is `changes-requested`; only nits, or `- none` as the whole Findings section, is `ready-to-merge`. A harden round closes `hardened` whatever it found, keeps its nits in the round, and prints its new finds (`new_finds` in `--json`). A finding line written by hand is marked a regression by the same rule as `review finding add`. It refuses, leaving the round open, a line under Findings not in the `- F-NN (severity) [file:line] text` form (a nit may leave out the location), a blocker or should-fix with no location, an `F-NN` used elsewhere in the project, a section with neither findings nor `- none`, `- none` beside findings, and an earlier item with no check line; the message names the line or ID and the ways on. `--verdict` is accepted only when it equals the derived verdict, except `--verdict waived --reason ...`, which closes the round without reading its findings. A round with nits adds one follow-up, `Nits from review round N`, naming their IDs; follow-ups work only for projects in the checkout, so a round a daemon holds keeps its nits in the round file. The date is stamped at close; the sha stays the one stamped at `review start`. `--file` ingests a reviewer's report as the round's body, refusing once that body has been written into. specflo never derives staleness from the stamp: commits landing after a closed round change nothing.
 - `specflo review waive --reason ... [--json]` - close the open round `waived` with the reason, or, with no round open, record a round and close it `waived` in one step. Works at any time, past the round budget, and while an open item has no done fix task. An empty reason is refused.
 - `specflo validate execute [--json]` - completion gate: confirms every task is done, then that no round is open and the latest gate round closed `ready-to-merge` or `waived`, or `changes-requested` with every blocking item deferred or rejected, and that no item raised after that round is still open. A harden round's verdict is never the gate's. The gate keys on the verdict and the open items, never on the round's nits, so a passing round may still list some. A harden project needs a valid brief, a harden round closed `hardened`, no open round and no open item instead.
-- `specflo advance [--json]` - validate the current phase's artifact, then move the active project to the next phase (`brainstorm -> spec -> plan -> execute`).
+- `specflo advance [--json]` - validate the current phase's artifact, then move the active project to the next phase (`brainstorm -> spec -> plan -> execute`). On a research project, whose one phase is terminal, it completes the project once `validate research` passes.
 - `specflo reopen [<phase>]` - the inverse of `advance`: move the phase pointer backward (bare `reopen` goes one phase back, `reopen <phase>` jumps to a named earlier phase). A pure pointer move; no artifact is rewritten.
 - `specflo checkpoint [--json]` - print the active project's **resume prompt** (which phase, what to read, what to do next) and refresh `checkpoint.md`. The file is also rewritten automatically after every state-mutating command, so a freshly-cleared agent can jump back in with one command.
 
@@ -402,6 +515,10 @@ The work a project leaves for a later one. Each project keeps its entries in its
 
 `specflo advance` lists the open follow-ups of the project it completes (`followups` in `--json`), and `specflo new` prints how many open follow-ups the checkout holds.
 
+### Research commands
+
+The `specflo research` commands (ingest, source add, user set, destination set, question add, question resolve, ask-dev, finding add, term set, list, lint, session close, recap, spinoff) are listed in [Research projects](#research-projects).
+
 ### Session-start and unattended runs
 
 - `specflo hook reseed [--format text|claude] [--continue]` - emit the **clear-and-continue** payload for the active project: a confirmation-gate directive (*do not start work; present the checkpoint and ask whether to continue*) followed by the verbatim checkpoint. Prints nothing for no active project, or when the active project is complete or shelved (nothing to resume, so the session starts silent). **Always exits 0, reads no stdin, makes no network calls** - safe to wire into a session-start hook unconditionally.
@@ -409,7 +526,7 @@ The work a project leaves for a later one. Each project keeps its entries in its
   - `--continue` swaps the confirmation gate for a direct *carry out the next step now* directive, and inlines the current task's brief - for a caller that cleared context on purpose and has already answered "keep going".
 - `specflo hook install` - idempotently merge the `SessionStart` wiring into Claude Code's `.claude/settings.json`, preserving all existing content; a previously-installed (older) reseed entry is rewired in place rather than duplicated. The wiring calls `specflo hook reseed --format claude` on the `startup`, `clear`, and `resume` sources (`compact` excluded - its digest is retained).
 - `specflo hook print` - print that same wiring as a JSON fragment on stdout (pipeable), either to merge into Claude Code's settings yourself or as a starting point to adapt for another harness (opencode, OpenAI Codex, ...); a stderr note marks it as a fragment and points at `specflo hook install` as the safe merge. pi needs no wiring - the bundled pi extension reseeds on its own (see **[The pi extension](#the-pi-extension)**). (`hook print --install` remains as a deprecated alias of `hook install`.)
-- `specflo auto [--autonomy safe|autonomous|yolo] [--max-passes N] [--off|--on] [--ladder] [--json]` - emit the **auto-mode handoff payload**: an explicit, per-invocation opt-in that starts or continues an *unattended* run from the current phase toward project completion, emitting a bootstrap directive (autonomy policy + guardrail stop-conditions) instead of the ask-first pause. specflo only prints the payload - it drives no loop, spawns no nested agent, and never clears context; the clear-and-reseed trigger is the outer harness's job. Strictly additive - the default `hook reseed` / checkpoint behavior is unchanged.
+- `specflo auto [--autonomy safe|autonomous|yolo] [--max-passes N] [--off|--on] [--ladder] [--json]` - emit the **auto-mode handoff payload**: an explicit, per-invocation opt-in that starts or continues an *unattended* run from the current phase toward project completion, emitting a bootstrap directive (autonomy policy + guardrail stop-conditions) instead of the ask-first pause. specflo only prints the payload - it drives no loop, spawns no nested agent, and never clears context; the clear-and-reseed trigger is the outer harness's job. Strictly additive - the default `hook reseed` / checkpoint behavior is unchanged. A harden or research project is refused, naming its level: both are attended work, with the user at the keyboard.
   - `--autonomy` sets how far it runs unattended: `safe` (the default) and `autonomous` stop and hand off on any irreversible or outbound step; `yolo` permits them. Overrides the `.specflo` config default.
   - `--max-passes` is a runaway backstop: each invocation counts as one pass in a durable per-project run-state file, and on reaching the cap (default `50`) the run escalates to the human instead of continuing. Overrides the config default.
   - `--off` sets the durable kill switch (the next pass halts); `--on` clears it.
@@ -741,6 +858,12 @@ active_project: my-thing
 
 # Review rounds a level may take before `review start` asks for --over-budget or a waive.
 # review_max_rounds: 2
+
+# Largest file `research ingest` takes, in MB; a bigger one is refused unread.
+# research_source_limit_mb: 50
+
+# Seconds a `research ingest` conversion may take before it is stopped and refused.
+# research_convert_timeout: 120
 ```
 
 It is your file, so specflo writes it conservatively:
@@ -875,7 +998,7 @@ for it.
 
 ## Skills
 
-specflo ships its ten workflow skills inside the package and installs them into
+specflo ships its eleven workflow skills inside the package and installs them into
 whatever agent harness it finds on your machine (Claude Code, pi, Hermes,
 opencode). Let the CLI do it - no copying or symlinking by hand:
 
@@ -901,7 +1024,7 @@ line on stderr pointing at `specflo skills update`. It is notice-only: it never
 prompts, never updates anything, and never changes the exit code. Silence it by
 setting `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK`.
 
-The ten skills:
+The eleven skills:
 
 - **`specflo-brainstorm`** (`skills/specflo-brainstorm/SKILL.md`) - drives the brainstorm phase over the CLI above (one question at a time, captures decisions, validates, hands off to the spec phase).
 - **`specflo-spec`** (`skills/specflo-spec/SKILL.md`) - drives the spec phase (synthesize testable `REQ-NN` requirements from the brainstorm, validate, hand off to the plan phase).
@@ -910,6 +1033,7 @@ The ten skills:
 - **`specflo-quick`** (`skills/specflo-quick/SKILL.md`) - works a quick-level project: fills the brief through the CLI, does the work, records proof, makes one commit, completes the project with no review round, and offers `specflo level fast` when the work outgrows one check.
 - **`specflo-harden`** (`skills/specflo-harden/SKILL.md`) - works a harden-level project: starts it, writes the brief's Scope, Focus and Stop when, runs harden rounds with a fresh-context reviewer, turns their blocker and should-fix findings into fix tasks, and stops on the user's say, with the whole suite run once.
 - **`specflo-research`** (`skills/specflo-research/SKILL.md`) - a research subagent the `specflo-brainstorm` skill dispatches to ground decisions in current facts: an upfront **landscape scan** (what tools/SDKs/clients/frameworks already exist) plus **opportunistic** assumption-checks. Wiki-integrated - searches the Agent Wiki first and saves findings back (soft dependency).
+- **`specflo-research-project`** (`skills/specflo-research-project/SKILL.md`) - drives a session of a research-level project: opens with `specflo research recap`, asks one question at a time (no suggested answer on a knowledge question, a recommendation on a choice), records each source, finding, question, term and decision with the CLI as it lands, keeps the user's material out of outgoing searches, and ends with `specflo research session close`. Not the `specflo-research` subagent above, which does a one-off fact check inside a brainstorm.
 - **`specflo-shelve`** (`skills/specflo-shelve/SKILL.md`) - recognizes "park this for now" / "let's pick that back up" and maps them to `specflo shelve` and `specflo resume`, so a project can be set aside and reclaimed without losing its phase or artifacts.
 - **`specflo-auto`** (`skills/specflo-auto/SKILL.md`) - recognizes an unattended-run intent ("auto mode", "autopilot", "keep going without me") and maps it to `specflo auto`, then follows the emitted payload. Thin by design: the CLI carries the loop, autonomy policy, and guardrails; the skill only triggers it and hands the directives to the loop.
 - **`specflo-agent`** (`skills/specflo-agent/SKILL.md`) - drives headless pi subagents through the `specflo agent` CLI: start a worker, send it prompts, monitor it and stop it. It is for delegating work to pi, not for the pipeline phases. A preview, like the [`specflo agent`](#pi-subagents-specflo-agent) surface it uses.
@@ -937,7 +1061,11 @@ uv tool uninstall specflo      # remove
 
 `pipx install .` and `pip install .` work the same way if you prefer them.
 A machine that runs the daemon needs the web stack too: `uv tool install '.[serve]'`
-(or `pip install 'specflo[serve]'`).
+(or `pip install 'specflo[serve]'`). A machine where a research project takes in
+PDF or Word documents needs the converters: `uv tool install '.[docs]'` (or
+`pip install 'specflo[docs]'`), which adds pypdfium2, mammoth and markdownify
+and nothing else; without it `specflo research ingest` refuses a `.pdf` or
+`.docx` naming the extra, and every other command runs as before.
 
 To build distributables instead, `uv build` writes the wheel and sdist into
 `dist/`; install the wheel anywhere with
