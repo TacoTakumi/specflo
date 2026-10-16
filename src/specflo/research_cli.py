@@ -297,6 +297,98 @@ def finding_add(
     )
 
 
+# --- listing a ledger ------------------------------------------------------------------
+
+# The list block imports what only it needs here so the block stays one piece.
+import json  # noqa: E402
+
+# The ledger each listing name stands for: the glossary is listed as "terms".
+LISTED_LEDGERS = {
+    "sources": ledger.SOURCES,
+    "questions": ledger.QUESTIONS,
+    "findings": ledger.FINDINGS,
+    "terms": ledger.GLOSSARY,
+}
+
+
+def _entry_heading(entry: ledger.Entry) -> str:
+    """The first line of a listed entry: its ID and title, with its superseded mark."""
+    heading = f"{entry.id} - {entry.title}" if entry.title else entry.id
+    if entry.superseded_by is not None:
+        heading += f" [superseded by {entry.superseded_by}]"
+    return heading
+
+
+def _entry_json(entry: ledger.Entry) -> dict:
+    """One listed entry as JSON: a repeated field is a list; a term's title is the term."""
+    fields: dict[str, str | list[str]] = {}
+    for name, value in entry.fields:
+        if name not in fields:
+            fields[name] = value
+        elif isinstance(fields[name], list):
+            fields[name].append(value)
+        else:
+            fields[name] = [fields[name], value]
+    return {
+        "id": entry.id,
+        "title": entry.title or entry.id,
+        "status": entry.status,
+        "supersedes": entry.supersedes,
+        "superseded_by": entry.superseded_by,
+        "active": entry.active,
+        "fields": fields,
+    }
+
+
+@research_app.command(
+    "list",
+    epilog="Example: specflo research list questions --open",
+)
+def research_list(
+    name: str = typer.Argument(
+        ..., metavar="sources|questions|findings|terms", help="The ledger to list."
+    ),
+    open_only: bool = typer.Option(
+        False, "--open", help="Questions only: keep the open ones, not resolved or superseded."
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """List a ledger: one block per entry with its ID, title and every field.
+
+    A superseded entry is marked on its first line and keeps its fields. The
+    glossary is listed as terms, each keyed by its term. --open applies to the
+    questions only. The command reads the ledger and changes nothing.
+    """
+    chosen = LISTED_LEDGERS.get(name)
+    if chosen is None:
+        raise _die(
+            f"Unknown ledger {name!r}: list one of " + ", ".join(LISTED_LEDGERS) + "."
+        )
+    if open_only and chosen is not ledger.QUESTIONS:
+        raise _die(
+            f"--open applies to questions only: `research list questions --open` keeps the"
+            f" open ones; the {name} ledger has no open state."
+        )
+    root, cfg, slug = research_project()
+    try:
+        entries = chosen.entries(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if open_only:
+        entries = [entry for entry in entries if questions.is_open(entry)]
+    if json_output:
+        typer.echo(json.dumps([_entry_json(entry) for entry in entries]))
+        return
+    if not entries:
+        what = f"open {name}" if open_only else name
+        typer.echo(f"No {what} in {slug}/{document.RESEARCH_DIRNAME}/{chosen.filename}.")
+        return
+    for entry in entries:
+        typer.echo(_entry_heading(entry))
+        for field, value in entry.fields:
+            typer.echo(f"  {field}: {value}")
+
+
 @session_app.command(
     "close",
     epilog=(

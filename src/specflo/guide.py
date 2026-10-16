@@ -252,6 +252,10 @@ COMMANDS: list[dict[str, str]] = [
              "[--cites S-NN[:pN]]... [--supersedes RF-NN]",
      "summary": "Record a finding (RF-NN) with checked citations: a fact needs one, a page "
                 "only on a PDF and within its page count."},
+    {"name": "research list", "group": "research",
+     "args": "sources|questions|findings|terms [--open] [--json]",
+     "summary": "List a ledger's entries with their IDs and fields; --open keeps the open "
+                "questions, --json gives every entry with its status."},
     {"name": "research session close", "group": "research",
      "args": "--summary <text> --next <text> [--present <who>]",
      "summary": "End a session: one dated log entry with the summary, the next steps and who "
