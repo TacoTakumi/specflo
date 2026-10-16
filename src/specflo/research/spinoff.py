@@ -16,6 +16,12 @@ what was asked for, so a later reader sees the entry the spin-off rests on.
 
 :func:`parse_handoff` reads a handoff back and :func:`spinoffs_of` lists the
 spin-offs a research log records, so a reader needs no text parsing of its own.
+
+The research moves on after a spin-off, and a finding it rests on may be
+superseded. :func:`spinoffs_on_replaced` names, for the recap, each spin-off
+that rests on a replaced entry; :func:`handoff_notice` gives the spun-off
+project's status one line saying so. Both read the ledgers as they are now
+and write nothing.
 """
 
 from __future__ import annotations
@@ -135,6 +141,77 @@ def spinoffs_of(root: Path, cfg: SpecfloConfig, research_slug: str) -> list[Spin
     """Every spin-off the research log of ``research_slug`` records, oldest first."""
     parsed = document.load(root, cfg, research_slug)
     return [parse_spinoff(entry) for entry in parsed.log if entry.kind == SPINOFF_KIND]
+
+
+def replaced_entries(
+    root: Path, cfg: SpecfloConfig, research_slug: str, entries
+) -> list[tuple[str, str]]:
+    """``(id, replacing id)`` of each ID in ``entries`` that a later entry has replaced.
+
+    Read against the research project's ledgers as they are now, in the order
+    given. An ID that names no handed-off ledger, whose ledger file is missing
+    or that the ledger no longer holds is skipped: the question is which
+    entries were replaced, and such an ID answers it with nothing.
+    """
+    found: list[tuple[str, str]] = []
+    for entry_id in entries:
+        match = _ENTRY_ID.match(entry_id)
+        chosen = _LEDGERS_BY_PREFIX.get(match.group(1)) if match else None
+        if chosen is None:
+            continue
+        try:
+            entry = chosen.show(root, cfg, research_slug, entry_id)
+        except SpecfloError:
+            continue
+        if entry.superseded_by is not None:
+            found.append((entry.id, entry.superseded_by))
+    return found
+
+
+def spinoffs_on_replaced(root: Path, cfg: SpecfloConfig, research_slug: str) -> list[dict]:
+    """The spin-offs of ``research_slug`` that rest on a replaced entry, oldest first.
+
+    Each is ``{"slug", "level", "date", "replaced": [{"id", "by"}, ...]}``; a
+    spin-off whose entries all still stand is left out. Nothing is written.
+    """
+    flagged = []
+    for each in spinoffs_of(root, cfg, research_slug):
+        replaced = replaced_entries(root, cfg, research_slug, each.entries)
+        if replaced:
+            flagged.append({
+                "slug": each.slug,
+                "level": each.level,
+                "date": each.date,
+                "replaced": [{"id": old, "by": new} for old, new in replaced],
+            })
+    return flagged
+
+
+def handoff_notice(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
+    """One line for the status of project ``slug`` when its handoff rests on a replaced entry.
+
+    None when the project has no handoff, when the research project it came
+    from is gone (its folder or its research document), or when every entry
+    the handoff names still stands. A handoff that cannot be read is refused.
+    Nothing is written.
+    """
+    path = handoff_path(root, cfg, slug)
+    if not path.is_file():
+        return None
+    try:
+        handoff = parse_handoff(path.read_text())
+    except (OSError, UnicodeDecodeError) as exc:
+        raise SpecfloError(f"Cannot read {slug}/{HANDOFF_FILENAME}: {exc}.") from exc
+    if not document.research_path(root, cfg, handoff.research).is_file():
+        return None
+    replaced = replaced_entries(root, cfg, handoff.research, handoff.entries)
+    if not replaced:
+        return None
+    changes = _ID_SEPARATOR.join(f"{old} was replaced by {new}" for old, new in replaced)
+    return (
+        f"Handoff from research project {handoff.research!r}: {changes};"
+        " see specflo research recap there."
+    )
 
 
 def _yaml_line(key: str, value: str) -> str:

@@ -8,9 +8,9 @@ one rule that keeps the user's private world out of an outgoing web search.
 
 :func:`build_recap` reads every file and writes none; :func:`render_recap`
 turns its payload into plain ASCII text with one short label per block. The
-``spinoffs_on_replaced`` key is an empty seam: a later change fills it with
-the spin-offs that rest on a superseded entry, so a reader learns which of
-them needs another look.
+``spinoffs_on_replaced`` block names each spin-off that rests on an entry the
+research has since superseded, with the old and the new ID, so a reader learns
+which of them needs another look.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..config import SpecfloConfig
-from . import document, glossary, questions
+from . import document, glossary, questions, spinoff
 from .ledger import FINDINGS, SOURCES
 
 # The one fixed sentence every recap ends with. An outgoing web search leaves
@@ -40,8 +40,10 @@ def build_recap(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
     None before the first close. The open questions are grouped by who
     answers them; a question with no recorded answerer goes to the user, since
     guessing the user's world is what the research is there to stop. The
-    findings count leaves superseded findings out. Refused, like the reads it
-    makes, when the document or a ledger is missing.
+    findings count leaves superseded findings out. ``spinoffs_on_replaced``
+    holds each spin-off that rests on a replaced entry, as
+    :func:`spinoff.spinoffs_on_replaced` lists them. Refused, like the reads
+    it makes, when the document or a ledger is missing.
     """
     parsed = document.load(root, cfg, slug)
     session = document.last_session(parsed)
@@ -66,9 +68,17 @@ def build_recap(root: Path, cfg: SpecfloConfig, slug: str) -> dict:
             "findings": len(FINDINGS.entries(root, cfg, slug, include_superseded=False)),
             "terms": len(glossary.terms(root, cfg, slug)),
         },
-        "spinoffs_on_replaced": [],
+        "spinoffs_on_replaced": spinoff.spinoffs_on_replaced(root, cfg, slug),
         "privacy_rule": PRIVACY_RULE,
     }
+
+
+def _spinoff_line(item: dict) -> str:
+    """``y (fast, 2026-10-16): RF-01 replaced by RF-02``, one flagged spin-off."""
+    changes = ", ".join(
+        f"{each['id']} replaced by {each['by']}" for each in item.get("replaced") or []
+    )
+    return f"{item['slug']} ({item['level']}, {item['date']}): {changes}"
 
 
 def _multiline(label: str, text: str) -> list[str]:
@@ -117,7 +127,7 @@ def render_recap(payload: dict) -> str:
     spinoffs = payload.get("spinoffs_on_replaced") or []
     if spinoffs:
         lines.append("Spin-offs on replaced entries:")
-        lines.extend(f"{_INDENT}{item}" for item in spinoffs)
+        lines.extend(f"{_INDENT}{_spinoff_line(item)}" for item in spinoffs)
     else:
         lines.append("Spin-offs on replaced entries: none")
     lines.append(f"Privacy: {payload.get('privacy_rule') or PRIVACY_RULE}")

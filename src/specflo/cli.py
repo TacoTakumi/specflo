@@ -30,6 +30,7 @@ from . import followup as followup_module
 from . import graph as graph_module
 from . import research as research_module
 from . import research_cli
+from .research import spinoff
 from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
@@ -1051,6 +1052,13 @@ def status(
         typer.echo(json.dumps(info))
     else:
         typer.echo(status_view.render_status(root, info))
+        # A spun-off project is told when the research replaced an entry its
+        # handoff rests on. The line is advice, so a handoff that cannot be
+        # read never fails the status.
+        with contextlib.suppress(SpecfloError):
+            notice = spinoff.handoff_notice(root, cfg, cfg.active_project)
+            if notice:
+                typer.echo(notice)
 
 
 def _render_pipeline(data: dict) -> str:
