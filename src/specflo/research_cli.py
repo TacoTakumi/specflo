@@ -364,3 +364,32 @@ def term_set(
         f"Recorded the term {entry.id!r} in {slug}/{document.RESEARCH_DIRNAME}/"
         f"{glossary.GLOSSARY.filename}.{kept}"
     )
+
+
+# --- the recap -----------------------------------------------------------------
+
+# The recap block imports its own modules here so the block stays one piece.
+import json  # noqa: E402
+
+from .research import recap  # noqa: E402
+
+
+@research_app.command("recap", epilog="Example: specflo research recap --json")
+def research_recap(
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Print the session recap: destination and why, the usual user, the last session,
+    the open questions by who answers them, the ledger counts and the privacy rule.
+
+    The recap reads every research file and writes none. It ends with the one
+    rule for an outgoing web search, so an agent sees it before it searches.
+    """
+    root, cfg, slug = research_project()
+    try:
+        payload = recap.build_recap(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if json_output:
+        typer.echo(json.dumps(payload))
+    else:
+        typer.echo(recap.render_recap(payload), nl=False)
