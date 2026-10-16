@@ -24,15 +24,19 @@ from .followup import FOLLOWUP_FILENAME
 from .locking import lock_path_for, locked
 from .plan import PLAN_FILENAME
 from .projects import FAST_LEVEL, HARDEN_LEVEL, PROJECT_FILENAME, QUICK_LEVEL, load_project
+from .research.document import RESEARCH_FILENAME
 from .spec import SPEC_FILENAME
 
-# Artifact name -> filename, in pipeline order. The name is the public
-# contract; the filename is a local-mode detail.
+# Artifact name -> filename, in pipeline order: the phase documents first
+# (research is the one document of research level's one phase), then the
+# derived and bookkeeping files. The name is the public contract; the filename
+# is a local-mode detail.
 ARTIFACTS: dict[str, str] = {
     "brainstorm": BRAINSTORM_FILENAME,
     "spec": SPEC_FILENAME,
     "plan": PLAN_FILENAME,
     "brief": BRIEF_FILENAME,
+    "research": RESEARCH_FILENAME,
     "checkpoint": CHECKPOINT_FILENAME,
     "project": PROJECT_FILENAME,
     "followup": FOLLOWUP_FILENAME,
@@ -46,7 +50,8 @@ ROUND_PATTERN = "review-<N>"
 
 # The artifacts that carry authored prose sections. checkpoint.md is derived
 # and regenerated; project.md is front matter with no sections; followup.md
-# holds only the followup verbs' entries.
+# holds only the followup verbs' entries; every section of research.md is the
+# research commands' or the decision verb's.
 PROSE_ARTIFACTS: tuple[str, ...] = ("brainstorm", "spec", "plan", "brief")
 
 # Section title -> the verb that owns its entries. A prose write never touches
@@ -61,7 +66,7 @@ MANAGED_SECTIONS: dict[str, str] = {
 
 
 def artifact_names() -> str:
-    """The artifact names as a help line: the seven documents, or a round by number."""
+    """The artifact names as a help line: the eight documents, or a round by number."""
     return ", ".join(ARTIFACTS) + f", or {ROUND_PATTERN}"
 
 

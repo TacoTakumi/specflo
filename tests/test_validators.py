@@ -20,6 +20,7 @@ def test_validators_maps_each_phase_to_its_real_validator():
         "plan": plan.validate_plan,
         "execute": validators.execute_issues,
         "brief": brief.validate_brief,
+        "research": validators.validate_research,
     }
 
 
@@ -255,3 +256,99 @@ def test_execute_on_a_full_project_with_no_task_still_names_the_empty_plan(tmp_p
     assert validators.execute_issues(tmp_path, cfg, "thing") == [
         "no tasks captured (need at least one)."
     ]
+
+
+# --- the research validator ------------------------------------------------------
+# The research phase is terminal, so this is what `specflo advance` runs to
+# decide whether a research project may complete: the document must record
+# where the research is headed and why, who usually sits at the keyboard, and
+# at least one closed session. Nothing is built, so no plan or review gate.
+
+
+def _research_project(tmp_path):
+    """An active research 'Thing' at ``tmp_path`` with its fresh document."""
+    from specflo import config, projects
+    from specflo.research import scaffold
+
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", level="research")
+    projects.switch_project(tmp_path, cfg, "Thing")
+    scaffold(tmp_path, cfg, "thing", today="2026-10-16")
+    return cfg
+
+
+def test_research_validator_names_each_missing_item_with_the_command_that_records_it(
+    tmp_path,
+):
+    from test_level_research import RECORD_COMMANDS
+
+    cfg = _research_project(tmp_path)
+
+    issues = validators.validate_research(tmp_path, cfg, "thing")
+
+    assert len(issues) == 3
+    for item, command in zip(("destination", "usual user", "session"), RECORD_COMMANDS):
+        (issue,) = [issue for issue in issues if item in issue]
+        assert f"`{command}`" in issue, issue
+
+
+def test_each_recorded_item_clears_its_own_research_issue_only(tmp_path):
+    from test_level_research import RECORDERS
+
+    for command, record in RECORDERS.items():
+        root = tmp_path / command.split()[-2]
+        root.mkdir()
+        cfg = _research_project(root)
+        record(root, cfg)
+
+        issues = validators.validate_research(root, cfg, "thing")
+
+        assert len(issues) == 2, command
+        assert not any(command in issue for issue in issues), command
+
+
+def test_the_research_validator_passes_with_all_three_recorded(tmp_path):
+    from test_level_research import record_everything
+
+    cfg = _research_project(tmp_path)
+    record_everything(tmp_path, cfg)
+
+    assert validators.validate_research(tmp_path, cfg, "thing") == []
+
+
+def test_a_destination_without_its_reason_is_not_recorded(tmp_path):
+    from test_level_research import DESTINATION_COMMAND, record_destination
+
+    cfg = _research_project(tmp_path)
+    record_destination(tmp_path, cfg, reason=None)
+
+    issues = validators.validate_research(tmp_path, cfg, "thing")
+
+    assert len(issues) == 3
+    assert any(DESTINATION_COMMAND in issue for issue in issues)
+
+
+def test_a_log_entry_that_is_not_a_session_leaves_the_session_issue(tmp_path):
+    from test_level_research import SESSION_COMMAND, record_session
+
+    cfg = _research_project(tmp_path)
+    record_session(tmp_path, cfg, kind=None)
+    record_session(tmp_path, cfg, kind="destination")
+
+    issues = validators.validate_research(tmp_path, cfg, "thing")
+
+    assert len(issues) == 3
+    assert any(SESSION_COMMAND in issue for issue in issues)
+
+
+def test_the_research_validator_reports_a_missing_document_instead_of_raising(tmp_path):
+    # The checkpoint's read path runs the phase validator to derive doneness,
+    # so a lost document must read as an issue, never as a crash.
+    from specflo.research import document
+
+    cfg = _research_project(tmp_path)
+    document.research_path(tmp_path, cfg, "thing").unlink()
+
+    issues = validators.validate_research(tmp_path, cfg, "thing")
+
+    assert len(issues) == 1 and "research.md" in issues[0]

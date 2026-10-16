@@ -5,12 +5,13 @@ The level stands apart from the quick-fast-full ladder as harden does: `new`
 starts a project at it, the ladder never climbs to it. Its phase is known to
 the workflow, terminal, and has its own skill in the continuation."""
 
+import datetime
 import json
 
 import pytest
 from typer.testing import CliRunner
 
-from specflo import config, continuation, projects, workflow
+from specflo import config, continuation, doc, markdown, projects, validators, workflow
 from specflo.cli import app
 from specflo.errors import SpecfloError
 from specflo.research import document, ledger, scaffold
@@ -57,6 +58,50 @@ def _tree(directory):
         for path in sorted(directory.rglob("*"))
         if path.is_file()
     }
+
+
+# The three items the research document must record before the project
+# completes, put in place with the document module's own primitives. The
+# commands that record them are the research sub-app's; the validator names
+# them, these helpers do not run them.
+DESTINATION_COMMAND = "specflo research destination set"
+USER_COMMAND = "specflo research user set"
+SESSION_COMMAND = "specflo research session close"
+RECORD_COMMANDS = (DESTINATION_COMMAND, USER_COMMAND, SESSION_COMMAND)
+
+
+def _set_section(root, cfg, header, body, slug="thing"):
+    path = document.research_path(root, cfg, slug)
+    path.write_text(markdown.replace_section_body(path.read_text(), header, body))
+
+
+def record_destination(root, cfg, slug="thing", reason="the findings feed a build"):
+    body = "- Destination: build"
+    if reason is not None:
+        body += f"\n- Reason: {reason}"
+    _set_section(root, cfg, document.DESTINATION_HEADER, body, slug)
+
+
+def record_user(root, cfg, slug="thing"):
+    _set_section(root, cfg, document.USER_HEADER, "A developer new to the field.", slug)
+
+
+def record_session(root, cfg, slug="thing", kind="session"):
+    document.append_log(
+        root, cfg, slug, "Read the first three sources", kind=kind, today="2026-10-16"
+    )
+
+
+RECORDERS = {
+    DESTINATION_COMMAND: record_destination,
+    USER_COMMAND: record_user,
+    SESSION_COMMAND: record_session,
+}
+
+
+def record_everything(root, cfg, slug="thing"):
+    for record in RECORDERS.values():
+        record(root, cfg, slug)
 
 
 # --- the level --------------------------------------------------------------
@@ -306,6 +351,113 @@ def test_a_daemon_creates_and_imports_no_research_project(tmp_path):
     copied = {"project.md": files["project.md"].replace("slug: thing", "slug: copy", 1)}
     assert local.import_project("copy", copied)
     assert local.load_project("copy").level == "research"
+
+
+# --- the document through the CLI ------------------------------------------------
+
+
+def test_doc_show_research_prints_the_document_verbatim(tmp_path, monkeypatch):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    record_everything(root, cfg)
+    text = document.research_path(root, cfg, "thing").read_text()
+
+    assert _ok(["doc", "show", "research"]).output == text
+    assert doc.ARTIFACTS["research"] == document.RESEARCH_FILENAME
+
+
+def test_the_artifact_and_validator_tables_name_research(tmp_path, monkeypatch):
+    _research_project(tmp_path, monkeypatch)
+
+    assert "research" in doc.ARTIFACTS
+    assert validators.VALIDATORS["research"] is validators.validate_research
+    assert "research" in _refused(["doc", "show", "nonsense"])
+    assert "research" in _refused(["validate", "nonsense"])
+
+
+# --- validate and advance --------------------------------------------------------
+
+
+def test_validate_research_names_each_missing_item_and_its_command(tmp_path, monkeypatch):
+    _research_project(tmp_path, monkeypatch)
+
+    shown = _refused(["validate", "research"])
+    info = json.loads(runner.invoke(app, ["validate", "research", "--json"]).output)
+
+    assert "research has issues:" in shown
+    for command in RECORD_COMMANDS:
+        assert f"`{command}`" in shown, command
+    assert info["ready"] is False and len(info["issues"]) == 3
+    for item in ("destination", "usual user", "session"):
+        assert sum(item in issue for issue in info["issues"]) == 1, item
+
+
+@pytest.mark.parametrize("command", RECORD_COMMANDS)
+def test_each_recorded_item_clears_its_own_issue_and_no_other(tmp_path, monkeypatch, command):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    RECORDERS[command](root, config.load_config(root))
+
+    shown = _refused(["validate", "research"])
+
+    assert command not in shown
+    for other in RECORD_COMMANDS:
+        if other != command:
+            assert other in shown, other
+
+
+def test_validate_research_passes_once_the_three_items_are_recorded(tmp_path, monkeypatch):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    record_everything(root, config.load_config(root))
+
+    assert "ok - research is ready." in _ok(["validate", "research"]).output
+
+
+def test_advance_on_a_fresh_research_project_is_refused_and_changes_no_file(
+    tmp_path, monkeypatch
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    before = _tree(root)
+
+    shown = _refused(["advance"])
+
+    assert "cannot complete - research is not ready:" in shown
+    for command in RECORD_COMMANDS:
+        assert command in shown, command
+    assert _tree(root) == before
+    project = projects.load_project(root, config.load_config(root), "thing")
+    assert (project.status, project.phase, project.completed) == ("active", "research", "")
+
+
+def test_advance_completes_the_research_project_once_the_three_items_are_recorded(
+    tmp_path, monkeypatch
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    _ok(["index"])
+    record_everything(root, cfg)
+
+    result = _ok(["advance"])
+
+    assert result.output.splitlines()[0] == "Completed project 'thing'."
+    project = projects.load_project(root, cfg, "thing")
+    assert (project.status, project.phase) == ("complete", "research")
+    assert project.completed == datetime.date.today().isoformat()
+    info = json.loads(_ok(["status", "--json"]).output)
+    assert (info["status"], info["phase"], info["level"]) == ("complete", "research", "research")
+    assert "complete" in (root / "docs" / "projects" / "specflo-index.md").read_text()
+    assert "Project 'thing' is already complete." in _ok(["advance"]).output
+
+
+def test_advance_completes_a_research_project_as_json(tmp_path, monkeypatch):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    record_everything(root, config.load_config(root))
+
+    info = json.loads(_ok(["advance", "--json"]).output)
+
+    assert (info["advanced"], info["from"], info["to"], info["complete"]) == (
+        True, "research", None, True
+    )
+    assert "specflo research recap" not in info["continuation"]
 
 
 # --- specflo level: up to fast or full, never to quick, never to research ---------

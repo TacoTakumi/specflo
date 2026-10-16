@@ -27,12 +27,19 @@ def _project(tmp_path, monkeypatch):
 # --- the module ----------------------------------------------------------
 
 
-def test_artifact_names_are_the_seven_project_documents():
+def test_artifact_names_are_the_eight_project_documents():
     assert list(doc.ARTIFACTS) == [
-        "brainstorm", "spec", "plan", "brief", "checkpoint", "project", "followup"
+        "brainstorm", "spec", "plan", "brief", "research", "checkpoint", "project", "followup"
     ]
     assert doc.ARTIFACTS["project"] == "project.md"
     assert doc.ARTIFACTS["checkpoint"] == "checkpoint.md"
+    assert doc.ARTIFACTS["research"] == "research.md"
+
+
+def test_the_research_document_has_no_prose_section_to_set():
+    # Every section of research.md is the research commands' or the decision
+    # verb's, so a prose write has nothing there to target.
+    assert "research" not in doc.PROSE_ARTIFACTS
 
 
 def test_show_document_returns_the_file_content_verbatim(tmp_path, monkeypatch):
@@ -224,7 +231,7 @@ def test_set_section_refuses_an_unknown_section_listing_the_prose_ones(tmp_path,
     assert "Decisions" not in message
 
 
-@pytest.mark.parametrize("name", ["checkpoint", "project"])
+@pytest.mark.parametrize("name", ["checkpoint", "project", "research"])
 def test_set_section_refuses_artifacts_without_prose_sections(tmp_path, monkeypatch, name):
     cfg, _path = _brainstorm_with_decisions(tmp_path, monkeypatch)
 

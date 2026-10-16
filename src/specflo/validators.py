@@ -14,6 +14,8 @@ the phase's outstanding issues (empty when the artifact is ready).
 from __future__ import annotations
 
 from . import brainstorm, brief, plan, projects, review, spec
+from .errors import SpecfloError
+from .research import document as research_document
 
 # Phase -> its real validator. Defined once; ``cli``'s validate/advance and the
 # read-path doneness derivation both reference this same object.
@@ -45,12 +47,46 @@ def execute_issues(root, cfg, slug) -> list[str]:
     return issues + review.completion_issues(root, cfg, slug)
 
 
+def validate_research(root, cfg, slug) -> list[str]:
+    """Everything blocking a research project's completion. Read-only.
+
+    Research is the one phase of its level and terminal, so this is the gate
+    `specflo advance` runs to complete the project. Nothing is built, so there
+    is no plan to reconcile and no review round: the document itself must
+    record where the research is headed and why, who usually sits at the
+    keyboard, and at least one closed session. Each issue names the command
+    that records the item. A lost document reads as an issue, not a crash,
+    since the checkpoint's read path runs this to derive doneness.
+    """
+    try:
+        parsed = research_document.load(root, cfg, slug)
+    except SpecfloError as exc:
+        return [str(exc)]
+    issues = []
+    # The scaffold's bare ``- Destination: unknown`` is no record: a recorded
+    # destination carries the reason of its last change.
+    if parsed.reason is None:
+        issues.append(
+            "destination not recorded (need a destination with its reason):"
+            " run `specflo research destination set`."
+        )
+    if not parsed.usual_user:
+        issues.append("usual user not recorded: run `specflo research user set`.")
+    if not any(entry.kind == "session" for entry in parsed.log):
+        issues.append(
+            "no session recorded (need at least one closed session):"
+            " run `specflo research session close`."
+        )
+    return issues
+
+
 VALIDATORS = {
     "brainstorm": brainstorm.validate_brainstorm,
     "spec": spec.validate_spec,
     "plan": plan.validate_plan,
     "execute": execute_issues,
     "brief": brief.validate_brief,
+    "research": validate_research,
 }
 
 
