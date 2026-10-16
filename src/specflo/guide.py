@@ -225,6 +225,17 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Show one follow-up from any project: Do, From, Status, Closed and Closed by."},
     {"name": "followup close", "group": "any", "args": "<FU-NN> --note <text> [--by <ref>]",
      "summary": "Close an open follow-up in any project, with a note and what did the work."},
+    {"name": "research user set", "group": "research", "args": "--text <text> | --file <path>",
+     "summary": "Record who usually sits at the keyboard, in their own words; a later call "
+                "replaces it and the log keeps the old text."},
+    {"name": "research destination set", "group": "research",
+     "args": "build|inform|learn|unknown --reason <text>",
+     "summary": "Record where the research is headed and why; the log keeps the old value, "
+                "the new one and the reason."},
+    {"name": "research session close", "group": "research",
+     "args": "--summary <text> --next <text> [--present <who>]",
+     "summary": "End a session: one dated log entry with the summary, the next steps and who "
+                "was present (the usual user by default)."},
     {"name": "agent start", "group": "agents", "args": "<name>",
      "summary": "Start a detached pi agent host in a herdr tab when available "
                 "(--cwd, --pi-cmd, --workspace, --no-herdr)."},

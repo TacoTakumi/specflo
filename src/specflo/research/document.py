@@ -48,11 +48,28 @@ SECTION_HEADERS = (DESTINATION_HEADER, USER_HEADER, DECISIONS_HEADER, LOG_HEADER
 DESTINATIONS = ("build", "inform", "learn", "unknown")
 UNKNOWN_DESTINATION = "unknown"
 
+# The kinds of the log entries the three session commands write.
+USER_KIND = "user"
+DESTINATION_KIND = "destination"
+SESSION_KIND = "session"
+
+# Who was present at a session when nobody is named and no usual user is
+# recorded; a recorded user is named by the first line of the description,
+# shortened to PRESENT_WIDTH characters.
+DEFAULT_PRESENT = "the usual user"
+PRESENT_WIDTH = 80
+
 _DESTINATION_LINE = re.compile(r"^- Destination:(.*)$")
 _REASON_LINE = re.compile(r"^- Reason:(.*)$")
 # ``- 2026-10-16: text`` or ``- 2026-10-16 session: text``.
 _LOG_LINE = re.compile(r"^- (\d{4}-\d{2}-\d{2})(?: ([a-z][a-z0-9-]*))?: (.*)$")
 _KIND = re.compile(r"^[a-z][a-z0-9-]*$")
+# A session entry's text: three fields on one line, in this order, joined by
+# the separator, which no field may hold so the line parses back.
+_SESSION_SEPARATOR = " | "
+_SESSION_LINE = re.compile(r"^Summary: (.*?) \| Next: (.*?) \| Present: (.*)$")
+# The hint a managed section keeps at the top of its body across rewrites.
+_COMMENT_LINE = re.compile(r"^<!--.*-->$")
 
 _TEMPLATE = """\
 ---
@@ -93,6 +110,16 @@ class ResearchDocument:
     log: tuple[LogEntry, ...]
 
 
+@dataclass(frozen=True)
+class Session:
+    """One closed session, read back from its log entry."""
+
+    summary: str
+    next_steps: str
+    present: str
+    date: str | None = None
+
+
 def research_dir(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
     """``<project>/research/``, the folder of the ledgers and stored sources."""
     return project_dir(root, cfg, validate_slug(slug)) / RESEARCH_DIRNAME
@@ -129,6 +156,15 @@ def start_document(
         )
     )
     return path, True
+
+
+def has_document(root: Path, cfg: SpecfloConfig, slug: str) -> bool:
+    """Whether project ``slug`` has a research document.
+
+    The research commands work on any project that has one, whatever its
+    level: a research project moved up to full keeps its research files.
+    """
+    return research_path(root, cfg, slug).is_file()
 
 
 def read_document(root: Path, cfg: SpecfloConfig, slug: str) -> str:
@@ -223,3 +259,182 @@ def append_log(
         doc = append_line_to_section(doc, LOG_HEADER, _log_line(entry))
         research_path(root, cfg, slug).write_text(markdown.bump_updated(doc, today))
     return entry
+
+
+def _write(root: Path, cfg: SpecfloConfig, slug: str, doc: str, today: str) -> None:
+    research_path(root, cfg, slug).write_text(markdown.bump_updated(doc, today))
+
+
+def _replace_managed_body(doc: str, header: str, body: str) -> str:
+    """``doc`` with the ``header`` section's body replaced by ``body``.
+
+    The hint comment a new document carries at the top of the section stays
+    above the new body, so a reader still sees which command owns it.
+    """
+    current = markdown.section_body(doc, header)
+    if current is None:
+        raise SpecfloError(f"Malformed {RESEARCH_FILENAME}: no '{header}' section.")
+    notes = []
+    for line in current.splitlines():
+        if not line.strip():
+            continue
+        if not _COMMENT_LINE.match(line.strip()):
+            break
+        notes.append(line.rstrip())
+    return markdown.replace_section_body(doc, header, "\n".join([*notes, body]))
+
+
+def _one_line(text: str) -> str:
+    """``text`` with its line breaks and runs of whitespace folded to one space."""
+    return " ".join(text.split())
+
+
+def set_user(
+    root: Path, cfg: SpecfloConfig, slug: str, text: str, today: str | None = None
+) -> str | None:
+    """Record the usual user's description and return the text it replaced.
+
+    The description may run over several lines; it replaces the Usual user
+    section's body. When there was a description before, a ``user`` log entry
+    keeps its words on one line, so nothing is lost. Refuses an empty text and
+    one holding a markdown heading line, which would start a new section.
+    """
+    if text is None or not text.strip():
+        raise SpecfloError("The usual user's description needs a non-empty text.")
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    if any(line.lstrip().startswith("#") for line in lines):
+        raise SpecfloError(
+            "The usual user's description cannot hold a line that starts with '#':"
+            " it would start a new section of the document."
+        )
+    text = "\n".join(lines)
+    today = today or datetime.date.today().isoformat()
+    with locked(lock_path_for(root, slug, LOCK_NAME)):
+        doc = read_document(root, cfg, slug)
+        previous = parse(doc).usual_user
+        doc = _replace_managed_body(doc, USER_HEADER, text)
+        if previous:
+            entry = LogEntry(date=today, kind=USER_KIND, text=f"Usual user was: {_one_line(previous)}")
+            doc = append_line_to_section(doc, LOG_HEADER, _log_line(entry))
+        _write(root, cfg, slug, doc, today)
+    return previous or None
+
+
+def set_destination(
+    root: Path, cfg: SpecfloConfig, slug: str, value: str, reason: str, today: str | None = None
+) -> tuple[str, str]:
+    """Record the destination and the reason; return ``(old, new)``.
+
+    The Destination section carries both lines afterwards, and a
+    ``destination`` log entry keeps the old value, the new one and the reason.
+    A value outside :data:`DESTINATIONS` and a missing, empty or multi-line
+    reason are refused before anything is written.
+    """
+    if value not in DESTINATIONS:
+        raise SpecfloError(
+            f"Unknown destination {value!r}: expected one of {', '.join(DESTINATIONS)}."
+        )
+    if reason is None or not reason.strip():
+        raise SpecfloError("A destination change needs a reason: why it changed, on one line.")
+    require_one_line("The reason", reason)
+    reason = reason.strip()
+    today = today or datetime.date.today().isoformat()
+    with locked(lock_path_for(root, slug, LOCK_NAME)):
+        doc = read_document(root, cfg, slug)
+        old = parse(doc).destination
+        doc = _replace_managed_body(
+            doc, DESTINATION_HEADER, f"- Destination: {value}\n- Reason: {reason}"
+        )
+        entry = LogEntry(
+            date=today, kind=DESTINATION_KIND, text=f"Destination {old} -> {value}: {reason}"
+        )
+        doc = append_line_to_section(doc, LOG_HEADER, _log_line(entry))
+        _write(root, cfg, slug, doc, today)
+    return old, value
+
+
+def _session_field(what: str, value: str | None) -> str:
+    if value is None or not value.strip():
+        raise SpecfloError(f"A session's {what} needs a non-empty text.")
+    require_one_line(f"A session's {what}", value)
+    if _SESSION_SEPARATOR in value:
+        raise SpecfloError(
+            f"A session's {what} cannot hold '{_SESSION_SEPARATOR.strip()}' between spaces:"
+            " it separates the fields of the log entry."
+        )
+    return value.strip()
+
+
+def format_session(summary: str, next_steps: str, present: str) -> str:
+    """The one-line text of a session log entry; :func:`parse_session` reads it back."""
+    return f"Summary: {summary}{_SESSION_SEPARATOR}Next: {next_steps}{_SESSION_SEPARATOR}Present: {present}"
+
+
+def parse_session(entry: LogEntry) -> Session:
+    """The session a ``session`` log entry records; refused for any other entry."""
+    if entry.kind != SESSION_KIND:
+        raise SpecfloError(f"Not a session entry: its kind is {entry.kind!r}, not {SESSION_KIND!r}.")
+    m = _SESSION_LINE.match(entry.text)
+    if m is None:
+        raise SpecfloError(
+            f"Malformed session entry of {entry.date}: expected"
+            f" '{format_session('<summary>', '<next steps>', '<who>')}'."
+        )
+    summary, next_steps, present = (group.strip() for group in m.groups())
+    return Session(summary=summary, next_steps=next_steps, present=present, date=entry.date)
+
+
+def last_session(parsed: ResearchDocument) -> Session | None:
+    """The most recent closed session in ``parsed``'s log, or None before the first."""
+    for entry in reversed(parsed.log):
+        if entry.kind == SESSION_KIND:
+            return parse_session(entry)
+    return None
+
+
+def default_present(usual_user: str) -> str:
+    """Who was present when a session names nobody.
+
+    The first line of the usual user's description, cut at a word to fit
+    :data:`PRESENT_WIDTH` with a trailing ``...``; :data:`DEFAULT_PRESENT`
+    when no user is recorded.
+    """
+    first = next((line.strip() for line in usual_user.splitlines() if line.strip()), "")
+    if not first:
+        return DEFAULT_PRESENT
+    if len(first) <= PRESENT_WIDTH:
+        return first
+    cut = first[: PRESENT_WIDTH - 3]
+    if " " in cut:
+        cut = cut[: cut.rfind(" ")]
+    return cut.rstrip() + "..."
+
+
+def close_session(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    summary: str,
+    next_steps: str,
+    present: str | None = None,
+    today: str | None = None,
+) -> Session:
+    """Append one dated ``session`` log entry and return the session it records.
+
+    ``present`` defaults to :func:`default_present` of the recorded usual
+    user. Each field is one non-empty line without the field separator, checked
+    before anything is written.
+    """
+    summary = _session_field("summary", summary)
+    next_steps = _session_field("next steps", next_steps)
+    if present is not None:
+        present = _session_field("present", present)
+    today = today or datetime.date.today().isoformat()
+    with locked(lock_path_for(root, slug, LOCK_NAME)):
+        doc = read_document(root, cfg, slug)
+        if present is None:
+            present = default_present(parse(doc).usual_user)
+        entry = LogEntry(date=today, kind=SESSION_KIND, text=format_session(summary, next_steps, present))
+        doc = append_line_to_section(doc, LOG_HEADER, _log_line(entry))
+        _write(root, cfg, slug, doc, today)
+    return Session(summary=summary, next_steps=next_steps, present=present, date=today)

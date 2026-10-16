@@ -29,6 +29,7 @@ from . import doctor as doctor_module
 from . import followup as followup_module
 from . import graph as graph_module
 from . import research as research_module
+from . import research_cli
 from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
@@ -222,6 +223,7 @@ app.add_typer(section_app, name="section")
 
 followup_app = typer.Typer(help="Record the work a project leaves for a later one (FU-NN).")
 app.add_typer(followup_app, name="followup")
+app.add_typer(research_cli.research_app, name="research")
 
 hook_app = typer.Typer(help="Session-start integration (clear-and-continue).")
 app.add_typer(hook_app, name="hook")
@@ -1088,6 +1090,7 @@ _GUIDE_GROUPS = [
     ("execute", "Execute"),
     ("review", "Review"),
     ("any", "Any phase"),
+    ("research", "Research"),
     ("agents", "Agents"),
 ]
 _GUIDE_TOPICS = {"daemon": ("daemon", "Daemon & team")}
