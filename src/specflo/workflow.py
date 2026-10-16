@@ -11,10 +11,19 @@ PHASES: list[str] = ["brainstorm", "spec", "plan", "execute"]
 # no approval sits between the two, so a phase boundary would do nothing.
 # Harden level has the same one phase: its plan grows from review findings.
 _QUICK_PHASES: list[str] = ["execute"]
+# Research level has its own one phase: the user builds up sources, findings,
+# questions and a glossary over sessions, and nothing is built from them. It
+# stays out of PHASES, which is the ladder that advance and reopen walk.
+RESEARCH_PHASE = "research"
+_RESEARCH_PHASES: list[str] = [RESEARCH_PHASE]
+# Every phase a project can stand in: the ladder's four and research level's one.
+KNOWN_PHASES: tuple[str, ...] = (*PHASES, RESEARCH_PHASE)
 
 
 def phases_for(level: str) -> list[str]:
     """The phases a project at ``level`` goes through, in order."""
+    if level == "research":
+        return _RESEARCH_PHASES
     return _QUICK_PHASES if level in ("quick", "harden") else PHASES
 
 _NEXT_STEP: dict[str, str] = {
@@ -22,19 +31,30 @@ _NEXT_STEP: dict[str, str] = {
     "spec": "Write the spec: testable requirements and scenarios.",
     "plan": "Write the multi-phase implementation plan with dependency-ordered tasks.",
     "execute": "Execute the plan one step at a time, verifying each.",
+    RESEARCH_PHASE: (
+        "Start the session with `specflo research recap`, then work the research with"
+        " the user: record each source, finding, question and term as it lands, and"
+        " end the session with `specflo research session close`."
+    ),
 }
+
+# The closing note of a finished project, whatever phase it finished in.
+_COMPLETE = "Project complete. Start the next piece of work with `specflo new`."
 
 
 def _require_known(phase: str) -> None:
-    if phase not in PHASES:
+    if phase not in KNOWN_PHASES:
         raise ValueError(
-            f"Unknown phase {phase!r}. Known phases: {', '.join(PHASES)}."
+            f"Unknown phase {phase!r}. Known phases: {', '.join(KNOWN_PHASES)}."
         )
 
 
 def next_phase(phase: str) -> str | None:
     """Return the phase after ``phase``, or None if it is the final phase."""
     _require_known(phase)
+    if phase == RESEARCH_PHASE:
+        # Research level's one phase is its last: the project completes from it.
+        return None
     index = PHASES.index(phase)
     if index + 1 < len(PHASES):
         return PHASES[index + 1]
@@ -449,9 +469,14 @@ def next_step(
             "Project shelved. Resume it with `specflo resume`, or start a new "
             "one with `specflo new`."
         )
+    if phase == RESEARCH_PHASE:
+        # Terminal like execute, so complete reads the same. The research
+        # document validating does not end the research, so ``validates``
+        # changes nothing here: the hint keeps the session loop.
+        return _COMPLETE if complete else _NEXT_STEP[RESEARCH_PHASE]
     if phase == "execute":
         if complete:
-            return "Project complete. Start the next piece of work with `specflo new`."
+            return _COMPLETE
         if progress is not None and progress.get("total", 0) > 0:
             if progress.get("all_done"):
                 return _review_hint(review, test_command)

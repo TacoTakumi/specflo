@@ -47,8 +47,12 @@ LEVELS = (QUICK_LEVEL, FAST_LEVEL, FULL_LEVEL)
 # Harden level hardens code outside a normal project. It stands apart from the
 # levels above: a project starts at it with `new`, and never moves to or from it.
 HARDEN_LEVEL = "harden"
+# Research level builds up sources, findings, questions and a glossary over
+# sessions, and builds nothing. It stands apart from the ladder as harden does:
+# a project starts at it with `new`, and the ladder never climbs to it.
+RESEARCH_LEVEL = "research"
 # The levels `new` starts a project at.
-NEW_LEVELS = (*LEVELS, HARDEN_LEVEL)
+NEW_LEVELS = (*LEVELS, HARDEN_LEVEL, RESEARCH_LEVEL)
 # Fast level's caps: more than this is work for full level.
 FAST_MAX_DECISIONS = 3
 FAST_MAX_TASKS = 7

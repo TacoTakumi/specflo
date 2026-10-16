@@ -34,12 +34,16 @@ from __future__ import annotations
 # invoke (REQ-06). It is a *pointer, not a dependency*: the continuation already
 # names the concrete next action, so the run proceeds even if the skill is
 # unavailable. The four phase skills carry their phase's name under the
-# collision-avoiding ``specflo-`` prefix.
+# collision-avoiding ``specflo-`` prefix. Research level's one phase is the
+# exception: ``specflo-research`` is the subagent skill that scans a landscape
+# for a brainstorm, so the research project's session skill carries a longer
+# name. The map is lookup-only; whether a skill is installed is not read here.
 PHASE_SKILLS: dict[str, str] = {
     "brainstorm": "specflo-brainstorm",
     "spec": "specflo-spec",
     "plan": "specflo-plan",
     "execute": "specflo-execute",
+    "research": "specflo-research-project",
 }
 
 # Fixed marker opening the clear-point sentence. Tests — and any outer harness
