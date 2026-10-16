@@ -240,6 +240,9 @@ COMMANDS: list[dict[str, str]] = [
      "args": "<Q-NN> --resolution <text> [--by <name>]",
      "summary": "Resolve an open question: record the resolution and who gave it (the usual "
                 "user by default)."},
+    {"name": "research ask-dev", "group": "research", "args": "",
+     "summary": "Print the open developer questions as email text (a subject line and a "
+                "plain body) for the user to send; writes nothing and sends nothing."},
     {"name": "research destination set", "group": "research",
      "args": "build|inform|learn|unknown --reason <text>",
      "summary": "Record where the research is headed and why; the log keeps the old value, "

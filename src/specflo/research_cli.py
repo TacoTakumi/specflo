@@ -16,7 +16,7 @@ import typer
 from . import config
 from . import guide as guide_module
 from .errors import SpecfloError
-from .research import document, findings, ledger, questions
+from .research import askdev, document, findings, ledger, questions
 from .research import ingest as ingest_module
 from .research import sources
 
@@ -200,6 +200,27 @@ def question_resolve(
         f"Resolved {entry.id} in {slug}/research/{ledger.QUESTIONS.filename}"
         f" (by {entry.get(questions.RESOLVED_BY_FIELD)})."
     )
+
+
+@research_app.command("ask-dev", epilog="Example: specflo research ask-dev")
+def ask_dev() -> None:
+    """Print the open developer questions as email text: a subject line and a plain body.
+
+    Each question comes with its ID, options, default and why; user questions
+    stay out. Nothing is written and nothing is sent: paste the text into your
+    own mail client. With no open developer question it says so in one line.
+    """
+    root, cfg, slug = research_project()
+    try:
+        subject, body = askdev.render_ask_dev(root, cfg, slug)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    if not subject:
+        typer.echo(body)
+        return
+    typer.echo(f"Subject: {subject}")
+    typer.echo()
+    typer.echo(body)
 
 
 @destination_app.command(
