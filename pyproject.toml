@@ -62,6 +62,16 @@ serve = [
 bench = [
     "matplotlib>=3.11.2",
 ]
+# The research converters for PDF and Word documents: pip install 'specflo[docs]'.
+# The core install stays free of them; research/convert.py imports them lazily
+# and names this extra when one is missing. Only these three: pypdfium2 reads
+# a PDF's text page by page, mammoth turns a .docx into HTML and markdownify
+# turns that HTML into markdown.
+docs = [
+    "pypdfium2>=5.14.0",
+    "mammoth>=1.13.0",
+    "markdownify>=1.2.3",
+]
 
 [build-system]
 requires = ["hatchling"]

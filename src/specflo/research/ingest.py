@@ -6,11 +6,12 @@ stores it: the ledger mints S-NN, the directory of that ID is created, the
 original is written byte for byte, the text beside it, and the entry records
 where both are. Every refusal comes before the first write.
 
-The converter is the seam for more formats. Today a markdown or plain-text
-file is the only kind it takes, and its text is the file's content decoded as
-UTF-8. PDF and Word documents join through :data:`CONVERTERS`: one entry per
-suffix with the Format value and a converter that returns the text and the
-fields its format adds (a PDF its page count).
+The converter is the seam for the formats: :data:`CONVERTERS` has one entry
+per suffix with the Format value and a converter that returns the text and the
+fields its format adds. A markdown or plain-text file's text is its content
+decoded as UTF-8. A PDF or Word document goes through :mod:`.convert`, whose
+libraries come from the ``docs`` extra and are imported only when such a file
+is converted; a PDF adds its page count.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from pathlib import Path
 from ..config import SpecfloConfig
 from ..errors import SpecfloError
 from . import sources
+from .convert import convert_docx, convert_pdf
 from .ledger import Entry, source_dir
 
 # A converter takes the file's path (for its name in messages) and its bytes;
@@ -41,11 +43,14 @@ def _decode_utf8(path: Path, data: bytes) -> tuple[str, list[tuple[str, str]]]:
         ) from exc
 
 
-# Lowercase suffix -> (Format value, converter). The PDF and Word converters
-# are added here, with their Format values from sources.FORMATS.
+# Lowercase suffix -> (Format value, converter); the Format values are those
+# of sources.FORMATS. The PDF and Word converters need the docs extra and say
+# so when it is missing.
 CONVERTERS: dict[str, tuple[str, Converter]] = {
     ".md": ("md", _decode_utf8),
     ".txt": ("txt", _decode_utf8),
+    ".pdf": ("pdf", convert_pdf),
+    ".docx": ("docx", convert_docx),
 }
 SUPPORTED_SUFFIXES = tuple(CONVERTERS)
 
@@ -80,7 +85,9 @@ def ingest_file(
 
     Refused, with nothing written: a missing file or a directory, bytes a
     source already holds (the message names it), a suffix no converter takes,
-    a name the source directory cannot hold and a file that is not UTF-8.
+    a name the source directory cannot hold, a text file that is not UTF-8, a
+    PDF or DOCX without the docs extra installed and a file its converter
+    cannot read.
     Then the ledger mints the ID, the source directory is made for it, the
     original and the text are written there and the entry records both paths.
     """

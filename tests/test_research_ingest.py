@@ -183,7 +183,7 @@ def test_the_same_bytes_again_are_refused_naming_the_entry_and_nothing_changes(t
 # --- refusals write nothing -------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["paper.pdf", "memo.docx", "README", "image.PNG"])
+@pytest.mark.parametrize("name", ["slides.odt", "README", "image.PNG"])
 def test_an_unsupported_suffix_is_refused_naming_the_supported_ones_and_writes_nothing(
     tmp_path, monkeypatch, name
 ):
@@ -194,7 +194,7 @@ def test_an_unsupported_suffix_is_refused_naming_the_supported_ones_and_writes_n
 
     shown = _refused([*INGEST, str(path)])
 
-    assert ".md" in shown and ".txt" in shown
+    assert ".md" in shown and ".txt" in shown and ".pdf" in shown and ".docx" in shown
     assert name in shown
     assert _tree(root) == before
     assert not (_project(root) / "research" / "sources").exists()
@@ -341,16 +341,18 @@ def test_add_source_checks_the_kind_and_the_field_contract_before_minting(tmp_pa
 
 
 def test_the_converter_dispatches_on_the_suffix_and_names_the_supported_ones():
-    assert ingest.SUPPORTED_SUFFIXES == (".md", ".txt")
+    assert ingest.SUPPORTED_SUFFIXES == (".md", ".txt", ".pdf", ".docx")
     assert ingest.format_of(Path("a.md")) == "md"
     assert ingest.format_of(Path("a.TXT")) == "txt"
+    assert ingest.format_of(Path("a.pdf")) == "pdf"
+    assert ingest.format_of(Path("a.docx")) == "docx"
     assert ingest.convert(Path("a.txt"), b"plain\n") == ("plain\n", [])
     assert ingest.convert(Path("a.md"), NOTES.encode("utf-8")) == (NOTES, [])
 
-    for name in ("a.pdf", "a.docx", "a"):
+    for name in ("a.odt", "a.png", "a"):
         with pytest.raises(SpecfloError, match=r"\.md"):
             ingest.format_of(Path(name))
-        with pytest.raises(SpecfloError, match=r"\.txt"):
+        with pytest.raises(SpecfloError, match=r"\.txt, \.pdf, \.docx"):
             ingest.convert(Path(name), b"")
     with pytest.raises(SpecfloError, match="UTF-8"):
         ingest.convert(Path("a.txt"), b"\xff\xfe")

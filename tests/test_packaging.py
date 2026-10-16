@@ -14,8 +14,10 @@ build (or from the repo), its parametrized case fails loudly.
 """
 
 import importlib.util
+import re
 import subprocess
 import tarfile
+import tomllib
 import zipfile
 from pathlib import Path
 
@@ -240,6 +242,69 @@ def test_the_serve_extra_declares_the_event_stream_library(dist):
     sse = [req for req in _requires_dist(dist) if req.startswith("sse-starlette")]
     assert sse, "sse-starlette is not declared at all"
     assert all("extra ==" in req and "serve" in req for req in sse), sse
+
+
+# The research converters: a PDF is read with pypdfium2, a Word document with
+# mammoth and markdownify. They ship as the docs extra and nowhere else, so a
+# core install stays free of them and `specflo research ingest` names the
+# extra when one is missing.
+DOCS_CONVERTERS = ("pypdfium2", "mammoth", "markdownify")
+# Converters that are never used, in any dependency group: PyMuPDF is AGPL
+# with a commercial licence, and the others pull in large stacks.
+FORBIDDEN_CONVERTERS = ("pymupdf", "pymupdf4llm", "markitdown", "docling")
+
+
+def _requirement_name(spec):
+    """The distribution name of a requirement line, lower-cased."""
+    return re.split(r"[\s<>=!~;\[]", spec.strip(), maxsplit=1)[0].lower()
+
+
+def _pyproject():
+    with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def test_the_docs_extra_holds_exactly_the_three_converters():
+    extras = _pyproject()["project"]["optional-dependencies"]
+    assert sorted(_requirement_name(spec) for spec in extras["docs"]) == sorted(DOCS_CONVERTERS)
+    # Each pins a lower bound, so a resolver cannot pick an API the converter predates.
+    assert all(">=" in spec for spec in extras["docs"]), extras["docs"]
+
+
+def test_the_core_dependencies_and_other_groups_do_not_name_the_converters():
+    project = _pyproject()
+    core = {_requirement_name(spec) for spec in project["project"]["dependencies"]}
+    assert core.isdisjoint(DOCS_CONVERTERS), core & set(DOCS_CONVERTERS)
+    for extra, specs in project["project"]["optional-dependencies"].items():
+        if extra != "docs":
+            names = {_requirement_name(spec) for spec in specs}
+            assert names.isdisjoint(DOCS_CONVERTERS), (extra, names)
+    for group, specs in project.get("dependency-groups", {}).items():
+        names = {_requirement_name(spec) for spec in specs if isinstance(spec, str)}
+        assert names.isdisjoint(DOCS_CONVERTERS), (group, names)
+
+
+def test_the_wheel_declares_the_converters_under_the_docs_extra_only(dist):
+    for name in DOCS_CONVERTERS:
+        reqs = [req for req in _requires_dist(dist) if _requirement_name(req) == name]
+        assert reqs, f"{name} is not declared at all"
+        # The marker's quotes differ between metadata writers; the extra's name does not.
+        extras = [req.split("extra ==", 1)[1].strip(" '\"") if "extra ==" in req else None for req in reqs]
+        assert extras == ["docs"] * len(reqs), reqs
+
+
+@pytest.mark.parametrize("name", FORBIDDEN_CONVERTERS)
+def test_no_forbidden_converter_is_named_anywhere(name):
+    pyproject = (REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8").lower()
+    assert name not in pyproject
+    lock_text = (REPO_ROOT / "uv.lock").read_text(encoding="utf-8").lower()
+    assert name not in lock_text
+    with (REPO_ROOT / "uv.lock").open("rb") as handle:
+        lock = tomllib.load(handle)
+    locked = {package["name"].lower() for package in lock["package"]}
+    assert name not in locked
+    # The three converters are locked, so the lock is the one the extra resolves from.
+    assert set(DOCS_CONVERTERS) <= locked
 
 
 @pytest.mark.parametrize("name", SKILL_NAMES)
