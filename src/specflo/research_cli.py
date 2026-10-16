@@ -274,3 +274,46 @@ def session_close(
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Closed the session of {session.date} in {slug}/research (present: {session.present}).")
+
+
+# --- the glossary ---------------------------------------------------------------
+
+# The glossary block imports its own module here so the block stays one piece.
+from .research import glossary  # noqa: E402
+
+term_app = typer.Typer(help="The glossary: the domain's terms in the user's own words.")
+research_app.add_typer(term_app, name="term")
+
+
+@term_app.command(
+    "set",
+    epilog=(
+        'Example: specflo research term set --term "Cap rate"'
+        ' --definition "Net operating income over the price" --avoid yield'
+    ),
+)
+def term_set(
+    term: str = typer.Option(..., "--term", help="The term, as the user says it (one line)."),
+    definition: str = typer.Option(
+        ..., "--definition", help="What the term means, in the user's own words (one line)."
+    ),
+    avoid: list[str] = typer.Option(
+        None, "--avoid", metavar="<word>", help="A word to avoid for this term (repeatable)."
+    ),
+) -> None:
+    """Set a glossary term with its definition and the words to avoid.
+
+    Setting a term again replaces its definition and words to avoid in place,
+    and the log keeps the previous definition. Nothing deletes a term.
+    """
+    root, cfg, slug = research_project()
+    try:
+        previous = glossary.get_term(root, cfg, slug, term)
+        entry = glossary.set_term(root, cfg, slug, term, definition, avoid or ())
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    kept = " The previous definition is kept in the log." if previous else ""
+    typer.echo(
+        f"Recorded the term {entry.id!r} in {slug}/{document.RESEARCH_DIRNAME}/"
+        f"{glossary.GLOSSARY.filename}.{kept}"
+    )

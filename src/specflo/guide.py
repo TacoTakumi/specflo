@@ -250,6 +250,10 @@ COMMANDS: list[dict[str, str]] = [
      "args": "--summary <text> --next <text> [--present <who>]",
      "summary": "End a session: one dated log entry with the summary, the next steps and who "
                 "was present (the usual user by default)."},
+    {"name": "research term set", "group": "research",
+     "args": "--term <term> --definition <text> [--avoid <word>]...",
+     "summary": "Set a glossary term in the user's own words, with the words to avoid; setting "
+                "it again replaces the definition in place and the log keeps the old one."},
     {"name": "agent start", "group": "agents", "args": "<name>",
      "summary": "Start a detached pi agent host in a herdr tab when available "
                 "(--cwd, --pi-cmd, --workspace, --no-herdr)."},
