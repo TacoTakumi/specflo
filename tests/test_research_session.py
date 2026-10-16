@@ -6,13 +6,15 @@ research files and the commands keep working on it. Every refusal leaves the
 checkout byte-identical, and the only writer of ``research.md`` is the CLI.
 """
 
+import ast
 import datetime
 import json
+from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from specflo import config, guide
+from specflo import config, guide, research_cli
 from specflo.cli import app
 from specflo.errors import SpecfloError
 from specflo.research import document
@@ -505,3 +507,42 @@ def test_the_guide_text_shows_the_research_heading_and_its_rows(tmp_path, monkey
         assert f"\n    {name} " in out, name
     assert out.index("\n    followup close ") < out.index("\n    research user set ")
     assert out.index("\n    research session close ") < out.index("\n    agent start ")
+
+
+# --- the shape of the module --------------------------------------------------------
+
+
+def test_the_research_cli_imports_everything_once_at_the_module_top():
+    """The sub-app grew in blocks, each with its own import; they belong at the
+    top. Every import is a module-level statement before the first other
+    statement (the docstring and ``from __future__`` may come first), no module
+    or name is imported twice, and no import line carries a ``noqa``."""
+    source = Path(research_cli.__file__).read_text(encoding="utf-8")
+    lines = source.splitlines()
+    tree = ast.parse(source)
+
+    body = tree.body
+    start = 0
+    if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant):
+        start = 1
+    end = start
+    while end < len(body) and isinstance(body[end], (ast.Import, ast.ImportFrom)):
+        end += 1
+    top_imports = body[start:end]
+    assert top_imports, "no import block at the top of research_cli.py"
+
+    all_imports = [n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))]
+    stray = [n.lineno for n in all_imports if not any(n is top for top in top_imports)]
+    assert stray == [], f"imports outside the top block at lines {stray}"
+
+    seen: dict[str, int] = {}
+    for node in top_imports:
+        assert "noqa" not in lines[node.lineno - 1], f"noqa on an import at line {node.lineno}"
+        if isinstance(node, ast.Import):
+            keys = [alias.name for alias in node.names]
+        else:
+            prefix = "." * node.level + (node.module or "")
+            keys = [f"{prefix}:{alias.name}" for alias in node.names]
+        for key in keys:
+            assert key not in seen, f"{key} imported at lines {seen[key]} and {node.lineno}"
+            seen[key] = node.lineno

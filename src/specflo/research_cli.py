@@ -9,6 +9,8 @@ Each group below is a place for the later ledger commands to mount beside.
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 
 import typer
@@ -16,9 +18,19 @@ import typer
 from . import config
 from . import guide as guide_module
 from .errors import SpecfloError
-from .research import askdev, document, findings, ledger, questions
+from .research import (
+    askdev,
+    document,
+    findings,
+    glossary,
+    ledger,
+    questions,
+    recap,
+    sources,
+    spinoff,
+)
 from .research import ingest as ingest_module
-from .research import sources
+from .research import lint as lint_module
 
 research_app = typer.Typer(
     help="Work a research project: its usual user, destination and sessions."
@@ -99,9 +111,6 @@ def ingest(
 
 
 # --- the sources whose text the user gives ----------------------------------------------
-
-# The source block imports what only it needs here so the block stays one piece.
-import sys  # noqa: E402
 
 source_app = typer.Typer(help="The sources ledger: interview, web and repo sources.")
 research_app.add_typer(source_app, name="source")
@@ -393,9 +402,6 @@ def finding_add(
 
 # --- listing a ledger ------------------------------------------------------------------
 
-# The list block imports what only it needs here so the block stays one piece.
-import json  # noqa: E402
-
 # The ledger each listing name stands for: the glossary is listed as "terms".
 LISTED_LEDGERS = {
     "sources": ledger.SOURCES,
@@ -485,9 +491,6 @@ def research_list(
 
 # --- checking the findings against their sources ------------------------------------------
 
-# The lint block imports its own module here so the block stays one piece.
-from .research import lint as lint_module  # noqa: E402
-
 
 @research_app.command("lint", epilog="Example: specflo research lint")
 def research_lint() -> None:
@@ -540,9 +543,6 @@ def session_close(
 
 # --- the glossary ---------------------------------------------------------------
 
-# The glossary block imports its own module here so the block stays one piece.
-from .research import glossary  # noqa: E402
-
 term_app = typer.Typer(help="The glossary: the domain's terms in the user's own words.")
 research_app.add_typer(term_app, name="term")
 
@@ -583,11 +583,6 @@ def term_set(
 
 # --- the recap -----------------------------------------------------------------
 
-# The recap block imports its own modules here so the block stays one piece.
-import json  # noqa: E402
-
-from .research import recap  # noqa: E402
-
 
 @research_app.command("recap", epilog="Example: specflo research recap --json")
 def research_recap(
@@ -611,9 +606,6 @@ def research_recap(
 
 
 # --- spin-offs -----------------------------------------------------------------
-
-# The spin-off block imports its own module here so the block stays one piece.
-from .research import spinoff  # noqa: E402
 
 
 @research_app.command(
