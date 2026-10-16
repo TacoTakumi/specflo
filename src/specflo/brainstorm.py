@@ -5,6 +5,10 @@ the structured, stateful parts of this file — scaffolding, the append-only
 Decisions section (stable ``D-NN`` IDs, supersede-as-event), and read-only
 linting. The brainstorm skill writes the prose sections (Current understanding,
 Out of scope, Open questions, Canonical refs) directly.
+
+A research project has no brainstorm until it moves up to fast or full; its
+``research.md`` carries the same Decisions section, and the decision code here
+writes and reads it as one more document of the project's D-NN sequence.
 """
 
 from __future__ import annotations
@@ -19,13 +23,15 @@ from .errors import SpecfloError, refuse_duplicate, require_one_line
 from . import briefs as briefs_mod, markdown
 from .locking import lock_path_for, locked
 from .projects import load_project, project_dir
+from .research import document as research_doc
 
 BRAINSTORM_FILENAME = "brainstorm.md"
 BRAINSTORM_SOURCE = "brainstorm"
-# One D-NN sequence runs across the brainstorm and every brief, so minting an
-# id reads every document: the read and the write sit under this one lock
-# for the series, named for the series since no single file is what is
-# being decided inside it.
+RESEARCH_SOURCE = "research"
+# One D-NN sequence runs across the research document, the brainstorm and
+# every brief, so minting an id reads every document: the read and the write
+# sit under this one lock for the series, named for the series since no
+# single file is what is being decided inside it.
 DECISIONS_LOCK = "decisions"
 
 _DECISION_ID_RE = re.compile(r"^### (D-\d+) —", re.MULTILINE)
@@ -68,8 +74,9 @@ class Decision:
     rationale: str
     supersedes: str | None
     status: str
-    # Where the decision lives: "brainstorm", or the B-NN of a brief inside
-    # the project. One D-NN sequence runs across all of them.
+    # Where the decision lives: "research" (the research document), "brainstorm",
+    # or the B-NN of a brief inside the project. One D-NN sequence runs across
+    # all of them.
     source: str = BRAINSTORM_SOURCE
     # An approved divergence from the reference design the project follows.
     diverges: bool = False
@@ -81,13 +88,28 @@ _DECISION_HEAD_RE = re.compile(r"^### (D-\d+) — (.*)$")
 
 def decision_documents(root: Path, cfg: SpecfloConfig, slug: str) -> list[tuple[str, Path]]:
     """Every document that holds decisions, as ``(source, path)``: the
-    brainstorm first, then each brief in id order."""
+    research document first (a project's earliest document, when it has one),
+    then the brainstorm, then each brief in id order."""
     documents = []
+    research = research_doc.research_path(root, cfg, slug)
+    if research.is_file():
+        documents.append((RESEARCH_SOURCE, research))
     path = brainstorm_path(root, cfg, slug)
     if path.is_file():
         documents.append((BRAINSTORM_SOURCE, path))
     documents.extend(briefs_mod.brief_files(root, cfg, slug))
     return documents
+
+
+def _write_lock(root: Path, slug: str, source: str, path: Path) -> Path:
+    """The lock a write to the decision document ``source`` takes.
+
+    The research commands write the research document under the project's one
+    research lock, so a decision into it takes that lock; every other document
+    is written under a lock named for its file.
+    """
+    name = research_doc.LOCK_NAME if source == RESEARCH_SOURCE else path
+    return lock_path_for(root, slug, name)
 
 
 def _decision_numbers(doc: str) -> list[int]:
@@ -99,7 +121,8 @@ def _decision_numbers(doc: str) -> list[int]:
 
 
 def next_decision_id(root: Path, cfg: SpecfloConfig, slug: str) -> str:
-    """The next D-NN across the brainstorm and every brief of the project."""
+    """The next D-NN across the research document, the brainstorm and every
+    brief of the project."""
     numbers = [
         n for _, path in decision_documents(root, cfg, slug)
         for n in _decision_numbers(path.read_text())
@@ -144,8 +167,9 @@ def list_decisions(
     root: Path, cfg: SpecfloConfig, slug: str,
     diverges_only: bool = False, include_superseded: bool = False,
 ) -> list[Decision]:
-    """The project's decisions across the brainstorm and every brief, in
-    document order; active ones only unless ``include_superseded``."""
+    """The project's decisions across the research document, the brainstorm
+    and every brief, in document order; active ones only unless
+    ``include_superseded``."""
     found = [
         d for source, path in decision_documents(root, cfg, slug)
         for d in _decision_entries(path.read_text(), source)
@@ -157,12 +181,15 @@ def list_decisions(
     return found
 
 
-def _document_holding(root: Path, cfg: SpecfloConfig, slug: str, decision_id: str) -> Path | None:
-    """The document that holds decision ``decision_id``, or None."""
+def _document_holding(
+    root: Path, cfg: SpecfloConfig, slug: str, decision_id: str
+) -> tuple[str, Path] | None:
+    """The ``(source, path)`` of the document that holds decision
+    ``decision_id``, or None."""
     head = re.compile(rf"^### {re.escape(decision_id)} —", re.MULTILINE)
-    for _, path in decision_documents(root, cfg, slug):
+    for source, path in decision_documents(root, cfg, slug):
         if head.search(path.read_text()):
-            return path
+            return source, path
     return None
 
 
@@ -204,13 +231,15 @@ def add_decision(
     """Append a decision to a Decisions section and return it.
 
     The decision goes into the brainstorm, or into brief ``brief_id`` when one
-    is named. Either way it takes the next ``D-NN`` across the brainstorm and
-    every brief, so one sequence runs through the project. If ``supersedes``
-    is given, the named decision is marked superseded in place, whichever
-    document holds it, and linked from the new entry. ``diverges`` marks an
-    approved divergence from the reference design. ``actor`` names the
-    identity adding it, written as an ``Actor`` line; a local add passes none
-    and writes none.
+    is named. A research project has no brainstorm before it moves up to fast
+    or full, so its decisions go into the research document instead. Either
+    way the decision takes the next ``D-NN`` across the research document,
+    the brainstorm and every brief, so one sequence runs through the project.
+    If ``supersedes`` is given, the named decision is marked superseded in
+    place, whichever document holds it, and linked from the new entry.
+    ``diverges`` marks an approved divergence from the reference design.
+    ``actor`` names the identity adding it, written as an ``Actor`` line; a
+    local add passes none and writes none.
     """
     require_one_line("A decision's text", text)
     require_one_line("A decision's rationale", rationale)
@@ -221,8 +250,11 @@ def add_decision(
         path = brainstorm_path(root, cfg, slug)
         where = BRAINSTORM_SOURCE
         if not path.is_file():
-            raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
-    with locked(lock_path_for(root, slug, DECISIONS_LOCK)), locked(lock_path_for(root, slug, path)):
+            research = research_doc.research_path(root, cfg, slug)
+            if not research.is_file():
+                raise SpecfloError("No brainstorm yet. Run `specflo brainstorm start` first.")
+            path, where = research, RESEARCH_SOURCE
+    with locked(lock_path_for(root, slug, DECISIONS_LOCK)), locked(_write_lock(root, slug, where, path)):
         doc = path.read_text()
         if "## Decisions" not in doc:
             raise SpecfloError(f"Malformed {path.name}: no '## Decisions' section.")
@@ -236,22 +268,23 @@ def add_decision(
         active = {
             d.id: d.text for d in list_decisions(root, cfg, slug)
         }
-        # Decisions live in the brainstorm and in every brief, so the hint
-        # names the list that spans them when the add is into a brief.
+        # Decisions live in more than one document, so unless the add is into
+        # the brainstorm the hint names the list that spans them all.
         refuse_duplicate(
             "decision", text, active, supersedes, where,
-            look="specflo decision list" if brief_id is not None else None,
+            look=None if where == BRAINSTORM_SOURCE else "specflo decision list",
         )
 
         new_id = next_decision_id(root, cfg, slug)
         rationale_text = rationale if rationale else "—"
 
-        if holder is not None and holder == path:
+        if holder is not None and holder[1] == path:
             doc = markdown.mark_superseded(doc, supersedes, new_id)
         elif holder is not None:
-            with locked(lock_path_for(root, slug, holder)):
-                other = markdown.mark_superseded(holder.read_text(), supersedes, new_id)
-                holder.write_text(markdown.bump_updated(other, today))
+            holder_source, holder_path = holder
+            with locked(_write_lock(root, slug, holder_source, holder_path)):
+                other = markdown.mark_superseded(holder_path.read_text(), supersedes, new_id)
+                holder_path.write_text(markdown.bump_updated(other, today))
 
         entry_lines = [f"### {new_id} — {text}", f"- Rationale: {rationale_text}"]
         if diverges:
@@ -272,7 +305,7 @@ def add_decision(
         rationale=rationale_text,
         supersedes=supersedes,
         status="active",
-        source=brief_id if brief_id is not None else BRAINSTORM_SOURCE,
+        source=where,
         diverges=diverges,
     )
 
