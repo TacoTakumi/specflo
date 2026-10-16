@@ -262,6 +262,10 @@ COMMANDS: list[dict[str, str]] = [
      "args": "sources|questions|findings|terms [--open] [--json]",
      "summary": "List a ledger's entries with their IDs and fields; --open keeps the open "
                 "questions, --json gives every entry with its status."},
+    {"name": "research lint", "group": "research", "args": "",
+     "summary": "Check each finding's numbers, dates and quoted strings against the text of "
+                "the sources it cites (within the cited page of a PDF); one line per missing "
+                "figure, exit 1 with any; writes nothing and gates nothing."},
     {"name": "research session close", "group": "research",
      "args": "--summary <text> --next <text> [--present <who>]",
      "summary": "End a session: one dated log entry with the summary, the next steps and who "

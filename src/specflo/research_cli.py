@@ -483,6 +483,35 @@ def research_list(
             typer.echo(f"  {field}: {value}")
 
 
+# --- checking the findings against their sources ------------------------------------------
+
+# The lint block imports its own module here so the block stays one piece.
+from .research import lint as lint_module  # noqa: E402
+
+
+@research_app.command("lint", epilog="Example: specflo research lint")
+def research_lint() -> None:
+    """Check each finding's figures against the text of the sources it cites.
+
+    A figure is a number, a date or a double-quoted string of the finding's
+    text; it passes when it appears word for word in the stored text of at
+    least one cited source, within the cited page when the citation names
+    one. Each missing figure is one line naming the finding, the figure and
+    the citations. Exits 1 with any problem and 0 without. A finding with no
+    citation and a superseded finding are skipped. The command reads only and
+    nothing else depends on it passing.
+    """
+    root, cfg, slug = research_project()
+    try:
+        entries = lint_module.cited_findings(root, cfg, slug)
+        problems = lint_module.lint(root, cfg, slug, entries)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(lint_module.render(problems, len(entries)))
+    if problems:
+        raise typer.Exit(code=1)
+
+
 @session_app.command(
     "close",
     epilog=(
