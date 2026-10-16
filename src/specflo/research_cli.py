@@ -16,7 +16,7 @@ import typer
 from . import config
 from . import guide as guide_module
 from .errors import SpecfloError
-from .research import document
+from .research import document, findings, ledger
 
 research_app = typer.Typer(
     help="Work a research project: its usual user, destination and sessions."
@@ -118,6 +118,57 @@ def destination_set(
     except SpecfloError as exc:
         raise _die(str(exc))
     typer.echo(f"Destination {old} -> {new} in {slug}/research.")
+
+
+finding_app = typer.Typer(help="The findings ledger: one fact or inference per entry, with its citations.")
+research_app.add_typer(finding_app, name="finding")
+
+
+@finding_app.command(
+    "add",
+    epilog=(
+        'Example: specflo research finding add --text "Rent rose 4% in 2025." --kind fact'
+        " --status supported --cites S-01:p3 --cites S-02"
+    ),
+)
+def finding_add(
+    text: str = typer.Option(..., "--text", help="The claim, on one line."),
+    kind: str = typer.Option(
+        ..., "--kind", metavar="fact|inference",
+        help="A fact rests on at least one citation; an inference may stand on none.",
+    ),
+    status: str = typer.Option(
+        ..., "--status", metavar="supported|contradicted|unsure",
+        help="What support the claim has from its sources.",
+    ),
+    cites: list[str] = typer.Option(
+        None, "--cites", metavar="S-NN[:pN]",
+        help="A source of the sources ledger, or a page of a PDF source (repeatable).",
+    ),
+    supersedes: str | None = typer.Option(
+        None, "--supersedes", metavar="RF-NN", help="The finding this one replaces."
+    ),
+) -> None:
+    """Record a finding: a fact or an inference, its status and the sources it cites.
+
+    Each citation is checked before anything is written: the source must be in
+    the sources ledger, and a page is accepted only on a PDF and within its
+    page count. A fact with no citation is refused. With --supersedes the old
+    finding is marked as replaced by the new one and keeps its own status.
+    """
+    root, cfg, slug = research_project()
+    try:
+        entry = findings.add_finding(
+            root, cfg, slug, text, kind, status, cites=cites or [], supersedes=supersedes
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    cited = ", ".join(entry.all(findings.CITES_FIELD)) or "none"
+    replaced = f", supersedes {entry.supersedes}" if entry.supersedes else ""
+    typer.echo(
+        f"Recorded {entry.id} ({entry.get(findings.KIND_FIELD)}, {entry.status}; cites: {cited}{replaced})"
+        f" in {slug}/research/{ledger.FINDINGS.filename}."
+    )
 
 
 @session_app.command(

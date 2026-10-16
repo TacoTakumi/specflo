@@ -232,6 +232,11 @@ COMMANDS: list[dict[str, str]] = [
      "args": "build|inform|learn|unknown --reason <text>",
      "summary": "Record where the research is headed and why; the log keeps the old value, "
                 "the new one and the reason."},
+    {"name": "research finding add", "group": "research",
+     "args": "--text <text> --kind fact|inference --status supported|contradicted|unsure "
+             "[--cites S-NN[:pN]]... [--supersedes RF-NN]",
+     "summary": "Record a finding (RF-NN) with checked citations: a fact needs one, a page "
+                "only on a PDF and within its page count."},
     {"name": "research session close", "group": "research",
      "args": "--summary <text> --next <text> [--present <who>]",
      "summary": "End a session: one dated log entry with the summary, the next steps and who "
