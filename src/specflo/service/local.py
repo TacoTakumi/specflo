@@ -158,6 +158,11 @@ class LocalProjectService:
         project, previous = projects.set_level(self.root, self.cfg, slug, level)
         if previous == projects.QUICK_LEVEL:
             brief.seed_fast_documents(self.root, self.cfg, slug)
+        elif previous == projects.RESEARCH_LEVEL:
+            # A research project has no brainstorm yet: scaffold the one the new
+            # phase works from. The research document and ledgers stay as they
+            # are; the research commands find them by file, not by level.
+            brainstorm.start_brainstorm(self.root, self.cfg, slug)
         review: list[str] = []
         path = brainstorm.brainstorm_path(self.root, self.cfg, slug)
         if project.level == projects.FULL_LEVEL and path.is_file():

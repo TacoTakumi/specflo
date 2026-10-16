@@ -479,7 +479,9 @@ def set_level(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> tuple[Pr
     A move up goes back to the brainstorm phase and makes a complete project
     active again; every document stays as it is. A move to the same or a
     lighter level is refused, as is any move of a harden project, leaving
-    ``project.md`` unchanged.
+    ``project.md`` unchanged. A research project moves to fast or full, the
+    levels with a brainstorm to ground in its research, never to quick; no
+    project moves to research, which only ``new`` starts a project at.
     """
     path = project_dir(root, cfg, slug) / PROJECT_FILENAME
     with locked(lock_path_for(root, slug, path)):
@@ -492,8 +494,20 @@ def set_level(root: Path, cfg: SpecfloConfig, slug: str, level: str) -> tuple[Pr
                 " fast and full: it never moves to another level. For more ceremony,"
                 " start a normal project with `specflo new`."
             )
+        if level == RESEARCH_LEVEL:
+            raise SpecfloError(
+                "No project moves to research level: a research project starts there,"
+                " with `specflo new --level research`. A project moves up to fast or full."
+            )
         level = validate_level(level)
-        if LEVELS.index(level) <= LEVELS.index(previous):
+        if previous == RESEARCH_LEVEL:
+            if level == QUICK_LEVEL:
+                raise SpecfloError(
+                    f"Project {slug!r} is at research level: a research project moves up"
+                    " to fast or full, which open a brainstorm beside its research."
+                    " It never moves to quick, which has no brainstorm."
+                )
+        elif LEVELS.index(level) <= LEVELS.index(previous):
             raise SpecfloError(
                 f"Project {slug!r} is at level {previous!r}; a project only moves up."
             )

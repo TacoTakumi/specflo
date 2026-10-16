@@ -726,12 +726,22 @@ def level(
             " `specflo auto --off` first."
         )
     try:
+        previous = svc.load_project(slug).level
         project, review = svc.set_level(slug, target)
     except SpecfloError as exc:
         raise _die(str(exc))
     _refresh_checkpoint(svc, slug)
     _refresh_index(root, cfg)
     typer.echo(f"Level for '{slug}': {project.level}. Phase: {project.phase}.")
+    if previous == projects.RESEARCH_LEVEL:
+        # The move scaffolded the brainstorm a research project had none of;
+        # the idempotent helper locates it. The research stays as it was.
+        named = _locator(slug, svc.start_brainstorm(slug)[0])
+        typer.echo(
+            f"Scaffolded {named} (ready to work). The research document and ledgers"
+            f" under {slug}/{research_module.document.RESEARCH_DIRNAME}/ stay as they"
+            " are: ground the brainstorm in them."
+        )
     if review:
         typer.echo(
             "These decisions were made without an interview. Review each with the"

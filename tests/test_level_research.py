@@ -306,3 +306,123 @@ def test_a_daemon_creates_and_imports_no_research_project(tmp_path):
     copied = {"project.md": files["project.md"].replace("slug: thing", "slug: copy", 1)}
     assert local.import_project("copy", copied)
     assert local.load_project("copy").level == "research"
+
+
+# --- specflo level: up to fast or full, never to quick, never to research ---------
+
+
+def _research_files(project_dir):
+    """The research document and every ledger with its bytes, by relative path."""
+    return {
+        name: data
+        for name, data in _tree(project_dir).items()
+        if name == "research.md" or name.startswith("research/")
+    }
+
+
+@pytest.mark.parametrize("target", ["fast", "full"])
+def test_level_moves_a_research_project_up_to_brainstorm_and_scaffolds_the_brainstorm(
+    tmp_path, monkeypatch, target
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    project_dir = projects.load_project(root, cfg, "thing").path
+    research_before = _research_files(project_dir)
+    assert len(research_before) == 1 + len(LEDGER_FILES)
+    assert not (project_dir / "brainstorm.md").exists()
+
+    result = _ok(["level", target])
+
+    project = projects.load_project(root, cfg, "thing")
+    assert (project.level, project.phase, project.status) == (target, "brainstorm", "active")
+    assert f"Level for 'thing': {target}. Phase: brainstorm." in result.output
+    assert "thing/brainstorm" in result.output
+    assert "confirm or supersede" not in result.output
+    brainstorm_text = (project_dir / "brainstorm.md").read_text()
+    assert "project: thing" in brainstorm_text and "phase: brainstorm" in brainstorm_text
+    assert _research_files(project_dir) == research_before
+
+
+@pytest.mark.parametrize("target", ["fast", "full"])
+def test_a_research_project_moved_up_reads_as_a_ladder_project_at_brainstorm(
+    tmp_path, monkeypatch, target
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+
+    _ok(["level", target])
+
+    shown = _ok(["status"]).output
+    info = json.loads(_ok(["status", "--json"]).output)
+    assert "Phase:   brainstorm" in shown and f"Level: {target}" in shown
+    assert (info["level"], info["phase"], info["next_phase"]) == (target, "brainstorm", "spec")
+    assert "specflo research recap" not in info["next_step"]
+    checkpoint_text = (projects.load_project(root, cfg, "thing").path / "checkpoint.md").read_text()
+    assert "brainstorm" in checkpoint_text and "research recap" not in checkpoint_text
+    # The research stays where the research commands find it: nothing is left
+    # to make, and the document still reads as it was scaffolded.
+    assert scaffold(root, cfg, "thing") == []
+    assert document.load(root, cfg, "thing").destination == document.UNKNOWN_DESTINATION
+
+
+def test_the_service_scaffolds_the_brainstorm_on_the_move_with_nothing_to_review(tmp_path):
+    cfg = config.init_config(tmp_path)
+    svc = LocalProjectService(tmp_path, cfg)
+    project = svc.create_project("Thing", level="research")
+    from specflo import research as research_module
+
+    research_module.scaffold(tmp_path, cfg, "thing")
+    research_before = _research_files(project.path)
+
+    moved, review = svc.set_level("thing", "full")
+
+    assert (moved.level, moved.phase, review) == ("full", "brainstorm", [])
+    assert (project.path / "brainstorm.md").is_file()
+    assert _research_files(project.path) == research_before
+
+
+def test_level_quick_on_a_research_project_is_refused_naming_fast_and_full_and_changes_no_file(
+    tmp_path, monkeypatch
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    projects_dir = projects.load_project(root, config.load_config(root), "thing").path.parent
+    before = _tree(projects_dir)
+
+    shown = _refused(["level", "quick"])
+
+    assert shown.startswith("error: ")
+    assert "'thing' is at research level" in shown
+    assert "fast or full" in shown and "quick" in shown
+    assert _tree(projects_dir) == before
+    project = projects.load_project(root, config.load_config(root), "thing")
+    assert (project.level, project.phase) == ("research", "research")
+
+
+@pytest.mark.parametrize("start", ["research", "full"])
+def test_level_research_is_refused_on_any_project_and_changes_no_file(
+    tmp_path, monkeypatch, start
+):
+    root = _checkout(tmp_path / "local", monkeypatch)
+    _ok(["new", "Thing", "--level", start])
+    projects_dir = projects.load_project(root, config.load_config(root), "thing").path.parent
+    before = _tree(projects_dir)
+
+    shown = _refused(["level", "research"])
+
+    assert shown.startswith("error: ")
+    assert "No project moves to research level" in shown
+    assert "`specflo new --level research`" in shown
+    assert "fast or full" in shown
+    assert _tree(projects_dir) == before
+    assert projects.load_project(root, config.load_config(root), "thing").level == start
+
+
+def test_level_on_a_research_project_refuses_an_unknown_level_as_before(tmp_path, monkeypatch):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    projects_dir = projects.load_project(root, config.load_config(root), "thing").path.parent
+    before = _tree(projects_dir)
+
+    shown = _refused(["level", "huge"])
+
+    assert "Unknown level 'huge'" in shown and "'fast', 'full'" in shown
+    assert _tree(projects_dir) == before
