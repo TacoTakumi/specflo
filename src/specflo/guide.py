@@ -228,6 +228,11 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "research ingest", "group": "research", "args": "<file>",
      "summary": "Keep a .md or .txt file as a document source (S-NN): the byte-identical "
                 "original, its text, name, sha256 and date; the same bytes again are refused."},
+    {"name": "research source add", "group": "research",
+     "args": "--kind interview|web|repo --title <text> (--file <path> | --stdin) [--url <url>]",
+     "summary": "Record an interview, web or repo source (S-NN) with its text stored as given; "
+                "web and repo need --url. The first source of an unpinned project prints one "
+                "egress suggestion."},
     {"name": "research user set", "group": "research", "args": "--text <text> | --file <path>",
      "summary": "Record who usually sits at the keyboard, in their own words; a later call "
                 "replaces it and the log keeps the old text."},

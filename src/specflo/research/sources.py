@@ -28,8 +28,8 @@ import re
 from pathlib import Path, PurePosixPath
 
 from ..config import SpecfloConfig
-from ..errors import SpecfloError
-from ..projects import project_dir, validate_slug
+from ..errors import SpecfloError, require_one_line
+from ..projects import load_project, project_dir, validate_slug
 from .document import RESEARCH_DIRNAME
 from .ledger import SOURCES, SOURCES_DIRNAME, Entry, source_dir
 
@@ -54,9 +54,18 @@ REPO_KIND = "repo"
 KINDS = (DOCUMENT_KIND, INTERVIEW_KIND, WEB_KIND, REPO_KIND)
 
 FORMATS = ("md", "txt", "pdf", "docx")
+# The kinds whose text the user gives; a document comes in through ingest.
+TEXT_KINDS = (INTERVIEW_KIND, WEB_KIND, REPO_KIND)
 
 # The stored text of every source, beside the original in the source directory.
 TEXT_FILENAME = "text.md"
+
+# Printed once, at the first source of a project that pins no egress class.
+# A suggestion only: the project file is never written here.
+EGRESS_HINT = (
+    "Suggestion: pin an egress class with `specflo egress local|no-train|open`."
+    " Sources may hold private material; the pin tells agents what may leave this machine."
+)
 
 # What each kind may carry beyond Kind and Date, and what it must carry. A
 # document's Original and Text are recorded once its files are stored, since
@@ -236,16 +245,97 @@ def record_stored(
     cfg: SpecfloConfig,
     slug: str,
     entry_id: str,
-    original: Path,
+    original: Path | None,
     text: Path,
     today: str | None = None,
 ) -> Entry:
-    """Record where source ``entry_id`` keeps its original and its text; return the entry."""
-    fields = [
-        (ORIGINAL_FIELD, project_relative(root, cfg, slug, original)),
-        (TEXT_FIELD, project_relative(root, cfg, slug, text)),
-    ]
+    """Record where source ``entry_id`` keeps its original and its text; return the entry.
+
+    ``original`` is None for a source that has no original file, only its text.
+    """
+    fields = []
+    if original is not None:
+        fields.append((ORIGINAL_FIELD, project_relative(root, cfg, slug, original)))
+    fields.append((TEXT_FIELD, project_relative(root, cfg, slug, text)))
     return SOURCES.set_fields(root, cfg, slug, entry_id, fields, today=today)
+
+
+def add_text_source(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    kind: str,
+    title: str,
+    text: str,
+    url: str | None = None,
+    today: str | None = None,
+) -> Entry:
+    """Store ``text`` as an interview, web or repo source of project ``slug``; return its entry.
+
+    Refused, with nothing written: a kind other than those three (a document
+    comes in through ingest, which keeps its bytes and sha256), an empty or
+    multi-line title, empty text, a web or repo source without a URL and an
+    interview with one. Then the ledger mints the ID, the source directory is
+    made for it, the text is written there as given and the entry records it.
+    """
+    if kind == DOCUMENT_KIND:
+        raise SpecfloError(
+            "A document comes in through `specflo research ingest <file>`, which keeps its"
+            f" bytes and sha256; `research source add` takes one of {', '.join(TEXT_KINDS)}."
+        )
+    if kind not in TEXT_KINDS:
+        raise SpecfloError(
+            f"Unknown source kind {kind!r}: use one of {', '.join(TEXT_KINDS)}"
+            " (a document comes in through `specflo research ingest <file>`)."
+        )
+    if title is None or not title.strip():
+        raise SpecfloError("A source needs a title: one line naming it.")
+    require_one_line("A source's title", title)
+    title = title.strip()
+    if not text or not text.strip():
+        raise SpecfloError("A source needs its text: the file or standard input is empty.")
+    url = (url or "").strip() or None
+    if kind == INTERVIEW_KIND and url is not None:
+        raise SpecfloError(
+            "An interview source has no --url: it is the user's own words, not a fetched page."
+        )
+    if kind != INTERVIEW_KIND and url is None:
+        raise SpecfloError(f"A {kind} source needs --url: where it was fetched from.")
+    if url is not None:
+        require_one_line(f"A {kind} source's --url", url)
+    today = today or datetime.date.today().isoformat()
+
+    fields = [(DATE_FIELD, today)]
+    if url is not None:
+        fields.append((URL_FIELD, url))
+    entry = add_source(root, cfg, slug, title, kind, fields, today=today)
+    # The ID is minted once and never again, so this directory is this
+    # source's alone; anything already there was never a recorded source.
+    directory = source_dir(root, cfg, slug, entry.id)
+    text_file = text_path(root, cfg, slug, entry.id)
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        text_file.write_bytes(text.encode("utf-8"))
+    except OSError as exc:
+        raise SpecfloError(
+            f"{entry.id} is recorded but its text could not be stored under {directory}: {exc}."
+        ) from exc
+    return record_stored(root, cfg, slug, entry.id, None, text_file, today=today)
+
+
+def egress_hint(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:
+    """The one-line egress suggestion, or None.
+
+    The suggestion is due once, at the first source of a project that pins no
+    egress class: call this before the source is added, since the ledger is
+    then no longer empty. It reads the project record and the ledger and
+    writes nothing; the pin itself is set by ``specflo egress`` only.
+    """
+    if load_project(root, cfg, slug).egress:
+        return None
+    if SOURCES.entries(root, cfg, slug):
+        return None
+    return EGRESS_HINT
 
 
 def sources(

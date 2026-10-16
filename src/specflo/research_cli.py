@@ -81,6 +81,7 @@ def ingest(
     """
     root, cfg, slug = research_project()
     try:
+        hint = sources.egress_hint(root, cfg, slug)
         entry = ingest_module.ingest_file(root, cfg, slug, file)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -88,6 +89,93 @@ def ingest(
         f"Ingested {entry.title} as {entry.id}: {slug}/{entry.get(sources.ORIGINAL_FIELD)}"
         f" (original), {slug}/{entry.get(sources.TEXT_FIELD)} (text)."
     )
+    _print_egress_hint(hint)
+
+
+# --- the sources whose text the user gives ----------------------------------------------
+
+# The source block imports what only it needs here so the block stays one piece.
+import sys  # noqa: E402
+
+source_app = typer.Typer(help="The sources ledger: interview, web and repo sources.")
+research_app.add_typer(source_app, name="source")
+
+
+def _print_egress_hint(hint: str | None) -> None:
+    """Print the egress suggestion when the source just added was the project's first."""
+    if hint:
+        typer.echo(hint)
+
+
+def _read_source_text(file: Path | None, use_stdin: bool) -> str:
+    """The text of a new source, from the file or standard input; refused when not UTF-8."""
+    if use_stdin:
+        data, what = sys.stdin.buffer.read(), "standard input"
+    else:
+        if not file.is_file():
+            if file.exists():
+                raise SpecfloError(f"Cannot read {file}: it is not a file.")
+            raise SpecfloError(f"No file at {file}.")
+        try:
+            data, what = file.read_bytes(), str(file)
+        except OSError as exc:
+            raise SpecfloError(f"Cannot read {file}: {exc}.") from exc
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise SpecfloError(
+            f"Cannot read {what}: it is not valid UTF-8 (at byte {exc.start})."
+            " The text of a source is stored as UTF-8; convert it first."
+        ) from exc
+
+
+@source_app.command(
+    "add",
+    epilog=(
+        'Example: specflo research source add --kind interview --title "Ana on renewals"'
+        " --file notes/ana.md"
+    ),
+)
+def source_add(
+    kind: str = typer.Option(
+        ..., "--kind", metavar="interview|web|repo",
+        help="What the source is; a document comes in through `research ingest`.",
+    ),
+    title: str = typer.Option(..., "--title", help="The source's title (one line)."),
+    file: Path | None = typer.Option(
+        None, "--file", metavar="<path>", help="A UTF-8 text file holding the source's text."
+    ),
+    use_stdin: bool = typer.Option(
+        False, "--stdin", help="Read the source's text from standard input."
+    ),
+    url: str | None = typer.Option(
+        None, "--url", metavar="<url>",
+        help="Where a web page or repository was fetched from; those two need it.",
+    ),
+) -> None:
+    """Record an interview, web or repo source (S-NN) with its text.
+
+    The text is stored as given under research/sources/S-NN/text.md and the
+    sources ledger records the kind, date, title and, for web and repo, the
+    URL. Give the text with exactly one of --file or --stdin. A web or repo
+    source without --url, or an interview with one, is refused and nothing is
+    written. The first source of a project with no egress pin prints one
+    suggestion to pin a class; it sets no pin.
+    """
+    if (file is None) == (not use_stdin):
+        raise _die("Give the text with exactly one of --file or --stdin.")
+    root, cfg, slug = research_project()
+    try:
+        text = _read_source_text(file, use_stdin)
+        hint = sources.egress_hint(root, cfg, slug)
+        entry = sources.add_text_source(root, cfg, slug, kind, title, text, url=url)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(
+        f"Recorded {entry.title!r} as {entry.id} ({entry.get(sources.KIND_FIELD)}):"
+        f" {slug}/{entry.get(sources.TEXT_FIELD)} (text)."
+    )
+    _print_egress_hint(hint)
 
 
 @user_app.command(

@@ -84,6 +84,8 @@ def _notes(tmp_path, name="notes.md"):
 @pytest.mark.parametrize("suffix", [".md", ".txt"])
 def test_ingest_keeps_the_original_and_the_text_and_records_the_entry(tmp_path, monkeypatch, suffix):
     root = _research_project(tmp_path, monkeypatch)
+    # Pinned, so the first source prints no egress suggestion and the output is one line.
+    _ok(["egress", "local"])
     source = _notes(tmp_path, f"notes{suffix}")
     data = source.read_bytes()
 
