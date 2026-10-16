@@ -102,3 +102,62 @@ def test_the_light_levels_run_targeted_tests_and_the_full_suite_once():
     assert "Targeted Verify" in plan
     assert "task edit T-NN --verify" in execute
     assert "before the commit" in quick
+
+
+RESEARCH_SIGNALS = (
+    "no build intended yet",
+    "documents to bring in",
+    "domain expert",
+    "unknown ground",
+)
+
+
+def test_the_brainstorm_skill_names_research_projects():
+    section = _levels_section("specflo-brainstorm")
+    assert "research project" in section
+    assert "--level research" in section
+    for phrase in RESEARCH_SIGNALS:
+        assert phrase in section, phrase
+    assert "specflo level fast|full" in section
+
+
+def _command_paths(command, prefix=()):
+    # Every node of the command tree, groups included: each has its own help.
+    yield prefix
+    for name, sub in (getattr(command, "commands", None) or {}).items():
+        yield from _command_paths(sub, prefix + (name,))
+
+
+def _help_texts(cli):
+    # Rendered through click's runner (build_cli returns a click group): rich
+    # prints the help rather than returning it, so get_help() on a Typer
+    # command comes back empty.
+    from click.testing import CliRunner
+    runner = CliRunner()
+    for path in _command_paths(cli):
+        result = runner.invoke(cli, [*path, "--help"])
+        # The mounted skills group exits 1 after printing its help, so the
+        # rendered usage line is the proof, not the exit code. The bench
+        # commands render it through argparse, in lower case.
+        assert "usage:" in result.output.lower(), (path, result.output)
+        yield " ".join(("specflo", *path)), result.output
+
+
+def test_nothing_user_facing_calls_the_feature_deep_research():
+    # Elsewhere "deep research" names a one-shot automated report. specflo's
+    # feature is a research project, worked with the user over sessions, so no
+    # help text, guide text or bundled skill may borrow that name.
+    import re
+    from typer.testing import CliRunner
+    from specflo.cli import app, build_cli
+
+    phrase = re.compile(r"deep[\s-]+research", re.IGNORECASE)
+    cli = build_cli()
+    texts = dict(_help_texts(cli))
+    texts["specflo guide"] = CliRunner().invoke(app, ["guide"]).output
+    for path in sorted(SKILLS.rglob("*.md")):
+        texts[str(path.relative_to(SKILLS.parent))] = path.read_text()
+    assert texts, "nothing was searched"
+    hits = {where: phrase.search(text).group(0)
+            for where, text in texts.items() if phrase.search(text)}
+    assert hits == {}, hits

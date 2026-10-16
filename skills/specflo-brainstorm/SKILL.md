@@ -32,8 +32,8 @@ explicitly approved. This applies regardless of how simple the work looks.
 
 ## Levels
 
-specflo has three levels of ceremony. Before `specflo new`, propose one from
-the request and have the user confirm it:
+specflo has three levels of ceremony, and a research level beside them. Before
+`specflo new`, propose one from the request and have the user confirm it:
 
 - **quick** - one goal and one check (`specflo new <name> --level quick`): one
   brief, proof, no review. Worked with the `specflo-quick` skill, not this one.
@@ -41,6 +41,12 @@ the request and have the user confirm it:
   that you write yourself, with one approval before execute.
 - **full** - more than that (the default): this skill's interview, and an
   approval at every phase.
+- **research** - a research project (`--level research`), when the signals
+  fit: no build intended yet, documents to bring in, a domain expert at the
+  keyboard, much unknown ground. It collects sources, findings, questions and
+  terms over sessions and builds nothing; local only. Not this skill's
+  interview: when building starts, `specflo level fast|full` moves it up and
+  the brainstorm begins here.
 
 A project moves up with `specflo level fast|full`, never down.
 

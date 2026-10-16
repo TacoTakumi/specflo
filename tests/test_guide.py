@@ -326,3 +326,23 @@ def test_readme_documents_the_review_loop():
     for term in (*_REVIEW_COMMANDS, "--full", "--over-budget", "review_max_rounds",
                  "review-budget"):
         assert term in readme, term
+
+
+def test_guide_lists_the_research_level_with_its_signals(cwd):
+    out = runner.invoke(app, ["guide"]).output
+    line = next(line for line in out.splitlines() if line.startswith("  research "))
+    assert "`new <name> --level research`" in line
+    # The four signals that make the agent propose a research project.
+    for phrase in (
+        "no build intended yet",
+        "documents to bring in",
+        "a domain expert at the keyboard",
+        "much unknown ground",
+    ):
+        assert phrase in out, phrase
+    assert "local only" in out
+    assert "`specflo level fast|full` moves it up" in out
+    # Harden stands still; research climbs. The one rule line stays true of both.
+    assert "a harden project never moves" in out
+    entries = {entry["name"]: entry for entry in guide.COMMANDS}
+    assert "research" in entries["new"]["args"]
