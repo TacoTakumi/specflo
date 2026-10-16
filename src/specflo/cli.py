@@ -2257,11 +2257,12 @@ def _seam_continuation(
             "next_step": payload["do_next"],
             "checkpoint": payload["path"],
             "checkpoint_locator": payload["locator"],
-            # `specflo auto` refuses a harden project, so its continuation
-            # does not offer it. A payload from an older daemon names no level.
+            # `specflo auto` refuses an attended level (harden, research), so
+            # the continuation of one does not offer it. A payload from an
+            # older daemon names no level.
             "continuation": continuation.build_continuation(
                 payload["phase"], payload["do_next"],
-                offer_auto=payload.get("level") != projects.HARDEN_LEVEL,
+                offer_auto=payload.get("level") not in auto_module.ATTENDED_LEVELS,
             ),
         }
     except Exception as exc:  # noqa: BLE001 - see docstring; never fail the caller
@@ -2274,11 +2275,11 @@ def _seam_continuation(
 
 
 def _offers_auto(svc: ProjectService, slug: str) -> bool:
-    """Whether a continuation may offer `specflo auto`: not for a harden
-    project, which auto refuses. True when the project cannot be read, as
-    before the project's level was consulted."""
+    """Whether a continuation may offer `specflo auto`: not for a project at
+    an attended level (harden, research), which auto refuses. True when the
+    project cannot be read, as before the project's level was consulted."""
     try:
-        return svc.load_project(slug).level != projects.HARDEN_LEVEL
+        return svc.load_project(slug).level not in auto_module.ATTENDED_LEVELS
     except Exception:  # noqa: BLE001 - a fallback line must never fail the caller
         return True
 
