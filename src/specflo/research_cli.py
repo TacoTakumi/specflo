@@ -16,7 +16,7 @@ import typer
 from . import config
 from . import guide as guide_module
 from .errors import SpecfloError
-from .research import document, findings, ledger
+from .research import document, findings, ledger, questions
 
 research_app = typer.Typer(
     help="Work a research project: its usual user, destination and sessions."
@@ -95,6 +95,85 @@ def user_set(
         raise _die(str(exc))
     kept = " The previous text is kept in the log." if previous else ""
     typer.echo(f"Recorded the usual user in {slug}/research.{kept}")
+
+
+question_app = typer.Typer(
+    help="The research questions: what is still to find out, and who answers it."
+)
+research_app.add_typer(question_app, name="question")
+
+
+@question_app.command(
+    "add",
+    epilog=(
+        'Example: specflo research question add --text "Which market first?" --by developer'
+        ' --option Toronto --option Calgary --default Toronto --why "the user lives there"'
+    ),
+)
+def question_add(
+    text: str = typer.Option(..., "--text", help="The question (one line)."),
+    by: str = typer.Option(
+        ..., "--by", metavar="user|developer", help="Who answers it."
+    ),
+    option: list[str] = typer.Option(
+        [], "--option", metavar="<text>", help="A possible answer; repeat for each."
+    ),
+    default: str | None = typer.Option(
+        None, "--default", metavar="<text>",
+        help="The answer the work goes on with when nobody answers; a developer question needs one.",
+    ),
+    why: str | None = typer.Option(
+        None, "--why", metavar="<text>", help="Why the question matters (one line)."
+    ),
+    supersedes: str | None = typer.Option(
+        None, "--supersedes", metavar="Q-NN", help="The question this one replaces."
+    ),
+) -> None:
+    """Record an open question: who answers it, its options, default and why.
+
+    A developer question without a default is refused and nothing is written.
+    With --supersedes the old question is marked as replaced by the new one.
+    """
+    root, cfg, slug = research_project()
+    try:
+        entry = questions.add_question(
+            root, cfg, slug, text, by, options=option, default=default, why=why,
+            supersedes=supersedes,
+        )
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    replaced = f" It supersedes {entry.supersedes}." if entry.supersedes else ""
+    typer.echo(
+        f"Recorded {entry.id} in {slug}/research/{ledger.QUESTIONS.filename}"
+        f" (open, the {by} answers).{replaced}"
+    )
+
+
+@question_app.command(
+    "resolve",
+    epilog='Example: specflo research question resolve Q-01 --resolution "Toronto first." --by Ana',
+)
+def question_resolve(
+    question_id: str = typer.Argument(..., metavar="Q-NN", help="The question to resolve."),
+    resolution: str = typer.Option(..., "--resolution", help="The answer (one line)."),
+    by: str | None = typer.Option(
+        None, "--by", metavar="<name>", help="Who resolved it; the usual user when not given."
+    ),
+) -> None:
+    """Resolve an open question: record the resolution and who gave it.
+
+    An unknown, superseded or already resolved question is refused and nothing
+    is written.
+    """
+    root, cfg, slug = research_project()
+    try:
+        entry = questions.resolve_question(root, cfg, slug, question_id, resolution, by=by)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    typer.echo(
+        f"Resolved {entry.id} in {slug}/research/{ledger.QUESTIONS.filename}"
+        f" (by {entry.get(questions.RESOLVED_BY_FIELD)})."
+    )
 
 
 @destination_app.command(

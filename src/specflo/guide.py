@@ -228,6 +228,15 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "research user set", "group": "research", "args": "--text <text> | --file <path>",
      "summary": "Record who usually sits at the keyboard, in their own words; a later call "
                 "replaces it and the log keeps the old text."},
+    {"name": "research question add", "group": "research",
+     "args": "--text <text> --by user|developer [--option <text>]... [--default <text>] "
+             "[--why <text>] [--supersedes Q-NN]",
+     "summary": "Record an open question (Q-NN): who answers it, its options, default and why; "
+                "a developer question needs a default, and --supersedes marks the old one."},
+    {"name": "research question resolve", "group": "research",
+     "args": "<Q-NN> --resolution <text> [--by <name>]",
+     "summary": "Resolve an open question: record the resolution and who gave it (the usual "
+                "user by default)."},
     {"name": "research destination set", "group": "research",
      "args": "build|inform|learn|unknown --reason <text>",
      "summary": "Record where the research is headed and why; the log keeps the old value, "
