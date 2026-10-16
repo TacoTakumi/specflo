@@ -10,6 +10,8 @@ path the command writes is inside the project folder.
 
 import datetime
 import hashlib
+import multiprocessing
+import time
 from pathlib import Path
 
 import pytest
@@ -178,6 +180,64 @@ def test_the_same_bytes_again_are_refused_naming_the_entry_and_nothing_changes(t
 
     assert _tree(root) == before
     assert [entry.id for entry in _entries(root)] == ["S-01"]
+
+
+def _ingest_in_child(path):
+    """One `research ingest` of ``path`` through the CLI, in a forked child.
+
+    Returns the exit code and the output, so the parent can tell the one
+    ingest that recorded a source from the ones refused.
+    """
+    result = runner.invoke(app, [*INGEST, str(path)])
+    return result.exit_code, result.output
+
+
+def test_simultaneous_ingests_of_the_same_bytes_record_exactly_one_source(tmp_path, monkeypatch):
+    """The duplicate check counts only under the lock that mints the ID.
+
+    A check made before the lock lets every ingest that passed it mint an
+    entry of its own, so N ingests of identical bytes at once recorded N
+    sources with one Sha256. Of N simultaneous ingests exactly one must
+    record a source and every other one must be refused naming it.
+    """
+    root = _research_project(tmp_path, monkeypatch)
+    # Pinned, so no first-source egress suggestion lands in a child's output.
+    _ok(["egress", "local"])
+    copies = []
+    for i in range(6):
+        copy = tmp_path / f"copy-{i}.md"
+        copy.write_bytes(NOTES.encode("utf-8"))
+        copies.append(copy)
+    # Hold every ingest between its check and its mint, so each of them is
+    # past the check before the first one takes the lock. A check that only
+    # runs before the lock then lets all of them through.
+    real_convert = ingest.convert
+
+    def held_convert(*args, **kwargs):
+        time.sleep(0.3)
+        return real_convert(*args, **kwargs)
+
+    monkeypatch.setattr(ingest, "convert", held_convert)
+
+    with multiprocessing.get_context("fork").Pool(len(copies)) as pool:
+        results = pool.map(_ingest_in_child, copies)
+
+    recorded = [output for code, output in results if code == 0]
+    refused = [output for code, output in results if code != 0]
+    entries = _entries(root)
+    assert len(recorded) == 1, (len(entries), results)
+    (held,) = [e for e in entries if e.get("Sha256") == DIGEST]
+    assert [e.id for e in entries] == [held.id]
+    assert held.id in recorded[0]
+    assert len(refused) == len(copies) - 1
+    for output in refused:
+        assert held.id in output, output
+        assert "Traceback" not in output, output
+    # The stored files exist for the one recorded entry only.
+    folder = _project(root) / "research" / "sources"
+    assert [path.name for path in folder.iterdir()] == [held.id]
+    assert sorted(path.name for path in (folder / held.id).iterdir()) == sorted([held.title, "text.md"])
+    assert (folder / held.id / held.title).read_bytes() == NOTES.encode("utf-8")
 
 
 # --- refusals write nothing -------------------------------------------------------------

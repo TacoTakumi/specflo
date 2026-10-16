@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 from ..config import SpecfloConfig
@@ -229,6 +230,7 @@ def add_source(
     kind: str,
     fields: list[tuple[str, str]],
     today: str | None = None,
+    precheck: Callable[[list[Entry]], None] | None = None,
 ) -> Entry:
     """Record a source of ``kind`` and return its entry with the ID the ledger minted.
 
@@ -236,8 +238,14 @@ def add_source(
     against the contract above and written in its order. Refused, before
     anything is written, for an unknown kind, a field the kind has not, a
     missing required field, a value in the wrong shape and a repeated field.
+    ``precheck`` is handed to the ledger: it runs under the research lock with
+    the sources held at that moment, right before the ID is minted, and a
+    SpecfloError it raises refuses the add with nothing written.
     """
-    return SOURCES.add(root, cfg, slug, title, _checked_fields(kind, list(fields or [])), today=today)
+    return SOURCES.add(
+        root, cfg, slug, title, _checked_fields(kind, list(fields or [])), today=today,
+        precheck=precheck,
+    )
 
 
 def record_stored(
@@ -345,16 +353,25 @@ def sources(
     return SOURCES.entries(root, cfg, slug, include_superseded)
 
 
+def holder_of_sha256(entries: list[Entry], digest: str) -> Entry | None:
+    """The entry among ``entries`` whose original has the sha256 ``digest``, or None.
+
+    Pure: it reads nothing, so a caller can run it on the entries the ledger
+    hands it under the research lock.
+    """
+    digest = (digest or "").strip().lower()
+    if not digest:
+        return None
+    for entry in entries:
+        if (entry.get(SHA256_FIELD) or "").strip().lower() == digest:
+            return entry
+    return None
+
+
 def find_by_sha256(root: Path, cfg: SpecfloConfig, slug: str, digest: str) -> Entry | None:
     """The source whose original has the sha256 ``digest``, replaced ones included, or None.
 
     A replaced source still holds its bytes, so the same file is never stored
     twice, whichever entry is active.
     """
-    digest = (digest or "").strip().lower()
-    if not digest:
-        return None
-    for entry in SOURCES.entries(root, cfg, slug):
-        if (entry.get(SHA256_FIELD) or "").strip().lower() == digest:
-            return entry
-    return None
+    return holder_of_sha256(SOURCES.entries(root, cfg, slug), digest)

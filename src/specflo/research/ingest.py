@@ -6,6 +6,13 @@ stores it: the ledger mints S-NN, the directory of that ID is created, the
 original is written byte for byte, the text beside it, and the entry records
 where both are. Every refusal comes before the first write.
 
+The duplicate check runs twice. Once before the conversion, so a file already
+held is refused without converting it; and once more under the research lock,
+right before the ID is minted, with the sources held at that moment. The
+second check is the one that counts: two ingests of the same bytes at once
+both pass the first, and only the lock keeps the second of them from minting
+an entry of its own.
+
 The converter is the seam for the formats: :data:`CONVERTERS` has one entry
 per suffix with the Format value and a converter that returns the text and the
 fields its format adds. A markdown or plain-text file's text is its content
@@ -114,6 +121,16 @@ def _check_size(path: Path, limit_mb: int) -> None:
         )
 
 
+def _refuse_held(digest: str, entries: list[Entry]) -> None:
+    """Refuse the ingest when a source among ``entries`` already holds the bytes of ``digest``."""
+    held = sources.holder_of_sha256(entries, digest)
+    if held is not None:
+        raise SpecfloError(
+            f"Not ingested: {held.id} already holds these bytes, stored as {held.title!r}."
+            f" A file is stored once; cite {held.id}."
+        )
+
+
 def ingest_file(
     root: Path, cfg: SpecfloConfig, slug: str, path: Path, today: str | None = None
 ) -> Entry:
@@ -139,17 +156,18 @@ def ingest_file(
     except OSError as exc:
         raise SpecfloError(f"Cannot read {path}: {exc}.") from exc
     digest = hashlib.sha256(data).hexdigest()
-    held = sources.find_by_sha256(root, cfg, slug, digest)
-    if held is not None:
-        raise SpecfloError(
-            f"Not ingested: {held.id} already holds these bytes, stored as {held.title!r}."
-            f" A file is stored once; cite {held.id}."
-        )
+    # The early check spares a held file its conversion; it is not the one
+    # that counts, since another ingest of the same bytes may record its
+    # source between this read and the mint below.
+    _refuse_held(digest, sources.sources(root, cfg, slug))
     fmt = format_of(path)
     name = sources.storage_name(path.name)
     text, extra = convert(path, data, timeout=cfg.research_convert_timeout)
     today = today or datetime.date.today().isoformat()
 
+    # The check that counts: under the lock that mints the ID, against the
+    # sources held at that moment, so of several ingests of the same bytes
+    # at once exactly one records a source and the others are refused naming it.
     entry = sources.add_source(
         root, cfg, slug, name, sources.DOCUMENT_KIND,
         [
@@ -159,6 +177,7 @@ def ingest_file(
             *extra,
         ],
         today=today,
+        precheck=lambda entries: _refuse_held(digest, entries),
     )
     # The ID is minted once and never again, so this directory is this
     # ingest's alone; anything already there was never a recorded source.

@@ -10,7 +10,11 @@ The CLI mints the IDs: two digits, zero-padded, one above the highest number
 the ledger mentions anywhere, so a number is never handed out twice, not
 after a supersede and not after a hand-written mention. The read that picks
 the number and the write that records it sit under the project's research
-lock, so two adds at once never share an ID.
+lock, so two adds at once never share an ID. An add may also hand in a
+precheck: a callable run under that same lock with the entries the ledger
+holds at that moment, so a caller can refuse an entry by the ledger's current
+state (a document's bytes already held, say) and not by an earlier read that
+another add may have overtaken.
 
 No entry is ever deleted. An entry is replaced by a later one: the old entry
 gets a ``- Superseded by: <new id>`` line and the new one a ``- Supersedes:
@@ -24,6 +28,7 @@ from __future__ import annotations
 
 import datetime
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -324,6 +329,7 @@ class Ledger:
         fields: list[tuple[str, str]] | None = None,
         supersedes: str | None = None,
         today: str | None = None,
+        precheck: Callable[[list[Entry]], None] | None = None,
     ) -> Entry:
         """Append an entry with the next ID and return it.
 
@@ -334,6 +340,13 @@ class Ledger:
         or multi-line title or value, a field name the ledger owns, an
         unknown or already replaced ``supersedes``, and a ledger with no
         file or no section, before anything is written.
+
+        ``precheck``, when given, is called under the lock with every entry
+        the ledger holds at that moment, replaced ones included, before the
+        ID is minted. A :class:`SpecfloError` it raises propagates and nothing
+        is written. It is the place for a refusal that depends on what the
+        ledger holds, since a check made before the lock can be overtaken by
+        another add between that check and this one's write.
         """
         if self.prefix is None:
             raise SpecfloError(
@@ -351,6 +364,8 @@ class Ledger:
             doc = self.read(root, cfg, slug)
             if self.header not in markdown.section_headers(doc):
                 raise SpecfloError(f"Malformed {slug}/{self.filename}: no '{self.header}' section.")
+            if precheck is not None:
+                precheck(parse_entries(doc, self.prefix))
             if supersedes is not None:
                 old = self._active_entry(doc, supersedes)
             new_id = self._next_id(doc)
