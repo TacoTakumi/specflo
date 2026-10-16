@@ -30,8 +30,8 @@ INDEX_FILENAME = "specflo-index.md"
 # with an underscore (slugify strips it), so this can never collide with one.
 _LOCK_SCOPE = "_index"
 
-_HEADER = "| Project | Created | Completed | State | Summary |"
-_SEPARATOR = "| --- | --- | --- | --- | --- |"
+_HEADER = "| Project | Created | Completed | Level | State | Summary |"
+_SEPARATOR = "| --- | --- | --- | --- | --- | --- |"
 
 # The one human-owned area (REQ-04). Everything between the markers is carried
 # byte-for-byte across regenerations; everything outside them is CLI-owned.
@@ -128,9 +128,11 @@ def _row(project: Project, active: bool) -> str:
     # finished project labelled active would misread the ledger.
     marked = active and project.status == INITIAL_STATUS
     name = f"{project.name} (active)" if marked else project.name
+    # The level beside the state tells a quick fix, a research project and a
+    # full build apart; the state is status/phase whatever the level's phases.
     state = f"{project.status}/{project.phase}"
     summary = project.summary or NEEDS_SUMMARY
-    cells = (name, project.created, project.completed, state, summary)
+    cells = (name, project.created, project.completed, project.level, state, summary)
     return "| " + " | ".join(_cell(cell) for cell in cells) + " |"
 
 

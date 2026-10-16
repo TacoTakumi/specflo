@@ -616,7 +616,7 @@ def _project_at_level(tmp_path, level):
     assert runner.invoke(app, ["new", "Thing", "--level", level]).exit_code == 0
 
 
-@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden"])
+@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden", "research"])
 def test_status_prints_the_level(tmp_path, monkeypatch, level):
     monkeypatch.chdir(tmp_path)
     _project_at_level(tmp_path, level)
@@ -625,7 +625,7 @@ def test_status_prints_the_level(tmp_path, monkeypatch, level):
     assert f"Level: {level}" in result.output.splitlines()
 
 
-@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden"])
+@pytest.mark.parametrize("level", ["quick", "fast", "full", "harden", "research"])
 def test_status_json_reports_the_level(tmp_path, monkeypatch, level):
     monkeypatch.chdir(tmp_path)
     _project_at_level(tmp_path, level)
@@ -642,3 +642,47 @@ def test_render_status_reads_a_view_without_a_level_as_full(tmp_path):
         "checkpoint_locator": "thing/checkpoint",
     }
     assert "Level: full" in status.render_status(tmp_path, info).splitlines()
+
+
+# --- the research level -------------------------------------------------------
+# A research project has the one phase, research, and its next step starts the
+# session with the recap. The status module derives all of it on its own, so
+# the hook and the command read the same block without going through the CLI.
+
+
+def _research_project(tmp_path):
+    """An active research 'Thing' at its one phase; ``(cfg, project)``."""
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", created="2026-07-06", level="research")
+    projects.switch_project(tmp_path, cfg, "Thing")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def test_build_status_carries_the_research_level_phase_and_next_step(tmp_path):
+    cfg, project = _research_project(tmp_path)
+    info = status.build_status(tmp_path, cfg, project)
+    assert (info["level"], info["phase"], info["next_phase"]) == ("research", "research", None)
+    assert info["next_step"] == workflow.next_step("research", level="research")
+    assert "specflo research recap" in info["next_step"]
+    # No plan to count tasks from and no round files: neither block is carried.
+    assert "progress" not in info and "review" not in info
+
+
+def test_render_status_prints_the_research_level_and_next_step(tmp_path):
+    cfg, project = _research_project(tmp_path)
+    lines = status.render_status(tmp_path, status.build_status(tmp_path, cfg, project)).splitlines()
+    assert "Phase:   research" in lines
+    assert "Level: research" in lines
+    next_line = next(line for line in lines if line.startswith("Next:"))
+    assert "specflo research recap" in next_line
+    assert not any(line.startswith(("Tasks:", "Milestone:", "Reviews:")) for line in lines)
+
+
+def test_status_command_json_reports_the_research_level_and_phase(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _research_project(tmp_path)
+    result = CliRunner().invoke(app, ["status", "--json"])
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert (data["level"], data["phase"], data["next_phase"]) == ("research", "research", None)
+    assert "specflo research recap" in data["next_step"]

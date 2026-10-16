@@ -123,7 +123,7 @@ def test_promote_moves_the_project_into_the_daemon_and_records_it_hosted(checkou
     hosted = live_daemon["root"] / daemon.PROJECTS_DIRNAME / "thing"
     assert _snapshot(hosted) == before
     listing = runner.invoke(app, ["list"]).output
-    assert "* thing  (brainstorm)  [hosted: home]" in listing.splitlines()
+    assert "* thing  (brainstorm, full)  [hosted: home]" in listing.splitlines()
     assert runner.invoke(app, ["doc", "show", "brainstorm"]).output == brainstorm_before
     status = runner.invoke(app, ["status"])
     assert status.exit_code == 0 and "Project: Thing (thing)" in status.output

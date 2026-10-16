@@ -141,8 +141,8 @@ def test_list_shows_the_locality_of_every_project(checkout):
 
     assert result.exit_code == 0, result.output
     assert result.output.splitlines()[:2] == [
-        "  alpha  (brainstorm)",
-        "* bravo  (brainstorm)  [hosted: home]",
+        "  alpha  (brainstorm, full)",
+        "* bravo  (brainstorm, full)  [hosted: home]",
     ]
 
     data = json.loads(runner.invoke(app, ["list", "--json"]).output)

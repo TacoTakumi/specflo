@@ -820,6 +820,7 @@ def list_(
                 "slug": row["slug"],
                 "name": p.name if p else None,
                 "phase": p.phase if p else None,
+                "level": p.level if p else None,
                 "status": p.status if p else None,
                 "active": row["slug"] == cfg.active_project,
                 "locality": row["locality"],
@@ -852,7 +853,9 @@ def list_(
             suffix = ""
         if row["locality"] == "hosted":
             suffix += f"  [hosted: {row['remote']}]"
-        typer.echo(f"{marker} {p.slug}  ({p.phase}){suffix}")
+        # The level follows the phase: a research project reads as research at
+        # its one phase, a quick fix as execute at quick.
+        typer.echo(f"{marker} {p.slug}  ({p.phase}, {p.level}){suffix}")
     rule = local.index_rule_line()
     if rule:
         typer.echo("")

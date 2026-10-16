@@ -459,3 +459,50 @@ def test_the_rule_line_survives_a_directory_that_is_not_a_project(root, cfg):
     (broken / "project.md").write_text("not a project\n")
 
     assert rule_line(root, cfg) is not None
+
+
+# --- the level column -----------------------------------------------------
+# Every row names the project's level, so the ledger tells a quick fix, a
+# research project and a full build apart at a glance. A research project
+# renders at its one phase like any other row.
+
+
+def _cells(row):
+    return [c.strip() for c in row.strip("|").split("|")]
+
+
+def test_index_header_has_a_level_column(root, cfg):
+    projects.create_project(root, cfg, "Thing", summary="S.")
+    lines = [ln for ln in write_index(root, cfg).read_text().splitlines() if ln.startswith("|")]
+    assert lines[0] == "| Project | Created | Completed | Level | State | Summary |"
+    assert lines[1] == "| --- | --- | --- | --- | --- | --- |"
+
+
+@pytest.mark.parametrize("level", projects.NEW_LEVELS)
+def test_index_rows_carry_the_level(root, cfg, level):
+    projects.create_project(root, cfg, "Thing", created="2026-01-02", summary="S.", level=level)
+    (row,) = _rows(write_index(root, cfg).read_text())
+    cells = _cells(row)
+    assert len(cells) == 6
+    assert cells[3] == level
+    assert cells[4] == f"active/{projects.load_project(root, cfg, 'thing').phase}"
+
+
+def test_index_renders_a_research_project_at_its_phase(root, cfg):
+    projects.create_project(root, cfg, "Thing", created="2026-01-02", summary="S.", level="research")
+    cfg.active_project = "thing"
+    text = write_index(root, cfg).read_text()
+    text.encode("ascii")
+    (row,) = _rows(text)
+    assert _cells(row) == ["Thing (active)", "2026-01-02", "", "research", "active/research", "S."]
+
+
+def test_index_command_writes_a_research_project_with_its_level(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Thing", "--level", "research", "--summary", "Reads up."])
+
+    result = runner.invoke(app, ["index"])
+    assert result.exit_code == 0, result.output
+    (row,) = _rows((tmp_path / "docs" / "projects" / INDEX_FILENAME).read_text())
+    assert "| research | active/research |" in row

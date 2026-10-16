@@ -263,7 +263,7 @@ def test_workitem_spawn_creates_the_hosted_project_and_makes_it_active(checkout,
     shown = runner.invoke(app, ["doc", "show", "project"])
     assert "work_item: 1\n" in shown.output and "piece: web\n" in shown.output
     listing = runner.invoke(app, ["list"]).output
-    assert "* fix-the-login  (brainstorm)  [hosted: home]" in listing.splitlines()
+    assert "* fix-the-login  (brainstorm, full)  [hosted: home]" in listing.splitlines()
 
     item = runner.invoke(app, ["workitem", "show", "1"])
     assert "Project:   fix-the-login\n" in item.output
