@@ -330,7 +330,7 @@ def test_the_privacy_rule_is_one_ascii_sentence():
 # --- the guide ------------------------------------------------------------------
 
 
-def test_recap_has_a_guide_row_as_the_last_research_row():
+def test_recap_has_a_guide_row_right_after_term_set():
     rows = {entry["name"]: entry for entry in guide.COMMANDS if entry["group"] == "research"}
 
     row = rows["research recap"]
@@ -338,8 +338,6 @@ def test_recap_has_a_guide_row_as_the_last_research_row():
     assert row["summary"].isascii() and row["args"].isascii()
     names = [entry["name"] for entry in guide.COMMANDS]
     assert names.index("research term set") + 1 == names.index("research recap")
-    research_names = [entry["name"] for entry in guide.COMMANDS if entry["group"] == "research"]
-    assert research_names[-1] == "research recap"
 
 
 def test_the_guide_text_shows_the_recap_row_after_term_set(tmp_path, monkeypatch):

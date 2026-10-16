@@ -573,3 +573,53 @@ def research_recap(
         typer.echo(json.dumps(payload))
     else:
         typer.echo(recap.render_recap(payload), nl=False)
+
+
+# --- spin-offs -----------------------------------------------------------------
+
+# The spin-off block imports its own module here so the block stays one piece.
+from .research import spinoff  # noqa: E402
+
+
+@research_app.command(
+    "spinoff",
+    epilog="Example: specflo research spinoff 'Lease tool' --level fast --use RF-01,Q-02",
+)
+def research_spinoff(
+    name: str = typer.Argument(
+        ..., metavar="<name>", help="The new project's name; slugified into its directory name."
+    ),
+    level: str = typer.Option(
+        ..., "--level", metavar="|".join(spinoff.SPINOFF_LEVELS),
+        help="How much ceremony the new project gets; research and harden are refused.",
+    ),
+    use: list[str] = typer.Option(
+        ..., "--use", metavar="<ID>[,<ID>]...",
+        help="The entries to hand off, by ID: sources (S-NN), questions (Q-NN) and findings"
+             " (RF-NN), comma-separated; repeatable.",
+    ),
+) -> None:
+    """Spin a seeded project off the research.
+
+    The new project is created as `specflo new <name> --level <level>` creates
+    one and becomes active; its handoff.md holds each named entry with its ID
+    and full text, the research project's name and the date. The research
+    project keeps its phase and status and its log names the spin-off. An
+    unknown ID, a glossary term, a repeated ID or a bad level is refused before
+    anything is created.
+    """
+    root, cfg, slug = research_project()
+    try:
+        result = spinoff.spin_off(root, cfg, slug, name, level, spinoff.split_ids(use))
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    ids = ", ".join(result.entries)
+    typer.echo(f"Created project '{result.slug}' (now active). Phase: {result.phase}.")
+    typer.echo(
+        f"Scaffolded {result.slug}/{result.scaffolded.stem} and"
+        f" {result.slug}/{result.handoff_path.stem} ({ids}) (ready to work)."
+    )
+    typer.echo(
+        f"Research project '{slug}' stays as it was and is no longer active:"
+        f" `specflo switch {slug}` returns to it."
+    )

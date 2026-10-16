@@ -273,6 +273,11 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Print the session recap: destination and why, the usual user, the last "
                 "session, the open questions by who answers them, the counts and the rule for "
                 "an outgoing web search; writes nothing."},
+    {"name": "research spinoff", "group": "research",
+     "args": "<name> --level quick|fast|full --use <ID>[,<ID>]...",
+     "summary": "Spin a seeded project off the research: create it as `new` would, with a "
+                "handoff.md holding each named source, question or finding in full; the "
+                "research project stays as it is and its log names the spin-off."},
     {"name": "agent start", "group": "agents", "args": "<name>",
      "summary": "Start a detached pi agent host in a herdr tab when available "
                 "(--cwd, --pi-cmd, --workspace, --no-herdr)."},
