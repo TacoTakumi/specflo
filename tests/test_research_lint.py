@@ -119,6 +119,23 @@ def test_a_missing_figure_fails_naming_the_figure_and_the_source(tmp_path, monke
     assert result.output.rstrip("\n").splitlines()[-1] == "1 problem in 1 of 1 findings with citations."
 
 
+def test_a_number_is_found_with_or_without_thousands_separators(tmp_path, monkeypatch):
+    root = _with_sources(tmp_path, monkeypatch)
+    text = root / "docs" / "projects" / "thing" / "research" / "sources" / "S-01" / "text.md"
+    text.write_text("The estate has 1,000 flats, 2000 houses and 30000 plots.\n", encoding="utf-8")
+    _finding("The estate has 1000 flats.", "S-01")
+    _finding("The estate has 2,000 houses.", "S-01")
+    _finding("The estate has 3000 plots.", "S-01")
+
+    result = _lint()
+
+    assert result.exit_code == 1, result.output
+    assert result.output == (
+        'RF-03: "3000" not found in S-01\n'
+        "1 problem in 1 of 3 findings with citations.\n"
+    )
+
+
 def test_a_page_citation_fails_when_the_figure_is_only_on_another_page(tmp_path, monkeypatch):
     _with_sources(tmp_path, monkeypatch)
     _finding("Rent rose 4 percent last year.", "S-02:p2")
@@ -310,6 +327,31 @@ def test_figures_of_leaves_words_and_identifiers_alone():
     assert lint.figures_of("") == []
 
 
+def _holds(source, finding):
+    """True when the one figure of ``finding`` is held by the text ``source``."""
+    (figure,) = lint.figures(finding)
+    return lint._holds(source, figure)
+
+
+def test_a_number_matches_its_grouped_and_ungrouped_forms_both_ways():
+    assert _holds("Stock stands at 1,000 units.", "1000 units")
+    assert _holds("Stock stands at 1000 units.", "1,000 units")
+    assert _holds("Total: 1,234,567.", "1234567")
+    assert _holds("Total: 1234567.", "1,234,567")
+    assert _holds("Rent is 1,234.5 each.", "1234.5 each")
+    assert _holds("Rent is 1234.5 each.", "1,234.5 each")
+    assert _holds("A 4% rise to 1,200 units.", "1200")
+    assert not _holds("Stock stands at 1,000 units.", "100 units")
+    assert not _holds("Stock stands at 1,000 units.", "1,001 units")
+
+
+def test_a_number_is_found_only_as_a_whole_number_in_either_form():
+    longer = ("10000", "21000", "1000.5", "1,0001", "11,000", "1,000.5", "1,000,000", "1,001,000")
+    for source in longer:
+        assert not _holds(f"Stock stands at {source} units.", "1000 units"), source
+        assert not _holds(f"Stock stands at {source} units.", "1,000 units"), source
+
+
 def test_render_lists_each_problem_then_the_counts():
     problems = [
         lint.Problem("RF-01", "7%", ["S-01"], [None]),
@@ -355,7 +397,16 @@ def test_a_cited_source_without_stored_text_is_refused(tmp_path, monkeypatch):
     assert "S-01" in shown
 
 
-# --- the guide -----------------------------------------------------------------------------
+# --- the help and the guide ----------------------------------------------------------------
+
+
+def test_the_lint_help_and_module_docstring_name_the_thousands_separator_rule(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, [*LINT, "--help"], terminal_width=200)
+
+    assert result.exit_code == 0, result.output
+    assert "1,000" in result.output and "1000" in result.output, result.output
+    assert "1,000" in lint.__doc__ and "1000" in lint.__doc__
 
 
 def test_the_guide_has_a_row_for_lint_after_list(tmp_path, monkeypatch):

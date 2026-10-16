@@ -6,9 +6,12 @@ for word: its numbers (``4%``, ``2025``, ``3.5``, ``10km``), its dates
 and its double-quoted strings (the text between ``"..."``). A figure is
 grounded when it appears in the stored text of at least one cited source,
 whitespace-normalised: a number by its digits, so ``4%`` is found in ``4
-percent``; a date and a quoted string as written, case included. A citation
-that names a page (``S-NN:pN``) is held to that page: the ``## Page N``
-section of the source's stored text, as the PDF converter writes it.
+percent``; a date and a quoted string as written, case included. A number is
+looked for with and without thousands separators, so ``1000`` is found in a
+source that writes ``1,000`` and ``1,000`` in one that writes ``1000``, but
+only as a whole number: ``1000`` is not found in ``10000`` or ``1000.5``. A
+citation that names a page (``S-NN:pN``) is held to that page: the ``## Page
+N`` section of the source's stored text, as the PDF converter writes it.
 
 A finding with no citation has nothing to check and is skipped; so is a
 superseded finding. Every function here reads and writes nothing, and no
@@ -114,12 +117,38 @@ def figures_of(text: str) -> list[str]:
     return [figure.text for figure in figures(text)]
 
 
+def _grouped(digits: str) -> str:
+    """``digits`` with thousands separators: ``1000`` -> ``1,000``, ``1234.5`` -> ``1,234.5``."""
+    whole, dot, fraction = digits.partition(".")
+    groups = []
+    while len(whole) > 3:
+        groups.insert(0, whole[-3:])
+        whole = whole[:-3]
+    groups.insert(0, whole)
+    return ",".join(groups) + dot + fraction
+
+
 def _number_pattern(digits: str) -> re.Pattern[str]:
-    """``digits`` as a whole number in a text: not a run inside a longer one."""
-    forms = [re.escape(digits)]
-    if "," in digits:
-        forms.append(re.escape(digits.replace(",", "")))
-    return re.compile(r"(?<!\d)(?<!\d\.)(?:" + "|".join(forms) + r")(?!\.?\d)")
+    """``digits`` as a whole number in a text, with or without thousands separators.
+
+    The figure is looked for as written, without its separators and with them
+    (``1000`` as ``1,000``, ``1,000`` as ``1000``, ``1234567`` as
+    ``1,234,567``). Each form must be the whole number, not a run inside a
+    longer one: ``1000`` is not in ``10000``, ``21000`` or ``1000.5``, and
+    ``1,000`` is not in ``11,000``, ``1,0001`` or ``1,000,000``.
+    """
+    plain = digits.replace(",", "")
+    forms = []
+    for form in (digits, plain, _grouped(plain)):
+        if form not in forms:
+            forms.append(form)
+    alternatives = []
+    for form in forms:
+        before, after = r"(?<!\d)(?<!\d\.)", r"(?!\.?\d)"
+        if "," in form:
+            before, after = before + r"(?<!\d,)", after + r"(?!,\d{3})"
+        alternatives.append(before + re.escape(form) + after)
+    return re.compile("|".join(alternatives))
 
 
 def _holds(text: str, figure: Figure) -> bool:

@@ -499,7 +499,10 @@ def research_lint() -> None:
     A figure is a number, a date or a double-quoted string of the finding's
     text; it passes when it appears word for word in the stored text of at
     least one cited source, within the cited page when the citation names
-    one. Each missing figure is one line naming the finding, the figure and
+    one. A number is looked for with and without thousands separators, so
+    1000 is found in a source that writes 1,000 and 1,000 in one that writes
+    1000, but only as a whole number: 1000 is not found in 10000 or 1000.5.
+    Each missing figure is one line naming the finding, the figure and
     the citations. Exits 1 with any problem and 0 without. A finding with no
     citation and a superseded finding are skipped. The command reads only and
     nothing else depends on it passing.
