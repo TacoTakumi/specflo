@@ -2,9 +2,11 @@
 
 :func:`ingest_file` reads the file, hashes it, refuses bytes the sources
 ledger already holds, converts the file to text by its suffix, and then
-stores it: the ledger mints S-NN, the directory of that ID is created, the
-original is written byte for byte, the text beside it, and the entry records
-where both are. Every refusal comes before the first write.
+stores it in one step under the research lock: the ledger mints S-NN, the
+directory of that ID is created, the original is written byte for byte, the
+text beside it, and the entry is written once, recording where both are. Every
+refusal comes before the first write, and a write that fails after the mint
+leaves no entry and no directory behind.
 
 The duplicate check runs twice. Once before the conversion, so a file already
 held is refused without converting it; and once more under the research lock,
@@ -39,7 +41,7 @@ from ..config import SpecfloConfig
 from ..errors import SpecfloError
 from . import sources
 from .convert import Converter, convert_docx, convert_pdf, run_with_timeout
-from .ledger import Entry, source_dir
+from .ledger import Entry
 
 # The config key the size refusal names, as the registry spells it.
 SIZE_LIMIT_KEY = "research_source_limit_mb"
@@ -142,8 +144,11 @@ def ingest_file(
     the source directory cannot hold, a text file that is not UTF-8, a PDF or
     DOCX without the docs extra installed, a file its converter cannot read, a
     scanned PDF and a conversion that runs past the timeout.
-    Then the ledger mints the ID, the source directory is made for it, the
-    original and the text are written there and the entry records both paths.
+    Then, in one step under the research lock, the ledger mints the ID, the
+    source directory is made for it, the original and the text are written
+    there and the entry is written once, recording both paths. A write that
+    fails there leaves no entry and no directory, and the message names the
+    directory and the error.
     """
     path = Path(path)
     if not path.is_file():
@@ -165,10 +170,16 @@ def ingest_file(
     text, extra = convert(path, data, timeout=cfg.research_convert_timeout)
     today = today or datetime.date.today().isoformat()
 
-    # The check that counts: under the lock that mints the ID, against the
-    # sources held at that moment, so of several ingests of the same bytes
-    # at once exactly one records a source and the others are refused naming it.
-    entry = sources.add_source(
+    # One locked step. The precheck is the duplicate check that counts: under
+    # the lock that mints the ID, against the sources held at that moment, so
+    # of several ingests of the same bytes at once exactly one records a
+    # source and the others are refused naming it. The store hook then gets
+    # the minted ID, makes its directory and writes the original and the text
+    # there, before the entry is written once with both paths. When a write
+    # fails, the hook removes the directory it made and nothing is recorded:
+    # the number is minted again by the next ingest.
+    encoded = text.encode("utf-8")
+    return sources.add_source(
         root, cfg, slug, name, sources.DOCUMENT_KIND,
         [
             (sources.DATE_FIELD, today),
@@ -178,18 +189,5 @@ def ingest_file(
         ],
         today=today,
         precheck=lambda entries: _refuse_held(digest, entries),
+        store=lambda new_id: sources.store_files(root, cfg, slug, new_id, encoded, original=(name, data)),
     )
-    # The ID is minted once and never again, so this directory is this
-    # ingest's alone; anything already there was never a recorded source.
-    directory = source_dir(root, cfg, slug, entry.id)
-    original = sources.original_path(root, cfg, slug, entry.id, name)
-    text_file = sources.text_path(root, cfg, slug, entry.id)
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        original.write_bytes(data)
-        text_file.write_bytes(text.encode("utf-8"))
-    except OSError as exc:
-        raise SpecfloError(
-            f"{entry.id} is recorded but its files could not be stored under {directory}: {exc}."
-        ) from exc
-    return sources.record_stored(root, cfg, slug, entry.id, original, text_file, today=today)

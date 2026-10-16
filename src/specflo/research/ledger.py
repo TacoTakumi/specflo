@@ -14,7 +14,10 @@ lock, so two adds at once never share an ID. An add may also hand in a
 precheck: a callable run under that same lock with the entries the ledger
 holds at that moment, so a caller can refuse an entry by the ledger's current
 state (a document's bytes already held, say) and not by an earlier read that
-another add may have overtaken.
+another add may have overtaken. And it may hand in a store hook: a callable
+run under that lock with the minted ID, before the write, so a caller whose
+files carry the ID stores them in the same step and the entry is written once,
+complete, or not at all.
 
 No entry is ever deleted. An entry is replaced by a later one: the old entry
 gets a ``- Superseded by: <new id>`` line and the new one a ``- Supersedes:
@@ -330,6 +333,7 @@ class Ledger:
         supersedes: str | None = None,
         today: str | None = None,
         precheck: Callable[[list[Entry]], None] | None = None,
+        store: Callable[[str], list[tuple[str, str]]] | None = None,
     ) -> Entry:
         """Append an entry with the next ID and return it.
 
@@ -347,6 +351,18 @@ class Ledger:
         is written. It is the place for a refusal that depends on what the
         ledger holds, since a check made before the lock can be overtaken by
         another add between that check and this one's write.
+
+        ``store``, when given, is called under the same lock with the minted
+        ID, after ``precheck`` and ``supersedes`` have passed and before the
+        write. It is the place for a caller whose files carry the ID (a
+        source's directory, say) to store them, so the entry is written once,
+        complete, and no entry ever points at files that are not there. The
+        fields it returns are checked like ``fields`` and follow them on the
+        entry, in the same write. An exception it raises propagates and
+        nothing is written: the ID it was handed is not recorded, so the
+        next add mints the same number. The hook runs while every other add
+        waits, so it must be quick, and it must leave nothing behind when it
+        fails. An OSError is the caller's to turn into a SpecfloError.
         """
         if self.prefix is None:
             raise SpecfloError(
@@ -369,6 +385,8 @@ class Ledger:
             if supersedes is not None:
                 old = self._active_entry(doc, supersedes)
             new_id = self._next_id(doc)
+            if store is not None:
+                fields = [*fields, *_check_fields(list(store(new_id) or []), f"A {self.name} entry's")]
             if supersedes is not None:
                 doc = mark_superseded(doc, old.id, new_id, self.prefix)
                 fields = [*fields, (SUPERSEDES_FIELD, old.id)]

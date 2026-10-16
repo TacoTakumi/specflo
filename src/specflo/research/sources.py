@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import datetime
 import re
+import shutil
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
@@ -69,8 +70,8 @@ EGRESS_HINT = (
 )
 
 # What each kind may carry beyond Kind and Date, and what it must carry. A
-# document's Original and Text are recorded once its files are stored, since
-# their paths carry the ID the ledger mints.
+# source's Original and Text come from the store hook of :func:`add_source`,
+# since their paths carry the ID the ledger mints.
 _ALLOWED = {
     DOCUMENT_KIND: (FORMAT_FIELD, PAGES_FIELD, SHA256_FIELD, ORIGINAL_FIELD, TEXT_FIELD),
     INTERVIEW_KIND: (ORIGINAL_FIELD, TEXT_FIELD),
@@ -231,6 +232,7 @@ def add_source(
     fields: list[tuple[str, str]],
     today: str | None = None,
     precheck: Callable[[list[Entry]], None] | None = None,
+    store: Callable[[str], list[tuple[str, str]]] | None = None,
 ) -> Entry:
     """Record a source of ``kind`` and return its entry with the ID the ledger minted.
 
@@ -238,34 +240,62 @@ def add_source(
     against the contract above and written in its order. Refused, before
     anything is written, for an unknown kind, a field the kind has not, a
     missing required field, a value in the wrong shape and a repeated field.
-    ``precheck`` is handed to the ledger: it runs under the research lock with
-    the sources held at that moment, right before the ID is minted, and a
-    SpecfloError it raises refuses the add with nothing written.
+    ``precheck`` and ``store`` are handed to the ledger. The precheck runs
+    under the research lock with the sources held at that moment, right before
+    the ID is minted, and a SpecfloError it raises refuses the add with nothing
+    written. The store hook runs under that lock with the minted ID, before
+    the entry is written, and the fields it returns (Original and Text, from
+    :func:`store_files`) go on the entry in that one write; when it raises,
+    nothing is written and the ID is minted again next time.
     """
     return SOURCES.add(
         root, cfg, slug, title, _checked_fields(kind, list(fields or [])), today=today,
-        precheck=precheck,
+        precheck=precheck, store=store,
     )
 
 
-def record_stored(
+def store_files(
     root: Path,
     cfg: SpecfloConfig,
     slug: str,
-    entry_id: str,
-    original: Path | None,
-    text: Path,
-    today: str | None = None,
-) -> Entry:
-    """Record where source ``entry_id`` keeps its original and its text; return the entry.
+    source_id: str,
+    text: bytes,
+    original: tuple[str, bytes] | None = None,
+) -> list[tuple[str, str]]:
+    """Store the files of source ``source_id`` and return its Original and Text fields.
 
-    ``original`` is None for a source that has no original file, only its text.
+    The store hook of :func:`add_source`: it runs under the research lock,
+    right after the ID is minted and before the entry is written. It makes
+    the source directory, writes the original (its file name and bytes, or
+    None for a source that has text only) and the text beside it, and returns
+    the project-relative paths the entry records. When a write fails it
+    leaves nothing behind, since the ID is not recorded and the next add
+    mints it again: the directory it made is removed and a SpecfloError
+    names the directory and the error. A directory that was there already
+    was never a recorded source and is left as it is.
     """
+    directory = source_dir(root, cfg, slug, source_id)
+    text_file = text_path(root, cfg, slug, source_id)
     fields = []
     if original is not None:
-        fields.append((ORIGINAL_FIELD, project_relative(root, cfg, slug, original)))
-    fields.append((TEXT_FIELD, project_relative(root, cfg, slug, text)))
-    return SOURCES.set_fields(root, cfg, slug, entry_id, fields, today=today)
+        name, data = original
+        original_file = original_path(root, cfg, slug, source_id, name)
+        fields.append((ORIGINAL_FIELD, project_relative(root, cfg, slug, original_file)))
+    fields.append((TEXT_FIELD, project_relative(root, cfg, slug, text_file)))
+    made = not directory.exists()
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        if original is not None:
+            original_file.write_bytes(data)
+        text_file.write_bytes(text)
+    except OSError as exc:
+        if made:
+            shutil.rmtree(directory, ignore_errors=True)
+        raise SpecfloError(
+            f"Not recorded: the files of {source_id} could not be stored under {directory}: {exc}."
+            " Nothing was written to the sources ledger."
+        ) from exc
+    return fields
 
 
 def add_text_source(
@@ -283,8 +313,9 @@ def add_text_source(
     Refused, with nothing written: a kind other than those three (a document
     comes in through ingest, which keeps its bytes and sha256), an empty or
     multi-line title, empty text, a web or repo source without a URL and an
-    interview with one. Then the ledger mints the ID, the source directory is
-    made for it, the text is written there as given and the entry records it.
+    interview with one. Then, in one locked step, the ledger mints the ID,
+    the source directory is made for it, the text is written there as given
+    and the entry is written once, recording it.
     """
     if kind == DOCUMENT_KIND:
         raise SpecfloError(
@@ -316,19 +347,11 @@ def add_text_source(
     fields = [(DATE_FIELD, today)]
     if url is not None:
         fields.append((URL_FIELD, url))
-    entry = add_source(root, cfg, slug, title, kind, fields, today=today)
-    # The ID is minted once and never again, so this directory is this
-    # source's alone; anything already there was never a recorded source.
-    directory = source_dir(root, cfg, slug, entry.id)
-    text_file = text_path(root, cfg, slug, entry.id)
-    try:
-        directory.mkdir(parents=True, exist_ok=True)
-        text_file.write_bytes(text.encode("utf-8"))
-    except OSError as exc:
-        raise SpecfloError(
-            f"{entry.id} is recorded but its text could not be stored under {directory}: {exc}."
-        ) from exc
-    return record_stored(root, cfg, slug, entry.id, None, text_file, today=today)
+    encoded = text.encode("utf-8")
+    return add_source(
+        root, cfg, slug, title, kind, fields, today=today,
+        store=lambda new_id: store_files(root, cfg, slug, new_id, encoded),
+    )
 
 
 def egress_hint(root: Path, cfg: SpecfloConfig, slug: str) -> str | None:

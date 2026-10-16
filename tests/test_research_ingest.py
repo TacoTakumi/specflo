@@ -9,6 +9,7 @@ path the command writes is inside the project folder.
 """
 
 import datetime
+import errno
 import hashlib
 import multiprocessing
 import time
@@ -238,6 +239,76 @@ def test_simultaneous_ingests_of_the_same_bytes_record_exactly_one_source(tmp_pa
     assert [path.name for path in folder.iterdir()] == [held.id]
     assert sorted(path.name for path in (folder / held.id).iterdir()) == sorted([held.title, "text.md"])
     assert (folder / held.id / held.title).read_bytes() == NOTES.encode("utf-8")
+
+
+# --- the mint, the files and the entry are one locked step --------------------------------
+
+
+def test_an_ingest_writes_the_sources_ledger_once_with_the_entry_complete(tmp_path, monkeypatch):
+    """The entry is written once, with its Original and Text, in the same
+    locked step that mints the ID and stores the files; there is no moment
+    when the ledger holds an entry without its files."""
+    root = _research_project(tmp_path, monkeypatch)
+    source = _notes(tmp_path, "notes.md")
+    real_write = ledger.Ledger._write
+    snapshots = []
+
+    def counting_write(self, root_, cfg_, slug_, doc, today):
+        snapshots.append((self.name, doc))
+        return real_write(self, root_, cfg_, slug_, doc, today)
+
+    monkeypatch.setattr(ledger.Ledger, "_write", counting_write)
+
+    _ok([*INGEST, str(source)])
+
+    assert [name for name, _ in snapshots] == ["sources"]
+    (written,) = ledger.parse_entries(snapshots[0][1], "S")
+    assert written.get("Original") == "research/sources/S-01/notes.md"
+    assert written.get("Text") == "research/sources/S-01/text.md"
+    folder = _project(root) / "research" / "sources" / "S-01"
+    assert (folder / "notes.md").read_bytes() == NOTES.encode("utf-8")
+    assert (folder / "text.md").read_bytes() == NOTES.encode("utf-8")
+
+
+def test_a_storage_failure_after_the_mint_records_nothing_and_the_number_is_minted_again(
+    tmp_path, monkeypatch
+):
+    """When the original cannot be written, the ingest fails naming the error,
+    the ledger is as it was, no S-NN directory is left, and the next ingest
+    gets the number the failed one was handed."""
+    root = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+    source = _notes(tmp_path, "notes.md")
+    before = _tree(_project(root))
+    ledger_before = ledger.SOURCES.path(root, cfg, "thing").read_bytes()
+    real_write_bytes = Path.write_bytes
+
+    def failing_write_bytes(self, data):
+        if self.name == "notes.md":
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real_write_bytes(self, data)
+
+    monkeypatch.setattr(Path, "write_bytes", failing_write_bytes)
+
+    shown = _refused([*INGEST, str(source)])
+
+    assert "No space left on device" in shown
+    assert str(_project(root) / "research" / "sources" / "S-01") in shown
+    assert ledger.SOURCES.path(root, cfg, "thing").read_bytes() == ledger_before
+    assert _entries(root) == []
+    assert not (_project(root) / "research" / "sources" / "S-01").exists()
+    assert _tree(_project(root)) == before
+
+    other = tmp_path / "brief.txt"
+    real_write_bytes(other, b"A plain brief.\n")
+    shown = _ok([*INGEST, str(other)]).output
+
+    assert "S-01" in shown
+    (entry,) = _entries(root)
+    assert (entry.id, entry.title) == ("S-01", "brief.txt")
+    assert entry.get("Original") == "research/sources/S-01/brief.txt"
+    assert (_project(root) / "research" / "sources" / "S-01" / "brief.txt").read_bytes() == b"A plain brief.\n"
+    assert sorted(path.name for path in (_project(root) / "research" / "sources").iterdir()) == ["S-01"]
 
 
 # --- refusals write nothing -------------------------------------------------------------

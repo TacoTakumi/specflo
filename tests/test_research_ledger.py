@@ -12,7 +12,7 @@ import re
 
 import pytest
 
-from specflo import brainstorm, config, markdown, projects
+from specflo import brainstorm, config, locking, markdown, projects
 from specflo.errors import SpecfloError
 from specflo.research import document, ledger, scaffold
 
@@ -425,6 +425,109 @@ def test_add_refusals_write_nothing(tmp_path):
     with pytest.raises(SpecfloError, match="sources"):
         ledger.SOURCES.add(root, cfg, "alpha", "Late", today=TODAY)
     assert not path.exists()
+
+
+def _counting_writes(monkeypatch):
+    """Patch the ledger's one write so a test can count the writes an add makes."""
+    real_write = ledger.Ledger._write
+    writes = []
+
+    def counting_write(self, *args, **kwargs):
+        writes.append(self.name)
+        return real_write(self, *args, **kwargs)
+
+    monkeypatch.setattr(ledger.Ledger, "_write", counting_write)
+    return writes
+
+
+def test_add_runs_the_store_hook_with_the_minted_id_and_writes_its_fields_in_the_one_write(
+    tmp_path, monkeypatch
+):
+    """A caller whose files carry the minted ID stores them through ``store``:
+    it gets the ID before the entry is written, under the same lock, and the
+    fields it returns land on the entry in that single write."""
+    root, cfg = _checkout(tmp_path, "Alpha")
+    ledger.SOURCES.add(root, cfg, "alpha", "First", [("Kind", "web")], today=TODAY)
+    writes = _counting_writes(monkeypatch)
+    seen = []
+
+    def store(new_id):
+        seen.append(new_id)
+        # The hook runs under the research lock: a second taker is held out.
+        lock = locking.lock_path_for(root, "alpha", document.LOCK_NAME)
+        with pytest.raises(SpecfloError), locking.locked(lock, timeout=0.2):
+            pass
+        return [("Original", f"research/sources/{new_id}/notes.md"), ("Text", f"research/sources/{new_id}/text.md")]
+
+    entry = ledger.SOURCES.add(
+        root, cfg, "alpha", "notes.md", [("Kind", "document"), ("Date", TODAY)], today=TODAY, store=store,
+    )
+
+    assert seen == ["S-02"]
+    assert entry.id == "S-02"
+    assert entry.fields == (
+        ("Kind", "document"), ("Date", TODAY),
+        ("Original", "research/sources/S-02/notes.md"), ("Text", "research/sources/S-02/text.md"),
+    )
+    assert writes == ["sources"]
+    doc = ledger.SOURCES.path(root, cfg, "alpha").read_text()
+    assert (
+        f"### S-02 - notes.md\n- Kind: document\n- Date: {TODAY}\n"
+        "- Original: research/sources/S-02/notes.md\n- Text: research/sources/S-02/text.md\n"
+    ) in doc
+    assert doc.count("### S-02") == 1
+    assert ledger.SOURCES.entries(root, cfg, "alpha")[1] == entry
+
+
+def test_add_with_store_and_supersedes_puts_the_stored_fields_before_the_supersedes_link(tmp_path):
+    root, cfg = _checkout(tmp_path, "Alpha")
+    ledger.SOURCES.add(root, cfg, "alpha", "Old", [("Kind", "web")], today=TODAY)
+
+    new = ledger.SOURCES.add(
+        root, cfg, "alpha", "New", [("Kind", "web")], supersedes="S-01", today=TODAY,
+        store=lambda new_id: [("Text", f"research/sources/{new_id}/text.md")],
+    )
+
+    assert new.fields == (("Kind", "web"), ("Text", "research/sources/S-02/text.md"), ("Supersedes", "S-01"))
+    doc = ledger.SOURCES.path(root, cfg, "alpha").read_text()
+    assert "### S-01 - Old\n- Kind: web\n- Superseded by: S-02\n\n" in doc
+    assert "### S-02 - New\n- Kind: web\n- Text: research/sources/S-02/text.md\n- Supersedes: S-01\n" in doc
+
+
+def test_a_store_hook_that_raises_leaves_the_ledger_as_it_was_and_the_id_unminted(tmp_path, monkeypatch):
+    """Nothing is written when the hook fails, so the ID it was handed is not
+    recorded and the next add mints the same number."""
+    root, cfg = _checkout(tmp_path, "Alpha")
+    ledger.SOURCES.add(root, cfg, "alpha", "First", [("Kind", "web")], today=TODAY)
+    path = ledger.SOURCES.path(root, cfg, "alpha")
+    before = path.read_bytes()
+    writes = _counting_writes(monkeypatch)
+    seen = []
+
+    def failing_store(new_id):
+        seen.append(new_id)
+        raise SpecfloError(f"disk full while storing {new_id}")
+
+    with pytest.raises(SpecfloError, match="disk full while storing S-02"):
+        ledger.SOURCES.add(
+            root, cfg, "alpha", "notes.md", [("Kind", "document")], today="2026-10-17", store=failing_store,
+        )
+    assert path.read_bytes() == before
+    assert writes == []
+
+    # A field the hook returns is checked like the caller's own; a bad one writes nothing.
+    for bad in ([("Superseded by", "S-01")], [("", "x")], [("Text", "a\nb")]):
+        with pytest.raises(SpecfloError):
+            ledger.SOURCES.add(
+                root, cfg, "alpha", "notes.md", today=TODAY, store=lambda new_id, bad=bad: bad,
+            )
+        assert path.read_bytes() == before, bad
+    assert writes == []
+
+    again = ledger.SOURCES.add(root, cfg, "alpha", "notes.md", [("Kind", "document")], today=TODAY)
+    assert seen == ["S-02"]
+    assert again.id == "S-02"
+    assert [e.id for e in ledger.SOURCES.entries(root, cfg, "alpha")] == ["S-01", "S-02"]
 
 
 def test_a_ledger_without_its_section_is_refused_by_name(tmp_path):
