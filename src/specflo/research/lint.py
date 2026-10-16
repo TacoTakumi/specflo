@@ -143,8 +143,11 @@ def _number_pattern(digits: str) -> re.Pattern[str]:
         if form not in forms:
             forms.append(form)
     # Every form gets every guard: a short figure such as 100 would otherwise
-    # match one group of a grouped neighbour such as 1,100.
-    before, after = r"(?<!\d)(?<!\d\.)(?<!\d,)", r"(?!\.?\d)(?!,\d{3})"
+    # match one group of a grouped neighbour such as 1,100. A comma counts as
+    # a separator only when it joins an exact three-digit group, so a list
+    # such as 1,2,3 or a CSV cell such as 2024,1500 still holds its numbers.
+    before = r"(?<!\d)(?<!\d\.)(?<!\d,(?=\d{3}(?!\d)))"
+    after = r"(?!\.?\d)(?!,\d{3}(?!\d))"
     alternatives = [before + re.escape(form) + after for form in forms]
     return re.compile("|".join(alternatives))
 

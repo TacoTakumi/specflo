@@ -434,3 +434,17 @@ def test_a_short_number_is_not_found_inside_a_grouped_neighbour():
     assert _holds("There are 100 flats.", "100 flats")
     assert _holds("There are 1,100 flats.", "1,100 flats")
     assert _holds("There are 1,100 flats.", "1100 flats")
+
+
+def test_a_comma_that_is_not_a_thousands_separator_does_not_block_a_number():
+    assert _holds("See Figures 2,3 for the trend.", "Figure 3")
+    assert _holds("The sections 1,2,3 cover it.", "section 2")
+    assert _holds("On pp. 12,13 the act names the tenant.", "page 13")
+    assert _holds("Rooms 10,11 face the street.", "room 11")
+    csv = "Year,Units 2024,1500 2025,1600"
+    assert _holds(csv, "2024 units")
+    assert _holds(csv, "1500 units")
+    assert _holds(csv, "1600 units")
+    assert not _holds("Rent is 1,100 a month.", "100 a month")
+    assert not _holds("Sales hit 100,000 last year.", "100 last year")
+    assert not _holds("Stock stands at 1,000 units.", "1 unit")
