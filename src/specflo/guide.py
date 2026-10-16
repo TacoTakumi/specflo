@@ -226,8 +226,9 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "followup close", "group": "any", "args": "<FU-NN> --note <text> [--by <ref>]",
      "summary": "Close an open follow-up in any project, with a note and what did the work."},
     {"name": "research ingest", "group": "research", "args": "<file>",
-     "summary": "Keep a .md or .txt file as a document source (S-NN): the byte-identical "
-                "original, its text, name, sha256 and date; the same bytes again are refused."},
+     "summary": "Keep a .md, .txt, .pdf or .docx file as a document source (S-NN): the "
+                "byte-identical original, its text, name, sha256 and date; the same bytes "
+                "again are refused. PDF and DOCX need the specflo[docs] extra."},
     {"name": "research source add", "group": "research",
      "args": "--kind interview|web|repo --title <text> (--file <path> | --stdin) [--url <url>]",
      "summary": "Record an interview, web or repo source (S-NN) with its text stored as given; "

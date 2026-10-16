@@ -69,7 +69,13 @@ def research_project() -> tuple[Path, config.SpecfloConfig, str]:
 @research_app.command("ingest", epilog="Example: specflo research ingest notes/lease-act.md")
 def ingest(
     file: Path = typer.Argument(
-        ..., metavar="<file>", help="A .md or .txt file to keep as a document source."
+        ...,
+        metavar="<file>",
+        help=(
+            "A .md, .txt, .pdf or .docx file to keep as a document source;"
+            # Rich reads [docs] as a style tag unless the bracket is escaped.
+            " PDF and DOCX need the specflo\\[docs] extra."
+        ),
     ),
 ) -> None:
     """Keep a file as a document source (S-NN).

@@ -285,3 +285,22 @@ def test_the_converter_module_imports_none_of_the_extra_at_import_time():
     )
     assert out.stdout.strip() == "[]", out.stdout
     assert importlib.import_module("specflo.research.convert") is convert
+
+
+# --- the help names every suffix and the extra ----------------------------------------------
+
+
+def test_the_guide_row_and_the_ingest_help_name_pdf_docx_and_the_extra(tmp_path, monkeypatch):
+    # Run from an empty directory so the guide reads no project state of its own.
+    monkeypatch.chdir(tmp_path)
+
+    guide_out = _ok(["guide"]).output
+    row_start = guide_out.index("research ingest")
+    row = guide_out[row_start:guide_out.index("research source add", row_start)]
+    help_out = _ok([*INGEST, "--help"]).output
+
+    for text in (row, help_out):
+        for word in (".md", ".txt", ".pdf", ".docx", EXTRA):
+            assert word in text, (word, text)
+    assert ".md or .txt file" not in guide_out
+    assert ".md or .txt file" not in help_out
