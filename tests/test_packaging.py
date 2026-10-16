@@ -23,7 +23,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-# The 10 repo skills, hardcoded so a dropped skill fails the build test.
+# The 11 repo skills, hardcoded so a dropped skill fails the build test.
 SKILL_NAMES = [
     "specflo-agent",
     "specflo-auto",
@@ -33,6 +33,7 @@ SKILL_NAMES = [
     "specflo-plan",
     "specflo-quick",
     "specflo-research",
+    "specflo-research-project",
     "specflo-shelve",
     "specflo-spec",
 ]

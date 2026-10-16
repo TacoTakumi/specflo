@@ -27,6 +27,7 @@ SKILL_NAMES = [
     "specflo-plan",
     "specflo-quick",
     "specflo-research",
+    "specflo-research-project",
     "specflo-shelve",
     "specflo-spec",
 ]
