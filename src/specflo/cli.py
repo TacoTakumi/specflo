@@ -28,6 +28,7 @@ from . import doc as doc_module
 from . import doctor as doctor_module
 from . import followup as followup_module
 from . import graph as graph_module
+from . import research as research_module
 from . import review as review_module
 from . import extension_install as extension_module
 from . import status as status_view
@@ -555,19 +556,29 @@ def new(
     # the scaffold is CLI orchestration over the idempotent helper.
     # A quick project is worked from its brief and has no brainstorm. A harden
     # project has a brief too, and a plan that starts empty: its tasks are fix
-    # tasks added from review findings.
+    # tasks added from review findings. A research project has its research
+    # document and four empty ledgers; it is local only, so the research
+    # package makes them in the checkout and nothing of it crosses the wire.
     if project.level == projects.QUICK_LEVEL:
-        scaffolded = [svc.start_brief(project.slug)[0]]
+        named = _locator(project.slug, svc.start_brief(project.slug)[0])
     elif project.level == projects.HARDEN_LEVEL:
-        scaffolded = [svc.start_brief(project.slug)[0], svc.start_plan(project.slug)[0]]
+        named = " and ".join(
+            _locator(project.slug, path)
+            for path in (svc.start_brief(project.slug)[0], svc.start_plan(project.slug)[0])
+        )
+    elif project.level == projects.RESEARCH_LEVEL:
+        research_doc, *ledgers = research_module.scaffold(root, cfg, project.slug)
+        named = (
+            f"{_locator(project.slug, research_doc)} and {len(ledgers)} empty ledgers"
+            f" under {project.slug}/{research_module.document.RESEARCH_DIRNAME}/"
+        )
     else:
-        scaffolded = [svc.start_brainstorm(project.slug)[0]]
+        named = _locator(project.slug, svc.start_brainstorm(project.slug)[0])
     _refresh_checkpoint(svc, project.slug)
     _refresh_index(root, cfg)
     typer.echo(
         f"Created project '{project.slug}' (now active). Phase: {project.phase}."
     )
-    named = " and ".join(_locator(project.slug, path) for path in scaffolded)
     typer.echo(f"Scaffolded {named} (ready to work).")
     if summary is None:
         typer.echo(

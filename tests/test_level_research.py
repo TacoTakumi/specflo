@@ -5,11 +5,58 @@ The level stands apart from the quick-fast-full ladder as harden does: `new`
 starts a project at it, the ladder never climbs to it. Its phase is known to
 the workflow, terminal, and has its own skill in the continuation."""
 
-import pytest
+import json
 
-from specflo import continuation, projects, workflow
+import pytest
+from typer.testing import CliRunner
+
+from specflo import config, continuation, projects, workflow
+from specflo.cli import app
+from specflo.errors import SpecfloError
+from specflo.research import document, ledger, scaffold
+from specflo.service import promote
+from specflo.service.local import LocalProjectService
+
+runner = CliRunner()
 
 LADDER_AND_HARDEN = ("quick", "fast", "full", "harden")
+LEDGER_FILES = ("sources.md", "questions.md", "findings.md", "glossary.md")
+# A registered remote nothing listens on: a call to it is refused as
+# unreachable, so a refusal in other words proves no call was made.
+DEAD_REMOTE = ["remote", "add", "home", "http://127.0.0.1:9", "--token", "secret"]
+
+
+def _ok(args, stdin=None):
+    result = runner.invoke(app, args, input=stdin)
+    assert result.exit_code == 0, (args, result.output)
+    return result
+
+
+def _refused(args):
+    result = runner.invoke(app, args)
+    assert result.exit_code != 0, (args, result.output)
+    return result.output
+
+
+def _checkout(path, monkeypatch):
+    path.mkdir()
+    config.init_config(path)
+    monkeypatch.chdir(path)
+    return path
+
+
+def _research_project(tmp_path, monkeypatch):
+    root = _checkout(tmp_path / "local", monkeypatch)
+    return root, _ok(["new", "Thing", "--level", "research"])
+
+
+def _tree(directory):
+    """Every file under ``directory`` with its bytes, keyed by relative path."""
+    return {
+        str(path.relative_to(directory)): path.read_bytes()
+        for path in sorted(directory.rglob("*"))
+        if path.is_file()
+    }
 
 
 # --- the level --------------------------------------------------------------
@@ -127,3 +174,135 @@ def test_the_research_continuation_names_the_skill_and_the_next_step():
 def test_the_four_ladder_skills_are_unchanged():
     for phase in workflow.PHASES:
         assert continuation.PHASE_SKILLS[phase] == f"specflo-{phase}"
+
+
+# --- specflo new --level research ----------------------------------------------
+
+
+def test_new_research_starts_at_the_research_phase_with_the_document_and_the_ledgers(
+    tmp_path, monkeypatch
+):
+    root, result = _research_project(tmp_path, monkeypatch)
+
+    cfg = config.load_config(root)
+    project = projects.load_project(root, cfg, "thing")
+    assert (project.level, project.phase) == ("research", "research")
+    assert cfg.active_project == "thing"
+    assert "Created project 'thing' (now active). Phase: research." in result.output
+    assert "thing/research" in result.output
+    text = (project.path / "project.md").read_text()
+    assert "\nlevel: research\n" in text and "\nphase: research\n" in text
+    names = {p.name for p in project.path.iterdir()}
+    assert {"project.md", "research.md", "research"} <= names
+    assert not names & {"brainstorm.md", "brief.md", "spec.md", "plan.md"}
+    ledgers = sorted(p.name for p in (project.path / "research").iterdir())
+    assert ledgers == sorted(LEDGER_FILES)
+
+
+def test_the_files_new_makes_are_the_research_scaffold_with_nothing_left_to_make(
+    tmp_path, monkeypatch
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    cfg = config.load_config(root)
+
+    parsed = document.load(root, cfg, "thing")
+    assert parsed.destination == document.UNKNOWN_DESTINATION
+    assert (parsed.reason, parsed.usual_user, parsed.log) == (None, "", ())
+    for each in ledger.LEDGERS:
+        assert each.path(root, cfg, "thing").parent == document.research_dir(root, cfg, "thing")
+        assert each.entries(root, cfg, "thing") == []
+    assert scaffold(root, cfg, "thing") == []
+
+
+def test_status_shows_level_research_at_the_research_phase_with_no_next_phase(
+    tmp_path, monkeypatch
+):
+    _research_project(tmp_path, monkeypatch)
+
+    shown = _ok(["status"]).output
+    info = json.loads(_ok(["status", "--json"]).output)
+
+    assert "Phase:   research" in shown
+    assert "Level: research" in shown
+    assert (info["level"], info["phase"], info["next_phase"]) == ("research", "research", None)
+    assert "specflo research recap" in info["next_step"]
+
+
+def test_list_shows_the_research_project_at_its_phase(tmp_path, monkeypatch):
+    _research_project(tmp_path, monkeypatch)
+
+    info = json.loads(_ok(["list", "--json"]).output)
+
+    assert info["active_project"] == "thing"
+    assert [(p["slug"], p["phase"]) for p in info["projects"]] == [("thing", "research")]
+
+
+# --- research is local only ----------------------------------------------------
+
+
+@pytest.mark.parametrize("registered", [True, False])
+def test_new_research_on_a_remote_is_refused_as_local_only_and_creates_nothing(
+    tmp_path, monkeypatch, registered
+):
+    root = _checkout(tmp_path / "local", monkeypatch)
+    if registered:
+        _ok(DEAD_REMOTE)
+    before = _tree(root)
+
+    shown = _refused(["new", "Thing", "--level", "research", "--remote", "home"])
+
+    assert "'research'" in shown and "local only" in shown
+    assert "Cannot reach" not in shown and "home" not in shown
+    assert not (root / "docs" / "projects" / "thing").exists()
+    assert config.hosted_projects(root) == {}
+    assert config.load_config(root).active_project is None
+    assert _tree(root) == before
+
+
+def test_promote_refuses_a_research_project_as_local_only_and_changes_nothing(
+    tmp_path, monkeypatch
+):
+    root, _ = _research_project(tmp_path, monkeypatch)
+    _ok(DEAD_REMOTE)
+    before = _tree(root)
+
+    shown = _refused(["promote", "thing", "--remote", "home"])
+
+    assert "'thing'" in shown and "research level" in shown and "local only" in shown
+    assert "Cannot reach" not in shown
+    assert config.hosted_projects(root) == {}
+    assert _tree(root) == before
+
+
+def test_promote_project_refuses_the_research_level_before_it_looks_at_the_remote(tmp_path):
+    cfg = config.init_config(tmp_path)
+    LocalProjectService(tmp_path, cfg).create_project("Thing", level="research")
+
+    # No remote is registered: a look at it first would refuse that instead.
+    with pytest.raises(SpecfloError, match="research level.*local only"):
+        promote.promote_project(tmp_path, cfg, "thing", "home")
+
+    assert (tmp_path / "docs" / "projects" / "thing" / "project.md").is_file()
+    assert config.hosted_projects(tmp_path) == {}
+
+
+def test_a_daemon_creates_and_imports_no_research_project(tmp_path):
+    cfg = config.init_config(tmp_path)
+    local = LocalProjectService(tmp_path, cfg)
+    hosted = LocalProjectService(
+        tmp_path / "daemon", config.init_config(tmp_path / "daemon"), hosted=True
+    )
+    project = local.create_project("Thing", level="research")
+    files = {"project.md": (project.path / "project.md").read_text()}
+
+    with pytest.raises(SpecfloError, match="'research'.*local only"):
+        hosted.create_project("Other", level="research")
+    with pytest.raises(SpecfloError, match="'research'.*local only"):
+        hosted.import_project("thing", files)
+
+    assert hosted.list_projects() == []
+    assert list((tmp_path / "daemon").rglob("project.md")) == []
+    # A checkout keeps taking both, as it did.
+    copied = {"project.md": files["project.md"].replace("slug: thing", "slug: copy", 1)}
+    assert local.import_project("copy", copied)
+    assert local.load_project("copy").level == "research"

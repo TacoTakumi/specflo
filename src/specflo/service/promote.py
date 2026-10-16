@@ -16,6 +16,7 @@ from pathlib import Path
 
 from ..config import SpecfloConfig, forget_hosted_project, hosting_remote, record_hosted_project
 from ..errors import SpecfloError
+from ..projects import RESEARCH_LEVEL
 from .resolve import local_service, remote_service
 
 
@@ -32,14 +33,21 @@ def promote_project(root: Path, cfg: SpecfloConfig, slug: str, remote: str) -> P
     """Move the local project ``slug`` onto the registered remote ``remote``.
 
     Refuses a project that is already hosted, one that does not exist here,
-    and a remote that is not registered, before anything is sent. Refuses a
-    hash mismatch after the upload, before anything local is removed.
+    a research project, which is local only, and a remote that is not
+    registered, before anything is sent. Refuses a hash mismatch after the
+    upload, before anything local is removed.
     """
     hosting = hosting_remote(root, slug)
     if hosting is not None:
         raise SpecfloError(f"Project {slug!r} is already hosted on remote {hosting!r}.")
     local = local_service(root, cfg)
-    directory = local.load_project(slug).path
+    project = local.load_project(slug)
+    if project.level == RESEARCH_LEVEL:
+        raise SpecfloError(
+            f"Project {slug!r} is at research level, which is local only: it stays in"
+            " this checkout and no daemon holds it."
+        )
+    directory = project.path
     target = remote_service(root, remote)
 
     files = local.export_project(slug)

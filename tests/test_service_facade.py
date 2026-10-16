@@ -434,7 +434,7 @@ _ARTIFACT_MODULE_ALLOWLIST = {
     "specflo.projects": {
         "slugify", "Project", "LINEAR_EXECUTION", "COMPLETE_STATUS", "SHELVED_STATUS",
         "LEVELS", "QUICK_LEVEL", "FAST_LEVEL", "FULL_LEVEL", "validate_level",
-        "NEW_LEVELS", "HARDEN_LEVEL", "FAN_OUT_EXECUTION",
+        "NEW_LEVELS", "HARDEN_LEVEL", "RESEARCH_LEVEL", "FAN_OUT_EXECUTION",
     },
     "specflo.brainstorm": {"BRAINSTORM_FILENAME"},
     "specflo.spec": {"SPEC_FILENAME"},

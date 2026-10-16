@@ -18,7 +18,7 @@ from ..briefs import Brief
 from ..config import display_path, SpecfloConfig
 from ..errors import SpecfloError
 from ..plan import Milestone, Task
-from ..projects import FULL_LEVEL, HARDEN_LEVEL, LINEAR_EXECUTION, Project
+from ..projects import FULL_LEVEL, HARDEN_LEVEL, LINEAR_EXECUTION, RESEARCH_LEVEL, Project
 from ..review import ClosedRound
 from ..spec import Requirement
 from ..validators import VALIDATORS
@@ -93,6 +93,14 @@ class LocalProjectService:
 
         return planneeds.daemon_pools(self.root)
 
+    def _refuse_hosted_research(self, level: str | None) -> None:
+        """A research project is local only: a daemon takes none, however it
+        arrives, so the CLI's own refusal is not the only guard."""
+        if self.hosted and level == RESEARCH_LEVEL:
+            raise SpecfloError(
+                f"Level {RESEARCH_LEVEL!r} is local only; a daemon holds no research project."
+            )
+
     # --- project lifecycle --------------------------------------------------
 
     def create_project(
@@ -105,6 +113,7 @@ class LocalProjectService:
         piece: str | None = None,
         level: str = FULL_LEVEL,
     ) -> Project:
+        self._refuse_hosted_research(level)
         return projects.create_project(
             self.root, self.cfg, name, summary=summary, execution=execution,
             work_item=work_item, piece=piece, level=level,
@@ -261,11 +270,13 @@ class LocalProjectService:
         # The project file is read before anything lands on disk: a file that
         # is not a project, or one naming another slug, would otherwise sit
         # under the root as a directory every listing has to step around.
-        named = projects._parse_frontmatter(files[projects.PROJECT_FILENAME])["slug"]
+        fields = projects._parse_frontmatter(files[projects.PROJECT_FILENAME])
+        named = fields["slug"]
         if named != slug:
             raise SpecfloError(
                 f"Cannot import {slug!r}: its {projects.PROJECT_FILENAME} names {named!r}."
             )
+        self._refuse_hosted_research(fields.get("level"))
         staging = directory.with_name(f".{directory.name}.importing")
         if staging.exists():
             shutil.rmtree(staging)
