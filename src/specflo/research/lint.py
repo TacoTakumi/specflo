@@ -142,12 +142,10 @@ def _number_pattern(digits: str) -> re.Pattern[str]:
     for form in (digits, plain, _grouped(plain)):
         if form not in forms:
             forms.append(form)
-    alternatives = []
-    for form in forms:
-        before, after = r"(?<!\d)(?<!\d\.)", r"(?!\.?\d)"
-        if "," in form:
-            before, after = before + r"(?<!\d,)", after + r"(?!,\d{3})"
-        alternatives.append(before + re.escape(form) + after)
+    # Every form gets every guard: a short figure such as 100 would otherwise
+    # match one group of a grouped neighbour such as 1,100.
+    before, after = r"(?<!\d)(?<!\d\.)(?<!\d,)", r"(?!\.?\d)(?!,\d{3})"
+    alternatives = [before + re.escape(form) + after for form in forms]
     return re.compile("|".join(alternatives))
 
 

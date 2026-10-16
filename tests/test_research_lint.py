@@ -423,3 +423,14 @@ def test_the_guide_has_a_row_for_lint_after_list(tmp_path, monkeypatch):
     assert "\n    research lint " in out
     assert out.index("\n    research list ") < out.index("\n    research lint ")
     assert out.index("\n    research lint ") < out.index("\n    research session close ")
+
+
+def test_a_short_number_is_not_found_inside_a_grouped_neighbour():
+    assert not _holds("Rent is 1,100 a month.", "100 a month")
+    assert not _holds("Stock stands at 1,000 units.", "1 unit")
+    assert not _holds("Sales hit 12,000 last year.", "12 last year")
+    assert not _holds("The count was 1,234,567.", "567 in all")
+    assert not _holds("The count was 1,234,567.", "234 in all")
+    assert _holds("There are 100 flats.", "100 flats")
+    assert _holds("There are 1,100 flats.", "1,100 flats")
+    assert _holds("There are 1,100 flats.", "1100 flats")
