@@ -15,25 +15,38 @@ from __future__ import annotations
 import datetime
 from pathlib import Path
 
-from . import index as index_module, plan as plan_module, review, validators, workflow
+from . import (
+    continuation,
+    index as index_module,
+    plan as plan_module,
+    review,
+    validators,
+    workflow,
+)
 from .brainstorm import BRAINSTORM_FILENAME
 from .config import SpecfloConfig, display_path
 from .projects import (
     COMPLETE_STATUS,
     HARDEN_LEVEL,
     PROJECT_FILENAME,
+    RESEARCH_LEVEL,
     SHELVED_STATUS,
     Project,
     project_dir,
 )
+from .research.document import RESEARCH_FILENAME
 from .spec import SPEC_FILENAME
 
 CHECKPOINT_FILENAME = "checkpoint.md"
 
 # Phase artifacts in pipeline order. ``checkpoint.md`` lists only the ones that
 # actually exist, so there are no dangling references and the list grows on its
-# own as later artifacts (plan.md, ...) land.
-_ARTIFACT_ORDER: list[str] = [BRAINSTORM_FILENAME, SPEC_FILENAME, "plan.md", "brief.md"]
+# own as later artifacts (plan.md, ...) land. research.md leads: it is the one
+# document of a research project, and a research project moved up to fast or
+# full grounds the brainstorm that follows it in that research.
+_ARTIFACT_ORDER: list[str] = [
+    RESEARCH_FILENAME, BRAINSTORM_FILENAME, SPEC_FILENAME, "plan.md", "brief.md",
+]
 
 
 def checkpoint_path(root: Path, cfg: SpecfloConfig, slug: str) -> Path:
@@ -160,11 +173,21 @@ def build_checkpoint(
             from . import auto
 
             unattended = auto.run_under_way(root, cfg, project)
+        research = project.phase == workflow.RESEARCH_PHASE
+        complete = project.status == COMPLETE_STATUS
+        # Research level completes from its one phase, so that phase reads the
+        # status the way execute does. The ladder phases keep their hints.
         do_next = workflow.next_step(
-            project.phase, validates=validates, level=project.level, unattended=unattended
+            project.phase, validates=validates, level=project.level, unattended=unattended,
+            complete=research and complete,
         )
         if cfg is not None:
             do_next = auto.ladder_full_step(root, cfg, project) or do_next
+        if research and not complete:
+            # The phase name suggests the research subagent skill, which scans
+            # a landscape for a brainstorm, so the session skill is named here
+            # as the continuation names it.
+            do_next += f" Work it with the `{continuation.phase_skill(project.phase)}` skill."
         # A plan that doesn't yet validate still names its next task; once it
         # validates the offer-advance hint stands alone.
         if project.phase == "plan" and not validates and prog is not None:
@@ -227,9 +250,11 @@ def render_checkpoint(payload: dict) -> str:
     subtitle += f" | execution: {payload['execution']}"
     # A harden project's loop is its own - harden rounds, fix tasks only, and
     # an empty ledger to complete - so the resuming session is told the level.
+    # A research project's loop is its own too - sessions that build up the
+    # research, with nothing built from it - so it is told the same way.
     # A payload from an older daemon carries no level and names none.
-    if payload.get("level") == HARDEN_LEVEL:
-        subtitle += f" | level: {HARDEN_LEVEL}"
+    if payload.get("level") in (HARDEN_LEVEL, RESEARCH_LEVEL):
+        subtitle += f" | level: {payload['level']}"
     subtitle += f" | generated {payload['generated']}_"
     lines = [
         f"# Checkpoint - {payload['project']}",

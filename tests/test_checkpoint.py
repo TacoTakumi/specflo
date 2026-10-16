@@ -1,4 +1,6 @@
-from specflo import checkpoint, config, projects, workflow
+import json
+
+from specflo import checkpoint, config, continuation, projects, workflow
 
 
 def _project(tmp_path, name="My Thing"):
@@ -625,3 +627,163 @@ def test_checkpoint_names_every_file_by_locator_when_asked(tmp_path):
     assert "- thing/review-1\n" in text and ".md" not in text.split("## Do next")[0]
     by_default = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-08-02")
     assert by_default["read_first"][0] == "docs/projects/thing/project.md"
+
+
+# --- the research level --------------------------------------------------------
+# A research project's one document is research.md, and its loop is a session
+# that starts with the recap. The phase name suggests the research subagent
+# skill, which scans a landscape for a brainstorm, so the checkpoint names the
+# session skill itself. The other levels render as they did.
+
+
+def _research_project(tmp_path):
+    """A 'Thing' at research level with its document and ledgers scaffolded."""
+    from specflo import research
+    cfg = config.init_config(tmp_path)
+    projects.create_project(tmp_path, cfg, "Thing", level="research")
+    research.scaffold(tmp_path, cfg, "thing", today="2026-10-16")
+    return cfg, projects.load_project(tmp_path, cfg, "thing")
+
+
+def _do_next_section(text):
+    return text.split("## Do next\n")[1].split("\n## Resume")[0]
+
+
+def test_checkpoint_of_a_research_project_lists_the_research_document(tmp_path):
+    cfg, project = _research_project(tmp_path)
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["read_first"] == [
+        "docs/projects/thing/project.md",
+        "docs/projects/thing/research.md",
+    ]
+    by_locator = checkpoint.build_checkpoint(
+        tmp_path, project, cfg=cfg, today="2026-10-16", locators=True
+    )
+    assert by_locator["read_first"] == ["thing/project", "thing/research"]
+    text = checkpoint.render_checkpoint(payload)
+    assert "- docs/projects/thing/research.md\n" in text.split("## Do next")[0]
+
+
+def test_checkpoint_of_a_research_project_starts_with_the_recap_and_names_the_skill(tmp_path):
+    cfg, project = _research_project(tmp_path)
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["do_next"].startswith(workflow.next_step("research"))
+    assert "`specflo research recap`" in payload["do_next"]
+    assert "`specflo-research-project`" in payload["do_next"]
+    assert continuation.phase_skill("research") in payload["do_next"]
+    do_next = _do_next_section(checkpoint.render_checkpoint(payload))
+    assert "`specflo research recap`" in do_next
+    assert "`specflo-research-project`" in do_next
+    # The same without cfg: the research hint needs no validator to stand.
+    bare = checkpoint.build_checkpoint(tmp_path, project, today="2026-10-16")
+    assert bare["do_next"] == payload["do_next"]
+
+
+def test_checkpoint_names_the_research_level_in_its_subtitle(tmp_path):
+    cfg, project = _research_project(tmp_path)
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["level"] == "research"
+    assert checkpoint.render_checkpoint(payload).splitlines()[1] == (
+        "_phase: research | execution: linear | level: research | generated 2026-10-16_"
+    )
+
+
+def test_checkpoint_of_a_complete_research_project_reads_as_complete(tmp_path):
+    cfg, _project = _research_project(tmp_path)
+    project = projects.complete_project(tmp_path, cfg, "thing")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["do_next"] == workflow.next_step("research", complete=True)
+    assert "specflo new" in payload["do_next"]
+    text = checkpoint.render_checkpoint(payload)
+    assert "research recap" not in text and "specflo-research-project" not in text
+    assert "- docs/projects/thing/research.md\n" in text
+
+
+def test_checkpoint_of_a_shelved_research_project_reads_as_shelved(tmp_path):
+    cfg, _project = _research_project(tmp_path)
+    project = projects.shelve_project(tmp_path, cfg, "thing", reason="later")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["do_next"] == workflow.next_step("research", shelved=True)
+    text = checkpoint.render_checkpoint(payload)
+    assert "research recap" not in text and "specflo-research-project" not in text
+    assert text.splitlines()[1] == (
+        "_phase: research (shelved) | execution: linear | level: research"
+        " | generated 2026-10-16_"
+    )
+
+
+def test_checkpoint_of_a_research_project_moved_up_lists_research_beside_the_brainstorm(tmp_path):
+    from specflo.service.local import LocalProjectService
+    cfg, _project = _research_project(tmp_path)
+    LocalProjectService(tmp_path, cfg).set_level("thing", "full")
+    project = projects.load_project(tmp_path, cfg, "thing")
+    assert (project.level, project.phase) == ("full", "brainstorm")
+
+    payload = checkpoint.build_checkpoint(tmp_path, project, cfg=cfg, today="2026-10-16")
+
+    assert payload["read_first"] == [
+        "docs/projects/thing/project.md",
+        "docs/projects/thing/research.md",
+        "docs/projects/thing/brainstorm.md",
+    ]
+    # Now a full project at brainstorm: the brainstorm hint, no research
+    # session, no level in the subtitle.
+    assert payload["do_next"] == workflow.next_step("brainstorm")
+    text = checkpoint.render_checkpoint(payload)
+    assert "research recap" not in text and "specflo-research-project" not in text
+    assert "level" not in text.splitlines()[1]
+
+
+def test_checkpoint_of_the_other_levels_carries_no_research(tmp_path):
+    for level in ("quick", "fast", "full", "harden"):
+        sub = tmp_path / level
+        sub.mkdir()
+        cfg = config.init_config(sub)
+        project = projects.create_project(sub, cfg, "Thing", level=level)
+        payload = checkpoint.build_checkpoint(sub, project, cfg=cfg, today="2026-10-16")
+        assert not any("research" in path for path in payload["read_first"]), level
+        text = checkpoint.render_checkpoint(payload)
+        assert "research recap" not in text and "specflo-research-project" not in text, level
+        assert "level: research" not in text, level
+
+
+def test_specflo_checkpoint_on_a_research_project_as_text_and_json(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from specflo.cli import app
+    runner = CliRunner()
+    config.init_config(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    created = runner.invoke(app, ["new", "Thing", "--level", "research"])
+    assert created.exit_code == 0, created.output
+
+    shown = runner.invoke(app, ["checkpoint"])
+    assert shown.exit_code == 0, shown.output
+    info = json.loads(runner.invoke(app, ["checkpoint", "--json"]).output)
+
+    read_first = shown.output.split("## Read first\n")[1].split("\n\n")[0].splitlines()
+    assert read_first == [
+        "- docs/projects/thing/project.md",
+        "- docs/projects/thing/research.md",
+    ]
+    do_next = _do_next_section(shown.output)
+    assert "`specflo research recap`" in do_next
+    assert "`specflo-research-project`" in do_next
+    assert (info["level"], info["phase"], info["status"]) == ("research", "research", "active")
+    assert info["read_first"] == [
+        "docs/projects/thing/project.md",
+        "docs/projects/thing/research.md",
+    ]
+    assert "`specflo research recap`" in info["do_next"]
+    assert "`specflo-research-project`" in info["do_next"]
+    # The JSON payload renders to the text the command printed.
+    assert checkpoint.render_checkpoint(info) == shown.output.rstrip("\n") + "\n"
