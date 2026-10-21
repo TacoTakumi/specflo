@@ -109,14 +109,14 @@ def test_a_member_declaring_none_gets_an_empty_skills_directory(tmp_path: Path) 
 
 
 def test_the_operators_skills_are_under_the_directory_the_variable_names() -> None:
-    environ = {"HOME": "/home/pool", "PI_CODING_AGENT_DIR": "/elsewhere/agent"}
+    environ = {"HOME": "/home/you", "PI_CODING_AGENT_DIR": "/elsewhere/agent"}
 
     assert piconfig.operator_skills(environ) == Path("/elsewhere/agent/skills")
 
 
 def test_the_operators_skills_fall_back_to_the_home_rooted_directory() -> None:
-    assert piconfig.operator_skills({"HOME": "/home/pool"}) == Path(
-        "/home/pool/.pi/agent/skills"
+    assert piconfig.operator_skills({"HOME": "/home/you"}) == Path(
+        "/home/you/.pi/agent/skills"
     )
 
 

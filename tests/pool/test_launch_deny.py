@@ -48,7 +48,7 @@ MEMBERS = (LOCAL_MEMBER, HOSTED_MEMBER)
 
 ACCOUNTS = (Account(name="team-a", cap=2, key_env="TEAM_A_KEY"),)
 
-CALLER = {"PATH": "/usr/bin:/bin", "HOME": "/home/pool", "TEAM_A_KEY": "key-of-team-a"}
+CALLER = {"PATH": "/usr/bin:/bin", "HOME": "/home/you", "TEAM_A_KEY": "key-of-team-a"}
 
 
 def _extension_paths(argv):

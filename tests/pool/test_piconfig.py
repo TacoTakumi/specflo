@@ -59,8 +59,8 @@ ACCOUNTS = (
 
 CALLER = {
     "PATH": "/usr/bin:/bin",
-    "HOME": "/home/pool",
-    "PI_CODING_AGENT_DIR": "/home/pool/.pi/agent",
+    "HOME": "/home/you",
+    "PI_CODING_AGENT_DIR": "/home/you/.pi/agent",
     "TEAM_A_KEY": "key-of-team-a",
     "TEAM_B_KEY": "key-of-team-b",
 }
@@ -281,7 +281,7 @@ def test_no_tool_is_made_where_the_operator_has_none(tmp_path):
 
 
 def test_the_operator_s_tools_are_in_the_bin_of_the_agent_directory():
-    assert piconfig.operator_tools(CALLER) == piconfig.Path("/home/pool/.pi/agent/bin")
-    assert piconfig.operator_tools({"HOME": "/home/pool"}) == piconfig.Path(
-        "/home/pool/.pi/agent/bin"
+    assert piconfig.operator_tools(CALLER) == piconfig.Path("/home/you/.pi/agent/bin")
+    assert piconfig.operator_tools({"HOME": "/home/you"}) == piconfig.Path(
+        "/home/you/.pi/agent/bin"
     )

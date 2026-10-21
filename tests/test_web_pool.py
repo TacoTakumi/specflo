@@ -255,7 +255,7 @@ def test_what_an_agent_cli_printed_of_a_member_that_did_not_start_is_not_shown(p
     # the service keeps the runner's words in the cause; they can name paths on
     # the daemon's host and repeat what the member's process wrote
     svc = pool_rig.service(pool_rig.config(pool_rig.local_member()))
-    detail = f"member 'local-1' did not start: /home/someone/pi: {MARKER}"
+    detail = f"member 'local-1' did not start: /home/you/pi: {MARKER}"
     with pool_rig.store() as store:
         lease_on(store, "local-1")
         store.record_transition(
@@ -272,7 +272,7 @@ def test_what_an_agent_cli_printed_of_a_member_that_did_not_start_is_not_shown(p
     assert newest[1:3] == ["released", "lease-1"]
     assert newest[3].startswith("member did not start")
     assert "log" in newest[3]
-    assert MARKER not in html and "/home/someone" not in html
+    assert MARKER not in html and "/home/you" not in html
 
 
 # -- the lazy expiry check --------------------------------------------------------

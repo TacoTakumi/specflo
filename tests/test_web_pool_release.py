@@ -345,7 +345,7 @@ def test_a_member_that_does_not_stop_is_the_logs_matter_and_the_release_is_audit
 
     def stuck(agent, *args, **keys):
         stop(agent, *args, **keys)
-        raise RunnerError(f"member '{agent}' did not stop: /home/someone/pi: {MARKER}")
+        raise RunnerError(f"member '{agent}' did not stop: /home/you/pi: {MARKER}")
 
     monkeypatch.setattr(pool_service.runner, "stop", stuck)
 
@@ -362,7 +362,7 @@ def test_a_member_that_does_not_stop_is_the_logs_matter_and_the_release_is_audit
     # what the runner said can hold host paths and member output: the log's alone
     assert MARKER not in response.text
     html = page(client)
-    assert MARKER not in html and "/home/someone" not in html
+    assert MARKER not in html and "/home/you" not in html
 
 
 # -- the pool is off ----------------------------------------------------------------------------

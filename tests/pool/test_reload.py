@@ -613,7 +613,7 @@ def test_a_team_lease_of_a_team_that_is_declared_no_more_is_given_back_as_one(po
 # -- an expired lease whose member does not stop -------------------------------
 
 # What the runner's words may hold of the member's host, and no answer may.
-HOST_WORDS = "/home/someone/pi: no answer in 20 s"
+HOST_WORDS = "/home/you/pi: no answer in 20 s"
 
 
 def expired_and_stuck(served, monkeypatch) -> dict:
@@ -643,7 +643,7 @@ def test_a_reload_is_put_in_force_when_an_expired_member_does_not_stop(
     assert response.status_code == 200, response.text
     assert response.headers["content-type"] == "application/json"
     assert response.json()["result"]["teams"] == 1
-    assert HOST_WORDS not in response.text and "/home/someone" not in response.text
+    assert HOST_WORDS not in response.text and "/home/you" not in response.text
     assert [team.name for team in served.state.pool.config.teams] == ["pair"]
     assert list(served.state.pool_errors) == []
     # the lease has ended, which is all the reload had to do with it

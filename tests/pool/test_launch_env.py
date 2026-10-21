@@ -53,7 +53,7 @@ ACCOUNTS = (
 
 CALLER = {
     "PATH": "/usr/bin:/bin",
-    "HOME": "/home/pool",
+    "HOME": "/home/you",
     "LANG": "C.UTF-8",
     "TERM": "xterm-256color",
     "TMPDIR": "/var/tmp",
@@ -250,7 +250,7 @@ def test_with_no_generated_git_file_the_git_global_variable_is_not_set():
 @pytest.mark.parametrize("listed", ["env", "credentials"])
 def test_neither_the_caller_nor_the_definition_sets_the_git_global_variable(tmp_path, listed):
     definition = replace(DEFINITION, **{listed: (launch.GIT_CONFIG_GLOBAL_ENV,)})
-    caller = {**CALLER, launch.GIT_CONFIG_GLOBAL_ENV: "/home/pool/.gitconfig"}
+    caller = {**CALLER, launch.GIT_CONFIG_GLOBAL_ENV: "/home/you/.gitconfig"}
     with_file = tmp_path / "with"
     with_file.mkdir()
     (with_file / launch.GITCONFIG_FILE).write_text("", encoding="utf-8")

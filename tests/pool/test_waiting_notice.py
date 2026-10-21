@@ -239,7 +239,7 @@ def test_a_member_that_fails_after_the_notice_is_told_as_it_is_with_no_notice(
         looks[id(self)] = looks.get(id(self), 0) + 1
         if looks[id(self)] == 1:
             return real_attempt(self)
-        raise RunnerError("the member in /home/someone/secret did not start")
+        raise RunnerError("the member in /home/you/secret did not start")
 
     monkeypatch.setattr(pool_routes.waiting.Waiting, "attempt", failing_after_the_first_look)
     with pytest.raises(SpecfloError) as plain:
