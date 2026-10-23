@@ -4,8 +4,6 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/specflo)](https://pypi.org/project/specflo/)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](https://github.com/TacoTakumi/specflo/blob/main/LICENSE)
 
-Website: https://tacotakumi.github.io/specflo/
-
 **Spec-driven software engineering for coding agents.** specflo is a Python CLI
 plus a set of skills and hooks that give an AI agent a disciplined
 brainstorm -> spec -> plan -> execute loop, with every artifact (specs, plans,
