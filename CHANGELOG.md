@@ -8,6 +8,24 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.20.0]
+
+### Added
+- **Act on another project with `-p/--project NAME`.** A root option beside
+  `-C` names the project a command acts on, without switching the active
+  project; `SPECFLO_PROJECT` does the same, and the flag wins over it. The
+  override is never written to `.specflo/config.yaml`. An unknown name fails
+  every project verb before it runs. `switch`, `resume` and `leave` treat the
+  named project as their target (`leave` clears the pointer only when the
+  named project is the active one), and `shelve` shelves it. `summary`,
+  `shelve`, `resume` and `switch` refuse a name argument that differs from
+  `-p`. `status` shows `(via -p)` or `(via SPECFLO_PROJECT)` and a
+  `project_source` JSON key.
+
+### Changed
+- `switch` takes its name as optional: `-p NAME` can stand in for it, and the
+  help lists it as `switch [<name>]`.
+
 ## [0.19.0]
 
 ### Added

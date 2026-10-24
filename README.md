@@ -436,6 +436,16 @@ Decisions go through the usual `specflo decision add`, which writes them into
 - The change lasts only for the command: the process cwd is restored when the command finishes.
 - `SPECFLO_DIRECTORY` reaches everything that inherits the environment: the Claude Code SessionStart hook, the pi extension (its specflo calls and its statusline segment), and any subagent an orchestrating agent spawns. This is the intended effect for an agent driving a project in another tree. To make the redirect visible, `specflo status` prints a `Root: <path> (via -C|SPECFLO_DIRECTORY)` line (and `root` / `directory_source` keys in `--json`) when the directory was overridden, and the reseed payload from `specflo hook reseed` leads with one line naming the root when the env var is set. Without an override, all outputs are unchanged.
 
+### Global option: act on another project
+
+- `specflo -p NAME <command>` / `specflo --project NAME <command>` - run the command on project `NAME` instead of the active project, without switching to it. `specflo -C ../other -p foo followup add "..." --do "..."` records a follow-up in `foo` in another checkout and leaves that checkout's active project as it was. The option goes before the subcommand, and `NAME` is resolved in the checkout `-C` selects.
+- `SPECFLO_PROJECT=NAME` - the environment variable has the same effect. Precedence is the flag, then the env var, then the stored active project; a set-but-empty variable counts as unset.
+- `NAME` must be a project in the checkout or one hosted on a daemon. Otherwise every project verb exits 1 before it runs and creates nothing. Commands that act on no project (`init`, `new`, `list`, `index`, `guide`, `doctor`, `config`, `skills`, `extension`, `serve`, `bench`, `remote`, `product`, `workitem`, `lease`, `console`, `agent`) ignore the option.
+- The override is never written to `.specflo/config.yaml`. Only the verbs whose job is to move the pointer move it: `-p foo switch` makes `foo` active, `-p foo resume` resumes `foo` and makes it active, and `-p foo leave` clears the pointer only when `foo` is the active project (otherwise it changes nothing). `-p foo shelve` shelves `foo` and leaves the pointer alone.
+- A command that also takes a project name (`summary`, `shelve`, `resume`, `switch`) runs when the name and `-p` name the same project, and exits 1 before any change when they differ.
+- `specflo status` ends the Project line with `(via -p)` or `(via SPECFLO_PROJECT)`, and `--json` adds a `project_source` key (`flag` or `env`), when the project was overridden.
+- `SPECFLO_PROJECT` reaches everything that inherits the environment, including the pool members and agents specflo starts. The `-p` flag does not.
+
 ### Setup and orientation
 
 - `specflo --version` - print the installed version and exit.
