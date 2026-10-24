@@ -512,3 +512,15 @@ def test_the_route_hands_the_daemons_own_url_to_the_seat(root, rpc_rig, monkeypa
 
     remote = config.load_remote(seat.seat_dir(root, "fix-the-login"), seat.REMOTE_NAME)
     assert remote.url == "http://daemon.local:9000"
+
+
+def test_workitem_spawn_under_a_project_override_makes_the_spawned_project_active(
+    checkout, live_daemon
+):
+    made = runner.invoke(app, ["new", "a", "--level", "quick"])
+    assert made.exit_code == 0, made.output
+
+    result = runner.invoke(app, ["-p", "a", "workitem", "spawn", "1"])
+
+    assert result.exit_code == 0, result.output
+    assert config.load_config(checkout).active_project == "fix-the-login"
