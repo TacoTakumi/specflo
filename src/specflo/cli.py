@@ -450,6 +450,27 @@ def _require_active(cfg: config.SpecfloConfig) -> str:
     return cfg.active_project
 
 
+def _named_project(cfg: config.SpecfloConfig, name: str | None) -> str:
+    """The project a command that takes an optional project name acts on.
+
+    ``name`` when given, else the active project (the -p project when one is
+    named). A ``name`` that differs from the -p project is refused before
+    the command changes anything.
+    """
+    if name is None:
+        return _require_active(cfg)
+    try:
+        slug = projects.slugify(name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    named = cfg.project_override
+    if named is not None and slug != named:
+        raise _die(
+            f"-p names project {named!r} but the argument names {slug!r}; give one of them."
+        )
+    return slug
+
+
 def _report_unwritten_checkpoint(exc: Exception) -> None:
     """One stderr line: the checkpoint was not written, and how to regenerate it."""
     typer.secho(
@@ -695,10 +716,7 @@ def summary(
     if second is None:
         slug, text = _require_active(cfg), first
     else:
-        try:
-            slug, text = projects.slugify(first), second
-        except SpecfloError as exc:
-            raise _die(str(exc))
+        slug, text = _named_project(cfg, first), second
     svc = _service(root, cfg, slug)
     try:
         project = svc.set_summary(slug, text)
@@ -933,14 +951,9 @@ def switch(
     """Make project <name> the active project."""
     root = _require_root()
     cfg = config.load_config(root)
-    if name is None:
-        if cfg.project_override is None:
-            raise typer.BadParameter("give a project to switch to, or -p NAME.", param_hint="'<name>'")
-        name = cfg.project_override
-    try:
-        slug = projects.slugify(name)
-    except SpecfloError as exc:
-        raise _die(str(exc))
+    if name is None and cfg.project_override is None:
+        raise typer.BadParameter("give a project to switch to, or -p NAME.", param_hint="'<name>'")
+    slug = _named_project(cfg, name)
     svc = _service(root, cfg, slug)
     try:
         project = svc.load_project(slug)
@@ -1008,7 +1021,7 @@ def shelve(
     """
     root = _require_root()
     cfg = config.load_config(root)
-    slug = projects.slugify(name) if name else _require_active(cfg)
+    slug = _named_project(cfg, name or None)
     svc = _service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)
@@ -1049,7 +1062,7 @@ def resume(
     """
     root = _require_root()
     cfg = config.load_config(root)
-    slug = projects.slugify(name) if name else _require_active(cfg)
+    slug = _named_project(cfg, name or None)
     svc = _service(root, cfg, slug)
     try:
         existing = svc.load_project(slug)

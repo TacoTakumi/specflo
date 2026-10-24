@@ -258,3 +258,47 @@ def test_switch_with_no_name_and_no_override_is_a_usage_error(repo):
     assert result.exit_code == 2
     assert "<name>" in result.output
     assert _stored(repo) == "a"
+
+
+# --- a name argument beside -p ---------------------------------------------
+
+
+def _project_files(root: Path) -> dict[str, str]:
+    return {
+        slug: (root / "docs" / "projects" / slug / "project.md").read_text()
+        for slug in ("a", "b")
+    }
+
+
+@pytest.mark.parametrize(
+    "verb", [["shelve"], ["summary"], ["switch"], ["resume"]], ids=lambda v: v[0]
+)
+def test_name_conflict_with_the_override_is_refused(repo, verb):
+    before = _project_files(repo)
+    stored = _stored(repo)
+    args = [*verb, "a"] + (["New summary"] if verb == ["summary"] else [])
+
+    result = runner.invoke(app, ["-p", "b", *args])
+
+    assert result.exit_code != 0
+    assert "'a'" in result.output and "'b'" in result.output
+    assert _project_files(repo) == before
+    assert _stored(repo) == stored
+
+
+def test_name_conflict_same_project_after_slugify_runs(repo):
+    result = runner.invoke(app, ["-p", "b", "shelve", "B"])
+    assert result.exit_code == 0, result.output
+    assert _status_of(repo, "b") == projects.SHELVED_STATUS
+
+    result = runner.invoke(app, ["-p", "b", "resume", "B"])
+    assert result.exit_code == 0, result.output
+    assert _stored(repo) == "b"
+
+    result = runner.invoke(app, ["-p", "a", "summary", "A", "Same project"])
+    assert result.exit_code == 0, result.output
+    assert "Same project" in (repo / "docs" / "projects" / "a" / "project.md").read_text()
+
+    result = runner.invoke(app, ["-p", "a", "switch", "A"])
+    assert result.exit_code == 0, result.output
+    assert _stored(repo) == "a"
