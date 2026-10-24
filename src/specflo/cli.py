@@ -190,8 +190,8 @@ def _root(
 # override naming no project does not make them fail.
 _PROJECTLESS_COMMANDS = frozenset({
     "init", "new", "list", "index", "guide", "doctor", "config", "skills",
-    "extension", "serve", "bench", "remote", "product", "workitem", "lease",
-    "console", "agent",
+    "extension", "serve", "bench", "remote", "product", "workitem", "console",
+    "agent",
 })
 # Commands that take the override but never refuse it: the session-start
 # hook must stay quiet, and treats an unknown project as it treats a stale

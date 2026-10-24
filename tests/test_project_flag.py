@@ -302,3 +302,22 @@ def test_name_conflict_same_project_after_slugify_runs(repo):
     result = runner.invoke(app, ["-p", "a", "switch", "A"])
     assert result.exit_code == 0, result.output
     assert _stored(repo) == "a"
+
+
+# --- lease request -----------------------------------------------------------
+
+
+def test_lease_request_is_made_for_the_named_project(repo, monkeypatch):
+    from specflo.pool import cli_lease
+
+    seen = []
+    monkeypatch.setattr(
+        cli_lease, "request",
+        lambda root, pool, **_: seen.append(config.load_config(root).active_project),
+    )
+
+    result = runner.invoke(app, ["-p", "b", "lease", "request", "coders"])
+
+    assert result.exit_code == 0, result.output
+    assert seen == ["b"]
+    assert _stored(repo) == "a"
