@@ -213,10 +213,11 @@ def _set_project_override(ctx: click.Context, name: str | None) -> None:
         raise _die(str(exc))
     root = config.find_root(Path.cwd())
     if root is not None and ctx.invoked_subcommand not in _UNCHECKED_OVERRIDE_COMMANDS:
-        cfg = config.load_config(root)
-        local = (projects.project_dir(root, cfg, slug) / projects.PROJECT_FILENAME).is_file()
-        if not local and config.hosting_remote(root, slug) is None:
-            raise _die(f"No project {slug!r}. Run `specflo list` to see available projects.")
+        if config.hosting_remote(root, slug) is None:
+            try:
+                local_service(root, config.load_config(root)).load_project(slug)
+            except SpecfloError:
+                raise _die(f"No project {slug!r}. Run `specflo list` to see available projects.")
     source = ctx.get_parameter_source("project")
     obj = ctx.obj if isinstance(ctx.obj, dict) else {}
     obj["project"] = slug
