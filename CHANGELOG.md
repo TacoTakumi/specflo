@@ -14,7 +14,9 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **Act on another project with `-p/--project NAME`.** A root option beside
   `-C` names the project a command acts on, without switching the active
   project; `SPECFLO_PROJECT` does the same, and the flag wins over it. The
-  override is never written to `.specflo/config.yaml`. An unknown name fails
+  override is never written to `.specflo/config.yaml`; `new` and
+  `research spinoff` still make the project they create active, and
+  `lease request` asks on behalf of the named project. An unknown name fails
   every project verb before it runs. `switch`, `resume` and `leave` treat the
   named project as their target (`leave` clears the pointer only when the
   named project is the active one), and `shelve` shelves it. `summary`,

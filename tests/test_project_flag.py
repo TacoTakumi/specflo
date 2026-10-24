@@ -321,3 +321,25 @@ def test_lease_request_is_made_for_the_named_project(repo, monkeypatch):
     assert result.exit_code == 0, result.output
     assert seen == ["b"]
     assert _stored(repo) == "a"
+
+
+# --- research spinoff --------------------------------------------------------
+
+
+def test_research_spinoff_under_an_override_makes_the_new_project_active(repo):
+    for args in (
+        ["new", "Study", "--level", "research"],
+        ["switch", "a"],
+        ["-p", "study", "research", "finding", "add", "--text", "Rents rose.",
+         "--kind", "inference", "--status", "unsure"],
+    ):
+        result = runner.invoke(app, args)
+        assert result.exit_code == 0, (args, result.output)
+    assert _stored(repo) == "a"
+
+    result = runner.invoke(
+        app, ["-p", "study", "research", "spinoff", "Next", "--level", "fast", "--use", "RF-01"]
+    )
+
+    assert result.exit_code == 0, result.output
+    assert _stored(repo) == "next"
