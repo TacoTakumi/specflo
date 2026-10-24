@@ -925,14 +925,18 @@ def list_(
 @app.command(epilog="Example: specflo switch my-project")
 def switch(
     name: str = typer.Argument(
-        ...,
+        None,
         metavar="<name>",
-        help="Project to make active (its slug or name).",
+        help="Project to make active (its slug or name); -p NAME may stand in for it.",
     ),
 ) -> None:
     """Make project <name> the active project."""
     root = _require_root()
     cfg = config.load_config(root)
+    if name is None:
+        if cfg.project_override is None:
+            raise typer.BadParameter("give a project to switch to, or -p NAME.", param_hint="'<name>'")
+        name = cfg.project_override
     try:
         slug = projects.slugify(name)
     except SpecfloError as exc:
@@ -964,20 +968,25 @@ def leave(
 
     The project itself is untouched (status, phase, files). Re-enter it later
     with `specflo switch <name>` (or `specflo resume <name>` if shelved).
-    Safe to run with no active project.
+    Safe to run with no active project. With -p NAME it leaves only when NAME
+    is the active project, and otherwise changes nothing.
     """
     root = _require_root()
     cfg = config.load_config(root)
-    left = cfg.active_project
+    named = cfg.project_override
+    stored = cfg.stored_active_project if named is not None else cfg.active_project
+    left = stored if named is None or named == stored else None
     if left is not None:
         config.set_active_project(cfg, None)
         config.save_config(root, cfg)
     if json_output:
-        typer.echo(json.dumps({"left": left, "active_project": None}))
-    elif left is None:
-        typer.echo("No active project.")
-    else:
+        typer.echo(json.dumps({"left": left, "active_project": None if left else stored}))
+    elif left is not None:
         typer.echo(f"Left {left}.")
+    elif named is not None:
+        typer.echo(f"'{named}' is not the active project; nothing to leave.")
+    else:
+        typer.echo("No active project.")
 
 
 @app.command(epilog='Example: specflo shelve --reason "not worth it"')

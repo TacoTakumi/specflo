@@ -207,3 +207,54 @@ def test_status_without_an_override_is_unchanged(repo):
 
     result = runner.invoke(app, ["status", "--json"])
     assert "project_source" not in json.loads(result.output)
+
+
+# --- the verbs that move the pointer ---------------------------------------
+
+
+def _status_of(root: Path, slug: str) -> str:
+    return projects.load_project(root, config.load_config(root), slug).status
+
+
+def test_leave_with_another_project_changes_nothing(repo):
+    result = runner.invoke(app, ["-p", "b", "leave"])
+    assert result.exit_code == 0, result.output
+    assert "'b' is not the active project" in result.output
+    assert _stored(repo) == "a"
+
+    result = runner.invoke(app, ["-p", "b", "leave", "--json"])
+    assert json.loads(result.output) == {"left": None, "active_project": "a"}
+    assert _stored(repo) == "a"
+
+
+def test_leave_with_the_active_project_clears_it(repo):
+    result = runner.invoke(app, ["-p", "a", "leave", "--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"left": "a", "active_project": None}
+    assert _stored(repo) is None
+
+
+def test_shelve_then_resume_act_on_the_named_project(repo):
+    result = runner.invoke(app, ["-p", "b", "shelve"])
+    assert result.exit_code == 0, result.output
+    assert _status_of(repo, "b") == projects.SHELVED_STATUS
+    assert _status_of(repo, "a") == "active"
+    assert _stored(repo) == "a"
+
+    result = runner.invoke(app, ["-p", "b", "resume"])
+    assert result.exit_code == 0, result.output
+    assert _status_of(repo, "b") == "active"
+    assert _stored(repo) == "b"
+
+
+def test_switch_takes_the_named_project(repo):
+    result = runner.invoke(app, ["-p", "b", "switch"])
+    assert result.exit_code == 0, result.output
+    assert _stored(repo) == "b"
+
+
+def test_switch_with_no_name_and_no_override_is_a_usage_error(repo):
+    result = runner.invoke(app, ["switch"])
+    assert result.exit_code == 2
+    assert "<name>" in result.output
+    assert _stored(repo) == "a"

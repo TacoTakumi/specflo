@@ -518,7 +518,7 @@ def test_switch_without_init_fails(cwd):
 def test_top_level_help_lists_switch_with_its_argument():
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
-    assert "switch <name>" in result.output
+    assert "switch [<name>]" in result.output
 
 
 def test_brainstorm_start_creates_the_artifact(cwd):
