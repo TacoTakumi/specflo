@@ -137,7 +137,9 @@ def test_the_dataclass_fields_are_exactly_the_registry_in_order():
     names = [f.name for f in dataclasses.fields(config.SpecfloConfig)]
     assert names[: len(config.CONFIG_FIELDS)] == _registry_names()
     # Anything after the registry keys is loader metadata, not a config key.
-    assert names[len(config.CONFIG_FIELDS) :] == ["present_keys", "invalid_keys"]
+    assert names[len(config.CONFIG_FIELDS) :] == [
+        "present_keys", "invalid_keys", "project_override", "stored_active_project",
+    ]
 
 
 def test_every_registry_key_is_readable_as_an_attribute(tmp_path):

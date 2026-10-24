@@ -332,10 +332,45 @@ SpecfloConfig = make_dataclass(
     + [
         ("present_keys", "frozenset[str]", field(default=frozenset(), compare=False)),
         ("invalid_keys", "frozenset[str]", field(default=frozenset(), compare=False)),
+        # Set only when load applied a project override: the override itself and
+        # the pointer the file holds, so a save writes the file's pointer back.
+        ("project_override", "str | None", field(default=None, compare=False)),
+        ("stored_active_project", "str | None", field(default=None, compare=False)),
     ],
     module=__name__,
 )
 SpecfloConfig.__doc__ = "Resolved config values, one attribute per CONFIG_FIELDS entry."
+
+
+# The project a single CLI invocation names with `-p`/`SPECFLO_PROJECT`. The
+# root callback sets it before the command runs and clears it after; load
+# reads it, so every reader of `active_project` sees the named project.
+_project_override: str | None = None
+
+
+def set_project_override(slug: str | None) -> None:
+    """Make every later :func:`load_config` act on ``slug`` (None clears it)."""
+    global _project_override
+    _project_override = slug
+
+
+def set_active_project(cfg: SpecfloConfig, slug: str | None) -> None:
+    """Move the stored active-project pointer to ``slug`` (None clears it).
+
+    The one way a command changes the pointer: a plain assignment to
+    ``cfg.active_project`` under a project override is not saved, so the
+    override never reaches the file.
+    """
+    cfg.active_project = slug
+    cfg.project_override = None
+    cfg.stored_active_project = None
+
+
+def _stored_pointer(cfg: SpecfloConfig) -> str | None:
+    """The active project the file should hold after a save of ``cfg``."""
+    if cfg.project_override is not None and cfg.active_project == cfg.project_override:
+        return cfg.stored_active_project
+    return cfg.active_project
 
 
 def config_path(root: Path) -> Path:
@@ -445,13 +480,24 @@ def load_config(root: Path) -> SpecfloConfig:
     for spec in CONFIG_FIELDS:
         if resolved[spec.name][1] == INVALID:
             _warn_invalid(spec, data[spec.name])
-    return SpecfloConfig(
+    cfg = SpecfloConfig(
         present_keys=frozenset(data),
         invalid_keys=frozenset(
             name for name, (_, source) in resolved.items() if source == INVALID
         ),
         **{name: value for name, (value, _) in resolved.items()},
     )
+    _apply_project_override(cfg)
+    return cfg
+
+
+def _apply_project_override(cfg: SpecfloConfig) -> None:
+    """Point a freshly loaded ``cfg`` at the overriding project, keeping the
+    file's pointer for the save."""
+    if _project_override is not None:
+        cfg.stored_active_project = cfg.active_project
+        cfg.project_override = _project_override
+        cfg.active_project = _project_override
 
 
 def report_config(root: Path) -> dict:
@@ -705,7 +751,7 @@ def save_config(
     doc = _load_document(path)
     live = set()
     for spec in CONFIG_FIELDS:
-        value = getattr(cfg, spec.name)
+        value = _stored_pointer(cfg) if spec.name == "active_project" else getattr(cfg, spec.name)
         if spec.name in doc and spec.name in cfg.invalid_keys and spec.name not in drop:
             # The file's value was degraded at load, so `value` is the default,
             # not the user's text. This write does not own the key: the line

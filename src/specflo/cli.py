@@ -550,7 +550,7 @@ def new(
         )
         if remote is not None:
             config.record_hosted_project(root, project.slug, remote)
-        cfg.active_project = project.slug
+        config.set_active_project(cfg, project.slug)
         config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -891,7 +891,7 @@ def switch(
         raise _die(
             f"No project {slug!r}. Run `specflo list` to see available projects."
         )
-    cfg.active_project = project.slug
+    config.set_active_project(cfg, project.slug)
     try:
         config.save_config(root, cfg)
     except SpecfloError as exc:
@@ -913,7 +913,7 @@ def leave(
     cfg = config.load_config(root)
     left = cfg.active_project
     if left is not None:
-        cfg.active_project = None
+        config.set_active_project(cfg, None)
         config.save_config(root, cfg)
     if json_output:
         typer.echo(json.dumps({"left": left, "active_project": None}))
@@ -993,7 +993,7 @@ def resume(
         raise _die(f"Project '{slug}' is not shelved - nothing to resume.")
     try:
         project = svc.resume_project(slug)
-        cfg.active_project = project.slug
+        config.set_active_project(cfg, project.slug)
         config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))
@@ -4051,7 +4051,7 @@ def workitem_spawn(
             _service_for_new_project(root, cfg, slug, remote)
         spawned = items.spawn(item_id, name=name)
         config.record_hosted_project(root, spawned.project.slug, remote)
-        cfg.active_project = spawned.project.slug
+        config.set_active_project(cfg, spawned.project.slug)
         config.save_config(root, cfg)
     except SpecfloError as exc:
         raise _die(str(exc))

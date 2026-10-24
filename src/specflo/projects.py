@@ -14,7 +14,7 @@ from pathlib import Path
 
 import yaml
 
-from .config import SpecfloConfig, save_config
+from .config import SpecfloConfig, save_config, set_active_project
 from .errors import ProjectNotFound, SpecfloError
 from .locking import lock_path_for, locked
 from .workflow import next_phase, phases_for, resolve_reopen_target
@@ -281,7 +281,7 @@ def switch_project(root: Path, cfg: SpecfloConfig, name: str) -> Project:
             f"No project {slug!r}. Run `specflo list` to see available projects."
         )
     project = load_project(root, cfg, slug)
-    cfg.active_project = slug
+    set_active_project(cfg, slug)
     save_config(root, cfg)
     return project
 

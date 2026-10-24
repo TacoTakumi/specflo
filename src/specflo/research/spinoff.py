@@ -349,7 +349,7 @@ def spin_off(
 
     svc = local_service(root, cfg)
     project = svc.create_project(name, level=level)
-    cfg.active_project = project.slug
+    config_module.set_active_project(cfg, project.slug)
     config_module.save_config(root, cfg)
     if project.level == projects.QUICK_LEVEL:
         scaffolded, _ = svc.start_brief(project.slug)

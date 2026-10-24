@@ -148,7 +148,7 @@ def scaffold(root: Path, slug: str, url: str, token: str) -> Path:
     config.add_remote(workspace, REMOTE_NAME, url, token)
     config.record_hosted_project(workspace, slug, REMOTE_NAME)
     if cfg.active_project != slug:
-        cfg.active_project = slug
+        config.set_active_project(cfg, slug)
         config.save_config(workspace, cfg)
     return workspace
 
