@@ -142,10 +142,26 @@ def _root(
             "The flag wins over SPECFLO_DIRECTORY, which wins over the current directory."
         ),
     ),
+    project: str | None = typer.Option(
+        None,
+        "-p",
+        "--project",
+        envvar="SPECFLO_PROJECT",
+        metavar="NAME",
+        help=(
+            "Run the command on project NAME instead of the active project, "
+            "without switching to it. The flag wins over SPECFLO_PROJECT, "
+            "which wins over the active project. Resolved in the checkout -C selects."
+        ),
+    ),
 ) -> None:
     """A spec-driven software-engineering workflow."""
+    # A previous command in this process (a test runner, an embedding caller)
+    # must not leave its override behind.
+    config.set_project_override(None)
     if directory is None:
         _record_checkout()
+        _set_project_override(ctx, project)
         return
     # The caller's cwd may already be gone (a shell left in a deleted directory)
     # or vanish while the command runs; -C exists to make that cwd irrelevant,
@@ -167,6 +183,47 @@ def _root(
         "directory_source": "env" if from_env else "flag",
     }
     _record_checkout()
+    _set_project_override(ctx, project)
+
+
+# Commands that act on no project: they ignore -p/SPECFLO_PROJECT, so an
+# override naming no project does not make them fail.
+_PROJECTLESS_COMMANDS = frozenset({
+    "init", "new", "list", "index", "guide", "doctor", "config", "skills",
+    "extension", "serve", "bench", "remote", "product", "workitem", "lease",
+    "console", "agent",
+})
+# Commands that take the override but never refuse it: the session-start
+# hook must stay quiet, and treats an unknown project as it treats a stale
+# pointer.
+_UNCHECKED_OVERRIDE_COMMANDS = frozenset({"hook"})
+
+
+def _set_project_override(ctx: click.Context, name: str | None) -> None:
+    """Make the project ``name`` the one this command acts on.
+
+    Checked against the checkout (or its hosted projects) before the command
+    runs, so an unknown name creates nothing.
+    """
+    if name is None or ctx.invoked_subcommand in _PROJECTLESS_COMMANDS:
+        return
+    try:
+        slug = projects.slugify(name)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    root = config.find_root(Path.cwd())
+    if root is not None and ctx.invoked_subcommand not in _UNCHECKED_OVERRIDE_COMMANDS:
+        cfg = config.load_config(root)
+        local = (projects.project_dir(root, cfg, slug) / projects.PROJECT_FILENAME).is_file()
+        if not local and config.hosting_remote(root, slug) is None:
+            raise _die(f"No project {slug!r}. Run `specflo list` to see available projects.")
+    source = ctx.get_parameter_source("project")
+    obj = ctx.obj if isinstance(ctx.obj, dict) else {}
+    obj["project"] = slug
+    obj["project_source"] = "env" if getattr(source, "name", None) == "ENVIRONMENT" else "flag"
+    ctx.obj = obj
+    config.set_project_override(slug)
+    ctx.call_on_close(lambda: config.set_project_override(None))
 
 
 def _record_checkout() -> None:

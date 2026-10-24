@@ -145,6 +145,20 @@ def _no_directory_override(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _no_project_override(monkeypatch):
+    """Keep ``SPECFLO_PROJECT`` out of the suite's environment, and start each
+    test with no project override set in the config module.
+
+    The variable names the project every project verb acts on, so a caller
+    that exported it would steer each test away from its own active project.
+    """
+    from specflo import config
+
+    monkeypatch.delenv("SPECFLO_PROJECT", raising=False)
+    monkeypatch.setattr(config, "_project_override", None)
+
+
+@pytest.fixture(autouse=True)
 def _no_checkout_remotes(monkeypatch, tmp_path_factory):
     """Make the remote lookup find nothing in this checkout.
 
