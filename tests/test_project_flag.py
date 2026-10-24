@@ -176,3 +176,34 @@ def test_root_option_with_directory_resolves_in_that_checkout(repo, tmp_path_fac
     assert result.exit_code == 0, result.output
     assert "From afar" in _followups(repo, "b")
     assert _stored(repo) == "a"
+
+
+# --- status ----------------------------------------------------------------
+
+
+def _project_line(output: str) -> str:
+    return next(line for line in output.splitlines() if line.startswith("Project:"))
+
+
+def test_status_names_the_override_source(repo):
+    result = runner.invoke(app, ["-p", "b", "status"])
+    assert result.exit_code == 0, result.output
+    assert _project_line(result.output).endswith("(via -p)")
+
+    result = runner.invoke(app, ["status"], env={"SPECFLO_PROJECT": "b"})
+    assert result.exit_code == 0, result.output
+    assert _project_line(result.output).endswith("(via SPECFLO_PROJECT)")
+
+    result = runner.invoke(app, ["-p", "b", "status", "--json"])
+    assert json.loads(result.output)["project_source"] == "flag"
+    result = runner.invoke(app, ["status", "--json"], env={"SPECFLO_PROJECT": "b"})
+    assert json.loads(result.output)["project_source"] == "env"
+
+
+def test_status_without_an_override_is_unchanged(repo):
+    result = runner.invoke(app, ["status"])
+    assert result.exit_code == 0, result.output
+    assert _project_line(result.output) == "Project: a"
+
+    result = runner.invoke(app, ["status", "--json"])
+    assert "project_source" not in json.loads(result.output)

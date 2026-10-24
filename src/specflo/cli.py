@@ -1105,6 +1105,9 @@ def status(
     if override is not None:
         info["root"] = str(root)
         info["directory_source"] = override["directory_source"]
+    obj = ctx.find_root().obj
+    if isinstance(obj, dict) and "project_source" in obj:
+        info["project_source"] = obj["project_source"]
     if json_output:
         typer.echo(json.dumps(info))
     else:

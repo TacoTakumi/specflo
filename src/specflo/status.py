@@ -214,6 +214,8 @@ def render_status(root: Path, info: dict) -> str:
     if "directory_source" in info:
         via = "-C" if info["directory_source"] == "flag" else "SPECFLO_DIRECTORY"
         lines.append(f"Root:    {info['root']} (via {via})")
+    if "project_source" in info:
+        label += " (via -p)" if info["project_source"] == "flag" else " (via SPECFLO_PROJECT)"
     lines += [
         f"Project: {label}",
         (
