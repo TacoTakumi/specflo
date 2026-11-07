@@ -16,7 +16,15 @@ from pathlib import Path
 
 import pytest
 
-from specflo.pool.sandbox import Limits, base_argv, limit_argv, unavailable
+from specflo.pool.sandbox import (
+    Limits,
+    base_argv,
+    limit_argv,
+    nproc_argv,
+    nproc_scoped,
+    uid_threads,
+    unavailable,
+)
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "specflo"
 
@@ -115,3 +123,24 @@ def test_a_member_that_asks_for_more_than_its_address_space_does_not_get_it() ->
     assert held.returncode != 0
     loose = run_inside(base_argv(limits=Limits(memory_mb=4096)), ALLOCATE)
     assert loose.returncode == 0, loose.stderr
+
+
+FORK_FIVE = "sleep 1 & sleep 1 & sleep 1 & sleep 1 & sleep 1 & wait"
+
+
+def test_a_process_limit_set_inside_counts_the_sandbox_alone() -> None:
+    reason = unavailable()
+    if reason is not None:
+        pytest.skip(f"no sandbox on this rig: {reason}")
+    if not nproc_scoped():
+        pytest.skip("this kernel counts the process limit per uid inside a sandbox")
+    inside = [*base_argv(), *nproc_argv(4)]
+    # Far below what the operator runs on the host, and the member starts.
+    assert uid_threads() > 4 + 1
+    started = run_inside(inside, "( : ) && echo started")
+    assert started.returncode == 0, started.stderr
+    assert "started" in started.stdout
+    held = run_inside(inside, FORK_FIVE)
+    assert "fork" in held.stderr.lower(), held.stderr
+    raised = run_inside(inside, "prlimit --nproc=1000 true")
+    assert raised.returncode != 0

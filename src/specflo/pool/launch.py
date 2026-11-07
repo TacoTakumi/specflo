@@ -310,8 +310,8 @@ def member_argv(
         # first of all: the other forwarders listen in the network it makes
         forwarder[:0] = sandbox.dns_argv(dns, *tools.values())
     # A member's process count is its scope's own when the user manager can
-    # make one; the per-uid count prlimit sets counts the whole host.
-    scope, limits = sandbox.member_limits(
+    # make one, and else a limit set inside its sandbox, after the separator.
+    scope, limits, inside = sandbox.member_limits(
         sandbox.DEFAULT_LIMITS if limits is None else limits, environ, member.name
     )
     prefix = sandbox.base_argv(
@@ -325,7 +325,7 @@ def member_argv(
         chdir=cwd,
         files=files,
     )
-    return [*scope, *prefix, *forwarder, *pi_argv(definition, member)]
+    return [*scope, *prefix, *inside, *forwarder, *pi_argv(definition, member)]
 
 
 def _listed_binds(

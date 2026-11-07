@@ -51,6 +51,11 @@ documented as unsafe. In front of prlimit, when the user manager can be
 reached, is the member's systemd scope, whose task limit is the member's
 process limit; each runs the next in place, so the pid chain is kept.
 
+Without a scope, the process limit is a second prlimit after the separator,
+inside the user namespace bwrap made. The kernel counts that limit per user
+and per user namespace, so there it counts the sandbox's tasks alone; in
+front of bwrap it would count every thread the operator runs on the host.
+
 The sandbox is only as good as the kernel and the policy under it. On a rig
 where an unprivileged user namespace cannot be made, bwrap refuses and there
 is no boundary to have; ``unavailable`` says so in one line for a test to
@@ -106,6 +111,17 @@ _EMPTY_NAME = ".empty"
 # that shell starts. The process limit stands above these, so a member's
 # allowance is what the member may add.
 _SANDBOX_PROCESSES = 16
+
+# What the sandbox itself runs inside its user namespace beside the member's
+# command: the init bwrap puts at pid 1. The member's command is the child of
+# that init, and the process limit set there counts the two of them and what
+# the command starts.
+_SANDBOX_INIT = 1
+
+# The process limit the namespace probe sets inside its sandbox: room for the
+# init, the shell and the one child the shell forks, and far below what the
+# operator runs on any host a daemon runs on.
+_NPROC_PROBE_LIMIT = 4
 
 # The prlimit flag each limit is set through.
 _LIMIT_FLAGS: dict[int, str] = {
@@ -515,30 +531,80 @@ _told_no_scope = False
 
 def member_limits(
     limits: Limits, environ: Mapping[str, str], member: str
-) -> tuple[list[str], Limits]:
-    """The scope prefix a member starts under and the limits prlimit sets.
+) -> tuple[list[str], Limits, list[str]]:
+    """The scope prefix a member starts under, the limits prlimit sets in
+    front of the sandbox, and the prefix the member's command runs behind
+    inside it, after the separator.
 
     With the user manager reachable from *environ*, the daemon's environment,
     the member's process count is the task limit of its scope, named for
-    *member*, and prlimit sets none. Without it, there is no scope, and prlimit sets the per-uid count
-    with ``FALLBACK_MARGIN`` above the uid's threads, or the member's own limit
-    where that is larger; the first time, the daemon logs why.
+    *member*, and prlimit sets none. Without it, there is no scope, and the
+    process limit is set inside the sandbox (``nproc_argv``), where the
+    kernel counts the sandbox's own tasks. On a kernel that counts it per uid
+    across the host there (``nproc_scoped``), prlimit sets it in front with
+    ``FALLBACK_MARGIN`` above the uid's threads, or the member's own limit
+    where that is larger. Each fact is logged the first time.
     """
     global _told_no_scope
     if not limits.max_procs:
-        return [], limits
+        return [], limits, []
     fault = scope_fault(environ)
     if fault is None:
-        return scope_argv(limits.max_procs, environ, member), replace(limits, max_procs=0)
+        return scope_argv(limits.max_procs, environ, member), replace(limits, max_procs=0), []
     if not _told_no_scope:
         _told_no_scope = True
         _log.warning(
-            "members start under the per-uid process limit, not a scope of their own: "
-            "the user manager cannot be reached (%s). Start the daemon in a login session "
+            "members start without a systemd scope of their own: the user manager"
+            " cannot be reached (%s). Start the daemon in a login session "
             "with %s set, and enable linger if members must outlive a logout.",
             fault, RUNTIME_DIR_VAR,
         )
-    return [], replace(limits, max_procs=max(limits.max_procs, FALLBACK_MARGIN))
+    if nproc_scoped():
+        return [], replace(limits, max_procs=0), nproc_argv(limits.max_procs)
+    return [], replace(limits, max_procs=max(limits.max_procs, FALLBACK_MARGIN)), []
+
+
+# Whether a process limit set inside a sandbox counts that sandbox alone on
+# this kernel. Probed once per daemon, when first asked; None until then.
+_nproc_scoped: bool | None = None
+
+
+def nproc_scoped() -> bool:
+    """True when a process limit set inside a sandbox counts its tasks alone.
+
+    Linux counts the process limit per user namespace from 5.14 on. Before
+    that, the count inside a sandbox is every thread the uid runs on the
+    host, and a limit set there would stop every fork. No flag says which,
+    and a version cannot see a backport, so the probe measures it: inside a
+    sandbox it sets a limit far below the host's count and has the shell
+    fork once. The fork passes only where the count is the sandbox's own,
+    and anything else counts as no, so a doubtful kernel keeps the per-uid
+    limit rather than a sandbox that cannot fork. A no is logged once.
+    """
+    global _nproc_scoped
+    if _nproc_scoped is None:
+        try:
+            # The program is named in the argv and the resolved path is passed
+            # beside it, so what this module starts can be read from the source.
+            probe = subprocess.run(
+                [
+                    "bwrap", *_PROBE[:-1], "--",
+                    prlimit_path() or "prlimit", f"--nproc={_NPROC_PROBE_LIMIT}",
+                    "/bin/sh", "-c", "( : ) && exit 0",
+                ],
+                executable=bwrap_path() or "bwrap",
+                capture_output=True,
+                timeout=_PROBE_TIMEOUT,
+            )
+            _nproc_scoped = probe.returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            _nproc_scoped = False
+        if not _nproc_scoped:
+            _log.warning(
+                "this kernel does not count a process limit per sandbox (that needs Linux "
+                "5.14 or later), so a member without a scope starts under the per-uid limit"
+            )
+    return _nproc_scoped
 
 
 def _systemctl_env(environ: Mapping[str, str]) -> dict[str, str]:
@@ -651,6 +717,22 @@ def limit_argv(limits: Limits, path: str | None = None) -> list[str]:
         )
     if not values:
         return []
+    return _prlimit_argv(values, path)
+
+
+def nproc_argv(max_procs: int, path: str | None = None) -> list[str]:
+    """The prlimit prefix that sets the process limit inside a sandbox, to
+    run after its separator, in front of the member's command.
+
+    In the user namespace bwrap made the kernel counts the sandbox's own
+    tasks, so the limit is what the member may run plus the sandbox's init,
+    whatever the host runs. The hard limit is set too, so the member cannot
+    raise it.
+    """
+    return _prlimit_argv({resource.RLIMIT_NPROC: max_procs + _SANDBOX_INIT}, path)
+
+
+def _prlimit_argv(values: Mapping[int, int], path: str | None) -> list[str]:
     argv = [path or prlimit_path() or "prlimit"]
     for which, value in values.items():
         _, hard = resource.getrlimit(which)

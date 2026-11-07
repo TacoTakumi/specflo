@@ -8,6 +8,21 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.20.1]
+
+### Fixed
+- **A pool member without a systemd scope gets a process limit of its own.**
+  When the daemon cannot reach the user manager, the member's process limit
+  is now set by a second prlimit after bwrap's separator, inside the
+  sandbox's user namespace, where the kernel counts that sandbox's tasks
+  alone. The limit is the member's `max_procs` plus bwrap's init, and the
+  member cannot raise it. Before, the limit was set in front of bwrap and
+  counted every thread the operator runs on the host, so host threads used up
+  the member's room. The daemon probes once that the kernel counts the limit
+  per namespace (Linux 5.14 or later); where it does not, the per-uid limit
+  with its margin stays, and the daemon logs why once. A member with a scope
+  is unchanged.
+
 ## [0.20.0]
 
 ### Added

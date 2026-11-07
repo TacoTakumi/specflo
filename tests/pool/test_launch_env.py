@@ -382,8 +382,11 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
     assert (dns, dns) in binds(web_argv)
     resolv = (str(sandbox.resolver_file(tmp_path)), sandbox.resolver_target())
     assert resolv in binds(web_argv)
-    # the DNS launcher first: the others listen in the network it makes
+    # with no scope, the process limit set inside the sandbox runs first
+    inside = sandbox.nproc_argv(sandbox.DEFAULT_LIMITS.max_procs) if sandbox.nproc_scoped() else []
+    # then the DNS launcher: the others listen in the network it makes
     assert web_argv[web_argv.index("--") + 1 :] == [
+        *inside,
         *sandbox.dns_argv(dns, *tools),
         *sandbox.forwarder_argv(llama, socat), *sandbox.forwarder_argv(proxy, socat), *pi,
     ]
@@ -399,7 +402,7 @@ def test_a_local_web_member_gets_the_socket_the_forwarder_and_the_variables_and_
     assert dns not in plain_argv
     assert resolv not in binds(plain_argv)
     assert plain_argv[plain_argv.index("--") + 1 :] == [
-        *sandbox.forwarder_argv(llama, socat), *pi,
+        *inside, *sandbox.forwarder_argv(llama, socat), *pi,
     ]
     assert [name for name in (*PROXY_VARS, *NO_PROXY_VARS, *SOCKS_VARS) if name in plain_env] == []
 
