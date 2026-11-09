@@ -494,19 +494,18 @@ def test_each_research_command_has_a_guide_row_under_the_research_group():
 
 
 def test_the_guide_text_shows_the_research_heading_and_its_rows(tmp_path, monkeypatch):
-    """The rows render in `specflo guide`, not only in its JSON: the text output
-    lists a group only when the CLI names its heading, after the project-wide
-    verbs and before the agents."""
+    """The rows render in `specflo guide research`, not only in the guide's
+    JSON: the topic prints the group under its heading and no other group."""
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n  Research\n" in out
-    assert out.index("\n  Any phase\n") < out.index("\n  Research\n") < out.index("\n  Agents\n")
+    assert "\n  Any phase\n" not in out and "\n  Agents\n" not in out
     for name in ("research user set", "research destination set", "research session close"):
         assert f"\n    {name} " in out, name
-    assert out.index("\n    followup close ") < out.index("\n    research user set ")
-    assert out.index("\n    research session close ") < out.index("\n    agent start ")
+    assert "\n    followup close " not in out
+    assert "\n    agent start " not in out
 
 
 # --- the shape of the module --------------------------------------------------------

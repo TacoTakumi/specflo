@@ -310,7 +310,7 @@ def test_the_guide_has_a_row_for_finding_add_between_destination_set_and_session
     assert row["summary"].isascii() and row["args"].isascii()
 
     monkeypatch.chdir(tmp_path)
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
     assert "\n    research finding add " in out
     assert out.index("\n    research destination set ") < out.index("\n    research finding add ")
     assert out.index("\n    research finding add ") < out.index("\n    research session close ")

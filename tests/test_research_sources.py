@@ -437,7 +437,7 @@ def test_the_guide_lists_research_source_add_directly_after_research_ingest(tmp_
     assert row["summary"].isascii() and row["args"].isascii()
 
     monkeypatch.chdir(tmp_path)
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research source add " in out
     assert out.index("\n    research ingest ") < out.index("\n    research source add ")

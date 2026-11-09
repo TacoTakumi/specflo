@@ -100,9 +100,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "List all projects, marking the active one."},
     {"name": "status", "group": "projects", "args": "",
      "summary": "Show the active project, its phase, and what's next."},
-    {"name": "guide", "group": "projects", "args": "[daemon]",
-     "summary": "Show this overview of specflo and what to do next; `daemon` lists "
-                "the daemon and team commands."},
+    {"name": "guide", "group": "projects", "args": "[research|agents|daemon]",
+     "summary": "Show this overview of specflo and what to do next; a topic lists "
+                "that topic's commands."},
     {"name": "switch", "group": "projects", "args": "<name>",
      "summary": "Make another project active."},
     {"name": "leave", "group": "projects", "args": "",

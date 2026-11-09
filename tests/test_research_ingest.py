@@ -526,8 +526,8 @@ def test_the_guide_lists_research_ingest_first_among_the_research_rows(tmp_path,
     assert rows[0]["summary"].isascii()
 
     monkeypatch.chdir(tmp_path)
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research ingest " in out
-    assert out.index("\n    followup close ") < out.index("\n    research ingest ")
+    assert "\n    followup close " not in out
     assert out.index("\n    research ingest ") < out.index("\n    research user set ")

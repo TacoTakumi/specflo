@@ -1181,10 +1181,14 @@ _GUIDE_GROUPS = [
     ("execute", "Execute"),
     ("review", "Review"),
     ("any", "Any phase"),
-    ("research", "Research"),
-    ("agents", "Agents"),
 ]
-_GUIDE_TOPICS = {"daemon": ("daemon", "Daemon & team")}
+# A topic holds a group that most sessions never use, so the default guide
+# stays short: it names the topic in one line and prints the rest on request.
+_GUIDE_TOPICS = {
+    "research": ("research", "Research"),
+    "agents": ("agents", "Agents"),
+    "daemon": ("daemon", "Daemon & team"),
+}
 
 
 def _render_commands(data: dict, groups: list[tuple[str, str]]) -> list[str]:
@@ -1213,15 +1217,16 @@ def _render_commands(data: dict, groups: list[tuple[str, str]]) -> list[str]:
 @app.command(name="guide", epilog="Example: specflo guide --json")
 def guide_(
     topic: str | None = typer.Argument(
-        None, help="Show one topic's commands instead: daemon."
+        None, help="Show one topic's commands instead: research, agents, daemon."
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """Show what specflo is, the workflow, and what to do next here.
 
     Runs cold - works before `specflo init` - so an agent can get oriented in any
-    repo with a single command. `specflo guide daemon` lists the daemon and team
-    commands; `--json` always carries every command.
+    repo with a single command. `specflo guide research`, `specflo guide agents`
+    and `specflo guide daemon` list the commands of those topics; `--json` always
+    carries every command.
     """
     if topic is not None and topic not in _GUIDE_TOPICS:
         raise _die(f"Unknown guide topic {topic!r}. Topics: {', '.join(_GUIDE_TOPICS)}.")
@@ -1257,8 +1262,12 @@ def guide_(
         "Commands:",
         *_render_commands(data, _GUIDE_GROUPS),
         "",
-        "Daemon & team commands (serve, remote, product, workitem, gate, lease,"
-        " console):\n  `specflo guide daemon`.",
+        "More commands, each on request:",
+        "  Research projects (sessions, sources, findings, questions, terms):"
+        " `specflo guide research`.",
+        "  Agents (start, prompt and read a detached pi agent): `specflo guide agents`.",
+        "  Daemon & team (serve, remote, product, workitem, gate, lease, console):"
+        " `specflo guide daemon`.",
         "",
         "Skills:  in a skill-capable harness the `specflo-brainstorm`, `specflo-spec`, "
         "`specflo-plan`, and `specflo-execute` skills drive\n  the conversation; these "

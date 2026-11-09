@@ -370,7 +370,7 @@ def test_each_question_command_has_a_guide_row_under_the_research_group():
 def test_the_guide_text_shows_both_question_rows(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     for name in ("research question add", "research question resolve"):
         assert f"\n    {name} " in out, name

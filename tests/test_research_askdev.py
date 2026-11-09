@@ -239,7 +239,7 @@ def test_the_guide_has_the_ask_dev_row_after_question_resolve(tmp_path, monkeypa
     assert names.index("research ask-dev") < names.index("research destination set")
 
     monkeypatch.chdir(tmp_path)
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
     assert "\n    research ask-dev " in out
     assert out.index("\n    research question resolve ") < out.index("\n    research ask-dev ")
     assert out.index("\n    research ask-dev ") < out.index("\n    research destination set ")

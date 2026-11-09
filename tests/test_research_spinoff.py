@@ -433,8 +433,8 @@ def test_spinoff_has_a_guide_row_right_after_recap():
 def test_the_guide_text_shows_the_spinoff_row_after_recap(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research spinoff " in out
     assert out.index("\n    research recap ") < out.index("\n    research spinoff ")
-    assert out.index("\n    research spinoff ") < out.index("\n    agent start ")
+    assert "\n    agent start " not in out

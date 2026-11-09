@@ -294,7 +294,7 @@ def test_the_guide_row_and_the_ingest_help_name_pdf_docx_and_the_extra(tmp_path,
     # Run from an empty directory so the guide reads no project state of its own.
     monkeypatch.chdir(tmp_path)
 
-    guide_out = _ok(["guide"]).output
+    guide_out = _ok(["guide", "research"]).output
     row_start = guide_out.index("research ingest")
     row = guide_out[row_start:guide_out.index("research source add", row_start)]
     help_out = _ok([*INGEST, "--help"]).output

@@ -419,7 +419,7 @@ def test_the_guide_has_a_row_for_lint_after_list(tmp_path, monkeypatch):
     assert "exit" in row["summary"] and "writes nothing" in row["summary"]
 
     monkeypatch.chdir(tmp_path)
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
     assert "\n    research lint " in out
     assert out.index("\n    research list ") < out.index("\n    research lint ")
     assert out.index("\n    research lint ") < out.index("\n    research session close ")

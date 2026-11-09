@@ -354,17 +354,42 @@ def test_guide_moves_the_daemon_commands_to_their_own_topic(cwd):
 def test_guide_lists_the_commands_in_workflow_order(cwd):
     out = runner.invoke(app, ["guide"]).output
     headings = ["Setup", "Projects", "Brainstorm", "Spec", "Plan", "Execute", "Review",
-                "Any phase", "Agents"]
+                "Any phase"]
     at = [out.index(f"\n  {h}\n") for h in headings]
     assert at == sorted(at)
     commands = ["init", "skills install", "hook install", "config get", "new", "status",
                 "brainstorm start", "decision add", "spec start", "requirement add",
                 "plan start", "task add", "plan graph", "task list", "task start", "task done",
-                "review start", "review done", "validate", "advance", "followup add",
-                "agent start"]
+                "review start", "review done", "validate", "advance", "followup add"]
     at = [out.index(f"\n    {c} ") for c in commands]
     assert at == sorted(at)
     assert "FU-\n" not in out
+
+
+def _group_names(group):
+    return [e["name"] for e in guide.COMMANDS if e["group"] == group]
+
+
+def test_guide_moves_the_research_and_agents_commands_to_their_own_topics(cwd):
+    # Only a research project or pool work needs these groups, and together
+    # they were a third of the guide. One line each says where they are.
+    out = runner.invoke(app, ["guide"]).output
+    for group, title in (("research", "Research"), ("agents", "Agents")):
+        names = _group_names(group)
+        assert names, group
+        for name in names:
+            assert f"    {name} " not in out, name
+        assert f"\n  {title}\n" not in out
+        pointer = next(l for l in out.splitlines() if f"`specflo guide {group}`" in l)
+        assert out.index(pointer) > out.index("Commands:")
+        result = runner.invoke(app, ["guide", group])
+        assert result.exit_code == 0
+        shown = [name for e in guide.COMMANDS
+                 if f"    {(name := e['name'])} " in result.output + " "]
+        assert sorted(shown) == sorted(names), group
+    data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    carried = {c["name"] for c in data["commands"]}
+    assert set(_group_names("research")) | set(_group_names("agents")) <= carried
 
 
 def test_guide_json_keeps_every_command(cwd):
@@ -375,7 +400,8 @@ def test_guide_json_keeps_every_command(cwd):
 def test_guide_refuses_an_unknown_topic(cwd):
     result = runner.invoke(app, ["guide", "bogus"])
     assert result.exit_code == 1
-    assert "daemon" in result.output
+    for topic in ("research", "agents", "daemon"):
+        assert topic in result.output, topic
 
 
 def test_readme_documents_the_review_loop():

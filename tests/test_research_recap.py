@@ -343,8 +343,8 @@ def test_recap_has_a_guide_row_right_after_term_set():
 def test_the_guide_text_shows_the_recap_row_after_term_set(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research recap " in out
     assert out.index("\n    research term set ") < out.index("\n    research recap ")
-    assert out.index("\n    research recap ") < out.index("\n    agent start ")
+    assert "\n    agent start " not in out

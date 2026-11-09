@@ -343,8 +343,8 @@ def test_term_set_has_a_guide_row_under_the_research_group():
 def test_the_guide_text_shows_the_term_set_row_after_session_close(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research term set " in out
     assert out.index("\n    research session close ") < out.index("\n    research term set ")
-    assert out.index("\n    research term set ") < out.index("\n    agent start ")
+    assert "\n    agent start " not in out

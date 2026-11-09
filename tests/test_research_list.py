@@ -321,7 +321,7 @@ def test_list_has_a_guide_row_after_finding_add_under_the_research_group():
 def test_the_guide_text_shows_the_list_row_after_finding_add(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
 
-    out = _ok(["guide"]).output
+    out = _ok(["guide", "research"]).output
 
     assert "\n    research list " in out
     assert out.index("\n    research finding add ") < out.index("\n    research list ")
