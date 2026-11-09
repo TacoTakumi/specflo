@@ -290,7 +290,9 @@ def test_guide_says_how_to_add_small_work_to_a_running_project(cwd):
     # Small work in a running project is a task, not a new project. The spec
     # is the test: a task cites a requirement, or a brief when the ask is new.
     block = _levels_block(runner.invoke(app, ["guide"]).output)
-    assert "In a running project" in block
+    # Only a fast or full project has a spec and a plan for a task to cite.
+    header = next(l for l in block.splitlines() if "do not start a new project" in l)
+    assert "In a running fast or full project" in header
     covered = next(l for l in block.splitlines() if "the spec already covers it" in l)
     assert "`specflo task add --from REQ-NN`" in covered
     fresh = next(l for l in block.splitlines() if "the ask is new to the spec" in l)

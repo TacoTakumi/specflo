@@ -32,8 +32,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   decision on what to build.
 
 ### Added
-- **The guide says how to add small work to a running project** without a new
-  project: `specflo task add --from REQ-NN` when the spec already covers the
+- **The guide says how to add small work to a running fast or full project**
+  without a new project: `specflo task add --from REQ-NN` when the spec already covers the
   work, and `specflo brief add` then `specflo task add --from B-NN` when the
   ask is new to the spec.
 - **With a research project active, the guide's "You are here" part names

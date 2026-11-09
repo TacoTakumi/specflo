@@ -432,7 +432,7 @@ LEVELS_TEXT = (
     " never moves.\n"
     "  When the user names a follow-up (FU-NN) to do, read it with"
     " `specflo followup show FU-NN` before you propose a level.\n"
-    "  In a running project, do not start a new project for small work:\n"
+    "  In a running fast or full project, do not start a new project for small work:\n"
     "    the spec already covers it    `specflo task add --from REQ-NN`, then do the task\n"
     "    the ask is new to the spec    `specflo brief add`, then"
     " `specflo task add --from B-NN`"
