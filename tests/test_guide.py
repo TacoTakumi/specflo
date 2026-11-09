@@ -153,7 +153,7 @@ def test_guide_offers_paste_ready_memory_snippet(cwd):
 
 def test_guide_asks_where_to_add_the_memory_snippet(cwd):
     # The snippet may go in a global, local or team file, so the agent asks the
-    # user; and in a global file it must not send the agent into every repo.
+    # user.
     out = runner.invoke(app, ["guide"]).output
     assert guide.MEMORY_PLACEMENT in out
     assert out.index(guide.MEMORY_PLACEMENT) < out.index(guide.MEMORY_SNIPPET)
@@ -161,11 +161,29 @@ def test_guide_asks_where_to_add_the_memory_snippet(cwd):
                   "team    the repo's CLAUDE.md or AGENTS.md"):
         assert place in guide.MEMORY_PLACEMENT, place
     assert "Ask the user" in guide.MEMORY_PLACEMENT
-    assert "The user develops features with specflo" in guide.MEMORY_SNIPPET
-    assert "In a repo that has a `.specflo/`" in guide.MEMORY_SNIPPET
     assert "This repo uses" not in guide.MEMORY_SNIPPET
     data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
     assert data["memory_placement"] == guide.MEMORY_PLACEMENT
+
+
+def test_memory_snippet_covers_every_change_in_any_repo():
+    # The snippet speaks of the user, not the repo, so it is right in a global
+    # file. It names no condition a new repo fails and no level list that a
+    # pasted copy would hold after the levels change: the guide carries those.
+    snippet = " ".join(guide.MEMORY_SNIPPET.split())
+    body = snippet.split("## Development workflow", 1)[1].strip()
+    assert body.startswith("This user develops with specflo.")
+    for phrase in (
+        "At the start of a session, run `specflo guide`",
+        "Every code change goes through specflo",
+        "a one-line fix",
+        "a fix from a follow-up",
+        "A subagent that has an assigned task does not run the guide.",
+    ):
+        assert phrase in snippet, phrase
+    for excluded in (".specflo", "specflo init", "quick", "fast", "full",
+                     "harden", "research", "v0."):
+        assert excluded not in snippet, excluded
 
 
 def test_memory_snippet_matches_the_readme_block():

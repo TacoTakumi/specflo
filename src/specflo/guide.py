@@ -22,9 +22,11 @@ from .errors import SpecfloError
 # A thin, version-less section users paste once near the top of their agent
 # memory file (CLAUDE.md / AGENTS.md / GEMINI.md / ...). Deliberately static: no
 # version, so it never goes stale and never needs re-committing when specflo is
-# upgraded. Its only job is to make specflo *discoverable* to a cold agent — the
-# live detail (command surface, next action) lives behind `specflo guide`, which
-# the snippet points at, so it never has to be duplicated here.
+# upgraded. Its job is to send a cold agent to `specflo guide` and to say that
+# every code change goes through specflo. It speaks of the user, not the repo,
+# and names no condition on the repo, so it is right in a global file and in a
+# repo with no specflo setup yet. The live detail (levels, command surface, next
+# action) lives behind `specflo guide`, so it never has to be duplicated here.
 #
 # README.md is the authority for this text: it is the copy users actually read
 # while onboarding, and this constant mirrors it. `tests/test_guide.py` extracts
@@ -33,12 +35,11 @@ from .errors import SpecfloError
 MEMORY_SNIPPET = (
     "## Development workflow\n"
     "\n"
-    "The user develops features with specflo. In a repo that has a `.specflo/`\n"
-    "directory, run `specflo guide` at the start of a session to orient yourself;\n"
-    "`specflo status` shows the active project and phase. Features move through\n"
-    "brainstorm -> spec -> plan -> execute using the specflo skills, recording\n"
-    "decisions, requirements, and tasks through the specflo CLI rather than editing\n"
-    "its artifacts by hand."
+    "This user develops with specflo. At the start of a session, run `specflo guide`\n"
+    "before any other work. It shows the state of the repo, when to use each project\n"
+    "level and the next step. Every code change goes through specflo, including a\n"
+    "one-line fix and a fix from a follow-up. A subagent that has an assigned task\n"
+    "does not run the guide."
 )
 
 # Where the snippet goes is the user's call: the guide tells the agent to ask.

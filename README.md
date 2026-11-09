@@ -107,8 +107,8 @@ The installed skills make your agent *able* to drive specflo; a note in an
 agent memory file makes it *routine*. Put it in one of three places:
 
 - **Global** - `~/.claude/CLAUDE.md`, or your harness's user memory file. It
-  applies to every repo you work in; the note only has the agent run specflo in
-  a repo that has a `.specflo/` directory.
+  applies to every repo you work in. `specflo guide` changes nothing and runs
+  in a repo that has no specflo setup, where it shows how to start.
 - **Local** - `CLAUDE.local.md` in the repo root, added to `.gitignore`. It
   applies to this repo and only to you, so a team repo's files stay unchanged.
   This file is a Claude Code feature. In another harness, a repo that does not
@@ -122,12 +122,11 @@ use. Add this near the top of the file:
 ```markdown
 ## Development workflow
 
-The user develops features with specflo. In a repo that has a `.specflo/`
-directory, run `specflo guide` at the start of a session to orient yourself;
-`specflo status` shows the active project and phase. Features move through
-brainstorm -> spec -> plan -> execute using the specflo skills, recording
-decisions, requirements, and tasks through the specflo CLI rather than editing
-its artifacts by hand.
+This user develops with specflo. At the start of a session, run `specflo guide`
+before any other work. It shows the state of the repo, when to use each project
+level and the next step. Every code change goes through specflo, including a
+one-line fix and a fix from a follow-up. A subagent that has an assigned task
+does not run the guide.
 ```
 
 Prompts that map onto the workflow:
