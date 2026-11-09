@@ -8,6 +8,38 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.21.0]
+
+### Changed
+- **The agent file section covers every code change and works in any repo.**
+  It now starts with "This user develops with specflo", tells the agent to
+  run `specflo guide` at the start of a session before other work, and says
+  that every code change goes through specflo, including a one-line fix and a
+  fix from a follow-up. A subagent that has an assigned task does not run the
+  guide. The condition "in a repo that has a `.specflo/` directory" is gone:
+  it stopped an agent in a new repo and in a nested directory, and
+  `specflo guide` is read-only and runs before `specflo init`. Update a copy
+  you pasted before.
+- **`specflo guide` no longer lists the research and agent commands.**
+  `specflo guide research` and `specflo guide agents` print them, and the
+  default guide names each topic in one line, as it does for
+  `specflo guide daemon`. The default output is about 30% shorter. `--json`
+  still carries every command. A script or skill that read these commands
+  from plain `specflo guide` must name the topic.
+- **Each level line in the guide gives the purpose of the level first,** then
+  its command and size rule. The research line says what the level gives:
+  sources, findings, open questions and terms kept between sessions, and a
+  decision on what to build.
+
+### Added
+- **The guide says how to add small work to a running project** without a new
+  project: `specflo task add --from REQ-NN` when the spec already covers the
+  work, and `specflo brief add` then `specflo task add --from B-NN` when the
+  ask is new to the spec.
+- **With a research project active, the guide's "You are here" part names
+  `specflo guide research`,** and `specflo guide --json` carries the active
+  project's `level`.
+
 ## [0.20.1]
 
 ### Fixed

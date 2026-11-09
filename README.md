@@ -138,8 +138,8 @@ Prompts that map onto the workflow:
 - "Run it in auto mode." - explicit opt-in to an unattended run (see `specflo auto`).
 
 `specflo guide` runs cold - before `init`, in any repo - and orients a fresh
-agent in one shot: what specflo is, the pipeline, the full command surface, and
-what to do next. When in doubt, tell your agent to run it.
+agent in one shot: what specflo is, the pipeline, when to use each level, the
+build commands, and what to do next. When in doubt, tell your agent to run it.
 
 ## The pipeline
 
@@ -448,7 +448,7 @@ Decisions go through the usual `specflo decision add`, which writes them into
 ### Setup and orientation
 
 - `specflo --version` - print the installed version and exit.
-- `specflo guide [daemon] [--json]` - orientation in one shot: what specflo is, the pipeline, the command surface, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo. The daemon and team commands (serve, remote, promote, product, workitem, gate, lease, console) are listed by `specflo guide daemon`; `--json` carries every command.
+- `specflo guide [research|agents|daemon] [--json]` - orientation in one shot: what specflo is, the pipeline, when to use each level, the build commands, and what to do next here. Runs **cold** (works before `specflo init`), so a fresh agent can get up to speed in any repo. Three topics hold the commands most sessions do not need: `specflo guide research` lists the research commands, `specflo guide agents` the agent commands, and `specflo guide daemon` the daemon and team commands (serve, remote, promote, product, workitem, gate, lease, console). `--json` carries every command.
 - `specflo init` - scaffold `.specflo/config.yaml` + the projects dir (default `docs/projects/`).
 
 ### Configuration
