@@ -260,6 +260,45 @@ def test_guide_lists_the_review_loop_commands(cwd):
         assert command in out, command
 
 
+def _levels_block(out):
+    return out[out.index("Levels:"):out.index("You are here:")]
+
+
+def test_guide_level_lines_give_the_purpose_first(cwd):
+    # A model that knows nothing of specflo picks a level from what the work
+    # is, so each line says that before the command and the size rule.
+    block = _levels_block(runner.invoke(app, ["guide"]).output)
+    lines = block.splitlines()
+    for level, purpose, rule in (
+        ("quick", "a small change or a fix", "one goal and one check"),
+        ("fast", "a small feature", "3 to 7 tasks"),
+        ("full", "a larger feature", "more than that"),
+        ("harden", "find and fix weak points", "`--level harden`"),
+        ("research", "find out if and what to build", "`new <name> --level research`"),
+    ):
+        line = next(l for l in lines if l.startswith(f"  {level} "))
+        assert purpose in line, level
+        assert line.index(purpose) < line.index(rule), level
+    research = next(l for l in lines if l.startswith("  research "))
+    for phrase in ("sources", "findings", "what to build"):
+        assert phrase in research, phrase
+    assert "open questions" in block
+    assert "between sessions" in block
+
+
+def test_guide_says_how_to_add_small_work_to_a_running_project(cwd):
+    # Small work in a running project is a task, not a new project. The spec
+    # is the test: a task cites a requirement, or a brief when the ask is new.
+    block = _levels_block(runner.invoke(app, ["guide"]).output)
+    assert "In a running project" in block
+    covered = next(l for l in block.splitlines() if "the spec already covers it" in l)
+    assert "`specflo task add --from REQ-NN`" in covered
+    fresh = next(l for l in block.splitlines() if "the ask is new to the spec" in l)
+    assert "`specflo brief add`" in fresh
+    assert "`specflo task add --from B-NN`" in fresh
+    assert fresh.index("brief add") < fresh.index("task add --from B-NN")
+
+
 def test_guide_lists_the_harden_level_with_its_meaning(cwd):
     out = runner.invoke(app, ["guide"]).output
     line = next(line for line in out.splitlines() if line.startswith("  harden "))

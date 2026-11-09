@@ -407,25 +407,35 @@ COMMANDS: list[dict[str, str]] = [
 
 
 # How much ceremony to pick, before `specflo new`: the agent proposes a level
-# from the request and the user confirms it.
+# from the request and the user confirms it. Each line gives the purpose first,
+# for an agent that knows nothing of specflo, then the command and size rule.
 LEVELS_TEXT = (
-    "Levels:   propose one from the request, and have the user confirm it before"
-    " `specflo new`:\n"
-    "  quick     one goal and one check (`new <name> --level quick`): one brief, proof, no review\n"
-    "  fast      3 to 7 tasks (`--level fast`): short brainstorm, spec and plan, one approval\n"
-    "  full      more than that (the default): every phase, an approval at each\n"
-    "  harden    make code that already exists sound (`--level harden`): harden rounds,"
-    " fix tasks only, the user stops it\n"
-    "  research  build knowledge over sessions, not code (`new <name> --level research`):"
-    " no build intended yet,\n"
-    "            documents to bring in, a domain expert at the keyboard, much unknown ground."
-    " Sources, findings,\n"
-    "            questions and terms; local only; `specflo level fast|full` moves it up"
+    "Levels:   propose the smallest one that fits the request, and have the user"
+    " confirm it before `specflo new`:\n"
+    "  quick     a small change or a fix; one goal and one check"
+    " (`new <name> --level quick`): one brief, proof, no review\n"
+    "  fast      a small feature; 3 to 7 tasks (`--level fast`): short brainstorm,"
+    " spec and plan, one approval\n"
+    "  full      a larger feature; more than that (the default): every phase,"
+    " an approval at each\n"
+    "  harden    find and fix weak points in code that already exists (`--level harden`):"
+    " harden rounds, fix tasks only, the user stops it\n"
+    "  research  find out if and what to build, before any code"
+    " (`new <name> --level research`): it keeps sources, findings,\n"
+    "            open questions and terms between sessions and leads to a decision"
+    " on what to build.\n"
+    "            Signals: no build intended yet, documents to bring in, a domain expert"
+    " at the keyboard, much unknown ground.\n"
+    "            It is local only; `specflo level fast|full` moves it up"
     " when building starts\n"
     "  A project moves up with `specflo level fast|full`, never down; a harden project"
     " never moves.\n"
     "  When the user names a follow-up (FU-NN) to do, read it with"
-    " `specflo followup show FU-NN` before you propose a level."
+    " `specflo followup show FU-NN` before you propose a level.\n"
+    "  In a running project, do not start a new project for small work:\n"
+    "    the spec already covers it    `specflo task add --from REQ-NN`, then do the task\n"
+    "    the ask is new to the spec    `specflo brief add`, then"
+    " `specflo task add --from B-NN`"
 )
 
 
