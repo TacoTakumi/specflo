@@ -1160,10 +1160,14 @@ def _render_you_are_here(data: dict) -> list[str]:
     if action == "none":
         first, second = guide_module.NO_ACTIVE_PROJECT_LINES
         return [first, f"  {second}"]
-    return [
+    lines = [
         f"Project '{data['active_project']}' | phase: {data['phase']}",
         f"  Next: {data['next_step']}",
     ]
+    if data.get("level") == "research":
+        # The default guide leaves the research commands to their topic.
+        lines.append("  Research commands: `specflo guide research`.")
+    return lines
 
 
 # The label column stops at this width: a longer label takes its own line, so

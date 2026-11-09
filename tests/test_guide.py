@@ -392,6 +392,25 @@ def test_guide_moves_the_research_and_agents_commands_to_their_own_topics(cwd):
     assert set(_group_names("research")) | set(_group_names("agents")) <= carried
 
 
+def _you_are_here(out):
+    return out[out.index("You are here:"):out.index("Commands:")]
+
+
+def test_guide_points_a_research_project_at_its_commands(cwd):
+    # The research commands are not in the default guide, so a session that
+    # opens on a research project is told where they are.
+    runner.invoke(app, ["init"])
+    runner.invoke(app, ["new", "Market Scan", "--level", "research"])
+    out = runner.invoke(app, ["guide"]).output
+    assert "`specflo guide research`" in _you_are_here(out)
+    data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
+    assert data["level"] == "research"
+
+    runner.invoke(app, ["new", "My Thing"])
+    out = runner.invoke(app, ["guide"]).output
+    assert "specflo guide research" not in _you_are_here(out)
+
+
 def test_guide_json_keeps_every_command(cwd):
     data = json.loads(runner.invoke(app, ["guide", "--json"]).output)
     assert len(data["commands"]) == len(guide.COMMANDS)

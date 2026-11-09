@@ -479,6 +479,7 @@ def build_guide(root: Path | None, cfg: SpecfloConfig | None) -> dict:
 
     payload["active_project"] = project.slug
     payload["phase"] = project.phase
+    payload["level"] = project.level
     # auto imports much of the package, so it is read here, at call time.
     from . import auto, plan, review, validators
 
