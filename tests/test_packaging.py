@@ -190,7 +190,7 @@ def test_wheel_requires_agentsquire_floor(dist):
             for line in zf.read(meta_name).decode().splitlines()
             if line.startswith("Requires-Dist:")
         ]
-    assert "Requires-Dist: agentsquire>=0.5.0" in requires
+    assert "Requires-Dist: agentsquire>=0.6.0" in requires
 
 
 # The daemon's web UI is server-rendered: its templates and the assets
