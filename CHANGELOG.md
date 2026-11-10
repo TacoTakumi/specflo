@@ -41,8 +41,9 @@ latter. Release tags are of the form `vX.Y.Z`.
   `specflo guide research`,** and `specflo guide --json` carries the active
   project's `level`.
 - **`specflo check-update` asks PyPI whether a newer specflo release exists.**
-  It prints the installed and the newest version, with the upgrade command for
-  a `uv tool` or `pipx` install, and exits 1 only when the check fails.
+  It prints the installed version, and the newest one with the upgrade command
+  for a `uv tool` or `pipx` install when PyPI has a newer release. It exits 1
+  only when the check fails.
 - **Any specflo command says when a newer release is known.** One line on
   stderr, while the release that `specflo check-update` or `specflo doctor`
   last recorded is newer than the installed one. It reads a cache file and
