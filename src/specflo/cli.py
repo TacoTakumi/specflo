@@ -17,7 +17,7 @@ import typer.main
 from typer.core import TyperGroup
 
 from agentsquire import check_stale
-from agentsquire.cli import skills_command_group
+from agentsquire.cli import check_update_command, skills_command_group
 from agentsquire.roots import resolve_roots
 from agentsquire.sources import default_source
 
@@ -4296,7 +4296,8 @@ def console_detach(
 
 
 def build_cli():
-    """The specflo click command with agentsquire's skills group mounted.
+    """The specflo click command with agentsquire's skills group and
+    ``check-update`` command mounted.
 
     The group is mounted onto the click command underlying the Typer app (Typer
     can't nest a ready-made click group directly). No ``source=`` is passed, so
@@ -4315,6 +4316,9 @@ def build_cli():
             source_version=__version__,
         )
     )
+    # The version is passed, not read from the install metadata: an editable
+    # checkout's metadata keeps the version it had when it was installed.
+    cli.add_command(check_update_command("specflo", __version__, prog_name="specflo"))
     return cli
 
 

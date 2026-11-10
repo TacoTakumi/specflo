@@ -25,7 +25,7 @@ dependencies = [
     # preserves the user's comments, key order and unrecognized keys. Artifact
     # front matter stays on PyYAML, which is faster and needs no round trip.
     "ruamel.yaml>=0.18",
-    "agentsquire>=0.5.0",
+    "agentsquire>=0.6.0",
     # The HTTP client behind the remote ProjectService: every CLI install can
     # talk to a daemon, so it is a core dependency rather than part of the
     # serve extra.

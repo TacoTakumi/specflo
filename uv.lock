@@ -4,16 +4,16 @@ requires-python = ">=3.12"
 
 [[package]]
 name = "agentsquire"
-version = "0.5.0"
+version = "0.6.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "pyyaml" },
     { name = "questionary" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/5f/4f/0ff5a47a4d7f797329debe7821c0d3821551d194b05919871e4ce6cd3f27/agentsquire-0.5.0.tar.gz", hash = "sha256:51c1454182523debde6eb565ca6e975a0259e2b52389b55a59dd0f77f7f0da85", size = 79032, upload-time = "2026-07-11T20:22:32.555Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/06/f0/11597e2d9523b65c9445decca071d8368cb08b2343a715bdf005995f16f8/agentsquire-0.6.0.tar.gz", hash = "sha256:2a1e381d22fbd650cda5c1d10c1098789eb94616fab8f3a8f55ac7123ff583b4", size = 114376, upload-time = "2026-11-09T23:56:10.526Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/67/9a5d4249b1565a8c9913a77f810d315b7d8564e87b2a8f26a79ad9b3b16b/agentsquire-0.5.0-py3-none-any.whl", hash = "sha256:8e15ef707ac4c049a5ea1c346ba3f8476f9fde1786443d39c59a120c3ce30993", size = 45644, upload-time = "2026-07-11T20:22:31.52Z" },
+    { url = "https://files.pythonhosted.org/packages/3d/77/187759aa196de019dde6d34689fd4a879e2951a0639933f2e5edf2e7f598/agentsquire-0.6.0-py3-none-any.whl", hash = "sha256:e33a652edf2c71a56ff99840e025d46c10beba468f14b18dbc0b4cc3cbe62485", size = 60573, upload-time = "2026-11-09T23:56:09.055Z" },
 ]
 
 [[package]]
@@ -1422,7 +1422,7 @@ wheels = [
 
 [[package]]
 name = "specflo"
-version = "0.18.0"
+version = "0.20.1"
 source = { editable = "." }
 dependencies = [
     { name = "agentsquire" },
@@ -1462,7 +1462,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "agentsquire", specifier = ">=0.5.0" },
+    { name = "agentsquire", specifier = ">=0.6.0" },
     { name = "click", specifier = ">=8.1" },
     { name = "fastapi", marker = "extra == 'serve'", specifier = ">=0.141.1" },
     { name = "githubkit", extras = ["auth-app"], marker = "extra == 'serve'", specifier = ">=0.16.1" },
