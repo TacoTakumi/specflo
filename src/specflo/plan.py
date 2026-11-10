@@ -502,13 +502,16 @@ def validate_plan(
                 issues.append(f"{req} is not implemented by any task.")
 
     ids = {t.id for t in active}
-    deferred_ids = {t.id for t in deferred}
+    by_deferred_id = {t.id: t for t in deferred}
+    deferred_ids = set(by_deferred_id)
     for t in active:
         for dep in t.depends_on:
             # Finished work may rest on a task that was deferred after it.
             if dep in deferred_ids and t.progress == "done":
                 continue
-            if dep not in ids:
+            if dep in deferred_ids:
+                issues.append(_deferred_dependency_line(t.id, by_deferred_id[dep]) + ".")
+            elif dep not in ids:
                 issues.append(f"{t.id} depends on {dep}, which is not an active task.")
     cycle = _find_cycle(active)
     if cycle:
@@ -601,6 +604,16 @@ def validate_plan(
                     )
 
     return issues
+
+
+def _deferred_dependency_line(blocked: str, dependency: Task) -> str:
+    """What to tell the owner of a task that waits on a deferred one: the
+    dependency never becomes done here, so the edge has to go."""
+    return (
+        f"{blocked} depends on {dependency.id}, which is {dependency.frozen_state} "
+        f"and will not be done in this plan; "
+        f"run: specflo task edit {blocked} --drop-depends-on {dependency.id}"
+    )
 
 
 def _deferred_requirements(
@@ -993,14 +1006,17 @@ def add_milestone(
 
 
 def blocked_on_superseded_from_doc(doc: str) -> list[dict]:
-    """Pending active tasks in *doc* blocked by a superseded dependency.
+    """Pending active tasks in *doc* blocked by a dependency that left the
+    active set: a superseded task, or a deferred one.
 
-    Returns one entry per (blocked task, superseded dependency) pair, each naming
-    the superseding task id, so callers (``task show``, ``status``, ``checkpoint``)
-    can render rewire remediation. Empty when nothing is blocked this way.
+    Returns one entry per (blocked task, dependency) pair, so callers
+    (``task show``, ``status``, ``checkpoint``) can render the remediation. A
+    superseded dependency names the superseding task id; a deferred one
+    carries its remediation line. Empty when nothing is blocked this way.
     """
     tasks = _parse_tasks(doc)
     superseded = {t.id: t.superseded_by for t in tasks if t.status == "superseded"}
+    deferred = {t.id: t for t in tasks if t.status == "deferred"}
     findings: list[dict] = []
     for t in tasks:
         if t.status != "active" or t.progress != "pending":
@@ -1010,6 +1026,11 @@ def blocked_on_superseded_from_doc(doc: str) -> list[dict]:
                 findings.append({
                     "blocked": t.id, "dependency": dep,
                     "superseded_by": superseded[dep],
+                })
+            elif dep in deferred:
+                findings.append({
+                    "blocked": t.id, "dependency": dep, "superseded_by": None,
+                    "deferred": _deferred_dependency_line(t.id, deferred[dep]),
                 })
     return findings
 
@@ -1025,7 +1046,9 @@ def superseded_block_remediation(blocks: list[dict]) -> list[str]:
     lines: list[str] = []
     for b in blocks:
         dep, by, blocked = b["dependency"], b["superseded_by"], b["blocked"]
-        if by:
+        if b.get("deferred"):
+            lines.append(b["deferred"])
+        elif by:
             lines.append(
                 f"{blocked} depends on superseded {dep} (superseded by {by}); "
                 f"run: specflo task rewire --from {dep} --to {by}"
@@ -1532,6 +1555,14 @@ def _set_progress(
             done_ids = {t.id for t in _parse_tasks(doc)
                         if t.status == "active" and t.progress == "done"}
             unmet = [d for d in task.depends_on if d not in done_ids]
+            gone = {t.id: t for t in _parse_tasks(doc) if t.status == "deferred"}
+            for dep in unmet:
+                # A deferred dependency never becomes done: say how to drop it.
+                if dep in gone:
+                    raise SpecfloError(
+                        _deferred_dependency_line(task_id, gone[dep])
+                        + f", or pass --force to start {task_id} anyway."
+                    )
             if unmet:
                 raise SpecfloError(
                     f"{task_id} depends on {', '.join(unmet)}, not done yet. "
@@ -2336,7 +2367,7 @@ def task_brief(
                 detail = "\n".join("  " + ln for ln in superseded_block_remediation(blocks))
                 raise SpecfloError(
                     "No actionable task: a pending task is blocked by a superseded "
-                    "dependency.\n" + detail
+                    "or deferred dependency.\n" + detail
                 )
             raise SpecfloError(
                 "No actionable task (all done, or remaining tasks are blocked "
