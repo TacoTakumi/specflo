@@ -41,10 +41,12 @@ _SCOPE_REDUCTION_TERMS = ("v1", "simplified", "for now", "stub")
 # Notes are append-only `- Note: <date> [<Label>] <text>` lines inside a task
 # entry (task-edit-and-task-note REQ-06). The label is bracketed data in the
 # value, never the field key, so the plan parser keeps one key for every note.
-# `Edit` is minted only by a forced `task edit`, never by `--label`.
-NOTE_LABELS = ("Note", "Design", "Resolution", "Descoped", "Edit")
+# `Edit` is minted only by a forced `task edit`, and `Deferred` only by
+# `task defer`, never by `--label`.
+NOTE_LABELS = ("Note", "Design", "Resolution", "Descoped", "Edit", "Deferred")
 NOTE_DEFAULT_LABEL = "Note"
 NOTE_FORCED_LABEL = "Edit"
+NOTE_DEFERRED_LABEL = "Deferred"
 NOTE_FIELD = "Note"
 _NOTE_VALUE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2}) \[([^\[\]]+)\] (\S.*)$")
 
@@ -61,7 +63,12 @@ def note_label(label: str | None, *, allow_edit: bool = False) -> str:
     """Return the validated label for a note, defaulting to ``Note``."""
     if label is None:
         return NOTE_DEFAULT_LABEL
-    offered = [lb for lb in NOTE_LABELS if lb != NOTE_FORCED_LABEL]
+    offered = [lb for lb in NOTE_LABELS if lb not in (NOTE_FORCED_LABEL, NOTE_DEFERRED_LABEL)]
+    if label == NOTE_DEFERRED_LABEL:
+        raise SpecfloError(
+            f"Label {NOTE_DEFERRED_LABEL!r} is reserved for `specflo task defer`. "
+            f"Accepted labels: {', '.join(offered)}."
+        )
     if label == NOTE_FORCED_LABEL and not allow_edit:
         raise SpecfloError(
             f"Label {NOTE_FORCED_LABEL!r} is reserved for `task edit --force`. "
@@ -1422,6 +1429,37 @@ def add_note(
         doc = markdown.bump_updated(doc, today)
         path.write_text(doc)
     return parse_note(value)
+
+
+def task_by_id(doc: str, task_id: str) -> Task | None:
+    """The task ``task_id`` of *doc* in any state, or None."""
+    return next((t for t in _parse_tasks(doc) if t.id == task_id), None)
+
+
+def check_deferrable(doc: str, task_id: str) -> Task:
+    """The task ``task_id`` of *doc* when it can be deferred; raises otherwise.
+
+    Only work that has not started can leave the plan: a pending or a blocked
+    task.
+    """
+    task = task_by_id(doc, task_id)
+    if task is None:
+        raise SpecfloError(f"No task {task_id}.")
+    if task.status != "active":
+        raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; it cannot be deferred.")
+    if task.progress not in ("pending", "blocked"):
+        raise SpecfloError(f"Task {task_id} is {task.progress}; it cannot be deferred.")
+    return task
+
+
+def deferred_doc(doc: str, task_id: str, followup_id: str, why: str, today: str) -> str:
+    """*doc* with the task marked as deferred to ``followup_id`` and the reason
+    as its last note. The caller checked the task with :func:`check_deferrable`."""
+    doc = markdown.set_entry_field(doc, task_id, DEFERRED_FIELD, followup_id)
+    doc = markdown.append_entry_field(
+        doc, task_id, NOTE_FIELD, f"{today} [{NOTE_DEFERRED_LABEL}] {note_text(why)}"
+    )
+    return markdown.bump_updated(doc, today)
 
 
 def _set_progress(

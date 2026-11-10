@@ -1766,7 +1766,9 @@ def test_brief_user_pool_task_says_it_runs_with_the_user(root, cfg, project):
 
 
 def test_note_grammar_label_set_is_closed():
-    assert plan.NOTE_LABELS == ("Note", "Design", "Resolution", "Descoped", "Edit")
+    assert plan.NOTE_LABELS == (
+        "Note", "Design", "Resolution", "Descoped", "Edit", "Deferred"
+    )
 
 
 def test_note_grammar_formats_a_dated_bracketed_line():

@@ -184,6 +184,9 @@ COMMANDS: list[dict[str, str]] = [
      "summary": "Mark a task blocked."},
     {"name": "task reopen", "group": "execute", "args": "<T-NN>",
      "summary": "Return a task to pending."},
+    {"name": "task defer", "group": "execute", "args": "<T-NN> --do <text> --why <text>",
+     "summary": "Hand a task this project will not do to a new follow-up (FU-NN); "
+                "the task stays in the plan, frozen."},
     {"name": "review start", "group": "review", "args": "[--full] [--over-budget] [--harden] [--brief <B-NN>]",
      "summary": "Mint the next review round (review-N.md) and print its scope; --harden "
                 "opens a harden round: a fresh review of the whole scope, outside the "

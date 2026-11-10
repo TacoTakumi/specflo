@@ -182,18 +182,75 @@ def add_followup(
     today = today or datetime.date.today().isoformat()
     path = followup_path(root, cfg, slug)
     with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
-        new_id = _next_id(root, cfg)
-        doc = _read(path) if path.is_file() else _new_document(slug, today)
-        if SECTION_HEADER not in markdown.section_headers(doc):
-            raise SpecfloError(f"Malformed {slug}/followup: no '{SECTION_HEADER}' section.")
-        lines = [f"### {new_id} - {title}", f"- Do: {do}"]
-        if source:
-            lines.append(f"- From: {source}")
-        lines.append("- Status: open")
-        doc = markdown.append_to_section(doc, SECTION_HEADER, "\n".join(lines) + "\n")
-        doc = markdown.bump_updated(doc, today)
+        entry, doc = _with_new_entry(root, cfg, slug, path, title, do, source, today)
         path.write_text(doc)
-    return FollowUp(id=new_id, project=slug, title=title, do=do, source=source, status="open")
+    return entry
+
+
+def _with_new_entry(
+    root: Path, cfg: SpecfloConfig, slug: str, path: Path,
+    title: str, do: str, source: str | None, today: str,
+) -> tuple[FollowUp, str]:
+    """A new open entry and ``slug``'s followup document with it appended.
+
+    Nothing is written. The caller holds the followup lock and passes fields
+    that are already checked.
+    """
+    new_id = _next_id(root, cfg)
+    doc = _read(path) if path.is_file() else _new_document(slug, today)
+    if SECTION_HEADER not in markdown.section_headers(doc):
+        raise SpecfloError(f"Malformed {slug}/followup: no '{SECTION_HEADER}' section.")
+    lines = [f"### {new_id} - {title}", f"- Do: {do}"]
+    if source:
+        lines.append(f"- From: {source}")
+    lines.append("- Status: open")
+    doc = markdown.append_to_section(doc, SECTION_HEADER, "\n".join(lines) + "\n")
+    doc = markdown.bump_updated(doc, today)
+    entry = FollowUp(id=new_id, project=slug, title=title, do=do, source=source, status="open")
+    return entry, doc
+
+
+def defer_task(
+    root: Path,
+    cfg: SpecfloConfig,
+    slug: str,
+    task_id: str,
+    do: str,
+    why: str,
+    today: str | None = None,
+) -> tuple[plan.Task, FollowUp]:
+    """Hand the task ``task_id`` of ``slug``'s plan to a new follow-up.
+
+    The follow-up takes the task's title; the task entry is marked as deferred
+    to it and gets ``why`` as its last note. The task content stays in the
+    plan, where ``show_followup`` callers read it from.
+
+    Every check runs before the first write, so a refusal leaves both documents
+    as they were and uses no follow-up number. The followup lock is taken
+    first, then the plan lock. The follow-up is written first: a failure
+    between the two writes leaves an entry no task points to, never a task
+    that points to no entry.
+    """
+    do = _one_line("Do line", do, required=True)
+    why = _one_line("reason (--why)", why, required=True)
+    today = today or datetime.date.today().isoformat()
+    plan_file = plan.plan_path(root, cfg, slug)
+    if not plan_file.is_file():
+        raise SpecfloError("No plan yet. Run `specflo plan start` first.")
+    path = followup_path(root, cfg, slug)
+    with locked(lock_path_for(root, _LOCK_SCOPE, FOLLOWUP_FILENAME)):
+        with locked(lock_path_for(root, slug, plan_file)):
+            plan_doc = plan_file.read_text()
+            task = plan.check_deferrable(plan_doc, task_id)
+            entry, doc = _with_new_entry(
+                root, cfg, slug, path,
+                _one_line("title", task.text, required=True), do,
+                f"{task_id} (deferred)", today,
+            )
+            plan_doc = plan.deferred_doc(plan_doc, task_id, entry.id, why, today)
+            path.write_text(doc)
+            plan_file.write_text(plan_doc)
+    return plan.task_by_id(plan_doc, task_id), entry
 
 
 def _is_checkout_project(root: Path, cfg: SpecfloConfig, slug: str) -> bool:

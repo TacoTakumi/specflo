@@ -2668,6 +2668,36 @@ def task_block(
     _report_transition(task, json_output)
 
 
+@task_app.command(
+    "defer",
+    epilog='Example: specflo task defer T-04 --do "Add the export" --why "Not needed for the pilot"',
+)
+def task_defer(
+    task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to defer."),
+    do: str = typer.Option(..., "--do", help="What a later project should do (one line)."),
+    why: str = typer.Option(..., "--why", help="Why this project does not do it (one line)."),
+    json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
+) -> None:
+    """Hand a task this project will not do to a new follow-up (FU-NN).
+
+    The task stays in the plan, frozen, with the reason as its last note;
+    `specflo followup show FU-NN` prints it in full.
+    """
+    root = _require_root(); cfg = config.load_config(root); slug = _require_active(cfg)
+    _require_checkout_project(root, slug)
+    svc = _service(root, cfg)
+    try:
+        task, entry = followup_module.defer_task(root, cfg, slug, task_id, do, why)
+    except SpecfloError as exc:
+        raise _die(str(exc))
+    _refresh_checkpoint(svc, slug)
+    if json_output:
+        typer.echo(json.dumps({"task": task.id, "followup": entry.id, "project": entry.project}))
+        return
+    typer.echo(f"{task.id} -> deferred to {entry.id} ({slug}/followup)")
+    typer.echo(f"Read it later with `specflo followup show {entry.id}`.")
+
+
 @task_app.command("reopen", epilog="Example: specflo task reopen T-01")
 def task_reopen(
     task_id: str = typer.Argument(..., metavar="<T-NN>", help="Task to reopen (back to pending)."),
