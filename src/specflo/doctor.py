@@ -2,12 +2,16 @@
 
 Two things go wrong when someone else installs specflo: the ``specflo`` command
 is not on PATH, and an agent harness has no skills, some of them, or a stale or
-mis-linked copy. Every problem names the command that fixes it.
+mis-linked copy. Every problem names the command that fixes it. The report ends
+with one line on whether a newer release exists, which is advice and never a
+problem.
 """
 
 from __future__ import annotations
 
+import os
 import shutil
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable
@@ -20,7 +24,10 @@ from agentsquire.verbs import SkillState, status
 
 @dataclass(frozen=True)
 class Check:
-    """One line of the report: ``status`` is ``ok``, ``fail`` or ``skip``."""
+    """One line of the report: ``status`` is ``ok``, ``fail``, ``skip`` or ``note``.
+
+    A ``note`` is advice: it is shown and never counts as a problem.
+    """
 
     status: str
     subject: str
@@ -89,6 +96,50 @@ def _harness_scope_check(name: str, scope: str, entries, statuses) -> tuple[Chec
     return Check("fail", subject, "; ".join(details), "; ".join(fixes)), False
 
 
+# A non-empty value of either switches the release notices off (the gate the
+# startup notice uses), so doctor then asks nobody.
+_RELEASE_SWITCHES = ("CI", "AGENTSQUIRE_NO_UPDATE_CHECK")
+
+
+def release_check(
+    check: Callable[[], object], *, environ: Mapping[str, str] | None = None
+) -> Check:
+    """The release line: is a newer specflo on PyPI?
+
+    ``check`` asks PyPI and returns agentsquire's result. It is not called when
+    a switch in ``environ`` is set. No outcome is a failure: a setup with an old
+    release works, and a machine with no route to PyPI is not broken.
+    """
+    environ = os.environ if environ is None else environ
+    subject = "release"
+    switched_off = next((name for name in _RELEASE_SWITCHES if environ.get(name)), None)
+    if switched_off:
+        return Check("skip", subject, f"not checked, {switched_off} is set")
+    try:
+        result = check()
+        status = getattr(result.status, "value", result.status)
+        installed, newest = result.installed, result.newest
+        if status == "check-failed":
+            return Check("skip", subject, f"could not check: {result.error or 'check failed'}")
+        if status == "update-available":
+            fix = f"`{result.upgrade_command}`" if result.upgrade_command else None
+            return Check(
+                "note", subject, f"a new release is available: {installed} -> {newest}", fix
+            )
+        if status == "up-to-date":
+            return Check("ok", subject, f"{installed} is the newest release")
+        if status == "ahead":
+            return Check(
+                "ok", subject, f"{installed} is newer than the newest PyPI release {newest}"
+            )
+        return Check(
+            "skip", subject,
+            f"installed {installed}, newest PyPI release {newest}; the versions cannot be compared",
+        )
+    except Exception as exc:
+        return Check("skip", subject, f"could not check: {exc}")
+
+
 def run_checks(
     *,
     home: Path,
@@ -96,8 +147,30 @@ def run_checks(
     source: SkillSource,
     which: Callable[[str], str | None] = shutil.which,
     registry: HarnessRegistry | None = None,
+    release: Callable[[], object] | None = None,
+    environ: Mapping[str, str] | None = None,
 ) -> list[Check]:
-    """Every check, in report order: the command, each harness, the summary."""
+    """Every check, in report order: the command, each harness, the summary, the release.
+
+    The release line is added when ``release`` is given; it is the last line
+    whatever the setup checks found.
+    """
+    checks = _setup_checks(
+        home=home, project=project, source=source, which=which, registry=registry
+    )
+    if release is not None:
+        checks.append(release_check(release, environ=environ))
+    return checks
+
+
+def _setup_checks(
+    *,
+    home: Path,
+    project: Path,
+    source: SkillSource,
+    which: Callable[[str], str | None],
+    registry: HarnessRegistry | None,
+) -> list[Check]:
     checks = []
     found = which("specflo")
     if found:
@@ -141,7 +214,7 @@ def run_checks(
 
 def render(checks: list[Check]) -> str:
     """The human report: one line per check, then the verdict."""
-    labels = {"ok": "ok  ", "fail": "FAIL", "skip": "skip"}
+    labels = {"ok": "ok  ", "fail": "FAIL", "skip": "skip", "note": "note"}
     lines = []
     for c in checks:
         line = f"{labels[c.status]}  {c.subject}: {c.detail}"

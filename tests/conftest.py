@@ -134,6 +134,23 @@ def role_token(root, role: str) -> str:
 
 
 @pytest.fixture(autouse=True)
+def _no_pypi(monkeypatch):
+    """Keep the release check off the network for the whole suite.
+
+    `specflo doctor` and `specflo check-update` ask PyPI for the newest
+    release. Here the one function that fetches fails at once, so a command
+    under test reports a failed check and writes no cache. A test of the
+    release check replaces the function with its own answer.
+    """
+    from agentsquire import release
+
+    def unreachable(url):
+        raise OSError("the test suite does not reach PyPI")
+
+    monkeypatch.setattr(release, "_fetch_body", unreachable)
+
+
+@pytest.fixture(autouse=True)
 def _no_directory_override(monkeypatch):
     """Keep ``SPECFLO_DIRECTORY`` out of the suite's environment.
 

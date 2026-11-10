@@ -16,7 +16,7 @@ import typer
 import typer.main
 from typer.core import TyperGroup
 
-from agentsquire import check_stale, notify_update
+from agentsquire import check_for_update, check_stale, notify_update
 from agentsquire.cli import check_update_command, skills_command_group
 from agentsquire.roots import resolve_roots
 from agentsquire.sources import default_source
@@ -1287,13 +1287,16 @@ def doctor_(
     """Check that specflo is on PATH and each agent harness has the skills.
 
     Runs cold - works before `specflo init`. Exits 1 when a check fails; each
-    failure names the command that fixes it.
+    failure names the command that fixes it. The last line says whether a
+    newer release is on PyPI; it asks PyPI once, unless CI or
+    AGENTSQUIRE_NO_UPDATE_CHECK is set, and never fails the run.
     """
     home, project = resolve_roots(None, None)
     found = config.find_root(project)
     checks = doctor_module.run_checks(
         home=home, project=found or project, source=default_source("specflo"),
         which=doctor_module.shutil.which,
+        release=lambda: check_for_update("specflo", __version__),
     )
     failed = any(c.status == "fail" for c in checks)
     if json_output:
