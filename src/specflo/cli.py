@@ -3559,11 +3559,21 @@ def followup_show(
         e = followup_module.show_followup(root, cfg, followup_id)
     except SpecfloError as exc:
         raise _die(str(exc))
+    # A follow-up a task was deferred to holds one line of it; the rest of the
+    # task is in the plan of the project that deferred it.
+    task = followup_module.deferred_task(root, cfg, e)
     if json_output:
         typer.echo(json.dumps(
             {"id": e.id, "project": e.project, "title": e.title, "do": e.do,
              "from": e.source, "status": e.status, "closed": e.closed,
-             "closed_by": e.closed_by}
+             "closed_by": e.closed_by,
+             "task": None if task is None else {
+                 "id": task.id, "text": task.text, "acceptance": task.acceptance,
+                 "verify": task.verify, "implements": task.implements,
+                 "fixes": task.fixes, "depends_on": task.depends_on,
+                 "files": task.file_list, "needs": task.needs, "scope": task.scope,
+                 "milestone": task.milestone, "notes": task.notes,
+             }}
         ))
         return
     typer.echo(f"{e.id}  {e.project}  {e.title}")
@@ -3575,6 +3585,26 @@ def followup_show(
         typer.echo(f"    Closed: {e.closed}")
     if e.closed_by is not None:
         typer.echo(f"    Closed by: {e.closed_by}")
+    if task is None:
+        return
+    typer.echo("")
+    typer.echo(f"Deferred task, from the plan of {e.project}:")
+    typer.echo(f"  {task.id} - {task.text}")
+    typer.echo(f"    Acceptance: {task.acceptance}")
+    typer.echo(f"    Verify:     {task.verify}")
+    for label, values in (
+        ("Implements:", task.implements), ("Fixes:     ", task.fixes),
+        ("Depends on:", task.depends_on), ("Files:     ", task.file_list),
+        ("Needs:     ", task.needs),
+    ):
+        if values:
+            typer.echo(f"    {label} {', '.join(values)}")
+    if task.scope:
+        typer.echo(f"    Scope:      {task.scope}")
+    if task.notes:
+        typer.echo("    Notes:")
+        for note in task.notes:
+            typer.echo(f"      {note['date']} [{note['label']}] {note['text']}")
 
 
 @config_app.command("get", epilog="Example: specflo config get autonomy")

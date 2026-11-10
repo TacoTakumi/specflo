@@ -1436,6 +1436,15 @@ def task_by_id(doc: str, task_id: str) -> Task | None:
     return next((t for t in _parse_tasks(doc) if t.id == task_id), None)
 
 
+def task_deferred_to(doc: str, followup_id: str) -> Task | None:
+    """The task of *doc* that was deferred to ``followup_id``, or None."""
+    return next(
+        (t for t in _parse_tasks(doc)
+         if t.status == "deferred" and t.deferred_to == followup_id),
+        None,
+    )
+
+
 def check_deferrable(doc: str, task_id: str) -> Task:
     """The task ``task_id`` of *doc* when it can be deferred; raises otherwise.
 

@@ -776,7 +776,7 @@ def test_show_prints_every_field_of_an_open_entry_in_another_project(tmp_path, m
         "from": "review-1 F2",
         "status": "open",
         "closed": None,
-        "closed_by": None,
+        "closed_by": None, "task": None,
     }
 
 
@@ -801,7 +801,7 @@ def test_show_prints_the_closed_line_of_a_closed_entry(tmp_path, monkeypatch):
         "from": None,
         "status": "closed",
         "closed": f"{today}: Done",
-        "closed_by": None,
+        "closed_by": None, "task": None,
     }
 
 

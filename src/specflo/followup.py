@@ -414,3 +414,17 @@ def show_followup(root: Path, cfg: SpecfloConfig, followup_id: str) -> FollowUp:
     if not found:
         raise SpecfloError(f"No follow-up {followup_id} in this checkout's projects.")
     return next((entry for entry in found if entry.status == "open"), found[0])
+
+
+def deferred_task(root: Path, cfg: SpecfloConfig, entry: FollowUp) -> plan.Task | None:
+    """The task that was deferred to ``entry``, read from the plan of the
+    project that holds the entry; None when no task was.
+
+    The link is the task's own deferral field, never the entry's From line,
+    which is free text. A plan that is missing or cannot be read gives None.
+    """
+    try:
+        doc = plan.plan_path(root, cfg, entry.project).read_text()
+    except (OSError, UnicodeDecodeError, SpecfloError):
+        return None
+    return plan.task_deferred_to(doc, entry.id)
