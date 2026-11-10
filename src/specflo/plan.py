@@ -145,6 +145,7 @@ class Task:
     status: str
     supersedes: str | None = None
     superseded_by: str | None = None
+    deferred_to: str | None = None
     blocked: str | None = None
     milestone: str | None = None
     needs: list[str] = field(default_factory=list)
@@ -223,8 +224,20 @@ def _split_refs(value: str) -> list[str]:
     return [part.strip() for part in value.split(",") if part.strip()]
 
 
+# The field a deferred task carries: the follow-up the work was handed to.
+DEFERRED_FIELD = "Deferred to"
+
+
+def frozen_state(task: Task) -> str:
+    """How a task that is out of the active set got there, for a refusal:
+    ``superseded`` or ``deferred to FU-NN``."""
+    if task.status == "deferred":
+        return f"deferred to {task.deferred_to}"
+    return "superseded"
+
+
 def _parse_tasks(doc: str) -> list[Task]:
-    """Parse all task entries (active and superseded) from *doc*, in order."""
+    """Parse all task entries (active, superseded and deferred) from *doc*, in order."""
     lines = doc.splitlines(keepends=True)
     heads: list[tuple[int, str, str]] = []
     for i, line, in_fence in markdown.iter_lines_with_fence(doc):
@@ -270,6 +283,15 @@ def _parse_tasks(doc: str) -> list[Task]:
             m = re.search(r"superseded by\s+(\S+)", status_raw)
             superseded_by = m.group(1) if m else None
         is_superseded = superseded_by is not None or "superseded by" in status_raw
+        # A deferred task was handed to a follow-up. Like a superseded one it
+        # is out of the active set, but nothing replaces it in this plan.
+        deferred_to = fields.get(DEFERRED_FIELD) or None
+        if is_superseded:
+            status = "superseded"
+        elif deferred_to is not None:
+            status = "deferred"
+        else:
+            status = "active"
         tasks.append(Task(
             id=task_id, text=title,
             acceptance=fields.get("Acceptance", ""),
@@ -278,9 +300,10 @@ def _parse_tasks(doc: str) -> list[Task]:
             depends_on=_split_refs(fields.get("Depends on", "")),
             files=fields.get("Files"), scope=fields.get("Scope"),
             progress=fields.get("Progress", "pending"),
-            status="superseded" if is_superseded else "active",
+            status=status,
             supersedes=fields.get("Supersedes"),
             superseded_by=superseded_by,
+            deferred_to=deferred_to if status == "deferred" else None,
             blocked=fields.get("Blocked"),
             needs=parse_needs(fields.get("Needs")),
             fixes=_split_refs(fields.get("Fixes", "")),
@@ -795,14 +818,25 @@ def add_task(
         if implements:
             check_implements(root, cfg, slug, implements)
 
+        deferred = {t.id: t for t in _parse_tasks(doc) if t.status == "deferred"}
         for dep in depends_on:
             if not re.search(rf"^### {re.escape(dep)} —", doc, re.MULTILINE):
                 raise SpecfloError(f"No task {dep} to depend on.")
+            if dep in deferred:
+                raise SpecfloError(
+                    f"Task {dep} is {frozen_state(deferred[dep])}; a task cannot "
+                    f"depend on work this plan no longer does."
+                )
 
         if supersedes is not None and not re.search(
             rf"^### {re.escape(supersedes)} —", doc, re.MULTILINE
         ):
             raise SpecfloError(f"No task {supersedes} to supersede.")
+        if supersedes in deferred:
+            raise SpecfloError(
+                f"Task {supersedes} is {frozen_state(deferred[supersedes])}; its "
+                f"entry is frozen and cannot be superseded."
+            )
 
         if milestone is not None and milestone not in {m.id for m in _parse_milestones(doc)}:
             raise SpecfloError(
@@ -1014,7 +1048,9 @@ def rewire_dependency(
         if to_task is None:
             raise SpecfloError(f"No task {to_id} to rewire to.")
         if to_task.status != "active":
-            raise SpecfloError(f"Cannot rewire to {to_id}: it is superseded (--to must be active).")
+            raise SpecfloError(
+                f"Cannot rewire to {to_id}: it is {frozen_state(to_task)} (--to must be active)."
+            )
 
         # Compute each dependent's post-rewire deps (order-preserving dedupe so a
         # dependent already listing --to ends with a single entry, not a duplicate).
@@ -1145,6 +1181,11 @@ def _check_edit_gate(task: Task, force: bool) -> None:
     A superseded entry is frozen outright; a done task opens only to ``force``,
     which records an ``[Edit]`` note of what it overwrote.
     """
+    if task.status == "deferred":
+        raise SpecfloError(
+            f"Task {task.id} is {frozen_state(task)}; its entry is frozen. "
+            f"Annotate it with `specflo task note {task.id}`."
+        )
     if task.status != "active":
         raise SpecfloError(
             f"Task {task.id} is superseded; its entry is frozen. Edit the task "
@@ -1198,7 +1239,8 @@ def _edited_depends_on(
             f"Cannot add and drop the same dependency in one edit: {', '.join(both)}."
         )
     known = {t.id for t in tasks}
-    superseded = {t.id for t in tasks if t.status != "active"}
+    superseded = {t.id for t in tasks if t.status == "superseded"}
+    deferred = {t.id: t for t in tasks if t.status == "deferred"}
     for dep in add:
         # Only an added edge must name a real task: a *drop* is how a dangling
         # edge onto a deleted id gets removed (review-4 F2), and the drop loop
@@ -1211,6 +1253,11 @@ def _edited_depends_on(
             raise SpecfloError(
                 f"Task {dep} is superseded; depend on the task that superseded "
                 f"it instead."
+            )
+        if dep in deferred:
+            raise SpecfloError(
+                f"Task {dep} is {frozen_state(deferred[dep])}; a task cannot "
+                f"depend on work this plan no longer does."
             )
     deps = list(task.depends_on)
     for dep in drop:
@@ -1353,7 +1400,7 @@ def _set_progress(
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
         if task.status != "active":
-            raise SpecfloError(f"Task {task_id} is superseded; its progress is frozen.")
+            raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; its progress is frozen.")
         if progress == "done" and task.progress != "in_progress":
             raise SpecfloError(
                 f"{task_id} must be in_progress before it can be done "
@@ -1496,7 +1543,7 @@ def set_milestone(
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
         if task.status != "active":
-            raise SpecfloError(f"Task {task_id} is superseded; its milestone is frozen.")
+            raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; its milestone is frozen.")
         if milestone_id not in {m.id for m in _parse_milestones(doc)}:
             raise SpecfloError(
                 f"No milestone {milestone_id} in this plan (add it with `specflo milestone add`)."
