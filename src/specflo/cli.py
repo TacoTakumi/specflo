@@ -2786,6 +2786,19 @@ def task_list(
     if progress["next_actionable"]:
         tail = " | next: " + ", ".join(progress["next_actionable"])
     typer.echo(f"\n{progress['done']}/{progress['total']} done{tail}")
+    if not all_:
+        # The default list hides deferred tasks; name them so the user sees
+        # where that work went.
+        deferred = [
+            t for t in svc.list_tasks(slug, include_superseded=True)
+            if t.status == "deferred"
+        ]
+        if deferred:
+            named = ", ".join(f"{t.id} ({t.deferred_to})" for t in deferred)
+            typer.echo(
+                f"{len(deferred)} deferred: {named}. "
+                "See them with `specflo task list --all`."
+            )
 
 
 @task_app.command("show", epilog="Example: specflo task show T-01")

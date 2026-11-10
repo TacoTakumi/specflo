@@ -15,6 +15,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   sets the task's `Progress:` to `deferred` and removes its `Blocked:` line.
   Before, a blocked task kept `Progress: blocked` and its old reason next to
   `Deferred to: FU-NN`.
+- **`specflo task list` names the deferred tasks it hides.** Without `--all`
+  the list ends with a line such as
+  `2 deferred: T-27 (FU-07), T-28 (FU-08). See them with specflo task list --all.`
+  Before, nothing on the screen pointed to them.
 
 ## [0.21.0]
 

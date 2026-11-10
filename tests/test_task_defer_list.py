@@ -35,7 +35,36 @@ def planned(tmp_path, monkeypatch):
 
 
 def _rows(output, task_id):
-    return [line for line in output.splitlines() if f" {task_id} " in line]
+    # A row is '<marker> T-NN  [...]'; the deferred line names the id too.
+    return [line for line in output.splitlines() if line[1:].startswith(f" {task_id} ")]
+
+
+def test_the_default_list_names_the_deferred_tasks(planned):
+    root, cfg, (first, second, third), followup_id = planned
+    _, other = followup.defer_task(root, cfg, "thing", first, "Parse it later", "No time")
+
+    result = runner.invoke(app, ["task", "list"])
+
+    assert result.exit_code == 0, result.output
+    assert (
+        f"2 deferred: {first} ({other.id}), {second} ({followup_id}). "
+        "See them with `specflo task list --all`."
+    ) in result.output
+
+
+def test_no_deferred_line_with_all_or_with_no_deferral(planned):
+    root, cfg, (first, second, third), followup_id = planned
+    assert "deferred:" not in runner.invoke(app, ["task", "list", "--all"]).output
+
+    projects.create_project(root, cfg, "Other")
+    spec.start_spec(root, cfg, "other")
+    spec.add_requirement(root, cfg, "other", "Prints help", acceptance="exits 0")
+    plan.start_plan(root, cfg, "other")
+    plan.add_task(root, cfg, "other", "Build it", "a", "uv run pytest", implements=["REQ-01"])
+    projects.switch_project(root, cfg, "other")
+    result = runner.invoke(app, ["task", "list"])
+    assert result.exit_code == 0, result.output
+    assert "deferred" not in result.output
 
 
 def test_the_default_list_leaves_the_deferred_task_out(planned):
