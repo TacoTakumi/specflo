@@ -145,15 +145,16 @@ def test_the_notice_is_off_when_a_variable_switches_it_off(
     assert NOTICE not in _run_main(monkeypatch, capsys, "--version")[2]
 
 
+@pytest.mark.parametrize("before", [(), ("-C", ".")], ids=["first", "after-an-option"])
 def test_check_update_prints_the_fresh_answer_without_the_cached_notice(
-    cache, pypi, monkeypatch, capsys, tmp_path
+    before, cache, pypi, monkeypatch, capsys, tmp_path
 ):
     # The cache can be older than the answer the command is about to print.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "cache"))
     cache(_newer(__version__))
     pypi.answer = __version__
-    code, out, err = _run_main(monkeypatch, capsys, "check-update")
+    code, out, err = _run_main(monkeypatch, capsys, *before, "check-update")
     assert code == 0
     assert f"specflo {__version__} is up to date" in out
     assert NOTICE not in err

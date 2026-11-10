@@ -4348,10 +4348,13 @@ def _notify_new_release() -> None:
     # release cache holds a version newer than this one. It reads the cache
     # that `specflo check-update` and `specflo doctor` write and makes no
     # request. `check-update` prints the fresh answer itself, so the cached
-    # one is left out there. notify_update swallows its own errors; the
-    # try/except keeps a startup notice from ever breaking the command.
+    # one is left out there. The word is looked for in every argument, since
+    # a global option can come before the command; another command that only
+    # has it as a value misses one notice, which costs nothing. notify_update
+    # swallows its own errors; the try/except keeps a startup notice from
+    # ever breaking the command.
     try:
-        if "check-update" in sys.argv[1:2]:
+        if "check-update" in sys.argv[1:]:
             return
         notify_update("specflo", __version__, prog_name="specflo")
     except Exception:
