@@ -71,8 +71,8 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "doctor", "group": "setup", "args": "",
      "summary": "Check specflo is on PATH and each agent harness has the skills."},
     {"name": "check-update", "group": "setup", "args": "",
-     "summary": "Ask PyPI whether a newer specflo release exists; the one command "
-                "that uses the network for this."},
+     "summary": "Ask PyPI whether a newer specflo release exists, and record the "
+                "answer for the notice that each command prints."},
     {"name": "skills install", "group": "setup", "args": "[--scope user|project] [--harness NAME[:SCOPE]]",
      "summary": "Install the bundled workflow skills into the detected agent harnesses."},
     {"name": "skills status", "group": "setup", "args": "",

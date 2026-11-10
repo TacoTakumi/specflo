@@ -76,7 +76,10 @@ def test_check_update_runs_when_the_notice_is_switched_off(pypi, monkeypatch):
 def test_the_guide_lists_check_update():
     entries = {entry["name"]: entry for entry in guide.COMMANDS}
     assert "check-update" in entries
-    assert "PyPI" in entries["check-update"]["summary"]
+    summary = entries["check-update"]["summary"]
+    assert "PyPI" in summary
+    # `specflo doctor` asks PyPI too, so the row claims no "only".
+    assert "the one command" not in summary and "only" not in summary
 
 
 # --- the startup notice -------------------------------------------------------
