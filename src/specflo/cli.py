@@ -2776,7 +2776,7 @@ def task_list(
         return
     for t in tasks:
         marker = ">" if t.id in nexts else " "
-        sup = "" if t.status == "active" else f"  ({plan.frozen_state(t)})"
+        sup = "" if t.status == "active" else f"  ({t.frozen_state})"
         deps = f"  deps: {', '.join(t.depends_on)}" if t.depends_on else ""
         fixes = f"  fixes: {', '.join(t.fixes)}" if t.fixes else ""
         typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{fixes}{sup}")

@@ -164,6 +164,14 @@ class Task:
     base: str | None = None
 
     @property
+    def frozen_state(self) -> str:
+        """How a task that is out of the active set got there, for a message:
+        ``superseded`` or ``deferred to FU-NN``."""
+        if self.status == "deferred":
+            return f"deferred to {self.deferred_to}"
+        return "superseded"
+
+    @property
     def file_list(self) -> list[str]:
         """The Files field as a normalized path list (fan-out-plans REQ-04)."""
         return parse_files(self.files)
@@ -233,14 +241,6 @@ def _split_refs(value: str) -> list[str]:
 
 # The field a deferred task carries: the follow-up the work was handed to.
 DEFERRED_FIELD = "Deferred to"
-
-
-def frozen_state(task: Task) -> str:
-    """How a task that is out of the active set got there, for a refusal:
-    ``superseded`` or ``deferred to FU-NN``."""
-    if task.status == "deferred":
-        return f"deferred to {task.deferred_to}"
-    return "superseded"
 
 
 def _parse_tasks(doc: str) -> list[Task]:
@@ -875,7 +875,7 @@ def add_task(
                 raise SpecfloError(f"No task {dep} to depend on.")
             if dep in deferred:
                 raise SpecfloError(
-                    f"Task {dep} is {frozen_state(deferred[dep])}; a task cannot "
+                    f"Task {dep} is {deferred[dep].frozen_state}; a task cannot "
                     f"depend on work this plan no longer does."
                 )
 
@@ -885,7 +885,7 @@ def add_task(
             raise SpecfloError(f"No task {supersedes} to supersede.")
         if supersedes in deferred:
             raise SpecfloError(
-                f"Task {supersedes} is {frozen_state(deferred[supersedes])}; its "
+                f"Task {supersedes} is {deferred[supersedes].frozen_state}; its "
                 f"entry is frozen and cannot be superseded."
             )
 
@@ -1100,7 +1100,7 @@ def rewire_dependency(
             raise SpecfloError(f"No task {to_id} to rewire to.")
         if to_task.status != "active":
             raise SpecfloError(
-                f"Cannot rewire to {to_id}: it is {frozen_state(to_task)} (--to must be active)."
+                f"Cannot rewire to {to_id}: it is {to_task.frozen_state} (--to must be active)."
             )
 
         # Compute each dependent's post-rewire deps (order-preserving dedupe so a
@@ -1234,7 +1234,7 @@ def _check_edit_gate(task: Task, force: bool) -> None:
     """
     if task.status == "deferred":
         raise SpecfloError(
-            f"Task {task.id} is {frozen_state(task)}; its entry is frozen. "
+            f"Task {task.id} is {task.frozen_state}; its entry is frozen. "
             f"Annotate it with `specflo task note {task.id}`."
         )
     if task.status != "active":
@@ -1307,7 +1307,7 @@ def _edited_depends_on(
             )
         if dep in deferred:
             raise SpecfloError(
-                f"Task {dep} is {frozen_state(deferred[dep])}; a task cannot "
+                f"Task {dep} is {deferred[dep].frozen_state}; a task cannot "
                 f"depend on work this plan no longer does."
             )
     deps = list(task.depends_on)
@@ -1448,7 +1448,7 @@ def check_deferrable(doc: str, task_id: str) -> Task:
     if task is None:
         raise SpecfloError(f"No task {task_id}.")
     if task.status != "active":
-        raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; it cannot be deferred.")
+        raise SpecfloError(f"Task {task_id} is {task.frozen_state}; it cannot be deferred.")
     if task.progress == "in_progress":
         raise SpecfloError(
             f"Task {task_id} is in_progress; it cannot be deferred while work on it "
@@ -1506,7 +1506,7 @@ def _set_progress(
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
         if task.status != "active":
-            raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; its progress is frozen.")
+            raise SpecfloError(f"Task {task_id} is {task.frozen_state}; its progress is frozen.")
         if progress == "done" and task.progress != "in_progress":
             raise SpecfloError(
                 f"{task_id} must be in_progress before it can be done "
@@ -1649,7 +1649,7 @@ def set_milestone(
         if task is None:
             raise SpecfloError(f"No task {task_id}.")
         if task.status != "active":
-            raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; its milestone is frozen.")
+            raise SpecfloError(f"Task {task_id} is {task.frozen_state}; its milestone is frozen.")
         if milestone_id not in {m.id for m in _parse_milestones(doc)}:
             raise SpecfloError(
                 f"No milestone {milestone_id} in this plan (add it with `specflo milestone add`)."
