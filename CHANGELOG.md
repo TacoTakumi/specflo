@@ -8,6 +8,14 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.21.1]
+
+### Fixed
+- **A deferred task no longer reads as blocked.** `specflo task defer` now
+  sets the task's `Progress:` to `deferred` and removes its `Blocked:` line.
+  Before, a blocked task kept `Progress: blocked` and its old reason next to
+  `Deferred to: FU-NN`.
+
 ## [0.21.0]
 
 ### Changed

@@ -92,6 +92,22 @@ def test_a_blocked_task_can_be_deferred(planned):
     assert _task(root, cfg, second).status == "deferred"
 
 
+def test_the_deferred_entry_reads_deferred_not_blocked(planned):
+    root, cfg, (first, second, third) = planned
+    plan.block_task(root, cfg, "thing", second, reason="waiting on the vendor")
+
+    result = runner.invoke(app, ["task", "defer", second, "--do", "X", "--why", "Y"])
+
+    assert result.exit_code == 0, result.output
+    doc = plan.plan_path(root, cfg, "thing").read_text()
+    entry = doc.split(f"### {second} ")[1].split("\n### ")[0]
+    assert "- Progress: deferred" in entry
+    assert "- Blocked:" not in entry
+    task = _task(root, cfg, second)
+    assert task.progress == "deferred"
+    assert task.blocked is None
+
+
 def test_json_names_the_task_and_the_followup(planned):
     root, cfg, (first, second, third) = planned
 

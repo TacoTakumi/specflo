@@ -1547,8 +1547,12 @@ def check_deferrable(doc: str, task_id: str) -> Task:
 
 def deferred_doc(doc: str, task_id: str, followup_id: str, why: str, today: str) -> str:
     """*doc* with the task marked as deferred to ``followup_id`` and the reason
-    as its last note. The caller checked the task with :func:`check_deferrable`."""
+    as its last note. The caller checked the task with :func:`check_deferrable`.
+    Progress reads ``deferred`` and a Blocked line goes, so the entry does not
+    read as blocked and deferred at once."""
     doc = markdown.set_entry_field(doc, task_id, DEFERRED_FIELD, followup_id)
+    doc = markdown.set_entry_field(doc, task_id, "Progress", "deferred")
+    doc = markdown.clear_entry_field(doc, task_id, "Blocked")
     doc = markdown.append_entry_field(
         doc, task_id, NOTE_FIELD, f"{today} [{NOTE_DEFERRED_LABEL}] {note_text(why)}"
     )
