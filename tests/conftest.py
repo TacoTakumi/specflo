@@ -3,6 +3,7 @@
 import ast
 import functools
 import inspect
+import os
 import textwrap
 from pathlib import Path
 
@@ -148,6 +149,29 @@ def _no_pypi(monkeypatch):
         raise OSError("the test suite does not reach PyPI")
 
     monkeypatch.setattr(release, "_fetch_body", unreachable)
+
+
+@pytest.fixture(scope="session")
+def _suite_cache_root(tmp_path_factory):
+    return tmp_path_factory.mktemp("xdg-cache")
+
+
+@pytest.fixture(autouse=True)
+def _no_user_release_cache(monkeypatch, _suite_cache_root):
+    """Give the suite a cache root of its own.
+
+    Each specflo command prints a stderr line when the release cache holds a
+    newer version, and the cache lives under the user's cache root. A test
+    that reads stderr would then depend on what this machine last recorded.
+    The root is set in the environment, so a specflo subprocess gets it too.
+    It is one directory for the session: other tools keep caches there that
+    are slow to build. uv keeps the cache it already has, so a build in a
+    test needs no download.
+    """
+    if not os.environ.get("UV_CACHE_DIR"):
+        real = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+        monkeypatch.setenv("UV_CACHE_DIR", str(Path(real) / "uv"))
+    monkeypatch.setenv("XDG_CACHE_HOME", str(_suite_cache_root))
 
 
 @pytest.fixture(autouse=True)

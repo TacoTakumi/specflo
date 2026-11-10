@@ -157,3 +157,33 @@ def test_check_update_prints_the_fresh_answer_without_the_cached_notice(
     assert code == 0
     assert f"specflo {__version__} is up to date" in out
     assert NOTICE not in err
+
+
+# --- the suite's own cache ------------------------------------------------------
+
+
+def _under_home_cache(path):
+    from pathlib import Path
+
+    return Path(path).resolve().is_relative_to((Path.home() / ".cache").resolve())
+
+
+def test_the_suite_reads_no_release_cache_of_the_developer():
+    # A newer release recorded on this machine would add a stderr line to
+    # every test that reads a command's stderr.
+    from agentsquire import _release_cache
+
+    assert not _under_home_cache(_release_cache.cache_path("specflo"))
+    assert _release_cache.read_cache("specflo") is None
+
+
+def test_the_suite_gives_a_subprocess_the_same_cache():
+    import subprocess
+    import sys
+
+    out = subprocess.run(
+        [sys.executable, "-c",
+         "from agentsquire import _release_cache as c; print(c.cache_path('specflo'))"],
+        capture_output=True, text=True, check=True,
+    ).stdout.strip()
+    assert not _under_home_cache(out)
