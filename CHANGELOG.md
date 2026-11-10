@@ -30,6 +30,7 @@ latter. Release tags are of the form `vX.Y.Z`.
   its command and size rule. The research line says what the level gives:
   sources, findings, open questions and terms kept between sessions, and a
   decision on what to build.
+- **specflo requires agentsquire 0.6.0 or later,** which has the release check.
 
 ### Added
 - **The guide says how to add small work to a running fast or full project**
@@ -39,6 +40,18 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **With a research project active, the guide's "You are here" part names
   `specflo guide research`,** and `specflo guide --json` carries the active
   project's `level`.
+- **`specflo check-update` asks PyPI whether a newer specflo release exists.**
+  It prints the installed and the newest version, with the upgrade command for
+  a `uv tool` or `pipx` install, and exits 1 only when the check fails.
+- **Any specflo command says when a newer release is known.** One line on
+  stderr, while the release that `specflo check-update` or `specflo doctor`
+  last recorded is newer than the installed one. It reads a cache file and
+  makes no request, never prompts and never changes an exit code. `CI` or
+  `AGENTSQUIRE_NO_UPDATE_CHECK` silences it.
+- **`specflo doctor` ends with a release line:** `ok` for the newest release,
+  `note` with both versions when PyPI has a newer one, `skip` when PyPI is out
+  of reach or when `CI` or `AGENTSQUIRE_NO_UPDATE_CHECK` is set. The line never
+  fails the run. `--json` carries it as a check with the subject `release`.
 
 ## [0.20.1]
 
