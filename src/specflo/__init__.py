@@ -1,3 +1,3 @@
 """specflo — a spec-driven software-engineering workflow CLI."""
 
-__version__ = "0.20.1"
+__version__ = "0.21.0"
