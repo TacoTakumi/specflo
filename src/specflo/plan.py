@@ -2396,7 +2396,7 @@ def task_brief(
             "needs": task.needs,
             "scope": task.scope, "progress": task.progress,
             "notes": task.notes,
-            "deferred_to": task.deferred_to,
+            **({"deferred_to": task.deferred_to} if task.deferred_to else {}),
             "worktree": (
                 str(Path(root) / task.worktree)
                 if task.worktree and task.progress == "in_progress" else None

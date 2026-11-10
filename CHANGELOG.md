@@ -47,8 +47,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   the plan of the project that deferred it. `--json` carries it under a new
   `task` key, which is null for other follow-ups.
 - **`specflo task list --all` marks a deferred task `(deferred to FU-NN)`,**
-  and `task show <T-NN>` names the follow-up. `task list --json` and
-  `task show --json` gain a `deferred_to` key. The note label `Deferred` is
+  and `task show <T-NN>` names the follow-up. In `task list --json` and
+  `task show --json` a deferred task has a `deferred_to` key. The note label `Deferred` is
   reserved for `task defer`.
 - **The guide says how to add small work to a running fast or full project**
   without a new project: `specflo task add --from REQ-NN` when the spec already covers the

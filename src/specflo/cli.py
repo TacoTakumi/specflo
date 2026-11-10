@@ -2761,10 +2761,12 @@ def task_list(
         typer.echo(json.dumps({
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
-                 "deferred_to": t.deferred_to,
                  "implements": t.implements, "fixes": t.fixes,
                  "depends_on": t.depends_on, "next": t.id in nexts,
-                 "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
+                 "files": t.file_list, "needs": t.needs, "ready": t.id in ready,
+                 # Only a deferred row names a follow-up, so the rows of a
+                 # plan with no deferral keep the keys they always had.
+                 **({"deferred_to": t.deferred_to} if t.deferred_to else {})}
                 for t in tasks
             ],
             "progress": progress,

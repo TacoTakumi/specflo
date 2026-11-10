@@ -81,7 +81,7 @@ def test_json_gives_the_status_and_the_followup(planned):
     assert tasks[second]["deferred_to"] == followup_id
     assert tasks[second]["ready"] is False and tasks[second]["next"] is False
     assert tasks[first]["status"] == "active"
-    assert tasks[first]["deferred_to"] is None
+    assert "deferred_to" not in tasks[first]
     default = json.loads(runner.invoke(app, ["task", "list", "--json"]).output)
     assert second not in [t["id"] for t in default["tasks"]]
 
@@ -105,7 +105,7 @@ def test_show_json_names_the_followup(planned):
     active = json.loads(runner.invoke(app, ["task", "show", first, "--json"]).output)
 
     assert deferred["task"]["deferred_to"] == followup_id
-    assert active["task"]["deferred_to"] is None
+    assert "deferred_to" not in active["task"]
 
 
 def test_show_of_an_active_task_does_not_mention_deferral(planned):
