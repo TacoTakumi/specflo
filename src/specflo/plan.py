@@ -442,7 +442,11 @@ def validate_plan(
     doc = path.read_text()
     issues = markdown.placeholder_issues(_authored_text(markdown.strip_comments(doc)))
 
-    active = [t for t in _parse_tasks(doc) if t.status == "active"]
+    parsed = _parse_tasks(doc)
+    active = [t for t in parsed if t.status == "active"]
+    # A deferred task took its requirements and its place in a milestone to a
+    # follow-up: both count as accounted for, and the task as no open work.
+    deferred = [t for t in parsed if t.status == "deferred"]
     # A harden plan starts empty and grows only from review findings: each
     # task fixes one, so the plan owes no task and covers no requirement,
     # even where the project has a spec.
@@ -485,13 +489,18 @@ def validate_plan(
                     issues.append(f"{t.id} implements {req}, which is not an active requirement.")
                 else:
                     covered.add(resolved)
+        covered |= _deferred_requirements(deferred, active_reqs, smap).keys()
         for req in active_reqs:
             if req not in covered:
                 issues.append(f"{req} is not implemented by any task.")
 
     ids = {t.id for t in active}
+    deferred_ids = {t.id for t in deferred}
     for t in active:
         for dep in t.depends_on:
+            # Finished work may rest on a task that was deferred after it.
+            if dep in deferred_ids and t.progress == "done":
+                continue
             if dep not in ids:
                 issues.append(f"{t.id} depends on {dep}, which is not an active task.")
     cycle = _find_cycle(active)
@@ -527,6 +536,9 @@ def validate_plan(
                 )
             else:
                 members[t.milestone].append(t.id)
+        for t in deferred:
+            if t.milestone in members:
+                members[t.milestone].append(t.id)
         for m in milestones:
             if not members[m.id]:
                 issues.append(f"{m.id} has no member tasks (empty milestone).")
@@ -561,6 +573,9 @@ def validate_plan(
                 for r in split_citations(t.implements)[0]
                 if (resolved := spec_mod.resolve_requirement(r, active_reqs, smap)) is not None
             }
+            milestone_reqs |= _deferred_requirements(
+                [t for t in deferred if t.milestone in order], active_reqs, smap
+            ).keys()
             for req in active_reqs:
                 if req not in milestone_reqs:
                     issues.append(f"{req} is not covered by any milestone's tasks.")
@@ -579,6 +594,20 @@ def validate_plan(
                     )
 
     return issues
+
+
+def _deferred_requirements(
+    deferred: list[Task], active_reqs: list[str], smap: dict[str, str]
+) -> dict[str, Task]:
+    """Each active requirement a deferred task implements, with the first such
+    task in plan order."""
+    found: dict[str, Task] = {}
+    for t in deferred:
+        for req in split_citations(t.implements)[0]:
+            resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
+            if resolved is not None:
+                found.setdefault(resolved, t)
+    return found
 
 
 def reconcile_issues(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
@@ -644,15 +673,30 @@ def resolution_notes(root: Path, cfg: SpecfloConfig, slug: str) -> list[str]:
     active_reqs = spec_mod.active_requirement_ids(spec_doc)
     smap = spec_mod.supersession_map(spec_doc)
     notes: list[str] = []
-    for t in _parse_tasks(path.read_text()):
+    tasks = _parse_tasks(path.read_text())
+    covered: set[str] = set()
+    for t in tasks:
         if t.status != "active":
             continue
         for req in t.implements:
             if req in active_reqs:
+                covered.add(req)
                 continue
             resolved = spec_mod.resolve_requirement(req, active_reqs, smap)
             if resolved is not None:
+                covered.add(resolved)
                 notes.append(f"{t.id} covers {resolved} via superseded {req}")
+            elif briefs_mod.is_brief_id(req):
+                covered.add(req)
+    # What only a deferred task implements went to a follow-up with it.
+    deferred = [t for t in tasks if t.status == "deferred"]
+    handed_over = dict(_deferred_requirements(deferred, active_reqs, smap))
+    for t in deferred:
+        for brief_id in split_citations(t.implements)[1]:
+            handed_over.setdefault(brief_id, t)
+    for cited, t in handed_over.items():
+        if cited not in covered:
+            notes.append(f"{cited} is deferred to {t.deferred_to} ({t.id})")
     return notes
 
 
