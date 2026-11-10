@@ -16,7 +16,7 @@ import typer
 import typer.main
 from typer.core import TyperGroup
 
-from agentsquire import check_stale
+from agentsquire import check_stale, notify_update
 from agentsquire.cli import check_update_command, skills_command_group
 from agentsquire.roots import resolve_roots
 from agentsquire.sources import default_source
@@ -4340,8 +4340,24 @@ def _notify_stale_skills() -> None:
         pass
 
 
+def _notify_new_release() -> None:
+    # Notice-only startup hook, like the one above: one stderr line when the
+    # release cache holds a version newer than this one. It reads the cache
+    # that `specflo check-update` and `specflo doctor` write and makes no
+    # request. `check-update` prints the fresh answer itself, so the cached
+    # one is left out there. notify_update swallows its own errors; the
+    # try/except keeps a startup notice from ever breaking the command.
+    try:
+        if "check-update" in sys.argv[1:2]:
+            return
+        notify_update("specflo", __version__, prog_name="specflo")
+    except Exception:
+        pass
+
+
 def main() -> None:
     _notify_stale_skills()
+    _notify_new_release()
     # typer 0.26 vendors its own copy of click (typer._click), so exceptions
     # raised by the mounted agentsquire group -- which uses the real `click` --
     # are a different class than the ones typer's runner catches. On `specflo
