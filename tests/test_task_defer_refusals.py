@@ -150,3 +150,22 @@ def test_a_project_with_no_plan_is_refused(tmp_path, monkeypatch):
     assert result.exit_code != 0
     assert "No plan yet" in result.output
     assert not followup.followup_path(tmp_path, cfg, "thing").is_file()
+
+
+def test_a_task_open_work_reaches_through_a_supersession_is_refused(planned):
+    root, cfg, (first, second, third) = planned
+    plan.edit_task(root, cfg, "thing", third, add_depends_on=[second])
+    newer = plan.add_task(root, cfg, "thing", "Build the printer again", "a",
+                          "uv run pytest", implements=["REQ-01"], supersedes=second).id
+    newest = plan.add_task(root, cfg, "thing", "Build the printer once more", "a",
+                           "uv run pytest", implements=["REQ-01"], supersedes=newer).id
+
+    _refused(root, cfg, newest, third, f"--drop-depends-on {second}")
+
+
+def test_a_replacement_nothing_waits_on_can_be_deferred(planned):
+    root, cfg, (first, second, third) = planned
+    newer = plan.add_task(root, cfg, "thing", "Build the printer again", "a",
+                          "uv run pytest", implements=["REQ-01"], supersedes=second).id
+
+    assert _defer(newer).exit_code == 0

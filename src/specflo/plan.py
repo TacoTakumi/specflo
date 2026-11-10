@@ -502,15 +502,16 @@ def validate_plan(
                 issues.append(f"{req} is not implemented by any task.")
 
     ids = {t.id for t in active}
-    by_deferred_id = {t.id: t for t in deferred}
-    deferred_ids = set(by_deferred_id)
+    by_id = {t.id: t for t in parsed}
+    deferred_ids = {t.id for t in deferred}
     for t in active:
         for dep in t.depends_on:
             # Finished work may rest on a task that was deferred after it.
             if dep in deferred_ids and t.progress == "done":
                 continue
-            if dep in deferred_ids:
-                issues.append(_deferred_dependency_line(t.id, by_deferred_id[dep]) + ".")
+            gone = _deferred_dependency(dep, by_id)
+            if gone is not None:
+                issues.append(_deferred_dependency_line(t.id, dep, gone))
             elif dep not in ids:
                 issues.append(f"{t.id} depends on {dep}, which is not an active task.")
     cycle = _find_cycle(active)
@@ -606,13 +607,34 @@ def validate_plan(
     return issues
 
 
-def _deferred_dependency_line(blocked: str, dependency: Task) -> str:
+def _resolved_dependency(dep: str, by_id: dict[str, Task]) -> Task | None:
+    """The task a dependency on ``dep`` now waits for: ``dep`` itself, or the
+    end of its supersession chain. None when the chain leads nowhere."""
+    seen: set[str] = set()
+    task = by_id.get(dep)
+    while task is not None and task.status == "superseded" and task.id not in seen:
+        seen.add(task.id)
+        task = by_id.get(task.superseded_by) if task.superseded_by else None
+    return task
+
+
+def _deferred_dependency(dep: str, by_id: dict[str, Task]) -> Task | None:
+    """The deferred task a dependency on ``dep`` waits for, directly or
+    through supersessions; None when it waits for no deferred task."""
+    task = _resolved_dependency(dep, by_id)
+    return task if task is not None and task.status == "deferred" else None
+
+
+def _deferred_dependency_line(blocked: str, dep: str, deferred: Task) -> str:
     """What to tell the owner of a task that waits on a deferred one: the
     dependency never becomes done here, so the edge has to go."""
+    what = (
+        f"which is {deferred.frozen_state}" if deferred.id == dep
+        else f"whose replacement {deferred.id} is {deferred.frozen_state}"
+    )
     return (
-        f"{blocked} depends on {dependency.id}, which is {dependency.frozen_state} "
-        f"and will not be done in this plan; "
-        f"run: specflo task edit {blocked} --drop-depends-on {dependency.id}"
+        f"{blocked} depends on {dep}, {what} and will not be done in this plan; "
+        f"run: specflo task edit {blocked} --drop-depends-on {dep}"
     )
 
 
@@ -1016,21 +1038,24 @@ def blocked_on_superseded_from_doc(doc: str) -> list[dict]:
     """
     tasks = _parse_tasks(doc)
     superseded = {t.id: t.superseded_by for t in tasks if t.status == "superseded"}
-    deferred = {t.id: t for t in tasks if t.status == "deferred"}
+    by_id = {t.id: t for t in tasks}
     findings: list[dict] = []
     for t in tasks:
         if t.status != "active" or t.progress != "pending":
             continue
         for dep in t.depends_on:
-            if dep in superseded:
+            # A deferred end of the chain comes first: a rewire onto a
+            # deferred replacement is refused, so it is no way out.
+            gone = _deferred_dependency(dep, by_id)
+            if gone is not None:
+                findings.append({
+                    "blocked": t.id, "dependency": dep, "superseded_by": None,
+                    "deferred": _deferred_dependency_line(t.id, dep, gone),
+                })
+            elif dep in superseded:
                 findings.append({
                     "blocked": t.id, "dependency": dep,
                     "superseded_by": superseded[dep],
-                })
-            elif dep in deferred:
-                findings.append({
-                    "blocked": t.id, "dependency": dep, "superseded_by": None,
-                    "deferred": _deferred_dependency_line(t.id, deferred[dep]),
                 })
     return findings
 
@@ -1491,14 +1516,26 @@ def check_deferrable(doc: str, task_id: str) -> Task:
             f"Task {task_id} is {task.progress}; only a pending or blocked task can be deferred."
         )
     active = [t for t in tasks if t.status == "active"]
-    waiting = [t.id for t in active if task_id in t.depends_on and t.progress != "done"]
+    by_id = {t.id: t for t in tasks}
+    # Open work waits on this task directly, or through a task it replaced.
+    waiting = [
+        (t.id, dep) for t in active if t.progress != "done"
+        for dep in t.depends_on
+        if (end := _resolved_dependency(dep, by_id)) is not None and end.id == task_id
+    ]
     if waiting:
+        names = [
+            blocked if dep == task_id else f"{blocked} (through superseded {dep})"
+            for blocked, dep in waiting
+        ]
+        drops = ", ".join(
+            f"`specflo task edit {blocked} --drop-depends-on {dep}`" for blocked, dep in waiting
+        )
         raise SpecfloError(
-            f"Cannot defer {task_id}: {', '.join(waiting)} "
+            f"Cannot defer {task_id}: {', '.join(names)} "
             f"{'depends' if len(waiting) == 1 else 'depend'} on it. Point them at "
-            f"another task with `specflo task rewire --from {task_id} --to <T-NN>`, "
-            f"drop the dependency with `specflo task edit <T-NN> --drop-depends-on {task_id}`, "
-            f"or defer them first."
+            f"another task with `specflo task rewire --from {waiting[0][1]} --to <T-NN>`, "
+            f"drop the dependency with {drops}, or defer them first."
         )
     if len(active) == 1:
         raise SpecfloError(
@@ -1555,12 +1592,13 @@ def _set_progress(
             done_ids = {t.id for t in _parse_tasks(doc)
                         if t.status == "active" and t.progress == "done"}
             unmet = [d for d in task.depends_on if d not in done_ids]
-            gone = {t.id: t for t in _parse_tasks(doc) if t.status == "deferred"}
+            by_id = {t.id: t for t in _parse_tasks(doc)}
             for dep in unmet:
                 # A deferred dependency never becomes done: say how to drop it.
-                if dep in gone:
+                gone = _deferred_dependency(dep, by_id)
+                if gone is not None:
                     raise SpecfloError(
-                        _deferred_dependency_line(task_id, gone[dep])
+                        _deferred_dependency_line(task_id, dep, gone)
                         + f", or pass --force to start {task_id} anyway."
                     )
             if unmet:
