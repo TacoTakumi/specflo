@@ -1440,15 +1440,39 @@ def check_deferrable(doc: str, task_id: str) -> Task:
     """The task ``task_id`` of *doc* when it can be deferred; raises otherwise.
 
     Only work that has not started can leave the plan: a pending or a blocked
-    task.
+    task. Open work must not rest on it, and it must not be the last active
+    task, because a plan with no active task is not a plan.
     """
-    task = task_by_id(doc, task_id)
+    tasks = _parse_tasks(doc)
+    task = next((t for t in tasks if t.id == task_id), None)
     if task is None:
         raise SpecfloError(f"No task {task_id}.")
     if task.status != "active":
         raise SpecfloError(f"Task {task_id} is {frozen_state(task)}; it cannot be deferred.")
+    if task.progress == "in_progress":
+        raise SpecfloError(
+            f"Task {task_id} is in_progress; it cannot be deferred while work on it "
+            f"is under way. Return it to pending with `specflo task reopen {task_id}` first."
+        )
     if task.progress not in ("pending", "blocked"):
-        raise SpecfloError(f"Task {task_id} is {task.progress}; it cannot be deferred.")
+        raise SpecfloError(
+            f"Task {task_id} is {task.progress}; only a pending or blocked task can be deferred."
+        )
+    active = [t for t in tasks if t.status == "active"]
+    waiting = [t.id for t in active if task_id in t.depends_on and t.progress != "done"]
+    if waiting:
+        raise SpecfloError(
+            f"Cannot defer {task_id}: {', '.join(waiting)} "
+            f"{'depends' if len(waiting) == 1 else 'depend'} on it. Point them at "
+            f"another task with `specflo task rewire --from {task_id} --to <T-NN>`, "
+            f"drop the dependency with `specflo task edit <T-NN> --drop-depends-on {task_id}`, "
+            f"or defer them first."
+        )
+    if len(active) == 1:
+        raise SpecfloError(
+            f"Cannot defer {task_id}: it is the only active task of the plan. "
+            f"Set the project aside with `specflo shelve` instead."
+        )
     return task
 
 
