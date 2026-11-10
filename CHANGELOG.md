@@ -33,6 +33,23 @@ latter. Release tags are of the form `vX.Y.Z`.
 - **specflo requires agentsquire 0.6.0 or later,** which has the release check.
 
 ### Added
+- **`specflo task defer <T-NN> --do <text> --why <text>` moves a task the
+  project will not do into a follow-up.** It adds an `FU-NN` with the task
+  title and the `--do` line, and freezes the task in the plan with a
+  `Deferred to: FU-NN` field and the `--why` line as its last note. A deferred
+  task is not open work: the project can complete, and a requirement that only
+  a deferred task implements passes plan validation with a note that names
+  the follow-up. The command refuses a task that is in progress, done,
+  superseded or deferred, a task that open tasks depend on, and the only
+  active task of a plan.
+- **`specflo followup show FU-NN` prints the task that was deferred to the
+  follow-up:** its acceptance, verify step, files and every note, read from
+  the plan of the project that deferred it. `--json` carries it under a new
+  `task` key, which is null for other follow-ups.
+- **`specflo task list --all` marks a deferred task `(deferred to FU-NN)`,**
+  and `task show <T-NN>` names the follow-up. `task list --json` and
+  `task show --json` gain a `deferred_to` key. The note label `Deferred` is
+  reserved for `task defer`.
 - **The guide says how to add small work to a running fast or full project**
   without a new project: `specflo task add --from REQ-NN` when the spec already covers the
   work, and `specflo brief add` then `specflo task add --from B-NN` when the

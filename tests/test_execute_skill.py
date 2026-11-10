@@ -367,3 +367,14 @@ def test_skill_fan_out_no_longer_shares_one_tree():
     section = _flat(_fan_out_section())
     assert "edit only the task's **Files**" not in section
     assert "edit and test only in their worktree" in section
+
+
+def test_skill_sends_a_task_the_user_drops_to_task_defer():
+    # A task the user decides not to do goes to a follow-up with one command,
+    # and the choice stays the user's.
+    text = SKILL.read_text()
+    followups = text.split("## Follow-ups", 1)[1].split("\n## ", 1)[0]
+    assert "specflo task defer T-NN --do" in followups
+    assert "--why" in followups
+    assert "specflo followup show FU-NN" in followups
+    assert "ask, do not pick for them" in followups

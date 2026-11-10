@@ -312,6 +312,16 @@ not do it on the side.
   `specflo followup add "<title>" --do "<what a later project should do>" --from "<the task, finding or test it came from>"`.
   It gets an `FU-NN` ID in this project's followup document, and `specflo
   advance` lists it when the project completes.
+- **A task the user decides not to do.** When the user says a task of the
+  plan is not for this project, do not leave it pending, mark it done or
+  delete it. On the user's say, run
+  `specflo task defer T-NN --do "<what a later project should do>" --why "<why this project does not do it>"`.
+  It adds a follow-up and freezes the task in the plan with the reason as its
+  last note, so the project can complete. `specflo followup show FU-NN` prints
+  the full task for the project that picks it up. The command refuses a task
+  that is in progress or done, a task that open tasks depend on, and the only
+  active task of the plan; its message names the way out. The choice to defer
+  is the user's: ask, do not pick for them.
 - **Deferred work left at the end.** Before `specflo advance` completes the
   project, add a follow-up for each item on the deferred list that is still
   work to do: nothing reads the deferred list after completion. An item that
