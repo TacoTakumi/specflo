@@ -2198,6 +2198,11 @@ def render_task_brief(brief: dict) -> str:
     if t is None:
         return ""
     header = f"{t['id']} - {t['text']}  [{t['progress']}]"
+    if t.get("deferred_to"):
+        header += (
+            f"  — deferred to {t['deferred_to']}"
+            f" (see `specflo followup show {t['deferred_to']}`)"
+        )
     if brief.get("working_ahead"):
         header += "  — working ahead (later milestone than current)"
     execution_line = f"Execution: {brief['execution']}"
@@ -2328,7 +2333,13 @@ def task_brief(
                 "No actionable task (all done, or remaining tasks are blocked "
                 "or waiting on dependencies). See `specflo task list`."
             )
-    task = next((t for t in active if t.id == task_id), None)
+    # A deferred task is shown when it is named: its entry is what a later
+    # project reads. It is never the default task.
+    task = next(
+        (t for t in _parse_tasks(doc)
+         if t.id == task_id and t.status in ("active", "deferred")),
+        None,
+    )
     if task is None:
         raise SpecfloError(f"No active task {task_id}.")
 
@@ -2376,6 +2387,7 @@ def task_brief(
             "needs": task.needs,
             "scope": task.scope, "progress": task.progress,
             "notes": task.notes,
+            "deferred_to": task.deferred_to,
             "worktree": (
                 str(Path(root) / task.worktree)
                 if task.worktree and task.progress == "in_progress" else None
@@ -2387,7 +2399,8 @@ def task_brief(
         "global_constraints": constraints,
         "execution": execution,
         "working_ahead": (
-            None if fan_out else _task_working_ahead(task, milestones, active)
+            None if fan_out or task.status != "active"
+            else _task_working_ahead(task, milestones, active)
         ),
         # The soft milestone-boundary verify beat (None off a boundary), so the
         # execute surface can surface the just-completed milestone's Exit checklist

@@ -2741,7 +2741,7 @@ def task_reopen(
 
 @task_app.command("list", epilog="Example: specflo task list")
 def task_list(
-    all_: bool = typer.Option(False, "--all", help="Include superseded tasks."),
+    all_: bool = typer.Option(False, "--all", help="Include superseded and deferred tasks."),
     json_output: bool = typer.Option(False, "--json", help="Emit machine-readable JSON."),
 ) -> None:
     """List tasks with progress and the deps-aware next-actionable marker."""
@@ -2761,6 +2761,7 @@ def task_list(
         typer.echo(json.dumps({
             "tasks": [
                 {"id": t.id, "text": t.text, "progress": t.progress, "status": t.status,
+                 "deferred_to": t.deferred_to,
                  "implements": t.implements, "fixes": t.fixes,
                  "depends_on": t.depends_on, "next": t.id in nexts,
                  "files": t.file_list, "needs": t.needs, "ready": t.id in ready}
@@ -2775,7 +2776,7 @@ def task_list(
         return
     for t in tasks:
         marker = ">" if t.id in nexts else " "
-        sup = "  (superseded)" if t.status != "active" else ""
+        sup = "" if t.status == "active" else f"  ({plan.frozen_state(t)})"
         deps = f"  deps: {', '.join(t.depends_on)}" if t.depends_on else ""
         fixes = f"  fixes: {', '.join(t.fixes)}" if t.fixes else ""
         typer.echo(f"{marker} {t.id}  [{t.progress}]  {t.text}{deps}{fixes}{sup}")
