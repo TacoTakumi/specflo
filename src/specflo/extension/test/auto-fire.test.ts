@@ -157,23 +157,37 @@ describe("the unattended fire", () => {
     assert.equal(replacement.ctx.newSessionCalls.length, 1);
   });
 
-  it("drops a stale anchor and re-anchors at the next armed auto seam", async () => {
-    // REQ-31: the anchor goes stale when something other than the chain
-    // replaces the session; the fire fails, and the next seam takes the
-    // unanchored path instead of erroring forever.
+  it("re-anchors on agent_settled when a stale anchor's fire fails mid-run", async () => {
+    // The anchor goes stale when something other than the chain replaces the
+    // session (a user /new opens a session with reason new as well). The seam
+    // has already ended the run, so no further turn comes: the failed fire
+    // itself must hand over to the re-anchoring command.
     const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
     const { replacement: stale } = await anchorChain(pi, fake, { idleRejects: true });
 
-    const first = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }), false);
     // Let the detached fire hit the rejection and drop the anchor.
     await new Promise((resolve) => setTimeout(resolve, 20));
-    const second = await armedTurn(pi, fake, status({ done: 13, autoUnderWay: true }));
 
-    assert.equal(calls(first, "notify").length, 0, "the anchored seam itself says nothing");
+    assert.equal(calls(ctx, "notify").length, 0, "the anchored seam itself says nothing");
     assert.equal(stale.ctx.newSessionCalls.length, 0, "a stale anchor must not clear");
-    assert.equal(second.abortCalls.length, 1, "the next seam ends the run");
+    assert.equal(ctx.abortCalls.length, 1, "the seam ended the run");
+    assert.equal(pi.sent.length, 0, "nothing is dispatched while the run is still going");
     await settle(pi, fake.root);
-    assert.deepEqual(pi.sent, [REANCHOR], "and re-anchors through the command once settled");
+    await settle(pi, fake.root);
+    assert.deepEqual(pi.sent, [REANCHOR], "one re-anchoring command once settled");
+  });
+
+  it("re-anchors at once when a stale anchor's fire fails with the session idle", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    await anchorChain(pi, fake, { idleRejects: true });
+
+    await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    assert.deepEqual(pi.sent, [REANCHOR], "the run already settled, so the command runs now");
+    await settle(pi, fake.root);
+    assert.deepEqual(pi.sent, [REANCHOR], "and a later agent_settled sends nothing more");
   });
 
   it("clears once and delivers the auto payload verbatim on a continuable handler pass", async () => {

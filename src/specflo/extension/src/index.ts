@@ -536,6 +536,28 @@ export default function specflo(pi: ExtensionAPI): void {
   // notice. null when no re-anchor is waiting.
   let pendingReanchor: { percent: number; seam: string } | null = null;
 
+  /**
+   * Run the waiting re-anchor, if one waits: dispatch `/specflo-continue auto`,
+   * whose clear anchors the chain again. Called once pi is idle - on
+   * agent_settled, or at once by a failed fire that finds pi already idle - and
+   * at most once per waiting re-anchor, since it clears the wait first.
+   */
+  function reanchor(ctx: ExtensionContext): void {
+    const pending = pendingReanchor;
+    if (pending === null) return;
+    pendingReanchor = null;
+    const command = `/${CONTINUE_COMMAND} ${AUTO_ARGUMENT}`;
+    try {
+      pi.sendUserMessage(command, { expandPromptTemplates: true });
+    } catch {
+      try {
+        ctx.ui.notify(noticeText(pending.percent, pending.seam, command), "info");
+      } catch {
+        // A retired context has no ui to tell; nothing more can be done here.
+      }
+    }
+  }
+
   // The status segment's session-local memory: the last rendered value the
   // segment was applied with, so a turn_end refresh can gate on change. It
   // dies with the session like the other closure state, which is fine -
@@ -598,10 +620,12 @@ export default function specflo(pi: ExtensionAPI): void {
     // A subagent's child session gets no payload and seeds no threshold, so
     // it never arms.
     if (isSubagentSession(ctx)) return;
-    // Only the chain's own clear opens a session with reason `new`. Any other
-    // start - a restart, a resume, a fork, a reload - replaced the session
-    // without the chain, so the anchor points at a session that is gone, and
-    // the next auto seam must re-anchor instead of firing through it.
+    // The chain's own clear opens a session with reason `new`, so that reason
+    // keeps the anchor. Any other start - a restart, a resume, a fork, a
+    // reload - replaced the session without the chain, so the anchor points
+    // at a session that is gone, and the next auto seam must re-anchor
+    // instead of firing through it. A user's /new is also reason `new`; the
+    // anchor it leaves stale fails at the next fire, which re-anchors then.
     if (event.reason !== "new") liveAnchor = null;
     if (COLD_START_REASONS.has(event.reason)) {
       // No direct-continuation flag: a cold start has no one's answer yet about
@@ -689,10 +713,21 @@ export default function specflo(pi: ExtensionAPI): void {
           await autoContinue(anchor);
         } catch {
           // A throw here means the anchor is stale - something other than the
-          // chain replaced or reloaded the session. Drop it (unless a clear
-          // re-anchored meanwhile) and let the next armed auto seam
-          // re-anchor.
-          if (liveAnchor === anchor) liveAnchor = null;
+          // chain replaced the session, a user /new among them. Drop it, unless
+          // a clear re-anchored meanwhile. The seam below has already ended
+          // the run, so no later turn comes to notice the loss: hand over to
+          // the re-anchoring command now, at once if pi is already idle, else
+          // when the run settles.
+          if (liveAnchor !== anchor) return;
+          liveAnchor = null;
+          if (pendingReanchor === null) pendingReanchor = { percent, seam };
+          let idle = false;
+          try {
+            idle = ctx.isIdle();
+          } catch {
+            // A context pi has retired reads as busy; agent_settled decides.
+          }
+          if (idle) reanchor(ctx);
         } finally {
           fireInFlight = false;
         }
@@ -717,17 +752,7 @@ export default function specflo(pi: ExtensionAPI): void {
   // command; queued while a run streams it would reach the model as text,
   // which is why this waits for agent_settled. A pi that cannot dispatch gets
   // the bootstrap notice naming the command instead (ctx.ui alone).
-  pi.on("agent_settled", (_event, ctx: ExtensionContext) => {
-    const pending = pendingReanchor;
-    if (pending === null) return;
-    pendingReanchor = null;
-    const command = `/${CONTINUE_COMMAND} ${AUTO_ARGUMENT}`;
-    try {
-      pi.sendUserMessage(command, { expandPromptTemplates: true });
-    } catch {
-      ctx.ui.notify(noticeText(pending.percent, pending.seam, command), "info");
-    }
-  });
+  pi.on("agent_settled", (_event, ctx: ExtensionContext) => reanchor(ctx));
 
   // The status segment, wired through its own listeners so the armed-seam
   // path above stays untouched: re-applied on every session start whatever

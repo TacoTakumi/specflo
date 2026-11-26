@@ -89,12 +89,15 @@ export async function armedTurn(
   pi: Awaited<ReturnType<typeof coldStart>>["pi"],
   fake: Awaited<ReturnType<typeof coldStart>>["fake"],
   snapshot: string,
+  idle = true,
 ) {
   fake.setStdout(snapshot);
   const ctx = createFakeCtx({
     cwd: fake.root,
     contextUsage: { tokens: 160000, contextWindow: 200000, percent: 80 },
   });
+  // A run that is still streaming when its turn ends reads as not idle.
+  ctx.isIdle = () => idle;
   await pi.emit({ type: "turn_end", turnIndex: 0, message: {}, toolResults: [] }, ctx);
   return ctx;
 }
