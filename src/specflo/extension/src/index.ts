@@ -394,7 +394,9 @@ export interface SegmentText {
  * and execute append a task tally ' T-NN d/total' counting non-superseded
  * tasks only (an explicit `Superseded by:` field or the legacy `Status:
  * superseded by` phrase marks a task superseded), and execute drops the phase
- * label to buy back width. Anything missing or unparseable - no config.yaml
+ * label to buy back width. An active segment ends in ' auto' while the
+ * project's auto run is live, a marker the segment script does not print.
+ * Anything missing or unparseable - no config.yaml
  * on the walk, no active_project, a broken frontmatter, an unreadable
  * plan.md - yields null, so the caller clears the status. Never throws: the
  * whole walk is guarded and a throwing read degrades to null (REQ-02).
@@ -478,9 +480,28 @@ export function computeSegment(cwd: string): SegmentText | null {
         seg = phase === "execute" ? label + tail : seg + tail;
       }
     }
+    if (autoRunLive(pdir)) seg += " auto";
     return { text: seg, style: "accent" };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether the project directory ``pdir`` holds a live auto run: its
+ * auto-run.json parses to an object that sets neither killed nor ended. The
+ * same rule the CLI's run_under_way applies to an incomplete project, which is
+ * the only kind the caller asks about. A missing or unparseable file reads as
+ * no run.
+ */
+function autoRunLive(pdir: string): boolean {
+  try {
+    const state = JSON.parse(fs.readFileSync(path.join(pdir, "auto-run.json"), "utf8")) as unknown;
+    if (state === null || typeof state !== "object" || Array.isArray(state)) return false;
+    const { killed, ended } = state as { killed?: unknown; ended?: unknown };
+    return !killed && !ended;
+  } catch {
+    return false;
   }
 }
 

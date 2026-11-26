@@ -229,3 +229,47 @@ describe("computeSegment - SPECFLO_DIRECTORY starts the walk (REQ-14)", () => {
     assert.equal(computeSegment(repo), null);
   });
 });
+
+describe("computeSegment - the auto marker", () => {
+  function seg(opts: FixtureRepoOpts) {
+    const root = createFixtureRepo(opts);
+    cleanups.push(root);
+    return computeSegment(root);
+  }
+
+  it("appends auto to an active segment while the run file is live", () => {
+    assert.deepEqual(seg({ phase: "spec", autoRun: '{"passes": 2}' }), {
+      text: "demo:spec auto",
+      style: "accent",
+    });
+  });
+
+  it("appends auto after the execute tally", () => {
+    assert.deepEqual(seg({ plan: THREE_TASKS, autoRun: '{"passes": 2}' }), {
+      text: "demo T-02 1/3 auto",
+      style: "accent",
+    });
+  });
+
+  it("shows no marker once the run is killed or ended", () => {
+    assert.equal(seg({ phase: "spec", autoRun: '{"killed": true}' })?.text, "demo:spec");
+    assert.equal(seg({ phase: "spec", autoRun: '{"ended": true}' })?.text, "demo:spec");
+  });
+
+  it("shows no marker with no run file or an unparseable one", () => {
+    assert.equal(seg({ phase: "spec" })?.text, "demo:spec");
+    assert.equal(seg({ phase: "spec", autoRun: "{not json" })?.text, "demo:spec");
+    assert.equal(seg({ phase: "spec", autoRun: "[1, 2]" })?.text, "demo:spec");
+  });
+
+  it("keeps the dim done and shelved segments for a finished project", () => {
+    assert.deepEqual(seg({ status: "complete", autoRun: '{"passes": 2}' }), {
+      text: "demo done",
+      style: "dim",
+    });
+    assert.deepEqual(seg({ status: "shelved", autoRun: '{"passes": 2}' }), {
+      text: "demo shelved",
+      style: "dim",
+    });
+  });
+});

@@ -23,6 +23,8 @@ export interface FixtureRepoOpts {
   plan?: string | null;
   /** Extra config.yaml lines, e.g. to drop active_project for a REQ-02 case. */
   configExtra?: string[];
+  /** auto-run.json body, written as given; null (the default) writes no file. */
+  autoRun?: string | null;
 }
 
 /** Builds a fixture specflo repo in a fresh temp dir and returns its root. */
@@ -45,6 +47,9 @@ export function createFixtureRepo(opts: FixtureRepoOpts = {}): string {
   );
   if (opts.plan !== undefined && opts.plan !== null) {
     fs.writeFileSync(path.join(pdir, "plan.md"), opts.plan);
+  }
+  if (opts.autoRun !== undefined && opts.autoRun !== null) {
+    fs.writeFileSync(path.join(pdir, "auto-run.json"), opts.autoRun);
   }
   return root;
 }
