@@ -509,8 +509,10 @@ function autoRunLive(pdir: string): boolean {
  * The notice for an armed seam: the current context usage, the seam that
  * fired, and the exact command to run - extension-authored prose, and it
  * reaches ctx.ui.notify alone, never model context (REQ-27). The attended
- * notice (REQ-09) names `/specflo-continue`; the bootstrap notice, shown
- * when pi cannot run the re-anchoring command, names `/specflo-continue auto`.
+ * notice (REQ-09) names `/specflo-continue`; the bootstrap notice names
+ * `/specflo-continue auto` and shows only when the re-anchoring dispatch call
+ * throws at once - pi reports a dispatch that fails later as an extension
+ * error, not to the extension.
  */
 function noticeText(percent: number, seam: string, command: string): string {
   return (
