@@ -750,8 +750,10 @@ export default function specflo(pi: ExtensionAPI): void {
   // `/specflo-continue auto`, whose clear anchors the chain again. Since pi
   // 0.84.2, sendUserMessage with expandPromptTemplates dispatches an extension
   // command; queued while a run streams it would reach the model as text,
-  // which is why this waits for agent_settled. A pi that cannot dispatch gets
-  // the bootstrap notice naming the command instead (ctx.ui alone).
+  // which is why this waits for agent_settled. pi catches a dispatch that
+  // fails later and reports it as an extension error, never to this handler;
+  // only a call that throws at once, from a context pi retired, gets the
+  // bootstrap notice naming the command (ctx.ui alone).
   pi.on("agent_settled", (_event, ctx: ExtensionContext) => reanchor(ctx));
 
   // The status segment, wired through its own listeners so the armed-seam

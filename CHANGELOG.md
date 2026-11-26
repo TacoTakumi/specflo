@@ -24,6 +24,18 @@ latter. Release tags are of the form `vX.Y.Z`.
   pending task, `specflo task start T-NN` before you change a file; for an
   in-progress task, run the Verify, commit, then `specflo task done T-NN`. A
   worktree task's brief, which a subagent reads, gets no such line.
+- **An auto run in pi survives a restart or a resume.** The CLI kept the run
+  under way, but pi lost the session handle it clears through, so the next
+  seam only showed a notice and the run went on as attended. Now a seam with
+  no handle ends the agent's turn and, once pi is idle, runs
+  `/specflo-continue auto` itself, which makes a new handle. A session start
+  that the run did not open (startup, resume, fork, reload) drops the old
+  handle. If the run still does not go on, type `/specflo-continue auto`. The pi
+  extension now needs pi 0.84.2 or later.
+
+### Added
+- **The pi footer shows `auto`** at the end of the specflo segment while an
+  auto run is under way.
 
 ## [0.21.1]
 
