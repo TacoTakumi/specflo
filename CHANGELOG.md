@@ -17,6 +17,13 @@ latter. Release tags are of the form `vX.Y.Z`.
   dispatch in the execute, harden and brainstorm skills (the reviewer, the
   fan-out task subagents and the research subagent) now says to use the
   session's model, and another model only when the user names one.
+- **The CLI says when to run `task start` and `task done`.** The guide's lines
+  for them now say to run `task start` before any work on a task and
+  `task done` after the task's Verify passes and its commit lands, and that
+  the main agent runs both. `specflo task show` ends with the next step: for a
+  pending task, `specflo task start T-NN` before you change a file; for an
+  in-progress task, run the Verify, commit, then `specflo task done T-NN`. A
+  worktree task's brief, which a subagent reads, gets no such line.
 
 ## [0.21.1]
 

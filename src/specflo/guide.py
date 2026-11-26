@@ -175,11 +175,13 @@ COMMANDS: list[dict[str, str]] = [
     {"name": "task show", "group": "execute", "args": "[<T-NN>]",
      "summary": "Show a task's brief (acceptance + cited REQ-NN + constraints)."},
     {"name": "task start", "group": "execute", "args": "<T-NN> [--force] [--worktree]",
-     "summary": "Mark a task in_progress; --worktree gives it its own git worktree."},
+     "summary": "Run before any work on a task: marks it in_progress. The main agent runs"
+                " it, never a subagent. --worktree gives it its own git worktree."},
     {"name": "task land", "group": "execute", "args": "<T-NN> [--message <text>]",
      "summary": "Land a worktree task's changes on its base branch as one commit."},
     {"name": "task done", "group": "execute", "args": "<T-NN> [--closes <FU-NN>]",
-     "summary": "Mark a task done; --closes closes a follow-up it settles."},
+     "summary": "Run after the task's Verify passes and its commit lands: marks it done."
+                " The main agent runs it. --closes closes a follow-up it settles."},
     {"name": "task block", "group": "execute", "args": "<T-NN>",
      "summary": "Mark a task blocked."},
     {"name": "task reopen", "group": "execute", "args": "<T-NN>",

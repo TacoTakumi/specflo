@@ -2832,6 +2832,17 @@ def task_show(
     # milestone's Exit checklist) after the brief, when at a boundary (REQ-14).
     if brief.get("boundary"):
         out += "\n\n" + "\n".join(plan.boundary_beat_lines(brief["boundary"]))
+    # The next lifecycle step closes the brief, so a model that reads the brief
+    # and starts to code is told to mark the task first. A worktree task's
+    # brief is a subagent's, and a subagent never runs specflo.
+    if not t.get("worktree"):
+        if t["progress"] == "pending":
+            out += f"\n\nNext: `specflo task start {t['id']}` before you change a file."
+        elif t["progress"] == "in_progress":
+            out += (
+                "\n\nNext: run the Verify, commit the task's files, then"
+                f" `specflo task done {t['id']}`."
+            )
     typer.echo(out)
 
 
