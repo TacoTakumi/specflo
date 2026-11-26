@@ -37,6 +37,12 @@ latter. Release tags are of the form `vX.Y.Z`.
   auth), the run stopped with no message. The new session now shows a notice
   with pi's error and the command to type to try again.
 
+- **The memory snippet no longer sends config and environment work through
+  specflo.** The snippet that `specflo guide` prints and the README shows now
+  says that config changes and environment work, such as editing settings
+  and config files or installing tools, do not go through specflo. Paste the
+  new text over a copy already in a memory file.
+
 ### Added
 - **The pi footer shows `auto`** at the end of the specflo segment while an
   auto run is under way. The Claude Code statusline example

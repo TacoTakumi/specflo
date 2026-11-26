@@ -125,8 +125,9 @@ use. Add this near the top of the file:
 This user develops with specflo. At the start of a session, run `specflo guide`
 before any other work. It shows the state of the repo, when to use each project
 level and the next step. Every code change goes through specflo, including a
-one-line fix and a fix from a follow-up. A subagent that has an assigned task
-does not run the guide.
+one-line fix and a fix from a follow-up. Config changes and environment work do
+not, such as editing settings and config files or installing tools. A subagent
+that has an assigned task does not run the guide.
 ```
 
 Prompts that map onto the workflow:

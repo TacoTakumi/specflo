@@ -178,6 +178,8 @@ def test_memory_snippet_covers_every_change_in_any_repo():
         "Every code change goes through specflo",
         "a one-line fix",
         "a fix from a follow-up",
+        "Config changes and environment work do not, such as editing settings and"
+        " config files or installing tools.",
         "A subagent that has an assigned task does not run the guide.",
     ):
         assert phrase in snippet, phrase
