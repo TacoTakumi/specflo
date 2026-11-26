@@ -959,10 +959,14 @@ In an auto run:
 - **The unattended fire.** After one clear has run, every armed seam clears
   and reseeds by itself: the extension fetches the next `specflo auto` pass
   and delivers its payload verbatim. No dialog, no confirmation, no input.
-- **Joining a run cold.** If the run was started outside pi (`specflo auto` in
-  a terminal, then pi opened), the first armed seam prints a bootstrap notice
-  asking you to type `/specflo-continue auto` once; every seam after that is
-  unattended.
+- **Joining a run cold.** If pi has not cleared during the run yet (the run
+  was started in a terminal, pi was restarted, or you resumed or switched
+  sessions), the first armed seam ends the agent's turn and runs
+  `/specflo-continue auto` itself once pi is idle; every seam after that is
+  unattended. This needs pi 0.84.2 or later. If pi cannot run the command, a
+  notice asks you to type it.
+- **Footer.** The specflo segment in pi's footer ends in `auto` while an auto
+  run is under way.
 - **Stopping.** Loop control lives in the CLI, never the extension: on the
   kill switch (`specflo auto --off`), the pass cap, a stall, or project
   completion, nothing clears and the CLI's own stop directive is shown as a

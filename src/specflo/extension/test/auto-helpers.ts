@@ -99,6 +99,19 @@ export async function armedTurn(
   return ctx;
 }
 
+/** Emit agent_settled, the point where the run has stopped and pi is idle. */
+export async function settle(pi: Awaited<ReturnType<typeof coldStart>>["pi"], cwd: string) {
+  const ctx = createFakeCtx({ cwd });
+  await pi.emit({ type: "agent_settled" }, ctx);
+  return ctx;
+}
+
+/** The command an unanchored auto seam dispatches once the run settles. */
+export const REANCHOR = {
+  content: "/specflo-continue auto",
+  options: { expandPromptTemplates: true },
+};
+
 /** The handler pi registered under `specflo-continue`. */
 export function continueHandler(pi: Awaited<ReturnType<typeof coldStart>>["pi"]) {
   const command = pi.commands.get("specflo-continue");

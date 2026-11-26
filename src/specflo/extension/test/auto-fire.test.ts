@@ -35,8 +35,10 @@ import {
   cleanups,
   coldStart,
   continueHandler,
+  REANCHOR,
   replacementFactory,
   resetAfterEach,
+  settle,
   status,
   until,
 } from "./auto-helpers.ts";
@@ -45,18 +47,58 @@ import { createFakeCtx, createFakePi, createFakeSpecflo, loadExtension } from ".
 afterEach(resetAfterEach);
 
 describe("the unattended fire", () => {
-  it("notices /specflo-continue auto at an unanchored armed auto seam, and clears nothing", async () => {
-    // REQ-31: no anchor - pi joined the run cold - so the seam degrades to one
-    // bootstrap notice naming the command that anchors the chain.
+  it("re-anchors an unanchored armed auto seam: one abort, then /specflo-continue auto once settled", async () => {
+    // No anchor - pi restarted or joined the run cold. The seam ends the run
+    // and, once the agent settles, runs the command whose clear anchors the
+    // chain, so the run goes on with nobody typing it.
     const { fake, pi } = await coldStart(status({ phase: "execute", autoUnderWay: true }));
 
     const ctx = await armedTurn(pi, fake, status({ phase: "complete", autoUnderWay: true }));
 
-    const notices = calls(ctx, "notify");
-    assert.equal(notices.length, 1, "an unanchored auto seam emits exactly one notice");
+    assert.equal(ctx.abortCalls.length, 1, "the seam ends the running agent");
+    assert.equal(ctx.newSessionCalls.length, 0, "an event context cannot clear");
+    assert.equal(pi.sent.length, 0, "nothing is dispatched while the run is still going");
+
+    const settled = await settle(pi, fake.root);
+
+    assert.deepEqual(pi.sent, [REANCHOR], "one dispatch of the re-anchoring command");
+    assert.equal(calls(ctx, "notify").length + calls(settled, "notify").length, 0, "no notice");
+  });
+
+  it("a second unanchored seam before the run settles adds no abort and no dispatch", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+
+    const first = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    const second = await armedTurn(pi, fake, status({ done: 13, autoUnderWay: true }));
+    await settle(pi, fake.root);
+    await settle(pi, fake.root);
+
+    assert.equal(first.abortCalls.length + second.abortCalls.length, 1, "one abort");
+    assert.deepEqual(pi.sent, [REANCHOR], "one dispatch");
+  });
+
+  it("an agent_settled with no pending re-anchor dispatches nothing", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11 }));
+
+    await armedTurn(pi, fake, status({ done: 12 }));
+    const settled = await settle(pi, fake.root);
+
+    assert.equal(pi.sent.length, 0, "an attended seam never dispatches a command");
+    assert.equal(calls(settled, "notify").length, 0);
+  });
+
+  it("falls back to the bootstrap notice when the dispatch throws", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    pi.api.sendUserMessage = () => {
+      throw new Error("no command dispatch in this pi");
+    };
+
+    await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    const settled = await settle(pi, fake.root);
+
+    const notices = calls(settled, "notify");
+    assert.equal(notices.length, 1, "exactly one bootstrap notice");
     assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
-    assert.equal(ctx.newSessionCalls.length, 0, "unanchored means nothing can clear");
-    assert.equal(pi.sent.length, 0, "nothing is ever queued into model context");
   });
 
   it("fires the anchored seam: one newSession, the auto payload verbatim, zero dialogs", async () => {
@@ -115,10 +157,10 @@ describe("the unattended fire", () => {
     assert.equal(replacement.ctx.newSessionCalls.length, 1);
   });
 
-  it("drops a stale anchor and notices at the next armed auto seam", async () => {
+  it("drops a stale anchor and re-anchors at the next armed auto seam", async () => {
     // REQ-31: the anchor goes stale when something other than the chain
-    // replaces the session; the fire fails, and the chain degrades to the
-    // bootstrap notice instead of erroring forever.
+    // replaces the session; the fire fails, and the next seam takes the
+    // unanchored path instead of erroring forever.
     const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
     const { replacement: stale } = await anchorChain(pi, fake, { idleRejects: true });
 
@@ -129,9 +171,9 @@ describe("the unattended fire", () => {
 
     assert.equal(calls(first, "notify").length, 0, "the anchored seam itself says nothing");
     assert.equal(stale.ctx.newSessionCalls.length, 0, "a stale anchor must not clear");
-    const notices = calls(second, "notify");
-    assert.equal(notices.length, 1, "the next seam degrades to the bootstrap notice");
-    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+    assert.equal(second.abortCalls.length, 1, "the next seam ends the run");
+    await settle(pi, fake.root);
+    assert.deepEqual(pi.sent, [REANCHOR], "and re-anchors through the command once settled");
   });
 
   it("clears once and delivers the auto payload verbatim on a continuable handler pass", async () => {
@@ -216,9 +258,9 @@ describe("the unattended fire", () => {
     assert.equal(injected, undefined, "a new session injects no cold-start payload");
 
     // The re-seeded state must actually re-arm: the next armed auto seam is
-    // seen (here unanchored, so the visible effect is the bootstrap notice).
+    // seen (here unanchored, so the visible effect is the abort).
     const ctx = await armedTurn(pi, fake, status({ phase: "complete", autoUnderWay: true }));
-    assert.equal(calls(ctx, "notify").length, 1, "the continued session must re-arm");
+    assert.equal(ctx.abortCalls.length, 1, "the continued session must re-arm");
   });
 
   it("holds no pass counter and no cap constant, and reads the CLI's stop verdict", async () => {

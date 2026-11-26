@@ -22,7 +22,9 @@ import {
   autoReport,
   calls,
   coldStart,
+  REANCHOR,
   resetAfterEach,
+  settle,
   status,
   until,
 } from "./auto-helpers.ts";
@@ -79,14 +81,14 @@ describe("the abort at the armed auto anchored seam", () => {
     assert.equal(replacement.ctx.newSessionCalls.length, 0, "unarmed, nothing fires");
   });
 
-  it("records zero aborts at an unanchored auto seam", async () => {
-    // REQ-04 keeps this branch notify-only; here only the abort is pinned -
-    // the notice itself is T-05's guard.
+  it("records one abort at an unanchored auto seam", async () => {
+    // The run ends at the seam so the re-anchoring command runs there, as an
+    // anchored fire's clear would.
     const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
 
     const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
 
-    assert.equal(ctx.abortCalls.length, 0, "unanchored means nothing may end the run");
+    assert.equal(ctx.abortCalls.length, 1, "unanchored, the seam still ends the run");
   });
 
   it("records zero aborts at an attended armed seam", async () => {
@@ -181,14 +183,14 @@ describe("the abort at the armed auto anchored seam", () => {
     assert.equal(next.ctx.newSessionCalls.length, 1, "and fires a second continuation");
   });
 
-  it("degrades to the bootstrap notice when the reseed dispatch fails", async () => {
+  it("re-anchors through the command when the reseed dispatch fails", async () => {
     // REQ-04: dispatching rather than awaiting means a failed send is nobody's
     // return value, so it has to be caught where it is thrown. A session that
     // received nothing is no anchor: the .catch drops it, and the next armed
-    // auto seam falls back to the branch pi joining a run cold already takes -
-    // one notice naming the command that re-anchors, nothing ended, nothing
-    // cleared. The rejection must also stay inside the extension: an escaped
-    // one takes pi's whole process down.
+    // auto seam takes the branch pi joining a run cold already takes - it
+    // ends the run and, once settled, runs the command that re-anchors; it
+    // clears nothing itself. The rejection must also stay inside the
+    // extension: an escaped one takes pi's whole process down.
     const rejections: unknown[] = [];
     const onRejection = (reason: unknown) => rejections.push(reason);
     process.on("unhandledRejection", onRejection);
@@ -208,11 +210,11 @@ describe("the abort at the armed auto anchored seam", () => {
 
       const later = await armedTurn(pi, fake, status({ done: 13, autoUnderWay: true }));
 
-      assert.equal(later.abortCalls.length, 0, "a dropped anchor must not end the run");
-      assert.equal(later.newSessionCalls.length, 0, "and must not clear");
-      const notices = calls(later, "notify");
-      assert.equal(notices.length, 1, "exactly one bootstrap notice");
-      assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+      assert.equal(later.abortCalls.length, 1, "a dropped anchor still ends the run");
+      assert.equal(later.newSessionCalls.length, 0, "and clears nothing itself");
+      assert.equal(calls(later, "notify").length, 0, "no notice");
+      await settle(pi, fake.root);
+      assert.deepEqual(pi.sent, [REANCHOR], "the settled run re-anchors through the command");
 
       // Node reports an unhandled rejection a tick or two late; give it room.
       await new Promise((resolve) => setTimeout(resolve, 100));
@@ -228,20 +230,6 @@ describe("the abort at the armed auto anchored seam", () => {
 // moved when it started dispatching - which is exactly why they are re-run
 // against the reshaped fake rather than taken on trust.
 describe("the notify-only branches stay notify-only", () => {
-  it("an unanchored armed auto seam: one notice, zero aborts, zero sessions (REQ-04)", async () => {
-    // pi joined the run cold - nothing may end the run or clear the session;
-    // the one bootstrap notice names the command that anchors the chain.
-    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
-
-    const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
-
-    const notices = calls(ctx, "notify");
-    assert.equal(notices.length, 1, "exactly one bootstrap notice");
-    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
-    assert.equal(ctx.abortCalls.length, 0, "an unanchored seam must not end the run");
-    assert.equal(ctx.newSessionCalls.length, 0, "an unanchored seam must not clear");
-  });
-
   it("an attended armed seam: one notice, zero aborts, zero sessions (REQ-04)", async () => {
     // Attended even with a live anchor from an earlier auto pass: the seam
     // says so once, passively, and the run keeps going.

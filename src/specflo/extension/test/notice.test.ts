@@ -12,7 +12,7 @@
  *
  * While an auto run is under way the seam is not the notice's to deliver -
  * that is the unattended fire (T-16) - so status reporting under_way true
- * yields the fire's behaviour instead: unanchored, its bootstrap notice.
+ * yields the fire's behaviour instead: unanchored, no notice at the seam.
  */
 
 import assert from "node:assert/strict";
@@ -139,18 +139,16 @@ describe("attended notice", () => {
     assert.equal(ctx.ui.calls.length, 0, "no seam, no ui traffic at all");
   });
 
-  it("hands an auto-run seam to the fire: unanchored, the bootstrap notice, not this one", async () => {
+  it("hands an auto-run seam to the fire: unanchored, no attended notice", async () => {
     // The seam is real, but its delivery belongs to the unattended fire
-    // (T-16). Unanchored - as any cold-started process is - the fire degrades
-    // to the bootstrap notice naming /specflo-continue auto (REQ-31), and
-    // nothing clears.
+    // (T-16). Unanchored - as any cold-started process is - the fire ends the
+    // run and re-anchors once it settles, so this seam shows no notice and
+    // clears nothing itself.
     const { fake, pi } = await coldStart(status({ phase: "execute" }));
 
     const { ctx } = await armedTurn(pi, fake, status({ phase: "complete", autoUnderWay: true }));
 
-    const notices = calls(ctx, "notify");
-    assert.equal(notices.length, 1, "an unanchored auto seam emits the bootstrap notice");
-    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+    assert.equal(calls(ctx, "notify").length, 0, "an unanchored auto seam shows no notice");
     assert.equal(ctx.newSessionCalls.length, 0, "and this slice still clears nothing");
   });
 });

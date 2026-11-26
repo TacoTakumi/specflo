@@ -531,6 +531,10 @@ export default function specflo(pi: ExtensionAPI): void {
   let pendingReseed: string | null = null;
   let threshold: number | null = null;
   let lastSnapshot: StatusSnapshot | null = null;
+  // The unanchored auto seam that is waiting for the run to settle, so the
+  // re-anchoring command can run; its percent and seam name the fallback
+  // notice. null when no re-anchor is waiting.
+  let pendingReanchor: { percent: number; seam: string } | null = null;
 
   // The status segment's session-local memory: the last rendered value the
   // segment was applied with, so a turn_end refresh can gate on change. It
@@ -663,10 +667,13 @@ export default function specflo(pi: ExtensionAPI): void {
     if (readAutoUnderWay(statusJson)) {
       const anchor = liveAnchor;
       if (anchor === null) {
-        // Unanchored - pi joined the run cold, or the anchor went stale. One
-        // clear anchors the chain; the bootstrap notice names the command that
-        // performs it (REQ-31), and it reaches ctx.ui alone (REQ-27).
-        ctx.ui.notify(noticeText(percent, seam, `/${CONTINUE_COMMAND} ${AUTO_ARGUMENT}`), "info");
+        // Unanchored - pi restarted or joined the run cold, or the anchor went
+        // stale. One `/specflo-continue auto` clear anchors the chain, and only
+        // an idle pi dispatches a command, so end the run here and run the
+        // command when it settles. A second seam before then adds nothing.
+        if (pendingReanchor !== null) return;
+        pendingReanchor = { percent, seam };
+        ctx.abort();
         return;
       }
       if (fireInFlight) return;
@@ -697,6 +704,24 @@ export default function specflo(pi: ExtensionAPI): void {
     // Attended: say so once, passively, and clear nothing (REQ-09). The notice
     // reaches ctx.ui alone - never model context.
     ctx.ui.notify(noticeText(percent, seam, `/${CONTINUE_COMMAND}`), "info");
+  });
+
+  // The run an unanchored auto seam ended has settled and pi is idle: run
+  // `/specflo-continue auto`, whose clear anchors the chain again. Since pi
+  // 0.84.2, sendUserMessage with expandPromptTemplates dispatches an extension
+  // command; queued while a run streams it would reach the model as text,
+  // which is why this waits for agent_settled. A pi that cannot dispatch gets
+  // the bootstrap notice naming the command instead (ctx.ui alone).
+  pi.on("agent_settled", (_event, ctx: ExtensionContext) => {
+    const pending = pendingReanchor;
+    if (pending === null) return;
+    pendingReanchor = null;
+    const command = `/${CONTINUE_COMMAND} ${AUTO_ARGUMENT}`;
+    try {
+      pi.sendUserMessage(command, { expandPromptTemplates: true });
+    } catch {
+      ctx.ui.notify(noticeText(pending.percent, pending.seam, command), "info");
+    }
   });
 
   // The status segment, wired through its own listeners so the armed-seam
