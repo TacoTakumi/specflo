@@ -127,7 +127,8 @@ Then continue the interview from there; do not start the brainstorm again.
 ## Researching (the woven research seam)
 
 Research is done by a **research subagent**, not by you inline — that keeps raw
-search noise out of this conversation. Dispatch a **general-purpose** subagent and
+search noise out of this conversation. Dispatch a **general-purpose** subagent
+on the session's model (another model only when the user names one) and
 instruct it to follow the `skills/specflo-research` skill (it runs with least-privilege,
 read/research-only tools and owns wiki search + save-back) — do **not** pass
 `subagent_type: research`; research is a *skill*, not an agent type, and that call

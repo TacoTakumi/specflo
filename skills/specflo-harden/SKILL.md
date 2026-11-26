@@ -49,7 +49,8 @@ path to a defect, and leave the stop to the user.
 4. **Hand the round to a fresh reviewer.** Give the reviewer the brief that
    `specflo review prompt` prints, so every round works to the same rules and
    sees the Scope and the Focus. With subagents: dispatch a fresh-context
-   reviewer on the most capable model. Without subagents: do not review
+   reviewer on the session's model, and on another model only when the user
+   names one. Without subagents: do not review
    inline; run `specflo checkpoint`, then review in a fresh session. The
    reviewer records through the CLI:
    - `specflo review finding add --severity blocker|should-fix|nit --at <file>:<line>[-<line>] --text "..."`

@@ -84,8 +84,9 @@ superseding requirement — never silently mutate a task or drift off its
      each earlier blocker and should-fix item (`--full` reviews the whole branch
      again and still checks the items).
    - Hand the reviewer the brief `specflo review prompt` prints, so every round
-     works to the same rules. With subagents: dispatch a reviewer on the most
-     capable model — it verifies the diff, not your report. Without subagents:
+     works to the same rules. With subagents: dispatch a reviewer on the
+     session's model, and on another model only when the user names one — it
+     verifies the diff, not your report. Without subagents:
      do **not** review inline (it defeats fresh eyes and burns context) —
      `specflo checkpoint`, then run the review in a fresh session.
    - The reviewer records findings through the CLI: `specflo review finding add
@@ -179,7 +180,8 @@ each *subagent* does for its task, and you drive the frontier:
    is already `in_progress`.
 2. **Dispatch.** Per ready task: `specflo task start T-NN --worktree`, which
    gives the task its own git worktree and branch, then spawn **one subagent**
-   with the full `specflo task show T-NN` brief (it names the worktree) and,
+   on the session's model (another model only when the user names one) with
+   the full `specflo task show T-NN` brief (it names the worktree) and,
    for each pool in its `Needs`, the concrete **pool member** it is assigned
    (which GPU, which venv, which port). Subagents **never run** a `git` command
    that writes, or `specflo` — plan state and commits are yours; the brief

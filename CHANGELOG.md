@@ -8,6 +8,16 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
+## [0.21.2]
+
+### Fixed
+- **Subagents run on the session's model.** The execute and harden skills told
+  the agent to put the reviewer on "the most capable model", so a pi session on
+  a local model could start a hosted model for the review. Every subagent
+  dispatch in the execute, harden and brainstorm skills (the reviewer, the
+  fan-out task subagents and the research subagent) now says to use the
+  session's model, and another model only when the user names one.
+
 ## [0.21.1]
 
 ### Fixed
