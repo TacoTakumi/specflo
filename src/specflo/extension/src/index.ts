@@ -13,8 +13,8 @@
  *   - attended:   one passive notice per seam, via ctx.ui.notify only
  *   - unattended: at a seam while an auto run is under way, end the running
  *     agent and clear and reseed through the live anchor - the replacement
- *     context the previous clear captured - or, unanchored, notice the
- *     command that starts the chain
+ *     context the previous clear captured - or, unanchored, end the agent
+ *     and run the command that starts the chain once pi is idle
  *
  * This file is the single extension entry point named by package.json's
  * `pi.extensions`.
@@ -81,9 +81,9 @@ const CONTINUE_COMMAND = "specflo-continue";
  *
  * `/specflo-continue auto` fetches the `specflo auto` pass report instead of
  * the on-demand payload - the same explicit opt-in the `specflo auto` command
- * itself is. It is also what the bootstrap notice tells the user to type at an
- * unanchored auto-run seam (REQ-31): the clear it performs anchors the chain,
- * and every seam after it fires unattended.
+ * itself is. It is also what the extension runs itself at an unanchored
+ * auto-run seam (REQ-31): the clear it performs anchors the chain, and every
+ * seam after it fires unattended.
  */
 const AUTO_ARGUMENT = "auto";
 
@@ -97,9 +97,10 @@ const AUTO_ARGUMENT = "auto";
  * state: pi rebuilds the extension closure for every session, and the anchor
  * must outlive the session whose clear captured it. It is a pi handle, never
  * specflo state, and it dies with the process - nothing durable (REQ-30). It
- * goes stale when something other than the chain replaces the session (a user
- * `/reload` or manual switch); the fire treats a throw as staleness, drops the
- * anchor, and the next armed auto seam degrades to the bootstrap notice.
+ * goes stale when something other than the chain replaces the session (a
+ * restart, a resume, a fork or a `/reload`): session_start drops it then, the
+ * fire treats a throw as staleness and drops it too, and the next armed auto
+ * seam re-anchors through `/specflo-continue auto`.
  */
 let liveAnchor: ExtensionCommandContext | null = null;
 
@@ -164,9 +165,8 @@ function runSpecflo(args: string[], cwd: string): Promise<string | null> {
  * latched out: the chain fired exactly once (pi-fixes-2 REQ-01, REQ-02).
  * Returning at delivery keeps the latch to milliseconds and holds no
  * `newSession` frame for the child run's life (REQ-05). A failed dispatch
- * drops the anchor, so the next armed auto seam degrades to the bootstrap
- * notice instead of firing through a session that never received anything
- * (REQ-04).
+ * drops the anchor, so the next armed auto seam re-anchors instead of firing
+ * through a session that never received anything (REQ-04).
  */
 async function reseedInto(ctx: ExtensionCommandContext, payload: string): Promise<void> {
   await ctx.newSession({
@@ -509,8 +509,8 @@ function autoRunLive(pdir: string): boolean {
  * The notice for an armed seam: the current context usage, the seam that
  * fired, and the exact command to run - extension-authored prose, and it
  * reaches ctx.ui.notify alone, never model context (REQ-27). The attended
- * notice (REQ-09) names `/specflo-continue`; the bootstrap notice at an
- * unanchored auto-run seam (REQ-31) names `/specflo-continue auto`.
+ * notice (REQ-09) names `/specflo-continue`; the bootstrap notice, shown
+ * when pi cannot run the re-anchoring command, names `/specflo-continue auto`.
  */
 function noticeText(percent: number, seam: string, command: string): string {
   return (
@@ -598,6 +598,11 @@ export default function specflo(pi: ExtensionAPI): void {
     // A subagent's child session gets no payload and seeds no threshold, so
     // it never arms.
     if (isSubagentSession(ctx)) return;
+    // Only the chain's own clear opens a session with reason `new`. Any other
+    // start - a restart, a resume, a fork, a reload - replaced the session
+    // without the chain, so the anchor points at a session that is gone, and
+    // the next auto seam must re-anchor instead of firing through it.
+    if (event.reason !== "new") liveAnchor = null;
     if (COLD_START_REASONS.has(event.reason)) {
       // No direct-continuation flag: a cold start has no one's answer yet about
       // whether to keep going, which is exactly what the ask-first payload is
@@ -685,8 +690,8 @@ export default function specflo(pi: ExtensionAPI): void {
         } catch {
           // A throw here means the anchor is stale - something other than the
           // chain replaced or reloaded the session. Drop it (unless a clear
-          // re-anchored meanwhile) and let the next armed auto seam fall back
-          // to the bootstrap notice.
+          // re-anchored meanwhile) and let the next armed auto seam
+          // re-anchor.
           if (liveAnchor === anchor) liveAnchor = null;
         } finally {
           fireInFlight = false;

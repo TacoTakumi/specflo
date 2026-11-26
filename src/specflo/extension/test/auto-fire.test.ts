@@ -275,3 +275,42 @@ describe("the unattended fire", () => {
     );
   });
 });
+
+describe("a session start the chain did not open", () => {
+  /** Emit session_start with ``reason`` on the same extension, seeding from ``baseline``. */
+  async function startAgain(pi: any, fake: any, reason: string, baseline: string) {
+    fake.setStdout(baseline);
+    await pi.emit({ type: "session_start", reason }, createFakeCtx({ cwd: fake.root }));
+  }
+
+  for (const reason of ["startup", "resume", "fork", "reload"]) {
+    it(`drops the live anchor on ${reason}, so the next auto seam re-anchors`, async () => {
+      const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+      const { replacement: old } = await anchorChain(pi, fake);
+
+      await startAgain(pi, fake, reason, status({ done: 11, autoUnderWay: true }));
+      const ctx = await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+      old.releaseIdle();
+      await new Promise((resolve) => setTimeout(resolve, 20));
+
+      assert.equal(old.ctx.newSessionCalls.length, 0, "the old anchor must not clear");
+      assert.equal(ctx.abortCalls.length, 1, "the seam ends the run");
+      await settle(pi, fake.root);
+      assert.deepEqual(pi.sent, [REANCHOR], "and re-anchors through the command");
+    });
+  }
+
+  it("keeps the live anchor on new, the start the chain's own clear makes", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    const { replacement } = await anchorChain(pi, fake);
+
+    await startAgain(pi, fake, "new", status({ done: 11, autoUnderWay: true }));
+    await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    fake.setStdout(autoReport());
+    replacement.releaseIdle();
+    await until(() => replacement.ctx.newSessionCalls.length === 1);
+
+    assert.equal(replacement.ctx.newSessionCalls.length, 1, "the anchored fire clears");
+    assert.equal(pi.sent.length, 0, "and no command is dispatched");
+  });
+});
