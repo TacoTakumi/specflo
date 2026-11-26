@@ -22,7 +22,9 @@ import {
   autoReport,
   calls,
   coldStart,
+  continueHandler,
   REANCHOR,
+  replacementFactory,
   resetAfterEach,
   settle,
   status,
@@ -317,5 +319,47 @@ describe("the reseed is dispatched, not awaited", () => {
     // A dispatched promise nobody awaits takes pi's process down when it
     // rejects. The behaviour that catch buys is pinned above (REQ-04).
     assert.match(reseedBody(), /\.catch\(/, "the dispatched send must handle its own rejection");
+  });
+});
+
+describe("a reseed whose turn never starts", () => {
+  it("tells the user in the new session after an anchored auto fire, and runs no pass", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11, autoUnderWay: true }));
+    const { replacement } = await anchorChain(pi, fake);
+    replacement.options.sendRejects = true;
+
+    await armedTurn(pi, fake, status({ done: 12, autoUnderWay: true }));
+    fake.setStdout(autoReport());
+    replacement.releaseIdle();
+    await until(() => replacement.ctx.newSessionCalls.length === 1);
+    const fresh = replacement.ctx.replacements[0];
+    await until(() => calls(fresh.ctx, "notify").length > 0);
+    const passes = fake.invocations().filter((line) => line === "auto --json").length;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    const notices = calls(fresh.ctx, "notify");
+    assert.equal(notices.length, 1, "one notice in the session that got no turn");
+    assert.match(notices[0].args[0] as string, /the reseed never landed/);
+    assert.match(notices[0].args[0] as string, /\/specflo-continue auto/);
+    assert.equal(
+      fake.invocations().filter((line) => line === "auto --json").length,
+      passes,
+      "the extension runs no further pass by itself",
+    );
+    assert.equal(pi.sent.length, 0, "and dispatches no command");
+  });
+
+  it("names plain /specflo-continue after a plain continue", async () => {
+    const { fake, pi } = await coldStart(status({ done: 11 }));
+    fake.setStdout("# Checkpoint - demo\n");
+    const ctx = createFakeCtx({ cwd: fake.root, replacement: replacementFactory({ sendRejects: true }) });
+
+    await continueHandler(pi)("", ctx);
+    const fresh = ctx.replacements[0];
+    await until(() => calls(fresh.ctx, "notify").length > 0);
+
+    const notices = calls(fresh.ctx, "notify");
+    assert.equal(notices.length, 1);
+    assert.match(notices[0].args[0] as string, /Run \/specflo-continue to/);
   });
 });

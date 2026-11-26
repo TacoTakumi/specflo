@@ -164,11 +164,19 @@ function runSpecflo(args: string[], cwd: string): Promise<string | null> {
  * cleared `fireInFlight` in time and every seam the reseeded run declared was
  * latched out: the chain fired exactly once (pi-fixes-2 REQ-01, REQ-02).
  * Returning at delivery keeps the latch to milliseconds and holds no
- * `newSession` frame for the child run's life (REQ-05). A failed dispatch
- * drops the anchor, so the next armed auto seam re-anchors instead of firing
- * through a session that never received anything (REQ-04).
+ * `newSession` frame for the child run's life (REQ-05). A failed dispatch -
+ * pi could not run the turn, for example with no model or no auth - drops the
+ * anchor (REQ-04), and since that session runs no turn, no seam follows: the
+ * new session shows a notice naming pi's error and ``command``, the one to
+ * type to try again. It does not retry by itself, because a retry would fail
+ * the same way and spend an auto pass each time. An abort does not reject
+ * the send: pi settles an aborted run normally.
  */
-async function reseedInto(ctx: ExtensionCommandContext, payload: string): Promise<void> {
+async function reseedInto(
+  ctx: ExtensionCommandContext,
+  payload: string,
+  command: string,
+): Promise<void> {
   await ctx.newSession({
     withSession: async (session) => {
       liveAnchor = session;
@@ -178,10 +186,20 @@ async function reseedInto(ctx: ExtensionCommandContext, payload: string): Promis
           { customType: RESEED_MESSAGE_TYPE, content: payload, display: false },
           { triggerTurn: true },
         )
-        .catch(() => {
+        .catch((error: unknown) => {
           // Only this callback's own anchor: a later clear may already have
           // re-anchored the chain, and that one is live.
           if (liveAnchor === session) liveAnchor = null;
+          const reason = error instanceof Error ? error.message : String(error);
+          try {
+            session.ui.notify(
+              `specflo: this session could not run its turn (${reason}). ` +
+                `Run ${command} to try again.`,
+              "warning",
+            );
+          } catch {
+            // A session pi already retired has no ui to tell.
+          }
         });
     },
   });
@@ -203,7 +221,7 @@ async function clearAndContinue(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify(NOTHING_TO_CONTINUE, "warning");
     return;
   }
-  await reseedInto(ctx, payload);
+  await reseedInto(ctx, payload, `/${CONTINUE_COMMAND}`);
 }
 
 /**
@@ -244,7 +262,7 @@ async function autoContinue(ctx: ExtensionCommandContext): Promise<void> {
     ctx.ui.notify(report.payload, "warning");
     return;
   }
-  await reseedInto(ctx, report.payload);
+  await reseedInto(ctx, report.payload, `/${CONTINUE_COMMAND} ${AUTO_ARGUMENT}`);
 }
 
 /**

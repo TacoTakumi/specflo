@@ -32,6 +32,10 @@ latter. Release tags are of the form `vX.Y.Z`.
   that the run did not open (startup, resume, fork, reload) drops the old
   handle. If the run still does not go on, type `/specflo-continue auto`. The pi
   extension now needs pi 0.84.2 or later.
+- **A clear whose new session cannot run its turn says so.** When pi could
+  not start the reseeded session's turn (for example with no model or no
+  auth), the run stopped with no message. The new session now shows a notice
+  with pi's error and the command to type to try again.
 
 ### Added
 - **The pi footer shows `auto`** at the end of the specflo segment while an
