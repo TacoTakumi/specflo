@@ -964,7 +964,7 @@ In an auto run:
   was started in a terminal, pi was restarted, or you resumed or switched
   sessions), the first armed seam ends the agent's turn and runs
   `/specflo-continue auto` itself once pi is idle; every seam after that is
-  unattended. This needs pi 0.84.2 or later. If the run still does not go on,
+  unattended. This needs pi 0.87.0 or later. If the run still does not go on,
   type `/specflo-continue auto` once.
 - **Footer.** The specflo segment in pi's footer ends in `auto` while an auto
   run is under way.

@@ -8,7 +8,7 @@ The version is kept in sync across `version` in `pyproject.toml` and
 `__version__` in `src/specflo/__init__.py`; `specflo --version` derives from the
 latter. Release tags are of the form `vX.Y.Z`.
 
-## [0.21.2]
+## [0.22.0]
 
 ### Fixed
 - **Subagents run on the session's model.** The execute and harden skills told
@@ -31,7 +31,8 @@ latter. Release tags are of the form `vX.Y.Z`.
   `/specflo-continue auto` itself, which makes a new handle. A session start
   that the run did not open (startup, resume, fork, reload) drops the old
   handle. If the run still does not go on, type `/specflo-continue auto`. The pi
-  extension now needs pi 0.84.2 or later.
+  extension now needs pi 0.87.0 or later, the first pi that runs a command
+  sent from `agent_settled` after every handler of that event has finished.
 - **A clear whose new session cannot run its turn says so.** When pi could
   not start the reseeded session's turn (for example with no model or no
   auth), the run stopped with no message. The new session now shows a notice
