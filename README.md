@@ -978,7 +978,8 @@ In an auto run:
 
 The active project in your statusline tells you where the agent is without
 asking: `my-project:plan 0/5` in plan, or `my-project T-03 2/5` in execute
-(the task in progress, then done over total). pi users get this segment from
+(the task in progress, then done over total), ending in `auto` while an auto
+run is under way. pi users get this segment from
 the pi extension. For Claude Code, the repo ships two example scripts in
 [examples/statusline](https://github.com/TacoTakumi/specflo/tree/main/examples/statusline):
 

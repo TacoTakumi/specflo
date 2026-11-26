@@ -395,7 +395,7 @@ export interface SegmentText {
  * tasks only (an explicit `Superseded by:` field or the legacy `Status:
  * superseded by` phrase marks a task superseded), and execute drops the phase
  * label to buy back width. An active segment ends in ' auto' while the
- * project's auto run is live, a marker the segment script does not print.
+ * project's auto run is live, as the segment script's does.
  * Anything missing or unparseable - no config.yaml
  * on the walk, no active_project, a broken frontmatter, an unreadable
  * plan.md - yields null, so the caller clears the status. Never throws: the

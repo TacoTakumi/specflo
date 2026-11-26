@@ -35,7 +35,8 @@ latter. Release tags are of the form `vX.Y.Z`.
 
 ### Added
 - **The pi footer shows `auto`** at the end of the specflo segment while an
-  auto run is under way.
+  auto run is under way. The Claude Code statusline example
+  (`examples/statusline/specflo_segment.py`) shows it the same way.
 
 ## [0.21.1]
 

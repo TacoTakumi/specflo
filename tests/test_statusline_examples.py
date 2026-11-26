@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from specflo import config, plan, projects, spec
+from specflo import auto, config, plan, projects, spec
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples" / "statusline"
 SEGMENT = EXAMPLES / "specflo_segment.py"
@@ -121,6 +121,50 @@ def test_segment_complete_project(tmp_path):
 
 def test_segment_shelved_project(tmp_path):
     assert plain(make_repo(tmp_path, status="shelved")) == "demo shelved\n"
+
+
+# --- the auto marker --------------------------------------------------------
+
+def _run_file(root, state=None, raw=None):
+    """Write the active project's auto-run.json: ``state`` through specflo's own
+    writer, or ``raw`` bytes as they are."""
+    cfg = config.load_config(root)
+    if raw is None:
+        auto.save_run_state(root, cfg, "demo", state)
+    else:
+        auto.run_state_path(root, cfg, "demo").write_text(raw)
+    return root
+
+
+def test_segment_auto_marks_a_live_run(tmp_path):
+    root = _run_file(make_repo(tmp_path, phase="spec"), {"passes": 2})
+    assert plain(root) == "demo:spec auto\n"
+
+
+def test_segment_auto_follows_the_execute_tally(tmp_path):
+    root = make_repo(tmp_path, phase="execute", tasks=3, done=["T-01"], started="T-02")
+    assert plain(_run_file(root, {"passes": 2})) == "demo T-02 1/3 auto\n"
+
+
+@pytest.mark.parametrize("state", [{"passes": 2, "killed": True}, {"passes": 2, "ended": True}])
+def test_segment_auto_drops_for_a_stopped_run(tmp_path, state):
+    root = _run_file(make_repo(tmp_path, phase="spec"), state)
+    assert plain(root) == "demo:spec\n"
+
+
+@pytest.mark.parametrize("raw", ["{not json", "[1, 2]"])
+def test_segment_auto_drops_for_an_unreadable_run_file(tmp_path, raw):
+    root = _run_file(make_repo(tmp_path, phase="spec"), raw=raw)
+    assert plain(root) == "demo:spec\n"
+
+
+def test_segment_auto_drops_without_a_run_file(tmp_path):
+    assert plain(make_repo(tmp_path, phase="spec")) == "demo:spec\n"
+
+
+def test_segment_auto_drops_for_a_complete_project(tmp_path):
+    root = _run_file(make_repo(tmp_path, status="complete"), {"passes": 2})
+    assert plain(root) == "demo done\n"
 
 
 def test_segment_cuts_a_long_slug(tmp_path):

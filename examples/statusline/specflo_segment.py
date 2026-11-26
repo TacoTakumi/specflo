@@ -9,6 +9,7 @@ current directory), for example:
     my-project:brainstorm      a project in brainstorm or spec
     my-project:plan 0/5        in plan, with the task count
     my-project T-03 2/5        in execute: the task in progress, done/total
+    my-project T-03 2/5 auto   any of the above while an auto run is under way
     my-project done            a complete project (dim)
     my-project shelved         a shelved project (dim)
 
@@ -18,7 +19,7 @@ set, is where it looks instead of DIR, as specflo itself does. NO_COLOR turns
 the colour off.
 
 The segment is read straight from specflo's files (.specflo/config.yaml, the
-project's project.md and plan.md), with the same rules as the status segment
+project's project.md, plan.md and auto-run.json), with the same rules as the status segment
 of specflo's pi extension. It never runs the specflo command, which would cost
 about 0.15 s per redraw. A project hosted on a daemon has no local files, so it
 shows nothing.
@@ -29,6 +30,7 @@ Import it to use it from your own Python statusline:
     text = specflo_segment.segment("/path/in/repo")   # None when nothing to show
 """
 
+import json
 import os
 import re
 import sys
@@ -102,6 +104,17 @@ def _task_tally(plan_path):
     return wip, done, len(active)
 
 
+def _auto_run_live(pdir):
+    """Whether the project's auto-run.json holds a live run: it parses to an
+    object that sets neither killed nor ended."""
+    try:
+        with _open(os.path.join(pdir, "auto-run.json")) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return False
+    return isinstance(state, dict) and not (state.get("killed") or state.get("ended"))
+
+
 def segment(start, color=None):
     """The segment for the repo that holds `start`, or None.
 
@@ -141,6 +154,8 @@ def segment(start, color=None):
                 tail = (" " + wip if wip else "") + " {}/{}".format(done, total)
                 # In execute the tally implies the phase, so drop it for width.
                 seg = label + tail if phase == "execute" else seg + tail
+        if _auto_run_live(pdir):
+            seg += " auto"
         return _color(seg, MAGENTA, color)
     except Exception:
         return None
